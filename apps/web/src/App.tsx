@@ -35,7 +35,11 @@ import {
   Wifi,
 } from 'lucide-react';
 import { formatDurationSec } from '@pmusic/core';
-import { usePMusicStore, type MainNavTab } from './store/usePMusicStore.ts';
+import {
+  getLivePlaybackPosition,
+  usePMusicStore,
+  type MainNavTab,
+} from './store/usePMusicStore.ts';
 import { isElectronDesktopRuntime } from './platform/web-bridge.ts';
 import { PMusicLogo } from './components/PMusicLogo.tsx';
 import { SpotlightSearchModal } from './components/SpotlightSearchModal.tsx';
@@ -93,6 +97,7 @@ export const App: React.FC = () => {
     settingsOpen,
     spotlightOpen,
     playerBarStyle,
+    reducedMotionPref,
     sleepTimerMode,
     sleepTimerRemainingSec,
     setActiveTab,
@@ -134,60 +139,126 @@ export const App: React.FC = () => {
   const [sidebarDropTargetId, setSidebarDropTargetId] = useState<string | null>(null);
   const [dockHoverPct, setDockHoverPct] = useState<number | null>(null);
   const [heartBurst, setHeartBurst] = useState(false);
-  const [dockTransportAnim, setDockTransportAnim] = useState<'prev' | 'next' | 'play' | null>(null);
+  const [dockHeartBurstKey, setDockHeartBurstKey] = useState(0);
+  const [dockTransportAnim, setDockTransportAnim] = useState<
+    'prev' | 'next' | 'play' | 'shuffle' | 'repeat' | null
+  >(null);
   const [smoothDockPosSec, setSmoothDockPosSec] = useState<number>(positionSec);
   const isElectronDesktop = isElectronDesktopRuntime();
 
   const swipeStartXRef = useRef<number | null>(null);
   const heartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dockBarRef = useRef<HTMLElement | null>(null);
+  const ambientFillRef = useRef<HTMLDivElement | null>(null);
+  const islandFillRef = useRef<HTMLDivElement | null>(null);
+  const waveFillRef = useRef<HTMLDivElement | null>(null);
   const scrubDraggingRef = useRef(false);
   const dockAnimTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dockClockRef = useRef({
     posSec: positionSec,
+    renderedPosSec: positionSec,
+    trackId: currentTrack.id,
     atMs: typeof performance !== 'undefined' ? performance.now() : 0,
   });
 
   useEffect(() => {
-    dockClockRef.current = {
-      posSec: positionSec,
-      atMs: typeof performance !== 'undefined' ? performance.now() : 0,
-    };
-    setSmoothDockPosSec(positionSec);
-  }, [positionSec, currentTrack.id, isPlaying]);
+    const now = typeof performance !== 'undefined' ? performance.now() : 0;
+    const trackChanged = dockClockRef.current.trackId !== currentTrack.id;
+    const seekJumped = Math.abs(positionSec - dockClockRef.current.renderedPosSec) > 0.85;
+    dockClockRef.current.posSec = positionSec;
+    dockClockRef.current.atMs = now;
+    dockClockRef.current.trackId = currentTrack.id;
+    if (trackChanged || seekJumped || !isPlaying) {
+      dockClockRef.current.renderedPosSec = positionSec;
+      setSmoothDockPosSec(positionSec);
+      const effDur = Math.max(1, durationSec, positionSec);
+      const pctStr = `${Math.max(0, Math.min(100, (positionSec / effDur) * 100)).toFixed(4)}%`;
+      if (ambientFillRef.current) ambientFillRef.current.style.width = pctStr;
+      if (islandFillRef.current) islandFillRef.current.style.width = pctStr;
+      if (waveFillRef.current) waveFillRef.current.style.width = pctStr;
+    }
+  }, [positionSec, currentTrack.id, isPlaying, durationSec]);
 
   useEffect(() => {
     if (!isPlaying || isMobileViewport || typeof requestAnimationFrame !== 'function') {
       return;
     }
     let rafId = 0;
+    let lastFrameMs = typeof performance !== 'undefined' ? performance.now() : 0;
+    let lastStateSyncMs = lastFrameMs;
+    let lastIntSec = Math.floor(dockClockRef.current.renderedPosSec);
+
     const step = (now: number) => {
-      const elapsed = Math.max(0, (now - dockClockRef.current.atMs) / 1000);
-      setSmoothDockPosSec(
-        Math.min(Math.max(1, durationSec), dockClockRef.current.posSec + elapsed)
-      );
+      const dt = Math.min(0.1, Math.max(0, (now - lastFrameMs) / 1000));
+      lastFrameMs = now;
+
+      const live = getLivePlaybackPosition();
+      const clockTarget =
+        dockClockRef.current.posSec + Math.max(0, (now - dockClockRef.current.atMs) / 1000);
+      const rawTarget =
+        live.positionSec > 0 && Math.abs(live.positionSec - clockTarget) < 2.5
+          ? live.positionSec
+          : clockTarget;
+
+      let rendered = dockClockRef.current.renderedPosSec;
+      const diff = rawTarget - rendered;
+      if (Math.abs(diff) > 1.2) {
+        rendered = rawTarget;
+      } else {
+        const rate = Math.max(0.82, Math.min(1.18, 1 + diff * 2.2));
+        rendered = Math.max(rendered, rendered + dt * rate);
+      }
+      const effDur = Math.max(1, live.durationSec || durationSec, rendered);
+      rendered = Math.min(effDur, rendered);
+      dockClockRef.current.renderedPosSec = rendered;
+
+      const pctStr = `${Math.max(0, Math.min(100, (rendered / effDur) * 100)).toFixed(4)}%`;
+      if (ambientFillRef.current) ambientFillRef.current.style.width = pctStr;
+      if (islandFillRef.current) islandFillRef.current.style.width = pctStr;
+      if (waveFillRef.current) waveFillRef.current.style.width = pctStr;
+
+      const curIntSec = Math.floor(rendered);
+      if (curIntSec !== lastIntSec || now - lastStateSyncMs >= 220) {
+        lastIntSec = curIntSec;
+        lastStateSyncMs = now;
+        setSmoothDockPosSec(rendered);
+      }
       rafId = requestAnimationFrame(step);
     };
     rafId = requestAnimationFrame(step);
     return () => cancelAnimationFrame(rafId);
   }, [isPlaying, isMobileViewport, durationSec]);
 
-  const triggerDockTransportAnim = (kind: 'prev' | 'next' | 'play') => {
+  const triggerDockTransportAnim = (
+    kind: 'prev' | 'next' | 'play' | 'shuffle' | 'repeat'
+  ) => {
     setDockTransportAnim(null);
     if (dockAnimTimerRef.current) clearTimeout(dockAnimTimerRef.current);
-    requestAnimationFrame(() => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => {
+        setDockTransportAnim(kind);
+        dockAnimTimerRef.current = setTimeout(() => setDockTransportAnim(null), 520);
+      });
+    } else {
       setDockTransportAnim(kind);
-      dockAnimTimerRef.current = setTimeout(() => setDockTransportAnim(null), 260);
-    });
+      dockAnimTimerRef.current = setTimeout(() => setDockTransportAnim(null), 520);
+    }
   };
 
   const triggerHeartBurst = () => {
     setHeartBurst(false);
     if (heartTimerRef.current) clearTimeout(heartTimerRef.current);
-    requestAnimationFrame(() => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => {
+        setHeartBurst(true);
+        if (!reducedMotionPref) setDockHeartBurstKey((k) => k + 1);
+        heartTimerRef.current = setTimeout(() => setHeartBurst(false), 520);
+      });
+    } else {
       setHeartBurst(true);
-      heartTimerRef.current = setTimeout(() => setHeartBurst(false), 320);
-    });
+      if (!reducedMotionPref) setDockHeartBurstKey((k) => k + 1);
+      heartTimerRef.current = setTimeout(() => setHeartBurst(false), 520);
+    }
   };
 
   useEffect(() => {
@@ -237,6 +308,7 @@ export const App: React.FC = () => {
 
       if (e.key === ' ' || e.code === 'Space') {
         e.preventDefault();
+        triggerDockTransportAnim('play');
         void togglePlayPause();
       } else if (e.key === 'ArrowRight') {
         e.preventDefault();
@@ -276,9 +348,11 @@ export const App: React.FC = () => {
         void toggleDjMode();
       } else if (e.key.toLowerCase() === 's') {
         e.preventDefault();
+        triggerDockTransportAnim('shuffle');
         toggleShuffle();
       } else if (e.key.toLowerCase() === 'r') {
         e.preventDefault();
+        triggerDockTransportAnim('repeat');
         cycleRepeatMode();
       } else if (e.key === '/') {
         e.preventDefault();
@@ -371,8 +445,14 @@ export const App: React.FC = () => {
     const nextSec = Math.round(pct * Math.max(1, durationSec));
     dockClockRef.current = {
       posSec: nextSec,
+      renderedPosSec: nextSec,
+      trackId: currentTrack.id,
       atMs: typeof performance !== 'undefined' ? performance.now() : 0,
     };
+    const pctStr = `${(pct * 100).toFixed(4)}%`;
+    if (ambientFillRef.current) ambientFillRef.current.style.width = pctStr;
+    if (islandFillRef.current) islandFillRef.current.style.width = pctStr;
+    if (waveFillRef.current) waveFillRef.current.style.width = pctStr;
     setSmoothDockPosSec(nextSec);
     seekTo(nextSec);
   };
@@ -1218,28 +1298,19 @@ export const App: React.FC = () => {
                   : 'inset-x-3 bottom-3 h-[84px] grid-cols-[minmax(200px,1fr)_minmax(320px,540px)_minmax(200px,1fr)] rounded-[20px] px-5'
           }`}
         >
-          {/* Exact-Position Subtle Ambient Progress Fill + Discreet White Playhead */}
+          {/* Flat Solid Sharp-Edged Ambient Progress Fill (Zero Gradient, Zero Vertical Playhead) */}
           {playerBarStyle === 'ambient-dock' && (
-            <>
-              <div
-                aria-hidden="true"
-                data-testid="ambient-progress-fill"
-                className="pointer-events-none absolute inset-y-0 left-0 z-0 transition-[background] duration-200"
-                style={{
-                  width: `${progressPct}%`,
-                  background:
-                    'linear-gradient(90deg, color-mix(in srgb, var(--pm-ambient-1) 28%, transparent) 0%, color-mix(in srgb, var(--pm-ambient-2) 40%, transparent) calc(100% - 8px), transparent 100%)',
-                }}
-              />
-              {progressPct > 0.4 && progressPct < 99.8 && (
-                <div
-                  aria-hidden="true"
-                  data-testid="ambient-playhead"
-                  className="pointer-events-none absolute inset-y-2.5 z-10 w-[1.5px] -translate-x-1/2 rounded-full bg-white/65 shadow-[0_0_8px_rgba(255,255,255,0.4)]"
-                  style={{ left: `${progressPct}%` }}
-                />
-              )}
-            </>
+            <div
+              ref={ambientFillRef}
+              aria-hidden="true"
+              data-testid="ambient-progress-fill"
+              className="pointer-events-none absolute inset-y-0 left-0 z-0 transition-[background-color] duration-300"
+              style={{
+                width: `${progressPct}%`,
+                backgroundColor:
+                  'color-mix(in srgb, var(--pm-ambient-1) 36%, rgba(255, 255, 255, 0.08))',
+              }}
+            />
           )}
 
           {/* Dynamic Floating Island Bottom Curve Progress Hairline */}
@@ -1249,6 +1320,7 @@ export const App: React.FC = () => {
               className="pointer-events-none absolute inset-x-7 bottom-0 z-10 h-[3px] overflow-hidden rounded-full bg-white/12"
             >
               <div
+                ref={islandFillRef}
                 className="h-full rounded-full"
                 style={{
                   width: `${progressPct}%`,
@@ -1268,6 +1340,7 @@ export const App: React.FC = () => {
               className="pointer-events-none absolute inset-x-0 top-0 z-10 h-[3px] bg-white/10"
             >
               <div
+                ref={waveFillRef}
                 className="h-full rounded-r-full"
                 style={{
                   width: `${progressPct}%`,
@@ -1287,7 +1360,7 @@ export const App: React.FC = () => {
                 <div
                   aria-hidden="true"
                   data-testid="dock-hover-hairline"
-                  className="pointer-events-none absolute inset-y-2 z-10 w-[1.5px] -translate-x-1/2 rounded-full bg-white/45 shadow-[0_0_6px_rgba(255,255,255,0.3)]"
+                  className="pointer-events-none absolute inset-y-0 z-10 w-[1px] -translate-x-1/2 bg-white/35"
                   style={{ left: `${dockHoverPct}%` }}
                 />
               )}
@@ -1393,11 +1466,11 @@ export const App: React.FC = () => {
                 aria-label={isLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
                 aria-pressed={isLiked}
                 onClick={() => {
-                  triggerHeartBurst();
+                  if (!isLiked) triggerHeartBurst();
                   void toggleLike(currentTrack);
                 }}
-                className={`pm-pressable pm-hover inline-flex shrink-0 items-center justify-center rounded-full p-2 ${
-                  heartBurst ? 'pm-heart-pop' : ''
+                className={`pm-pressable pm-hover relative inline-flex shrink-0 items-center justify-center overflow-visible rounded-full p-2 ${
+                  heartBurst && !reducedMotionPref ? 'pm-heart-burst-epic' : ''
                 } ${
                   isLiked
                     ? 'text-rose-500'
@@ -1405,6 +1478,30 @@ export const App: React.FC = () => {
                 }`}
               >
                 <Heart className={`h-4 w-4 ${isLiked ? 'fill-current' : ''}`} />
+                {isLiked &&
+                  dockHeartBurstKey > 0 &&
+                  !reducedMotionPref &&
+                  [
+                    { sx: '0px', sy: '-17px', c: '#FB7185' },
+                    { sx: '15px', sy: '-9px', c: '#F9A8D4' },
+                    { sx: '15px', sy: '9px', c: '#FDE047' },
+                    { sx: '0px', sy: '17px', c: '#FB7185' },
+                    { sx: '-15px', sy: '9px', c: '#F9A8D4' },
+                    { sx: '-15px', sy: '-9px', c: '#FDE047' },
+                  ].map((sp, spIdx) => (
+                    <span
+                      key={`dock-sp-${dockHeartBurstKey}-${spIdx}`}
+                      aria-hidden="true"
+                      className="pm-sparkle-dot pointer-events-none absolute left-1/2 top-1/2 h-1.5 w-1.5 rounded-full"
+                      style={
+                        {
+                          backgroundColor: sp.c,
+                          '--sx': sp.sx,
+                          '--sy': sp.sy,
+                        } as React.CSSProperties
+                      }
+                    />
+                  ))}
               </button>
             </div>
           </div>
@@ -1420,14 +1517,23 @@ export const App: React.FC = () => {
                     : 'Activar reproducción aleatoria'
                 }
                 aria-pressed={shuffleEnabled}
-                onClick={() => toggleShuffle()}
+                onClick={() => {
+                  triggerDockTransportAnim('shuffle');
+                  toggleShuffle();
+                }}
                 className={`pm-pressable pm-hover relative inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
                   shuffleEnabled
                     ? 'pm-text-primary'
                     : 'pm-text-tertiary hover:text-[var(--pm-text-primary)]'
                 }`}
               >
-                <Shuffle className="h-3.5 w-3.5" />
+                <Shuffle
+                  className={`h-3.5 w-3.5 ${
+                    dockTransportAnim === 'shuffle' && !reducedMotionPref
+                      ? 'pm-shuffle-flip-epic'
+                      : ''
+                  }`}
+                />
                 {shuffleEnabled && (
                   <span
                     aria-hidden="true"
@@ -1447,7 +1553,9 @@ export const App: React.FC = () => {
                 className="pm-pressable pm-hover inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-primary"
               >
                 <SkipBack
-                  className={`h-4 w-4 ${dockTransportAnim === 'prev' ? 'pm-nudge-prev' : ''}`}
+                  className={`h-4 w-4 ${
+                    dockTransportAnim === 'prev' && !reducedMotionPref ? 'pm-skip-prev-epic' : ''
+                  }`}
                 />
               </button>
 
@@ -1458,10 +1566,16 @@ export const App: React.FC = () => {
                   triggerDockTransportAnim('play');
                   void togglePlayPause();
                 }}
-                className={`pm-btn-primary pm-pressable flex h-10 w-10 items-center justify-center rounded-full shadow-lg hover:scale-105 ${
-                  dockTransportAnim === 'play' ? 'pm-play-morph' : ''
+                className={`pm-btn-primary pm-pressable relative flex h-10 w-10 items-center justify-center overflow-visible rounded-full shadow-lg hover:scale-105 ${
+                  dockTransportAnim === 'play' && !reducedMotionPref ? 'pm-play-flip-epic' : ''
                 }`}
               >
+                {dockTransportAnim === 'play' && !reducedMotionPref && (
+                  <span
+                    aria-hidden="true"
+                    className="pm-play-ring-burst pointer-events-none absolute inset-0 rounded-full border-2 border-current opacity-70"
+                  />
+                )}
                 {isPlaying ? (
                   <Pause className="h-4.5 w-4.5 fill-current" />
                 ) : (
@@ -1479,7 +1593,9 @@ export const App: React.FC = () => {
                 className="pm-pressable pm-hover inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-primary"
               >
                 <SkipForward
-                  className={`h-4 w-4 ${dockTransportAnim === 'next' ? 'pm-nudge-next' : ''}`}
+                  className={`h-4 w-4 ${
+                    dockTransportAnim === 'next' && !reducedMotionPref ? 'pm-skip-next-epic' : ''
+                  }`}
                 />
               </button>
 
@@ -1487,18 +1603,29 @@ export const App: React.FC = () => {
                 type="button"
                 aria-label={repeatLabel}
                 aria-pressed={repeatMode !== 'off'}
-                onClick={() => cycleRepeatMode()}
+                onClick={() => {
+                  triggerDockTransportAnim('repeat');
+                  cycleRepeatMode();
+                }}
                 className={`pm-pressable pm-hover relative inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
                   repeatMode !== 'off'
                     ? 'pm-text-primary'
                     : 'pm-text-tertiary hover:text-[var(--pm-text-primary)]'
                 }`}
               >
-                {repeatMode === 'one' ? (
-                  <Repeat1 className="h-3.5 w-3.5" />
-                ) : (
-                  <Repeat className="h-3.5 w-3.5" />
-                )}
+                <span
+                  className={`inline-flex ${
+                    dockTransportAnim === 'repeat' && !reducedMotionPref
+                      ? 'pm-repeat-spin-epic'
+                      : ''
+                  }`}
+                >
+                  {repeatMode === 'one' ? (
+                    <Repeat1 className="h-3.5 w-3.5" />
+                  ) : (
+                    <Repeat className="h-3.5 w-3.5" />
+                  )}
+                </span>
                 {repeatMode !== 'off' && (
                   <span
                     aria-hidden="true"

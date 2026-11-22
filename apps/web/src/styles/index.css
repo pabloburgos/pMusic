@@ -1242,9 +1242,308 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   animation: pmQueueMoved 420ms var(--ease-out) both;
 }
 
+/* ── Apple Music Style Living Fluid Cover Backdrop ── */
+@keyframes pmFluidCoverA {
+  0%, 100% {
+    transform: translate3d(-4%, -3%, 0) scale(1.28) rotate(0deg);
+    filter: blur(58px) saturate(1.22) contrast(1.06);
+  }
+  50% {
+    transform: translate3d(5%, 4%, 0) scale(1.42) rotate(5deg);
+    filter: blur(82px) saturate(1.36) contrast(1.08);
+  }
+}
+
+@keyframes pmFluidCoverB {
+  0%, 100% {
+    transform: translate3d(5%, 3%, 0) scale(1.34) rotate(0deg);
+    filter: blur(78px) saturate(1.30);
+  }
+  50% {
+    transform: translate3d(-5%, -4%, 0) scale(1.24) rotate(-6deg);
+    filter: blur(58px) saturate(1.18);
+  }
+}
+
+.pm-fluid-cover-a {
+  transform: translate3d(-2%, -2%, 0) scale(1.32);
+  filter: blur(64px) saturate(1.24) contrast(1.06);
+  animation: pmFluidCoverA 16s ease-in-out infinite;
+  will-change: transform, filter;
+}
+
+.pm-fluid-cover-b {
+  transform: translate3d(3%, 2%, 0) scale(1.34);
+  filter: blur(74px) saturate(1.26);
+  animation: pmFluidCoverB 22s ease-in-out infinite;
+  will-change: transform, filter;
+}
+
+.pm-backdrop-static .pm-fluid-cover-a,
+.pm-backdrop-static .pm-fluid-cover-b {
+  animation: none !important;
+  transform: scale(1.28) !important;
+  filter: blur(66px) saturate(1.18) !important;
+}
+
+@keyframes pmBackdropInNext {
+  from {
+    opacity: 0;
+    transform: translate3d(10%, 0, 0) scale(1.06);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes pmBackdropInPrev {
+  from {
+    opacity: 0;
+    transform: translate3d(-10%, 0, 0) scale(1.06);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes pmBackdropOutNext {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(-10%, 0, 0) scale(0.96);
+  }
+}
+
+@keyframes pmBackdropOutPrev {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(10%, 0, 0) scale(0.96);
+  }
+}
+
+.pm-backdrop-in-next {
+  animation: pmBackdropInNext 760ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.pm-backdrop-in-prev {
+  animation: pmBackdropInPrev 760ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.pm-backdrop-out-next {
+  animation: pmBackdropOutNext 760ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.pm-backdrop-out-prev {
+  animation: pmBackdropOutPrev 760ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.pm-lyrics-mask {
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 7%, #000 90%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 7%, #000 90%, transparent 100%);
+}
+
+/* ── Ultradinámico / Épico Transport & Cover Animations ── */
+@keyframes pmPlayFlipEpic {
+  0% {
+    transform: perspective(600px) rotateY(0deg) scale(1);
+  }
+  38% {
+    transform: perspective(600px) rotateY(192deg) scale(1.16);
+  }
+  72% {
+    transform: perspective(600px) rotateY(352deg) scale(0.96);
+  }
+  100% {
+    transform: perspective(600px) rotateY(360deg) scale(1);
+  }
+}
+
+.pm-play-flip-epic {
+  animation: pmPlayFlipEpic 520ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  transform-style: preserve-3d;
+}
+
+@keyframes pmPlayRingBurst {
+  0% {
+    opacity: 0.72;
+    transform: scale(0.88);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.85);
+  }
+}
+
+.pm-play-ring-burst {
+  animation: pmPlayRingBurst 520ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes pmSkipNextEpic {
+  0% {
+    transform: translateX(0) rotate(0deg) scale(1);
+  }
+  30% {
+    transform: translateX(7px) rotate(12deg) scale(1.16);
+  }
+  65% {
+    transform: translateX(-3px) rotate(-4deg) scale(0.95);
+  }
+  100% {
+    transform: translateX(0) rotate(0deg) scale(1);
+  }
+}
+
+.pm-skip-next-epic {
+  animation: pmSkipNextEpic 420ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes pmSkipPrevEpic {
+  0% {
+    transform: translateX(0) rotate(0deg) scale(1);
+  }
+  30% {
+    transform: translateX(-7px) rotate(-12deg) scale(1.16);
+  }
+  65% {
+    transform: translateX(3px) rotate(4deg) scale(0.95);
+  }
+  100% {
+    transform: translateX(0) rotate(0deg) scale(1);
+  }
+}
+
+.pm-skip-prev-epic {
+  animation: pmSkipPrevEpic 420ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes pmShuffleFlipEpic {
+  0% {
+    transform: perspective(400px) rotateX(0deg) scale(1);
+  }
+  45% {
+    transform: perspective(400px) rotateX(195deg) scale(1.22);
+  }
+  100% {
+    transform: perspective(400px) rotateX(360deg) scale(1);
+  }
+}
+
+.pm-shuffle-flip-epic {
+  animation: pmShuffleFlipEpic 460ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes pmRepeatSpinEpic {
+  0% {
+    transform: rotate(0deg) scale(1);
+  }
+  50% {
+    transform: rotate(210deg) scale(1.22);
+  }
+  100% {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
+.pm-repeat-spin-epic {
+  animation: pmRepeatSpinEpic 520ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes pmHeartBurstEpic {
+  0% {
+    transform: scale(1) rotate(0deg);
+  }
+  28% {
+    transform: scale(1.42) rotate(-12deg);
+  }
+  58% {
+    transform: scale(0.9) rotate(8deg);
+  }
+  80% {
+    transform: scale(1.14) rotate(-3deg);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+.pm-heart-burst-epic {
+  animation: pmHeartBurstEpic 480ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes pmSparkleDot {
+  0% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(0.4);
+  }
+  65% {
+    opacity: 0.95;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(calc(-50% + var(--sx, 0px)), calc(-50% + var(--sy, -18px))) scale(1.25);
+  }
+}
+
+.pm-sparkle-dot {
+  animation: pmSparkleDot 520ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes pmCoverSlideNext {
+  0% {
+    opacity: 0.35;
+    transform: perspective(900px) translate3d(38px, 0, -40px) rotateY(-14deg) scale(0.92);
+  }
+  65% {
+    opacity: 1;
+    transform: perspective(900px) translate3d(-4px, 0, 0) rotateY(2deg) scale(1.015);
+  }
+  100% {
+    opacity: 1;
+    transform: perspective(900px) translate3d(0, 0, 0) rotateY(0deg) scale(1);
+  }
+}
+
+.pm-cover-slide-next {
+  animation: pmCoverSlideNext 460ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes pmCoverSlidePrev {
+  0% {
+    opacity: 0.35;
+    transform: perspective(900px) translate3d(-38px, 0, -40px) rotateY(14deg) scale(0.92);
+  }
+  65% {
+    opacity: 1;
+    transform: perspective(900px) translate3d(4px, 0, 0) rotateY(-2deg) scale(1.015);
+  }
+  100% {
+    opacity: 1;
+    transform: perspective(900px) translate3d(0, 0, 0) rotateY(0deg) scale(1);
+  }
+}
+
+.pm-cover-slide-prev {
+  animation: pmCoverSlidePrev 460ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 /* Accessibility Media Query 2: Reduced Motion */
 @media (prefers-reduced-motion: reduce) {
   .pm-ambient-mesh,
+  .pm-fluid-cover-a,
+  .pm-fluid-cover-b,
+  .pm-backdrop-in-next,
+  .pm-backdrop-in-prev,
+  .pm-backdrop-out-next,
+  .pm-backdrop-out-prev,
   .pm-eq-bar-1,
   .pm-eq-bar-2,
   .pm-eq-bar-3,
@@ -1252,9 +1551,17 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   .pm-cover-swap,
   .pm-cover-next,
   .pm-cover-prev,
+  .pm-cover-slide-next,
+  .pm-cover-slide-prev,
   .pm-nudge-next,
   .pm-nudge-prev,
   .pm-play-morph,
+  .pm-play-flip-epic,
+  .pm-play-ring-burst,
+  .pm-skip-next-epic,
+  .pm-skip-prev-epic,
+  .pm-shuffle-flip-epic,
+  .pm-repeat-spin-epic,
   .pm-queue-moved,
   .pm-sheet-enter,
   .pm-page-enter,
@@ -1262,7 +1569,9 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   .pm-modal-pop,
   .pm-menu-pop,
   .pm-toast-enter,
-  .pm-heart-pop {
+  .pm-heart-pop,
+  .pm-heart-burst-epic,
+  .pm-sparkle-dot {
     animation: none !important;
   }
   .pm-sing-word {
@@ -1282,6 +1591,12 @@ html.pm-solid-modern .pm-spotlight-backdrop {
 }
 
 html.pm-reduced-motion .pm-ambient-mesh,
+html.pm-reduced-motion .pm-fluid-cover-a,
+html.pm-reduced-motion .pm-fluid-cover-b,
+html.pm-reduced-motion .pm-backdrop-in-next,
+html.pm-reduced-motion .pm-backdrop-in-prev,
+html.pm-reduced-motion .pm-backdrop-out-next,
+html.pm-reduced-motion .pm-backdrop-out-prev,
 html.pm-reduced-motion .pm-eq-bar-1,
 html.pm-reduced-motion .pm-eq-bar-2,
 html.pm-reduced-motion .pm-eq-bar-3,
@@ -1289,9 +1604,17 @@ html.pm-reduced-motion .pm-lyric-dot,
 html.pm-reduced-motion .pm-cover-swap,
 html.pm-reduced-motion .pm-cover-next,
 html.pm-reduced-motion .pm-cover-prev,
+html.pm-reduced-motion .pm-cover-slide-next,
+html.pm-reduced-motion .pm-cover-slide-prev,
 html.pm-reduced-motion .pm-nudge-next,
 html.pm-reduced-motion .pm-nudge-prev,
 html.pm-reduced-motion .pm-play-morph,
+html.pm-reduced-motion .pm-play-flip-epic,
+html.pm-reduced-motion .pm-play-ring-burst,
+html.pm-reduced-motion .pm-skip-next-epic,
+html.pm-reduced-motion .pm-skip-prev-epic,
+html.pm-reduced-motion .pm-shuffle-flip-epic,
+html.pm-reduced-motion .pm-repeat-spin-epic,
 html.pm-reduced-motion .pm-queue-moved,
 html.pm-reduced-motion .pm-sheet-enter,
 html.pm-reduced-motion .pm-page-enter,
@@ -1299,7 +1622,9 @@ html.pm-reduced-motion .pm-tab-enter,
 html.pm-reduced-motion .pm-modal-pop,
 html.pm-reduced-motion .pm-menu-pop,
 html.pm-reduced-motion .pm-toast-enter,
-html.pm-reduced-motion .pm-heart-pop {
+html.pm-reduced-motion .pm-heart-pop,
+html.pm-reduced-motion .pm-heart-burst-epic,
+html.pm-reduced-motion .pm-sparkle-dot {
   animation: none !important;
 }
 html.pm-reduced-motion .pm-sing-word {

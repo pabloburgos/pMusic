@@ -84,6 +84,7 @@ export const SettingsModal: React.FC = () => {
     playerBarStyle,
     accentPreset,
     liquidGlassMode,
+    ambientMotionEnabled,
     visualizerEnabled,
     graphicSaverMode,
     reducedMotionPref,
@@ -111,6 +112,7 @@ export const SettingsModal: React.FC = () => {
     setPlayerBarStyle,
     setAccentPreset,
     setLiquidGlassMode,
+    setAmbientMotionEnabled,
     setVisualizerEnabled,
     setGraphicSaverMode,
     setReducedMotionPref,
@@ -368,6 +370,32 @@ export const SettingsModal: React.FC = () => {
                         Superficies opacas nítidas con cero transparencia y máximo ahorro gráfico
                       </p>
                     </button>
+                  </div>
+
+                  <div className="border-t pm-border pt-3">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[13px] font-bold pm-text-primary">
+                          Fondo fluido vivo en Reproductor
+                        </div>
+                        <p className="text-xs pm-text-secondary">
+                          Desplaza y respira el desenfoque de la portada al ritmo de los graves
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        data-testid="ambient-motion-toggle"
+                        aria-checked={ambientMotionEnabled}
+                        aria-label="Movimiento y ritmo del fondo en Reproductor"
+                        onClick={() => setAmbientMotionEnabled(!ambientMotionEnabled)}
+                        className={`shrink-0 rounded-full px-4 py-1.5 text-xs font-bold transition-all ${
+                          ambientMotionEnabled ? 'pm-btn-primary' : 'pm-btn-secondary'
+                        }`}
+                      >
+                        {ambientMotionEnabled ? 'Animado' : 'Estático'}
+                      </button>
+                    </div>
                   </div>
                 </section>
 

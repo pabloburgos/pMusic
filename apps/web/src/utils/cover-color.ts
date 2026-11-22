@@ -1,11 +1,11 @@
 import type { Track } from '@pmusic/core';
 
 const FALLBACK_PALETTES: readonly [string, string, string][] = [
-  ['#6D28D9', '#1D4ED8', '#111024'],
-  ['#BE185D', '#1E3A8A', '#170E1D'],
-  ['#0F766E', '#1E293B', '#0B181A'],
-  ['#B45309', '#4C1D95', '#17111A'],
-  ['#0369A1', '#312E81', '#0D1321'],
+  ['#3A3A42', '#26262C', '#101014'],
+  ['#3E3C38', '#292724', '#121110'],
+  ['#363B40', '#23272C', '#101215'],
+  ['#3C383B', '#272427', '#121012'],
+  ['#383D3B', '#242927', '#101412'],
 ];
 
 function setRootAmbient(p: readonly [string, string, string]): void {
@@ -69,7 +69,8 @@ export function applyAmbientPaletteFromCover(track: Track | null): void {
         ctx.drawImage(img, 0, 0, 24, 24);
         const { data } = ctx.getImageData(0, 0, 24, 24);
 
-        let bestH = 260;
+        let bestH = 220;
+        let bestS = 0;
         let bestScore = -1;
         let secondH = 215;
         let sumR = 0;
@@ -89,23 +90,36 @@ export function applyAmbientPaletteFromCover(track: Track | null): void {
           count++;
 
           const [h, s, l] = rgbToHsl(r, g, b);
-          if (l < 0.12 || l > 0.85) continue;
-          const vibrance = s * (1 - Math.abs(l - 0.5) * 1.4);
+          if (l < 0.1 || l > 0.88) continue;
+          const vibrance = s * (1 - Math.abs(l - 0.5) * 1.35);
           if (vibrance > bestScore) {
             if (Math.abs(h - bestH) > 28) secondH = bestH;
             bestScore = vibrance;
             bestH = h;
+            bestS = s;
           }
         }
 
-        if (count > 0 && bestScore > 0.12) {
-          const avgH = rgbToHsl(sumR / count, sumG / count, sumB / count)[0];
-          const secondary = Math.abs(secondH - bestH) > 25 ? secondH : avgH + 35;
-          setRootAmbient([
-            hslCss(bestH, 68, 40),
-            hslCss(secondary, 62, 32),
-            hslCss(bestH, 45, 11),
-          ]);
+        if (count > 0) {
+          const [avgH, avgS] = rgbToHsl(sumR / count, sumG / count, sumB / count);
+          if (bestScore > 0.14) {
+            const sat1 = Math.min(68, Math.max(24, Math.round(bestS * 100)));
+            const sat2 = Math.min(62, Math.max(20, Math.round(sat1 * 0.9)));
+            const secondary = Math.abs(secondH - bestH) > 25 ? secondH : avgH + 30;
+            setRootAmbient([
+              hslCss(bestH, sat1, 40),
+              hslCss(secondary, sat2, 30),
+              hslCss(bestH, Math.min(44, Math.round(sat1 * 0.65)), 11),
+            ]);
+          } else {
+            // Authentic muted stone/parchment/graphite palette for white, cream, beige or B&W covers
+            const mutedSat = Math.min(18, Math.round(avgS * 100));
+            setRootAmbient([
+              hslCss(avgH, mutedSat, 34),
+              hslCss(avgH, Math.max(4, Math.round(mutedSat * 0.75)), 22),
+              hslCss(avgH, Math.max(3, Math.round(mutedSat * 0.5)), 10),
+            ]);
+          }
         }
       } catch {
         // Keep deterministic fallback palette when canvas is tainted

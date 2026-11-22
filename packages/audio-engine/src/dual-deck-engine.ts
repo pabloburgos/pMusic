@@ -36,6 +36,25 @@ interface DeckChannelNodes {
   delayFeedbackNode?: GainNode;
 }
 
+function resetAudioParam(
+  param: AudioParam | undefined,
+  ctx: AudioContext | null,
+  value: number
+): void {
+  if (!param) return;
+  try {
+    if (ctx && typeof param.cancelScheduledValues === 'function') {
+      param.cancelScheduledValues(0);
+    }
+    if (ctx && typeof param.setValueAtTime === 'function') {
+      param.setValueAtTime(value, ctx.currentTime);
+    }
+  } catch {
+    // ignore in synthetic audio contexts
+  }
+  param.value = value;
+}
+
 function setAudioParamSmooth(
   param: AudioParam | undefined,
   ctx: AudioContext | null,
@@ -44,10 +63,15 @@ function setAudioParamSmooth(
 ): void {
   if (!param) return;
   if (ctx && typeof param.setTargetAtTime === 'function') {
-    param.setTargetAtTime(value, ctx.currentTime, timeConstantSec);
-  } else {
-    param.value = value;
+    try {
+      param.cancelScheduledValues?.(ctx.currentTime);
+      param.setTargetAtTime(value, ctx.currentTime, timeConstantSec);
+      return;
+    } catch {
+      // fall through
+    }
   }
+  param.value = value;
 }
 
 /**
@@ -63,7 +87,7 @@ export function volumeToPerceptualGain(volume01: number): number {
 export async function waitForAudioReady(
   audio: HTMLAudioElement,
   targetSec: number,
-  timeoutMs = 2400
+  timeoutMs = 4200
 ): Promise<void> {
   const safeTarget = Math.max(0, targetSec);
   // Instant path for synthetic mock audio elements in Vitest
@@ -78,16 +102,22 @@ export async function waitForAudioReady(
 
   const seekTarget = () => {
     try {
-      const maxDur = Number.isFinite(audio.duration) && audio.duration > 1 ? audio.duration - 0.5 : safeTarget;
-      audio.currentTime = Math.max(0, Math.min(maxDur, safeTarget));
+      const maxDur =
+        Number.isFinite(audio.duration) && audio.duration > 1 ? audio.duration - 0.5 : safeTarget;
+      const desired = Math.max(0, Math.min(maxDur, safeTarget));
+      if (Math.abs((audio.currentTime || 0) - desired) > 0.35) {
+        audio.currentTime = desired;
+      }
     } catch {
       // ignore before metadata
     }
   };
 
-  if (audio.readyState >= 1) {
+  if (audio.readyState >= 2) {
     seekTarget();
     if (safeTarget <= 0.2 || audio.readyState >= 3) return;
+  } else if (audio.readyState >= 1) {
+    seekTarget();
   }
 
   await new Promise<void>((resolve) => {
@@ -96,14 +126,16 @@ export async function waitForAudioReady(
       if (settled) return;
       settled = true;
       audio.removeEventListener('loadedmetadata', onMeta);
+      audio.removeEventListener('loadeddata', done);
       audio.removeEventListener('canplay', done);
+      audio.removeEventListener('canplaythrough', done);
       audio.removeEventListener('seeked', done);
       clearTimeout(timer);
       resolve();
     };
     const onMeta = () => {
       seekTarget();
-      if (safeTarget <= 0.2 || audio.readyState >= 3) {
+      if (safeTarget <= 0.2 && audio.readyState >= 2) {
         done();
       }
     };
@@ -113,7 +145,9 @@ export async function waitForAudioReady(
     }, timeoutMs);
 
     audio.addEventListener('loadedmetadata', onMeta);
+    audio.addEventListener('loadeddata', done);
     audio.addEventListener('canplay', done);
+    audio.addEventListener('canplaythrough', done);
     audio.addEventListener('seeked', done);
     if (audio.readyState >= 1) {
       seekTarget();
@@ -297,24 +331,60 @@ export class DualDeckAudioEngine implements IAudioEngine {
       } as unknown as HTMLAudioElement;
     }
 
+    let eofFiredForSrc = '';
+    const fireEndedIfActive = () => {
+      if (this.activeDeck !== id || this.isTransitioning) {
+        return;
+      }
+      const curSrc = audio.src || id;
+      if (eofFiredForSrc === curSrc && !this.isPlaying) {
+        return;
+      }
+      eofFiredForSrc = curSrc;
+      this.isPlaying = false;
+      this.emitState();
+      for (const listener of this.endedListeners) {
+        listener(id);
+      }
+    };
+
+    const syncDuration = () => {
+      if (this.activeDeck !== id) return;
+      if (Number.isFinite(audio.duration) && audio.duration > 1) {
+        this.durationSec = audio.duration;
+        this.emitState();
+      }
+    };
+
+    audio.addEventListener('loadedmetadata', syncDuration);
+    audio.addEventListener('durationchange', syncDuration);
+
     audio.addEventListener('timeupdate', () => {
       if (this.activeDeck === id) {
         this.positionSec = Number.isFinite(audio.currentTime) ? audio.currentTime : this.positionSec;
-        if (Number.isFinite(audio.duration) && audio.duration > 0) {
+        if (Number.isFinite(audio.duration) && audio.duration > 1) {
           this.durationSec = audio.duration;
+        } else if (this.positionSec + 0.5 > this.durationSec) {
+          this.durationSec = Math.ceil(this.positionSec + 12);
         }
         this.emitState();
+
+        if (
+          !this.isTransitioning &&
+          this.isPlaying &&
+          (audio.ended ||
+            (Number.isFinite(audio.duration) &&
+              audio.duration > 10 &&
+              audio.currentTime >= audio.duration - 0.15 &&
+              audio.paused))
+        ) {
+          fireEndedIfActive();
+        }
       }
     });
 
     audio.addEventListener('ended', () => {
-      if (this.activeDeck === id) {
-        this.isPlaying = false;
-        this.emitState();
-      }
-      for (const listener of this.endedListeners) {
-        listener(id);
-      }
+      fireEndedIfActive();
     });
 
     return {
@@ -433,18 +503,18 @@ export class DualDeckAudioEngine implements IAudioEngine {
       this.audioCtx && deck.sourceNode
         ? 1.0
         : volumeToPerceptualGain(this.volume) * gainValue;
-    if (deck.lowEqNode) deck.lowEqNode.gain.value = 0;
-    if (deck.midEqNode) deck.midEqNode.gain.value = 0;
-    if (deck.highEqNode) deck.highEqNode.gain.value = 0;
+    resetAudioParam(deck.lowEqNode?.gain, this.audioCtx, 0);
+    resetAudioParam(deck.midEqNode?.gain, this.audioCtx, 0);
+    resetAudioParam(deck.highEqNode?.gain, this.audioCtx, 0);
     if (deck.sweepFilterNode) {
       deck.sweepFilterNode.type = 'lowpass';
-      deck.sweepFilterNode.frequency.value = 20000;
-      deck.sweepFilterNode.Q.value = 0.707;
+      resetAudioParam(deck.sweepFilterNode.frequency, this.audioCtx, 20000);
+      resetAudioParam(deck.sweepFilterNode.Q, this.audioCtx, 0.707);
     }
-    if (deck.trimGainNode) deck.trimGainNode.gain.value = 1.0;
-    if (deck.gainNode) deck.gainNode.gain.value = gainValue;
-    if (deck.delaySendNode) deck.delaySendNode.gain.value = 0;
-    if (deck.delayFeedbackNode) deck.delayFeedbackNode.gain.value = 0;
+    resetAudioParam(deck.trimGainNode?.gain, this.audioCtx, 1.0);
+    resetAudioParam(deck.gainNode?.gain, this.audioCtx, gainValue);
+    resetAudioParam(deck.delaySendNode?.gain, this.audioCtx, 0);
+    resetAudioParam(deck.delayFeedbackNode?.gain, this.audioCtx, 0);
   }
 
   public async loadAndPlay(track: Track, startSec = 0): Promise<void> {
@@ -492,7 +562,17 @@ export class DualDeckAudioEngine implements IAudioEngine {
 
     if (nextDeck.track?.id === track.id && nextDeck.audio.src) {
       this.resetDeckDsp(nextDeck, 0);
-      await waitForAudioReady(nextDeck.audio, safeStart, 1200);
+      if (
+        safeStart > 0.1 &&
+        nextDeck.audio.readyState >= 1 &&
+        Math.abs((nextDeck.audio.currentTime || 0) - safeStart) > 0.35
+      ) {
+        try {
+          nextDeck.audio.currentTime = safeStart;
+        } catch {
+          // ignore
+        }
+      }
       return;
     }
 
@@ -508,20 +588,24 @@ export class DualDeckAudioEngine implements IAudioEngine {
         // ignore in mock DOM
       }
     }
-    try {
-      nextDeck.audio.currentTime = safeStart;
-    } catch {
-      nextDeck.audio.addEventListener?.(
-        'loadedmetadata',
-        () => {
-          try {
-            nextDeck.audio.currentTime = safeStart;
-          } catch {
-            // ignore
-          }
-        },
-        { once: true }
-      );
+    if (safeStart > 0.1) {
+      try {
+        nextDeck.audio.currentTime = safeStart;
+      } catch {
+        nextDeck.audio.addEventListener?.(
+          'loadedmetadata',
+          () => {
+            try {
+              if (Math.abs((nextDeck.audio.currentTime || 0) - safeStart) > 0.35) {
+                nextDeck.audio.currentTime = safeStart;
+              }
+            } catch {
+              // ignore
+            }
+          },
+          { once: true }
+        );
+      }
     }
   }
 
@@ -731,15 +815,47 @@ export class DualDeckAudioEngine implements IAudioEngine {
       setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, 260, 0.01);
     }
 
-    await waitForAudioReady(incoming.audio, Math.max(0, plan.cueInSec), 2400);
+    await waitForAudioReady(incoming.audio, Math.max(0, plan.cueInSec), 4200);
+
+    const ensureIncomingPlaying = () => {
+      if (!incoming.audio.paused) return;
+      try {
+        const p = incoming.audio.play();
+        if (p && typeof p.catch === 'function') {
+          p.catch(() => {});
+        }
+      } catch {
+        // ignore in headless tests
+      }
+    };
 
     try {
       await incoming.audio.play();
     } catch {
-      // ignore in headless tests
+      incoming.audio.addEventListener?.('canplay', ensureIncomingPlaying, { once: true });
+    }
+    if (incoming.audio.paused) {
+      incoming.audio.addEventListener?.('canplay', ensureIncomingPlaying, { once: true });
     }
 
-    const totalMs = Math.max(250, Math.min(14_000, Math.round(plan.transitionDurationSec * 1000)));
+    const outDur =
+      Number.isFinite(outgoing.audio.duration) && outgoing.audio.duration > 10
+        ? outgoing.audio.duration
+        : this.durationSec;
+    const outPos =
+      Number.isFinite(outgoing.audio.currentTime) && outgoing.audio.currentTime > 0
+        ? outgoing.audio.currentTime
+        : this.positionSec;
+    const outRemainingSec =
+      outDur > 10 && outPos > 0
+        ? Math.max(1.2, outDur - outPos + 0.6)
+        : plan.transitionDurationSec;
+    const effectiveTransSec = Math.max(
+      1.2,
+      Math.min(plan.transitionDurationSec, outRemainingSec)
+    );
+
+    const totalMs = Math.max(250, Math.min(14_000, Math.round(effectiveTransSec * 1000)));
     const estFromBpm = Math.max(
       65,
       Math.min(175, (240 * plan.transitionBars) / Math.max(2, plan.transitionDurationSec))
@@ -930,6 +1046,14 @@ export class DualDeckAudioEngine implements IAudioEngine {
         this.isTransitioning = false;
         this.activeTransitionType = undefined;
         this.transitionProgress01 = 1;
+        this.isPlaying = true;
+        if (incoming.audio.paused && typeof incoming.audio.play === 'function') {
+          try {
+            void incoming.audio.play().catch(() => {});
+          } catch {
+            // ignore
+          }
+        }
         if (incoming.track) {
           this.durationSec =
             Number.isFinite(incoming.audio.duration) && incoming.audio.duration > 10
@@ -1029,6 +1153,17 @@ export class DualDeckAudioEngine implements IAudioEngine {
       return { frequencyBins: bins, rmsLevel: 0.48 };
     }
     return { frequencyBins: bins, rmsLevel: 0 };
+  }
+
+  public getLivePositionSec(): number {
+    if (this.deckA && this.deckB) {
+      const deck = this.getDeck(this.activeDeck);
+      const t = deck.audio.currentTime;
+      if (Number.isFinite(t) && t >= 0) {
+        return t;
+      }
+    }
+    return this.positionSec;
   }
 
   public getState(): AudioEngineState {

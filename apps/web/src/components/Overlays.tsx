@@ -12,6 +12,8 @@ import {
   MoreHorizontal,
   Pause,
   Play,
+  Plus,
+  RefreshCw,
   Repeat,
   Repeat1,
   Search,
@@ -20,6 +22,7 @@ import {
   SkipForward,
   Sliders,
   Smartphone,
+  Sparkles,
   Trash2,
   Volume2,
   VolumeX,
@@ -32,7 +35,11 @@ import {
   formatDurationSec,
   type Track,
 } from '@pmusic/core';
-import { usePMusicStore } from '../store/usePMusicStore.ts';
+import {
+  getLiveAnalyserData,
+  getLivePlaybackPosition,
+  usePMusicStore,
+} from '../store/usePMusicStore.ts';
 import {
   isElectronDesktopRuntime,
   setDesktopTitleBarOverlay,
@@ -55,10 +62,13 @@ export const NowPlayingSheet: React.FC = () => {
     reducedMotionPref,
     lyricsSize,
     lyricsBlurEnabled,
+    ambientMotionEnabled,
     lastTrackDirection,
     currentTrack,
     queue,
     queueIndex,
+    recommendedQueue,
+    isLoadingRecommendedQueue,
     shuffleEnabled,
     repeatMode,
     isPlaying,
@@ -92,6 +102,9 @@ export const NowPlayingSheet: React.FC = () => {
     clearUpNextQueue,
     addToQueue,
     playNextInQueue,
+    replenishRecommendedQueue,
+    promoteRecommendedTrack,
+    dismissRecommendedTrack,
     searchTracksForPlaylist,
     playTrack,
     openAlbumDetail,
@@ -100,6 +113,7 @@ export const NowPlayingSheet: React.FC = () => {
 
   const isElectronDesktop = isElectronDesktopRuntime();
   const activeLyricRef = useRef<HTMLButtonElement | null>(null);
+  const backdropBeatRef = useRef<HTMLDivElement | null>(null);
   const [smoothPosSec, setSmoothPosSec] = useState(positionSec);
   const [dragQueueIdx, setDragQueueIdx] = useState<number | null>(null);
   const [dragOverQueueIdx, setDragOverQueueIdx] = useState<number | null>(null);
@@ -107,12 +121,25 @@ export const NowPlayingSheet: React.FC = () => {
   const [queueSearchResults, setQueueSearchResults] = useState<Track[]>([]);
   const [isQueueSearching, setIsQueueSearching] = useState(false);
   const [recentlyMovedKey, setRecentlyMovedKey] = useState<string | null>(null);
-  const [transportAnim, setTransportAnim] = useState<'prev' | 'next' | 'play' | null>(null);
+  const [transportAnim, setTransportAnim] = useState<
+    'prev' | 'next' | 'play' | 'shuffle' | 'repeat' | null
+  >(null);
+  const [heartBurstKey, setHeartBurstKey] = useState(0);
+  const [prevBackdrop, setPrevBackdrop] = useState<{
+    id: string;
+    coverUrl: string;
+    direction: 'next' | 'prev';
+  } | null>(null);
 
   const queueRowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const prevRowTopsRef = useRef<Map<string, number>>(new Map());
   const transportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const movedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const backdropTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastBackdropTrackRef = useRef<{ id: string; coverUrl: string }>({
+    id: currentTrack.id,
+    coverUrl: currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl,
+  });
   const lyricsScrollResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const markLyricsUserScrolled = () => {
@@ -123,14 +150,98 @@ export const NowPlayingSheet: React.FC = () => {
     }, 4500);
   };
 
-  const triggerTransportAnim = (kind: 'prev' | 'next' | 'play') => {
+  const triggerTransportAnim = (
+    kind: 'prev' | 'next' | 'play' | 'shuffle' | 'repeat'
+  ) => {
     setTransportAnim(null);
     if (transportTimerRef.current) clearTimeout(transportTimerRef.current);
-    requestAnimationFrame(() => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => {
+        setTransportAnim(kind);
+        transportTimerRef.current = setTimeout(() => setTransportAnim(null), 520);
+      });
+    } else {
       setTransportAnim(kind);
-      transportTimerRef.current = setTimeout(() => setTransportAnim(null), 260);
-    });
+      transportTimerRef.current = setTimeout(() => setTransportAnim(null), 520);
+    }
   };
+
+  useEffect(() => {
+    const nextUrl = currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl;
+    const prev = lastBackdropTrackRef.current;
+    if (prev.id !== currentTrack.id) {
+      setPrevBackdrop({
+        id: prev.id,
+        coverUrl: prev.coverUrl,
+        direction: lastTrackDirection === 'prev' ? 'prev' : 'next',
+      });
+      lastBackdropTrackRef.current = { id: currentTrack.id, coverUrl: nextUrl };
+      if (backdropTimerRef.current) clearTimeout(backdropTimerRef.current);
+      backdropTimerRef.current = setTimeout(() => setPrevBackdrop(null), 760);
+    }
+    return () => {
+      if (backdropTimerRef.current) clearTimeout(backdropTimerRef.current);
+    };
+  }, [currentTrack.id, currentTrack.thumbnailHighUrl, currentTrack.thumbnailUrl, lastTrackDirection]);
+
+  useEffect(() => {
+    if (
+      !nowPlayingOpen ||
+      !isPlaying ||
+      !ambientMotionEnabled ||
+      reducedMotionPref ||
+      typeof requestAnimationFrame !== 'function'
+    ) {
+      if (backdropBeatRef.current) {
+        backdropBeatRef.current.style.setProperty('--pm-beat-scale', '1');
+        backdropBeatRef.current.style.setProperty('--pm-beat-brightness', '1');
+      }
+      return;
+    }
+    let rafId = 0;
+    let smoothBass = 0;
+    const pulse = () => {
+      const data = getLiveAnalyserData();
+      const bins = data.frequencyBins;
+      const lowAvg =
+        bins.length >= 4
+          ? ((bins[0] ?? 0) + (bins[1] ?? 0) + (bins[2] ?? 0) + (bins[3] ?? 0)) / (4 * 255)
+          : data.rmsLevel;
+      const bassLevel = Math.max(lowAvg, data.rmsLevel * 0.85);
+      smoothBass = smoothBass * 0.74 + bassLevel * 0.26;
+      const el = backdropBeatRef.current;
+      if (el) {
+        el.style.setProperty('--pm-beat-scale', (1 + smoothBass * 0.045).toFixed(4));
+        el.style.setProperty('--pm-beat-brightness', (1 + smoothBass * 0.14).toFixed(4));
+      }
+      rafId = requestAnimationFrame(pulse);
+    };
+    rafId = requestAnimationFrame(pulse);
+    return () => {
+      cancelAnimationFrame(rafId);
+      if (backdropBeatRef.current) {
+        backdropBeatRef.current.style.setProperty('--pm-beat-scale', '1');
+        backdropBeatRef.current.style.setProperty('--pm-beat-brightness', '1');
+      }
+    };
+  }, [nowPlayingOpen, isPlaying, ambientMotionEnabled, reducedMotionPref]);
+
+  useEffect(() => {
+    if (
+      nowPlayingOpen &&
+      nowPlayingTab === 'Cola' &&
+      recommendedQueue.length < 3 &&
+      !isLoadingRecommendedQueue
+    ) {
+      void replenishRecommendedQueue();
+    }
+  }, [
+    nowPlayingOpen,
+    nowPlayingTab,
+    recommendedQueue.length,
+    isLoadingRecommendedQueue,
+    replenishRecommendedQueue,
+  ]);
 
   const moveWithFlip = (fromIdx: number, toIdx: number, movedKey: string) => {
     const snap = new Map<string, number>();
@@ -167,16 +278,23 @@ export const NowPlayingSheet: React.FC = () => {
 
   const syncClockRef = useRef({
     posSec: positionSec,
+    renderedPosSec: positionSec,
+    trackId: currentTrack.id,
     atMs: typeof performance !== 'undefined' ? performance.now() : 0,
   });
 
   useEffect(() => {
-    syncClockRef.current = {
-      posSec: positionSec,
-      atMs: typeof performance !== 'undefined' ? performance.now() : 0,
-    };
-    setSmoothPosSec(positionSec);
-  }, [positionSec, currentTrack.id]);
+    const now = typeof performance !== 'undefined' ? performance.now() : 0;
+    const trackChanged = syncClockRef.current.trackId !== currentTrack.id;
+    const seekJumped = Math.abs(positionSec - syncClockRef.current.renderedPosSec) > 0.85;
+    syncClockRef.current.posSec = positionSec;
+    syncClockRef.current.atMs = now;
+    syncClockRef.current.trackId = currentTrack.id;
+    if (trackChanged || seekJumped || !isPlaying) {
+      syncClockRef.current.renderedPosSec = positionSec;
+      setSmoothPosSec(positionSec);
+    }
+  }, [positionSec, currentTrack.id, isPlaying]);
 
   useEffect(() => {
     if (
@@ -187,9 +305,30 @@ export const NowPlayingSheet: React.FC = () => {
       return;
     }
     let rafId = 0;
+    let lastFrameMs = typeof performance !== 'undefined' ? performance.now() : 0;
     const step = (now: number) => {
-      const elapsed = Math.max(0, (now - syncClockRef.current.atMs) / 1000);
-      setSmoothPosSec(Math.min(Math.max(1, durationSec), syncClockRef.current.posSec + elapsed));
+      const dt = Math.min(0.1, Math.max(0, (now - lastFrameMs) / 1000));
+      lastFrameMs = now;
+      const live = getLivePlaybackPosition();
+      const clockTarget =
+        syncClockRef.current.posSec + Math.max(0, (now - syncClockRef.current.atMs) / 1000);
+      const rawTarget =
+        live.positionSec > 0 && Math.abs(live.positionSec - clockTarget) < 2.5
+          ? live.positionSec
+          : clockTarget;
+
+      let rendered = syncClockRef.current.renderedPosSec;
+      const diff = rawTarget - rendered;
+      if (Math.abs(diff) > 1.2) {
+        rendered = rawTarget;
+      } else {
+        const rate = Math.max(0.82, Math.min(1.18, 1 + diff * 2.2));
+        rendered = Math.max(rendered, rendered + dt * rate);
+      }
+      const effDur = Math.max(1, live.durationSec || durationSec, rendered);
+      rendered = Math.min(effDur, rendered);
+      syncClockRef.current.renderedPosSec = rendered;
+      setSmoothPosSec(rendered);
       rafId = requestAnimationFrame(step);
     };
     rafId = requestAnimationFrame(step);
@@ -284,11 +423,11 @@ export const NowPlayingSheet: React.FC = () => {
         compact ? 'w-full gap-5' : 'mx-auto w-full max-w-[420px] gap-6'
       }`}
     >
-      {/* Larger Centerpiece Artwork with smooth directional swap animation */}
+      {/* Larger Centerpiece Artwork with smooth 3D directional slide */}
       <div
         key={currentTrack.id}
         className={`${
-          lastTrackDirection === 'prev' ? 'pm-cover-prev' : 'pm-cover-next'
+          lastTrackDirection === 'prev' ? 'pm-cover-slide-prev' : 'pm-cover-slide-next'
         } relative aspect-square overflow-hidden rounded-[24px] border border-white/15 bg-[#111115] shadow-[0_36px_90px_rgba(0,0,0,0.75)] transition-transform duration-300 ease-out ${
           compact ? 'w-64 lg:w-[340px] xl:w-[368px]' : 'w-72 sm:w-[386px] xl:w-[410px]'
         } ${isPlaying ? 'scale-100' : 'scale-[0.95]'}`}
@@ -344,12 +483,46 @@ export const NowPlayingSheet: React.FC = () => {
             type="button"
             aria-label={isLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
             aria-pressed={isLiked}
-            onClick={() => void toggleLike(currentTrack)}
-            className={`pm-pressable flex h-9 w-9 items-center justify-center rounded-full bg-white/[0.08] transition-colors hover:bg-white/[0.16] ${
+            onClick={() => {
+              if (!isLiked && !reducedMotionPref) {
+                setHeartBurstKey((k) => k + 1);
+              }
+              void toggleLike(currentTrack);
+            }}
+            className={`pm-pressable relative flex h-9 w-9 items-center justify-center overflow-visible rounded-full bg-white/[0.08] transition-colors hover:bg-white/[0.16] ${
               isLiked ? 'text-[#FB7185]' : 'text-[#F5F5F7]'
             }`}
           >
-            <Heart className={`h-4.5 w-4.5 ${isLiked ? 'fill-current' : ''}`} />
+            <Heart
+              key={`deck-heart-${heartBurstKey}-${isLiked}`}
+              className={`h-4.5 w-4.5 ${isLiked ? 'fill-current' : ''} ${
+                isLiked && heartBurstKey > 0 && !reducedMotionPref ? 'pm-heart-burst-epic' : ''
+              }`}
+            />
+            {isLiked &&
+              heartBurstKey > 0 &&
+              !reducedMotionPref &&
+              [
+                { sx: '0px', sy: '-20px', c: '#FB7185' },
+                { sx: '17px', sy: '-10px', c: '#F9A8D4' },
+                { sx: '17px', sy: '10px', c: '#FDE047' },
+                { sx: '0px', sy: '20px', c: '#FB7185' },
+                { sx: '-17px', sy: '10px', c: '#F9A8D4' },
+                { sx: '-17px', sy: '-10px', c: '#FDE047' },
+              ].map((sp, spIdx) => (
+                <span
+                  key={`deck-sp-${heartBurstKey}-${spIdx}`}
+                  aria-hidden="true"
+                  className="pm-sparkle-dot pointer-events-none absolute left-1/2 top-1/2 h-1.5 w-1.5 rounded-full"
+                  style={
+                    {
+                      backgroundColor: sp.c,
+                      '--sx': sp.sx,
+                      '--sy': sp.sy,
+                    } as React.CSSProperties
+                  }
+                />
+              ))}
           </button>
 
           <button
@@ -430,14 +603,21 @@ export const NowPlayingSheet: React.FC = () => {
               : 'Activar reproducción aleatoria'
           }
           aria-pressed={shuffleEnabled}
-          onClick={() => toggleShuffle()}
+          onClick={() => {
+            triggerTransportAnim('shuffle');
+            toggleShuffle();
+          }}
           className={`pm-pressable relative flex h-10 w-10 items-center justify-center rounded-full transition-all hover:scale-110 ${
             shuffleEnabled
               ? 'text-white'
               : 'text-[#B4B4BE] hover:text-white'
           }`}
         >
-          <Shuffle className="h-4.5 w-4.5" />
+          <Shuffle
+            className={`h-4.5 w-4.5 ${
+              transportAnim === 'shuffle' && !reducedMotionPref ? 'pm-shuffle-flip-epic' : ''
+            }`}
+          />
           {shuffleEnabled && (
             <span
               aria-hidden="true"
@@ -456,7 +636,9 @@ export const NowPlayingSheet: React.FC = () => {
           className="pm-pressable flex h-11 w-11 items-center justify-center rounded-full text-white/90 transition-all hover:scale-110 hover:text-white active:scale-90"
         >
           <SkipBack
-            className={`h-6 w-6 fill-current ${transportAnim === 'prev' ? 'pm-nudge-prev' : ''}`}
+            className={`h-6 w-6 fill-current ${
+              transportAnim === 'prev' && !reducedMotionPref ? 'pm-skip-prev-epic' : ''
+            }`}
           />
         </button>
 
@@ -467,10 +649,16 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('play');
             void togglePlayPause();
           }}
-          className={`pm-pressable flex h-[62px] w-[62px] items-center justify-center rounded-full bg-white text-[#070709] shadow-[0_14px_38px_rgba(255,255,255,0.28)] transition-all duration-200 hover:scale-105 active:scale-95 ${
-            transportAnim === 'play' ? 'pm-play-morph' : ''
+          className={`pm-pressable relative flex h-[62px] w-[62px] items-center justify-center overflow-visible rounded-full bg-white text-[#070709] shadow-[0_14px_38px_rgba(255,255,255,0.28)] transition-all duration-200 hover:scale-105 active:scale-95 ${
+            transportAnim === 'play' && !reducedMotionPref ? 'pm-play-flip-epic' : ''
           }`}
         >
+          {transportAnim === 'play' && !reducedMotionPref && (
+            <span
+              aria-hidden="true"
+              className="pm-play-ring-burst pointer-events-none absolute inset-0 rounded-full border-2 border-white/80"
+            />
+          )}
           {isPlaying ? (
             <Pause className="h-6.5 w-6.5 fill-current transition-transform duration-150" />
           ) : (
@@ -488,7 +676,9 @@ export const NowPlayingSheet: React.FC = () => {
           className="pm-pressable flex h-11 w-11 items-center justify-center rounded-full text-white/90 transition-all hover:scale-110 hover:text-white active:scale-90"
         >
           <SkipForward
-            className={`h-6 w-6 fill-current ${transportAnim === 'next' ? 'pm-nudge-next' : ''}`}
+            className={`h-6 w-6 fill-current ${
+              transportAnim === 'next' && !reducedMotionPref ? 'pm-skip-next-epic' : ''
+            }`}
           />
         </button>
 
@@ -496,18 +686,27 @@ export const NowPlayingSheet: React.FC = () => {
           type="button"
           aria-label={repeatLabel}
           aria-pressed={repeatMode !== 'off'}
-          onClick={() => cycleRepeatMode()}
+          onClick={() => {
+            triggerTransportAnim('repeat');
+            cycleRepeatMode();
+          }}
           className={`pm-pressable relative flex h-10 w-10 items-center justify-center rounded-full transition-all hover:scale-110 ${
             repeatMode !== 'off'
               ? 'text-white'
               : 'text-[#B4B4BE] hover:text-white'
           }`}
         >
-          {repeatMode === 'one' ? (
-            <Repeat1 className="h-4.5 w-4.5" />
-          ) : (
-            <Repeat className="h-4.5 w-4.5" />
-          )}
+          <span
+            className={`inline-flex ${
+              transportAnim === 'repeat' && !reducedMotionPref ? 'pm-repeat-spin-epic' : ''
+            }`}
+          >
+            {repeatMode === 'one' ? (
+              <Repeat1 className="h-4.5 w-4.5" />
+            ) : (
+              <Repeat className="h-4.5 w-4.5" />
+            )}
+          </span>
           {repeatMode !== 'off' && (
             <span
               aria-hidden="true"
@@ -559,38 +758,72 @@ export const NowPlayingSheet: React.FC = () => {
       data-testid="now-playing-sheet"
       className="pm-sheet-enter pm-dark-sliders fixed inset-0 z-50 flex flex-col overflow-hidden bg-[#070709] text-[#F5F5F7]"
     >
-      {/* Dynamic Living Song-Reactive Cover-Art Gradient Backdrop (Exclusive to Song / Now Playing view) */}
+      {/* Apple Music Style Living Fluid Cover Backdrop */}
       <div
+        ref={backdropBeatRef}
+        data-testid="live-backdrop-container"
         aria-hidden="true"
-        className="pm-ambient-mesh pointer-events-none absolute -inset-12 opacity-90"
+        className={`pointer-events-none absolute inset-0 overflow-hidden transition-[transform,filter] duration-150 ${
+          !ambientMotionEnabled || reducedMotionPref ? 'pm-backdrop-static' : ''
+        }`}
         style={{
           background:
-            'radial-gradient(circle at 18% 22%, var(--pm-ambient-1), transparent 54%), radial-gradient(circle at 82% 76%, var(--pm-ambient-2), transparent 56%), radial-gradient(circle at 52% 45%, var(--pm-ambient-3), transparent 68%), linear-gradient(180deg, var(--pm-ambient-3) 0%, #070709 100%)',
+            'radial-gradient(circle at 20% 24%, var(--pm-ambient-1), transparent 58%), radial-gradient(circle at 80% 76%, var(--pm-ambient-2), transparent 60%), linear-gradient(180deg, var(--pm-ambient-3) 0%, #070709 100%)',
+          transform: 'scale(var(--pm-beat-scale, 1))',
+          filter: 'brightness(var(--pm-beat-brightness, 1))',
         }}
-      />
-      <div
-        aria-hidden="true"
-        className="pm-ambient-orb pointer-events-none absolute -left-24 top-1/4 h-96 w-96 rounded-full blur-3xl"
-        style={{
-          background: 'color-mix(in srgb, var(--pm-ambient-1) 52%, transparent)',
-        }}
-      />
-      <div
-        aria-hidden="true"
-        className="pm-ambient-orb pointer-events-none absolute -right-24 bottom-1/5 h-96 w-96 rounded-full blur-3xl"
-        style={{
-          animationDelay: '-5s',
-          background: 'color-mix(in srgb, var(--pm-ambient-2) 52%, transparent)',
-        }}
-      />
+      >
+        {prevBackdrop && (
+          <div
+            key={`out-${prevBackdrop.id}`}
+            className={`pointer-events-none absolute -inset-12 ${
+              prevBackdrop.direction === 'prev'
+                ? 'pm-backdrop-out-prev'
+                : 'pm-backdrop-out-next'
+            }`}
+          >
+            <img
+              src={prevBackdrop.coverUrl}
+              alt=""
+              draggable={false}
+              className="pm-fluid-cover-a h-full w-full select-none object-cover opacity-75"
+            />
+          </div>
+        )}
 
-      {/* Apple HIG Bright Media Scrim (44% dark wash for guaranteed contrast) */}
+        <div
+          key={`in-${currentTrack.id}`}
+          className={`pointer-events-none absolute -inset-12 ${
+            prevBackdrop
+              ? lastTrackDirection === 'prev'
+                ? 'pm-backdrop-in-prev'
+                : 'pm-backdrop-in-next'
+              : ''
+          }`}
+        >
+          <img
+            data-testid="live-backdrop-img"
+            src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
+            alt=""
+            draggable={false}
+            className="pm-fluid-cover-a absolute inset-0 h-full w-full select-none object-cover opacity-80"
+          />
+          <img
+            src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
+            alt=""
+            draggable={false}
+            className="pm-fluid-cover-b absolute inset-0 h-full w-full -scale-x-100 select-none object-cover opacity-50"
+          />
+        </div>
+      </div>
+
+      {/* Apple HIG Bright Media Scrim (46% dark wash for guaranteed contrast) */}
       <div
         data-testid="bright-media-scrim"
         data-scrim="true"
-        data-scrim-alpha="0.44"
+        data-scrim-alpha="0.46"
         className="pointer-events-none absolute inset-0"
-        style={{ backgroundColor: 'rgba(8, 8, 12, 0.44)' }}
+        style={{ backgroundColor: 'rgba(8, 8, 12, 0.46)' }}
       />
 
       {/* Minimalist Full Liquid Glass Header (with Electron Windows drag & optical 50% tab centering) */}
@@ -643,7 +876,13 @@ export const NowPlayingSheet: React.FC = () => {
       </header>
 
       {/* Main Content */}
-      <div className="relative z-10 flex-1 overflow-y-auto px-4 py-6 md:px-10 md:py-8">
+      <div
+        className={`relative z-10 min-h-0 flex-1 px-4 md:px-10 ${
+          nowPlayingTab === 'Portada'
+            ? 'overflow-y-auto py-6 md:py-8'
+            : 'overflow-hidden py-4 md:py-6'
+        }`}
+      >
         {nowPlayingTab === 'Portada' && (
           <div className="pm-tab-enter flex min-h-full items-center justify-center">
             {PlayerDeckColumn(false)}
@@ -651,8 +890,11 @@ export const NowPlayingSheet: React.FC = () => {
         )}
 
         {nowPlayingTab === 'Letras' && (
-          <div className="pm-tab-enter mx-auto grid min-h-[calc(100dvh-132px)] max-w-6xl grid-cols-1 gap-8 lg:grid-cols-12 lg:items-center">
-            <div className="hidden lg:sticky lg:top-8 lg:col-span-5 lg:block">
+          <div className="pm-tab-enter mx-auto grid h-full min-h-0 max-w-6xl grid-cols-1 gap-8 lg:grid-cols-12 lg:items-center">
+            <div
+              data-testid="letras-left-deck"
+              className="hidden lg:col-span-5 lg:flex lg:items-center lg:justify-center"
+            >
               {PlayerDeckColumn(true)}
             </div>
 
@@ -660,7 +902,7 @@ export const NowPlayingSheet: React.FC = () => {
               data-testid="synced-lyrics-view"
               onWheel={markLyricsUserScrolled}
               onTouchMove={markLyricsUserScrolled}
-              className="space-y-6 lg:col-span-7"
+              className="h-full min-h-0 space-y-6 overflow-y-auto py-8 pr-2 pm-no-scrollbar pm-lyrics-mask lg:col-span-7"
             >
               <div className="flex items-center justify-between lg:hidden">
                 <div className="flex items-center gap-3">
@@ -877,16 +1119,21 @@ export const NowPlayingSheet: React.FC = () => {
           </div>
         )}
 
-        {nowPlayingTab === 'Cola' && (
-          <div className="pm-tab-enter mx-auto grid min-h-[calc(100dvh-132px)] max-w-6xl grid-cols-1 gap-8 lg:grid-cols-12 lg:items-center">
-            <div className="hidden lg:sticky lg:top-8 lg:col-span-5 lg:block">
+        {nowPlayingTab === 'Cola' && (() => {
+          const activeQueueTrack = queue[queueIndex] ?? currentTrack;
+          const upNextTracks = queue.slice(queueIndex + 1);
+          const activeAna = trackAnalyses[activeQueueTrack.id];
+          const activeLiked = likedTracks.some((l) => l.trackId === activeQueueTrack.id);
+          return (
+          <div className="pm-tab-enter mx-auto grid h-full min-h-0 max-w-6xl grid-cols-1 gap-8 lg:grid-cols-12 lg:items-center">
+            <div className="hidden lg:col-span-5 lg:flex lg:items-center lg:justify-center">
               {PlayerDeckColumn(true)}
             </div>
 
-            {/* Free-floating Borderless Queue with Inline Quick-Add Search & Smooth FLIP Reordering */}
+            {/* Free-floating Borderless Two-Tier Queue */}
             <div
               data-testid="queue-view"
-              className="flex max-h-[78vh] flex-col gap-3.5 lg:col-span-7"
+              className="flex h-full max-h-[82vh] min-h-0 flex-col gap-3.5 lg:col-span-7"
             >
               {/* Clean Borderless Header */}
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.12] pb-3">
@@ -895,11 +1142,11 @@ export const NowPlayingSheet: React.FC = () => {
                     Cola de reproducción
                   </h2>
                   <p className="text-xs text-[#D4D4E0]">
-                    {queue.length} pistas · Arrastra o usa ↑ para reordenar
+                    {upNextTracks.length} en tu cola · {recommendedQueue.length} recomendadas infinitas
                   </p>
                 </div>
 
-                {queue.length > 1 && (
+                {upNextTracks.length > 0 && (
                   <button
                     type="button"
                     onClick={() => clearUpNextQueue()}
@@ -1029,193 +1276,434 @@ export const NowPlayingSheet: React.FC = () => {
                 </div>
               )}
 
-              {/* Scrollable Borderless Draggable Queue Rows with Smooth FLIP Animation */}
+              {/* Scrollable Borderless Two-Tier Queue Rows with Smooth FLIP Reordering */}
               <div
                 role="list"
-                className="flex-1 space-y-1 overflow-y-auto pr-1 pm-no-scrollbar"
+                className="flex-1 space-y-4 overflow-y-auto pr-1 pm-no-scrollbar"
               >
-                {(() => {
-                  const occMap = new Map<string, number>();
-                  return queue.map((track, idx) => {
-                    const occ = occMap.get(track.id) ?? 0;
-                    occMap.set(track.id, occ + 1);
-                    const rowKey = `${track.id}#${occ}`;
-                    const isCurrent = idx === queueIndex;
-                    const ana = trackAnalyses[track.id];
-                    const trackLiked = likedTracks.some((l) => l.trackId === track.id);
-                    const isDragOver = dragOverQueueIdx === idx;
-                    const isMoved = recentlyMovedKey === rowKey;
-                    return (
-                      <div
-                        key={rowKey}
-                        ref={(el) => {
-                          if (el) queueRowRefs.current.set(rowKey, el);
-                          else queueRowRefs.current.delete(rowKey);
-                        }}
-                        role="listitem"
-                        draggable
-                        onDragStart={(e) => {
-                          setDragQueueIdx(idx);
-                          e.dataTransfer.effectAllowed = 'move';
-                          e.dataTransfer.setData('text/plain', String(idx));
-                        }}
-                        onDragEnd={() => {
-                          setDragQueueIdx(null);
-                          setDragOverQueueIdx(null);
-                        }}
-                        onDragOver={(e) => {
-                          if (dragQueueIdx === null || dragQueueIdx === idx) return;
-                          e.preventDefault();
-                          e.dataTransfer.dropEffect = 'move';
-                          setDragOverQueueIdx(idx);
-                        }}
-                        onDragLeave={() => {
-                          if (dragOverQueueIdx === idx) setDragOverQueueIdx(null);
-                        }}
-                        onDrop={(e) => {
-                          e.preventDefault();
-                          const from =
-                            dragQueueIdx ??
-                            Number.parseInt(e.dataTransfer.getData('text/plain'), 10);
-                          setDragQueueIdx(null);
-                          setDragOverQueueIdx(null);
-                          if (Number.isFinite(from) && from !== idx) {
-                            const movedTrack = queue[from];
-                            moveWithFlip(from, idx, movedTrack ? `${movedTrack.id}#0` : rowKey);
-                          }
-                        }}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          openTrackMenu(track, e.clientX, e.clientY);
-                        }}
-                        className={`group flex h-15 items-center justify-between gap-2.5 overflow-hidden rounded-[12px] px-2.5 transition-colors ${
-                          isCurrent
-                            ? 'bg-white/[0.15]'
-                            : 'hover:bg-white/[0.09]'
-                        } ${isMoved ? 'pm-queue-moved' : ''} ${
-                          isDragOver ? 'border-t-2 border-white bg-white/[0.18]' : ''
-                        }`}
+                {/* Tier 1a: Sonando ahora */}
+                <section aria-label="Sonando ahora" className="space-y-1.5">
+                  <div className="flex items-center justify-between px-1">
+                    <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#D4D4E0]">
+                      Sonando ahora
+                    </span>
+                  </div>
+                  <div
+                    role="listitem"
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      openTrackMenu(activeQueueTrack, e.clientX, e.clientY);
+                    }}
+                    className="group flex h-15 items-center justify-between gap-2.5 overflow-hidden rounded-[12px] bg-white/[0.15] px-2.5"
+                  >
+                    <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                      <button
+                        type="button"
+                        aria-label={`Reproducir ${activeQueueTrack.title}`}
+                        onClick={() => void playTrack(activeQueueTrack, queue)}
+                        className="relative h-10 w-10 shrink-0 overflow-hidden rounded-[8px] bg-black/40"
                       >
-                        <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                          <span
-                            aria-hidden="true"
-                            className="cursor-grab text-[#D4D4E0]/50 opacity-50 transition-opacity group-hover:opacity-100"
-                          >
-                            <GripVertical className="h-4 w-4" />
-                          </span>
-
-                          <button
-                            type="button"
-                            aria-label={`Reproducir ${track.title}`}
-                            onClick={() => void playTrack(track, queue)}
-                            className="relative h-10 w-10 shrink-0 overflow-hidden rounded-[8px] bg-black/40"
-                          >
-                            <img
-                              src={track.thumbnailUrl}
-                              alt={track.title}
-                              className="h-full w-full object-cover"
-                            />
-                            {isCurrent && isPlaying && (
-                              <span className="absolute inset-0 flex items-center justify-center bg-black/45">
-                                <span className="inline-flex h-3 w-3 items-end justify-center gap-[2px]">
-                                  <span className="pm-eq-bar-1 h-full w-[2.5px] rounded-full bg-white" />
-                                  <span className="pm-eq-bar-2 h-full w-[2.5px] rounded-full bg-white" />
-                                  <span className="pm-eq-bar-3 h-full w-[2.5px] rounded-full bg-white" />
-                                </span>
-                              </span>
-                            )}
-                          </button>
-
-                          <div className="min-w-0 flex-1">
-                            <button
-                              type="button"
-                              onClick={() => void playTrack(track, queue)}
-                              className="block max-w-full truncate text-left text-[14px] font-semibold text-[#F5F5F7] hover:underline"
-                            >
-                              {track.title}
-                            </button>
-                            <div className="truncate text-xs text-[#D4D4E0]">
-                              <ArtistLinks
-                                artists={track.artists}
-                                onBeforeNavigate={() => setNowPlayingOpen(false)}
-                                linkClassName="hover:text-white hover:underline"
-                              />
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex shrink-0 items-center gap-1">
-                          {djMode.enabled && (
-                            <span className="tabular-nums hidden rounded-full bg-white/[0.10] px-2 py-0.5 text-[11px] font-semibold text-[#E9D5FF] sm:inline">
-                              {ana?.bpm ?? 120} BPM
+                        <img
+                          src={activeQueueTrack.thumbnailUrl}
+                          alt={activeQueueTrack.title}
+                          className="h-full w-full object-cover"
+                        />
+                        {isPlaying && (
+                          <span className="absolute inset-0 flex items-center justify-center bg-black/45">
+                            <span className="inline-flex h-3 w-3 items-end justify-center gap-[2px]">
+                              <span className="pm-eq-bar-1 h-full w-[2.5px] rounded-full bg-white" />
+                              <span className="pm-eq-bar-2 h-full w-[2.5px] rounded-full bg-white" />
+                              <span className="pm-eq-bar-3 h-full w-[2.5px] rounded-full bg-white" />
                             </span>
-                          )}
-
-                          <span className="tabular-nums hidden px-1.5 text-xs font-medium text-[#D4D4E0] sm:inline">
-                            {formatDurationSec(track.durationSec)}
                           </span>
+                        )}
+                      </button>
 
-                          <button
-                            type="button"
-                            aria-label={
-                              trackLiked
-                                ? `Quitar ${track.title} de Me gusta`
-                                : `Añadir ${track.title} a Me gusta`
-                            }
-                            onClick={() => void toggleLike(track)}
-                            className={`pm-pressable hidden rounded-full p-1.5 transition-colors sm:inline-flex ${
-                              trackLiked
-                                ? 'text-[#FB7185]'
-                                : 'text-[#D4D4E0] hover:bg-white/[0.12] hover:text-white'
-                            }`}
-                          >
-                            <Heart
-                              className={`h-3.5 w-3.5 ${trackLiked ? 'fill-current' : ''}`}
-                            />
-                          </button>
-
-                          {idx > 0 && (
-                            <button
-                              type="button"
-                              aria-label={`Subir ${track.title} en la cola`}
-                              onClick={() => moveWithFlip(idx, idx - 1, rowKey)}
-                              className="pm-pressable rounded-full px-2 py-1 text-xs font-semibold text-[#E5E5EA] opacity-75 transition-all hover:bg-white/[0.14] hover:text-white group-hover:opacity-100"
-                            >
-                              ↑
-                            </button>
-                          )}
-
-                          <button
-                            type="button"
-                            aria-label={`Más opciones para ${track.title}`}
-                            onClick={(e) => {
-                              const r = e.currentTarget.getBoundingClientRect();
-                              openTrackMenu(track, r.left - 210, r.bottom + 6);
-                            }}
-                            className="pm-pressable rounded-full p-1.5 text-[#D4D4E0] hover:bg-white/[0.12] hover:text-white"
-                          >
-                            <MoreHorizontal className="h-4 w-4" />
-                          </button>
-
-                          {queue.length > 1 && (
-                            <button
-                              type="button"
-                              aria-label={`Quitar ${track.title} de la cola`}
-                              onClick={() => removeQueueItem(idx)}
-                              className="pm-pressable rounded-full p-1.5 text-[#D4D4E0] hover:bg-white/[0.12] hover:text-[#FB7185]"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          )}
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[14px] font-semibold text-[#F5F5F7]">
+                          {activeQueueTrack.title}
+                        </div>
+                        <div className="truncate text-xs text-[#D4D4E0]">
+                          <ArtistLinks
+                            artists={activeQueueTrack.artists}
+                            onBeforeNavigate={() => setNowPlayingOpen(false)}
+                            linkClassName="hover:text-white hover:underline"
+                          />
                         </div>
                       </div>
-                    );
-                  });
-                })()}
+                    </div>
+
+                    <div className="flex shrink-0 items-center gap-1">
+                      {djMode.enabled && (
+                        <span className="tabular-nums hidden rounded-full bg-white/[0.10] px-2 py-0.5 text-[11px] font-semibold text-[#E9D5FF] sm:inline">
+                          {activeAna?.bpm ?? 120} BPM
+                        </span>
+                      )}
+                      <span className="tabular-nums hidden px-1.5 text-xs font-medium text-[#D4D4E0] sm:inline">
+                        {formatDurationSec(activeQueueTrack.durationSec)}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={
+                          activeLiked
+                            ? `Quitar ${activeQueueTrack.title} de Me gusta`
+                            : `Añadir ${activeQueueTrack.title} a Me gusta`
+                        }
+                        onClick={() => void toggleLike(activeQueueTrack)}
+                        className={`pm-pressable hidden rounded-full p-1.5 transition-colors sm:inline-flex ${
+                          activeLiked
+                            ? 'text-[#FB7185]'
+                            : 'text-[#D4D4E0] hover:bg-white/[0.12] hover:text-white'
+                        }`}
+                      >
+                        <Heart className={`h-3.5 w-3.5 ${activeLiked ? 'fill-current' : ''}`} />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Más opciones para ${activeQueueTrack.title}`}
+                        onClick={(e) => {
+                          const r = e.currentTarget.getBoundingClientRect();
+                          openTrackMenu(activeQueueTrack, r.left - 210, r.bottom + 6);
+                        }}
+                        className="pm-pressable rounded-full p-1.5 text-[#D4D4E0] hover:bg-white/[0.12] hover:text-white"
+                      >
+                        <MoreHorizontal className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                </section>
+
+                {/* Tier 1b: Tu cola · Siguiente (user/playlist queue) */}
+                <section
+                  data-testid="user-queue-section"
+                  aria-label="Tu cola · Siguiente"
+                  className="space-y-1.5"
+                >
+                  <div className="flex items-center justify-between px-1">
+                    <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-white/90">
+                      Tu cola · Siguiente
+                    </span>
+                    <span className="tabular-nums rounded-full bg-white/[0.08] px-2 py-0.5 text-[10px] font-semibold text-[#D4D4E0]">
+                      {upNextTracks.length}
+                    </span>
+                  </div>
+
+                  {upNextTracks.length === 0 ? (
+                    <div className="rounded-[12px] border border-dashed border-white/15 bg-white/[0.03] px-3.5 py-3 text-xs text-[#B4B4BE]">
+                      No hay canciones pendientes en tu cola. Busca arriba o sube pistas con{' '}
+                      <span className="font-semibold text-white">+</span> desde tus recomendadas.
+                    </div>
+                  ) : (
+                    (() => {
+                      const occMap = new Map<string, number>();
+                      return upNextTracks.map((track, relIdx) => {
+                        const realIdx = queueIndex + 1 + relIdx;
+                        const occ = occMap.get(track.id) ?? 0;
+                        occMap.set(track.id, occ + 1);
+                        const rowKey = `${track.id}#next#${occ}`;
+                        const ana = trackAnalyses[track.id];
+                        const trackLiked = likedTracks.some((l) => l.trackId === track.id);
+                        const isDragOver = dragOverQueueIdx === realIdx;
+                        const isMoved = recentlyMovedKey === rowKey;
+                        return (
+                          <div
+                            key={rowKey}
+                            ref={(el) => {
+                              if (el) queueRowRefs.current.set(rowKey, el);
+                              else queueRowRefs.current.delete(rowKey);
+                            }}
+                            role="listitem"
+                            draggable
+                            onDragStart={(e) => {
+                              setDragQueueIdx(realIdx);
+                              e.dataTransfer.effectAllowed = 'move';
+                              e.dataTransfer.setData('text/plain', String(realIdx));
+                            }}
+                            onDragEnd={() => {
+                              setDragQueueIdx(null);
+                              setDragOverQueueIdx(null);
+                            }}
+                            onDragOver={(e) => {
+                              if (
+                                dragQueueIdx === null ||
+                                dragQueueIdx === realIdx ||
+                                dragQueueIdx <= queueIndex
+                              ) {
+                                return;
+                              }
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = 'move';
+                              setDragOverQueueIdx(realIdx);
+                            }}
+                            onDragLeave={() => {
+                              if (dragOverQueueIdx === realIdx) setDragOverQueueIdx(null);
+                            }}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              const from =
+                                dragQueueIdx ??
+                                Number.parseInt(e.dataTransfer.getData('text/plain'), 10);
+                              setDragQueueIdx(null);
+                              setDragOverQueueIdx(null);
+                              if (Number.isFinite(from) && from > queueIndex && from !== realIdx) {
+                                moveWithFlip(from, realIdx, rowKey);
+                              }
+                            }}
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              openTrackMenu(track, e.clientX, e.clientY);
+                            }}
+                            className={`group flex h-15 items-center justify-between gap-2.5 overflow-hidden rounded-[12px] px-2.5 transition-colors hover:bg-white/[0.09] ${
+                              isMoved ? 'pm-queue-moved' : ''
+                            } ${isDragOver ? 'border-t-2 border-white bg-white/[0.18]' : ''}`}
+                          >
+                            <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                              <span
+                                aria-hidden="true"
+                                className="cursor-grab text-[#D4D4E0]/50 opacity-50 transition-opacity group-hover:opacity-100"
+                              >
+                                <GripVertical className="h-4 w-4" />
+                              </span>
+
+                              <button
+                                type="button"
+                                aria-label={`Reproducir ${track.title}`}
+                                onClick={() => void playTrack(track, queue.slice(realIdx))}
+                                className="relative h-10 w-10 shrink-0 overflow-hidden rounded-[8px] bg-black/40"
+                              >
+                                <img
+                                  src={track.thumbnailUrl}
+                                  alt={track.title}
+                                  className="h-full w-full object-cover"
+                                />
+                              </button>
+
+                              <div className="min-w-0 flex-1">
+                                <button
+                                  type="button"
+                                  onClick={() => void playTrack(track, queue.slice(realIdx))}
+                                  className="block max-w-full truncate text-left text-[14px] font-semibold text-[#F5F5F7] hover:underline"
+                                >
+                                  {track.title}
+                                </button>
+                                <div className="truncate text-xs text-[#D4D4E0]">
+                                  <ArtistLinks
+                                    artists={track.artists}
+                                    onBeforeNavigate={() => setNowPlayingOpen(false)}
+                                    linkClassName="hover:text-white hover:underline"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex shrink-0 items-center gap-1">
+                              {djMode.enabled && (
+                                <span className="tabular-nums hidden rounded-full bg-white/[0.10] px-2 py-0.5 text-[11px] font-semibold text-[#E9D5FF] sm:inline">
+                                  {ana?.bpm ?? 120} BPM
+                                </span>
+                              )}
+
+                              <span className="tabular-nums hidden px-1.5 text-xs font-medium text-[#D4D4E0] sm:inline">
+                                {formatDurationSec(track.durationSec)}
+                              </span>
+
+                              <button
+                                type="button"
+                                aria-label={
+                                  trackLiked
+                                    ? `Quitar ${track.title} de Me gusta`
+                                    : `Añadir ${track.title} a Me gusta`
+                                }
+                                onClick={() => void toggleLike(track)}
+                                className={`pm-pressable hidden rounded-full p-1.5 transition-colors sm:inline-flex ${
+                                  trackLiked
+                                    ? 'text-[#FB7185]'
+                                    : 'text-[#D4D4E0] hover:bg-white/[0.12] hover:text-white'
+                                }`}
+                              >
+                                <Heart
+                                  className={`h-3.5 w-3.5 ${trackLiked ? 'fill-current' : ''}`}
+                                />
+                              </button>
+
+                              {relIdx > 0 && (
+                                <button
+                                  type="button"
+                                  aria-label={`Subir ${track.title} en la cola`}
+                                  onClick={() => moveWithFlip(realIdx, realIdx - 1, rowKey)}
+                                  className="pm-pressable rounded-full px-2 py-1 text-xs font-semibold text-[#E5E5EA] opacity-75 transition-all hover:bg-white/[0.14] hover:text-white group-hover:opacity-100"
+                                >
+                                  ↑
+                                </button>
+                              )}
+
+                              <button
+                                type="button"
+                                aria-label={`Más opciones para ${track.title}`}
+                                onClick={(e) => {
+                                  const r = e.currentTarget.getBoundingClientRect();
+                                  openTrackMenu(track, r.left - 210, r.bottom + 6);
+                                }}
+                                className="pm-pressable rounded-full p-1.5 text-[#D4D4E0] hover:bg-white/[0.12] hover:text-white"
+                              >
+                                <MoreHorizontal className="h-4 w-4" />
+                              </button>
+
+                              <button
+                                type="button"
+                                aria-label={`Quitar ${track.title} de la cola`}
+                                onClick={() => removeQueueItem(realIdx)}
+                                className="pm-pressable rounded-full p-1.5 text-[#D4D4E0] hover:bg-white/[0.12] hover:text-[#FB7185]"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()
+                  )}
+                </section>
+
+                {/* Tier 2: Cola infinita · Recomendadas para ti */}
+                <section
+                  data-testid="recommended-queue-section"
+                  aria-label="Cola infinita · Recomendadas para ti"
+                  className="space-y-1.5 border-t border-white/[0.10] pt-3"
+                >
+                  <div className="flex items-center justify-between px-1">
+                    <div className="flex items-center gap-1.5">
+                      <Sparkles className="h-3.5 w-3.5 text-[#E9D5FF]" />
+                      <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#E9D5FF]">
+                        Cola infinita · Recomendadas para ti
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      aria-label="Renovar recomendaciones"
+                      onClick={() => void replenishRecommendedQueue(true)}
+                      className="pm-pressable inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/[0.06] px-2.5 py-1 text-[10px] font-semibold text-[#E5E5EA] hover:bg-white/[0.14] hover:text-white"
+                    >
+                      <RefreshCw
+                        className={`h-3 w-3 ${isLoadingRecommendedQueue ? 'animate-spin' : ''}`}
+                      />
+                      <span>Renovar</span>
+                    </button>
+                  </div>
+
+                  {recommendedQueue.length === 0 ? (
+                    <div className="flex items-center gap-2 rounded-[12px] px-3 py-3 text-xs text-[#B4B4BE]">
+                      {isLoadingRecommendedQueue ? (
+                        <>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-white" />
+                          <span>Buscando próximas canciones afines…</span>
+                        </>
+                      ) : (
+                        <span>Pulsa Renovar para cargar recomendaciones infinitas.</span>
+                      )}
+                    </div>
+                  ) : (
+                    recommendedQueue.map((rec) => {
+                      const recLiked = likedTracks.some((l) => l.trackId === rec.id);
+                      return (
+                        <div
+                          key={`rec-${rec.id}`}
+                          data-testid="recommended-queue-item"
+                          role="listitem"
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            openTrackMenu(rec, e.clientX, e.clientY);
+                          }}
+                          className="group flex h-14 items-center justify-between gap-2.5 overflow-hidden rounded-[12px] px-2.5 transition-colors hover:bg-white/[0.09]"
+                        >
+                          <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                            <button
+                              type="button"
+                              aria-label={`Reproducir recomendación ${rec.title}`}
+                              onClick={() => void playTrack(rec, [rec])}
+                              className="relative h-10 w-10 shrink-0 overflow-hidden rounded-[8px] bg-black/40"
+                            >
+                              <img
+                                src={rec.thumbnailUrl}
+                                alt={rec.title}
+                                className="h-full w-full object-cover"
+                              />
+                            </button>
+
+                            <div className="min-w-0 flex-1">
+                              <button
+                                type="button"
+                                onClick={() => void playTrack(rec, [rec])}
+                                className="block max-w-full truncate text-left text-[13.5px] font-semibold text-[#F5F5F7] hover:underline"
+                              >
+                                {rec.title}
+                              </button>
+                              <div className="truncate text-xs text-[#D4D4E0]">
+                                <ArtistLinks
+                                  artists={rec.artists}
+                                  onBeforeNavigate={() => setNowPlayingOpen(false)}
+                                  linkClassName="hover:text-white hover:underline"
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex shrink-0 items-center gap-1">
+                            <span className="tabular-nums hidden px-1.5 text-xs font-medium text-[#D4D4E0] sm:inline">
+                              {formatDurationSec(rec.durationSec)}
+                            </span>
+
+                            <button
+                              type="button"
+                              aria-label={
+                                recLiked
+                                  ? `Quitar ${rec.title} de Me gusta`
+                                  : `Añadir ${rec.title} a Me gusta`
+                              }
+                              onClick={() => void toggleLike(rec)}
+                              className={`pm-pressable hidden rounded-full p-1.5 transition-colors sm:inline-flex ${
+                                recLiked
+                                  ? 'text-[#FB7185]'
+                                  : 'text-[#D4D4E0] hover:bg-white/[0.12] hover:text-white'
+                              }`}
+                            >
+                              <Heart className={`h-3.5 w-3.5 ${recLiked ? 'fill-current' : ''}`} />
+                            </button>
+
+                            <button
+                              type="button"
+                              aria-label={`Subir ${rec.title} a tu cola`}
+                              onClick={() => {
+                                promoteRecommendedTrack(rec.id);
+                                showToast(`«${rec.title}» subida a Tu cola`);
+                              }}
+                              className="pm-pressable inline-flex h-7 w-7 items-center justify-center rounded-full border border-white/15 bg-white/[0.08] text-white hover:bg-white hover:text-[#070709]"
+                              title="Subir a Tu cola"
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                            </button>
+
+                            <button
+                              type="button"
+                              aria-label={`Descartar ${rec.title}`}
+                              onClick={() => dismissRecommendedTrack(rec.id)}
+                              className="pm-pressable inline-flex h-7 w-7 items-center justify-center rounded-full text-[#B4B4BE] hover:bg-white/[0.12] hover:text-white"
+                              title="Quitar recomendación"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </section>
               </div>
             </div>
           </div>
-        )}
+          );
+        })()}
       </div>
 
       {/* Unobtrusive Floating DJ & EQ Micro-Controls in Bottom-Right of Now Playing */}
@@ -1452,9 +1940,13 @@ export const DjPopover: React.FC = () => {
     nowPlayingOpen,
     djMode,
     currentTrack,
+    positionSec,
+    activeTransitionPlan,
+    isTransitioning,
     trackAnalyses,
     toggleDjMode,
     setDjSessionStyle,
+    triggerDjMixNow,
   } = usePMusicStore();
 
   React.useEffect(() => {
@@ -1478,6 +1970,10 @@ export const DjPopover: React.FC = () => {
   if (!djPopoverOpen) return null;
 
   const ana = trackAnalyses[currentTrack.id];
+  const countdownSec =
+    djMode.enabled && activeTransitionPlan
+      ? Math.max(0, Math.round(activeTransitionPlan.cueOutSec - positionSec))
+      : null;
 
   return (
     <div
@@ -1496,7 +1992,7 @@ export const DjPopover: React.FC = () => {
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-1.5">
-              <Disc3 className="h-4 w-4 text-purple-400" />
+              <Disc3 className={`h-4 w-4 text-purple-400 ${djMode.enabled ? 'animate-spin' : ''}`} />
               <h2 className="text-[15px] font-bold leading-tight pm-text-primary">
                 Sesión DJ
               </h2>
@@ -1530,10 +2026,10 @@ export const DjPopover: React.FC = () => {
           <button
             type="button"
             data-testid="dj-style-quick"
-            aria-pressed={djMode.style === 'quick'}
+            aria-pressed={djMode.enabled && djMode.style === 'quick'}
             onClick={() => void setDjSessionStyle('quick')}
             className={`pm-pressable flex flex-col items-start gap-1 rounded-[14px] border p-3 text-left transition-all ${
-              djMode.style === 'quick'
+              djMode.enabled && djMode.style === 'quick'
                 ? 'border-purple-400/60 bg-purple-500/20 text-white shadow-sm'
                 : 'border-white/10 bg-white/[0.06] pm-text-secondary hover:bg-white/[0.12]'
             }`}
@@ -1547,10 +2043,10 @@ export const DjPopover: React.FC = () => {
           <button
             type="button"
             data-testid="dj-style-full"
-            aria-pressed={djMode.style === 'full'}
+            aria-pressed={djMode.enabled && djMode.style === 'full'}
             onClick={() => void setDjSessionStyle('full')}
             className={`pm-pressable flex flex-col items-start gap-1 rounded-[14px] border p-3 text-left transition-all ${
-              djMode.style === 'full'
+              djMode.enabled && djMode.style === 'full'
                 ? 'border-purple-400/60 bg-purple-500/20 text-white shadow-sm'
                 : 'border-white/10 bg-white/[0.06] pm-text-secondary hover:bg-white/[0.12]'
             }`}
@@ -1561,6 +2057,27 @@ export const DjPopover: React.FC = () => {
             </span>
           </button>
         </div>
+
+        {djMode.enabled && (
+          <div className="mt-3 flex items-center justify-between gap-2 border-t border-white/10 pt-3">
+            <span className="tabular-nums text-[11px] pm-text-secondary">
+              {isTransitioning
+                ? 'Mezclando pistas ahora…'
+                : activeTransitionPlan && countdownSec !== null
+                  ? `Cruce auto en ${countdownSec}s (${formatDurationSec(activeTransitionPlan.cueOutSec)})`
+                  : 'Preparando siguiente cruce…'}
+            </span>
+            <button
+              type="button"
+              data-testid="dj-mix-now-btn"
+              disabled={isTransitioning}
+              onClick={() => void triggerDjMixNow()}
+              className="pm-pressable rounded-full bg-purple-500 px-3 py-1 text-[11px] font-bold text-white shadow-sm transition-opacity hover:bg-purple-400 disabled:opacity-50"
+            >
+              Mezclar ahora
+            </button>
+          </div>
+        )}
     </div>
   );
 };

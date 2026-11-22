@@ -120,6 +120,8 @@ describe('@pmusic/audio-engine', () => {
 
     expect(engine.getState().activeDeck).toBe('B');
     expect(engine.getState().isTransitioning).toBe(false);
+    expect(engine.getState().isPlaying).toBe(true);
+    expect(engine.getLivePositionSec()).toBeGreaterThanOrEqual(16);
     await engine.dispose();
   });
 

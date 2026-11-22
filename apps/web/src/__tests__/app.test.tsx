@@ -75,6 +75,8 @@ describe('@pmusic/web UI', () => {
     const minimalCard = screen.getByTestId('dock-style-minimal-wave');
     fireEvent.click(ambientCard);
     expect(ambientCard.getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('ambient-progress-fill')).toBeDefined();
+    expect(screen.queryByTestId('ambient-playhead')).toBeNull();
     fireEvent.click(islandCard);
     expect(islandCard.getAttribute('aria-pressed')).toBe('true');
     fireEvent.click(minimalCard);
@@ -126,5 +128,64 @@ describe('@pmusic/web UI', () => {
 
     fireEvent.click(screen.getByTestId('back-detail-btn'));
     expect(usePMusicStore.getState().activeDetailView).toBeNull();
+  });
+
+  it('toggles ambientMotionEnabled switch in SettingsModal and updates NowPlayingSheet fluid backdrop state', () => {
+    render(<App />);
+    const settingsBtn = screen.getAllByRole('button', { name: /Ajustes/i })[0]!;
+    fireEvent.click(settingsBtn);
+
+    const ambientToggle = screen.getByTestId('ambient-motion-toggle');
+    expect(usePMusicStore.getState().ambientMotionEnabled).toBe(true);
+    fireEvent.click(ambientToggle);
+    expect(usePMusicStore.getState().ambientMotionEnabled).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: /Cerrar ajustes/i }));
+
+    fireEvent.click(
+      screen.getAllByRole('button', { name: /Abrir reproductor a pantalla completa/i })[0]!
+    );
+    expect(
+      screen.getByTestId('live-backdrop-container').classList.contains('pm-backdrop-static')
+    ).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: /Cerrar reproductor/i }));
+    fireEvent.click(settingsBtn);
+    fireEvent.click(screen.getByTestId('ambient-motion-toggle'));
+    fireEvent.click(screen.getByRole('button', { name: /Cerrar ajustes/i }));
+    fireEvent.click(
+      screen.getAllByRole('button', { name: /Abrir reproductor a pantalla completa/i })[0]!
+    );
+    expect(
+      screen.getByTestId('live-backdrop-container').classList.contains('pm-backdrop-static')
+    ).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: /Cerrar reproductor/i }));
+  });
+
+  it('auto-drops finished tracks in user queue, preserves Anterior via sessionPrevStack, and promotes infinite recommendations', async () => {
+    const t1 = usePMusicStore.getState().homeShelves[0]!.tracks![0]!;
+    const t2 = usePMusicStore.getState().homeShelves[0]!.tracks![1]!;
+    const rec = usePMusicStore.getState().homeShelves[0]!.tracks![2]!;
+
+    usePMusicStore.setState({
+      queue: [t1, t2],
+      queueIndex: 0,
+      currentTrack: t1,
+      sessionPrevStack: [],
+      recommendedQueue: [rec],
+      repeatMode: 'off',
+    });
+
+    await usePMusicStore.getState().nextTrack();
+    expect(usePMusicStore.getState().currentTrack.id).toBe(t2.id);
+    expect(usePMusicStore.getState().queue.map((t) => t.id)).toEqual([t2.id]);
+    expect(usePMusicStore.getState().sessionPrevStack.map((t) => t.id)).toEqual([t1.id]);
+
+    usePMusicStore.getState().promoteRecommendedTrack(rec.id);
+    expect(usePMusicStore.getState().queue.map((t) => t.id)).toEqual([t2.id, rec.id]);
+    expect(usePMusicStore.getState().recommendedQueue.some((t) => t.id === rec.id)).toBe(false);
+
+    await usePMusicStore.getState().prevTrack();
+    expect(usePMusicStore.getState().currentTrack.id).toBe(t1.id);
+    expect(usePMusicStore.getState().queue[0]?.id).toBe(t1.id);
   });
 });

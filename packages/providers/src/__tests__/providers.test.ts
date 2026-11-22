@@ -402,4 +402,38 @@ describe('@pmusic/providers', () => {
     const fullAlbum = await yt.getAlbum('MPR_NSLQVAPM_2023');
     expect(fullAlbum.tracks).toHaveLength(22);
   });
+
+  it('matches Cruz Cafuné -> Cruzzi artist alias and accepts 388s Me Muevo Con Dios on YTMusic', () => {
+    const crzScore = scoreAudioCandidate(
+      { title: 'Me Muevo Con Dios', artist: 'Cruz Cafuné', durationSec: 214 },
+      {
+        candidateTitle: 'Me Muevo Con Dios',
+        candidateArtists: 'Cruzzi',
+        candidateDurationSec: 388,
+        isYtMusicSong: true,
+      }
+    );
+    const coverScore = scoreAudioCandidate(
+      { title: 'Me Muevo Con Dios', artist: 'Cruz Cafuné', durationSec: 214 },
+      {
+        candidateTitle: 'Me Muevo Con Dios (Acoustic Cover)',
+        candidateArtists: 'Random Cover Artist',
+        candidateDurationSec: 214,
+        isYtMusicSong: false,
+      }
+    );
+    expect(crzScore).toBeGreaterThanOrEqual(15);
+    expect(crzScore).toBeGreaterThan(coverScore);
+
+    const cangriScore = scoreAudioCandidate(
+      { title: 'Cangrinaje', artist: 'Cruz Cafuné', durationSec: 212 },
+      {
+        candidateTitle: 'Cangrinaje',
+        candidateArtists: 'Cruzzi',
+        candidateDurationSec: 212,
+        isYtMusicSong: true,
+      }
+    );
+    expect(cangriScore).toBeGreaterThanOrEqual(20);
+  });
 });

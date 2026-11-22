@@ -47,6 +47,17 @@ export interface StreamCandidateInput {
   isYtMusicSong?: boolean;
 }
 
+const ARTIST_ALIASES: Record<string, readonly string[]> = {
+  'cruz cafune': ['cruzzi', 'cruz cafune'],
+  cruzzi: ['cruz cafune', 'cruzzi'],
+  'la pantera': ['la pantera', 'lapantera'],
+  'c tangana': ['c tangana', 'pucho', 'crema'],
+  'd valentino': ['d valentino', 'dvalentino'],
+  dvalentino: ['d valentino', 'dvalentino'],
+  'lucho rk': ['lucho rk', 'luchork'],
+  'bad bunny': ['bad bunny', 'benito'],
+};
+
 export function scoreAudioCandidate(
   target: { title: string; artist: string; durationSec: number },
   cand: StreamCandidateInput
@@ -61,11 +72,6 @@ export function scoreAudioCandidate(
   if (!candTitle || cand.candidateDurationSec < 40) return -Infinity;
 
   if (!wantsSpecial && BAD_VERSION_RE.test(candTitle) && !BAD_VERSION_RE.test(cleanTitle)) {
-    return -Infinity;
-  }
-
-  const targetDur = target.durationSec;
-  if (targetDur > 45 && !wantsSpecial && Math.abs(cand.candidateDurationSec - targetDur) > 45) {
     return -Infinity;
   }
 
@@ -88,17 +94,27 @@ export function scoreAudioCandidate(
     return -Infinity;
   }
 
-  const artistParts = target.artist
+  const rawArtistParts = target.artist
     .split(/,|&|\bfeat\.?\b|\bft\.?\b/i)
     .map((p) => normText(p))
     .filter(Boolean);
+  const expandedArtistParts: string[] = [];
+  for (const part of rawArtistParts) {
+    expandedArtistParts.push(part);
+    const aliases = ARTIST_ALIASES[part];
+    if (aliases) {
+      for (const al of aliases) {
+        if (!expandedArtistParts.includes(al)) expandedArtistParts.push(al);
+      }
+    }
+  }
   const candArtistBlob = normText(
     `${cand.candidateArtists ?? ''} ${cand.candidateAuthor ?? ''}`
   );
   const candFullBlob = `${candArtistBlob} ${candTitle}`.trim();
 
   let artistMatchCount = 0;
-  for (const part of artistParts) {
+  for (const part of expandedArtistParts) {
     const partCollapsed = part.replace(/\s+/g, '');
     const candBlobCollapsed = candFullBlob.replace(/\s+/g, '');
     if (
@@ -114,8 +130,16 @@ export function scoreAudioCandidate(
     }
   }
 
-  const artistMatched = artistParts.length === 0 || artistMatchCount > 0;
+  const artistMatched = rawArtistParts.length === 0 || artistMatchCount > 0;
+  const targetDur = target.durationSec;
   const durDiff = targetDur > 0 ? Math.abs(cand.candidateDurationSec - targetDur) : 0;
+  if (targetDur > 45 && !wantsSpecial) {
+    const maxDurDiff = cand.isYtMusicSong && exactTitle && artistMatched ? 240 : 45;
+    if (durDiff > maxDurDiff) {
+      return -Infinity;
+    }
+  }
+
   if (!artistMatched && !(exactTitle && durDiff <= 8)) {
     return -Infinity;
   }
@@ -125,7 +149,7 @@ export function scoreAudioCandidate(
   else if (candTitle.includes(cleanTitle) || cleanTitle.includes(candStrippedTitle)) score += 5;
   score += Math.round(titleOverlap * 4);
 
-  if (artistParts.length > 0) {
+  if (rawArtistParts.length > 0) {
     score += artistMatchCount > 0 ? 6 + Math.min(3, artistMatchCount) : 0;
   }
   if (/topic|vevo|official|oficial/.test(candArtistBlob)) score += 2;
