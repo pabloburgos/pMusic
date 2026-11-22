@@ -69,7 +69,7 @@ export const TrackInfoModal: React.FC = () => {
                 {track.title}
               </h3>
               {track.isExplicit && (
-                <span className="rounded bg-white/15 px-1.5 py-0.5 text-[11px] font-bold pm-text-primary">
+                <span className="inline-flex h-[15px] w-[15px] shrink-0 items-center justify-center rounded-[3px] bg-[var(--pm-text-secondary)]/20 text-[10px] font-extrabold leading-none pm-text-secondary">
                   E
                 </span>
               )}
@@ -88,7 +88,12 @@ export const TrackInfoModal: React.FC = () => {
                 onClick={() => {
                   const id = track.album?.id;
                   setTrackInfoModalTrack(null);
-                  if (id) void openAlbumDetail(id);
+                  if (id) {
+                    void openAlbumDetail(id, {
+                      title: track.album?.name,
+                      artist: track.artists[0]?.name,
+                    });
+                  }
                 }}
                 className="block truncate text-xs pm-text-tertiary hover:underline"
               >

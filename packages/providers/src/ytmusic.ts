@@ -28,6 +28,7 @@ export interface YouTubeMusicProviderOptions {
   location?: string;
   enableLiveNetwork?: boolean;
   proxyBaseUrl?: string;
+  catalog?: DeezerCatalog | null;
 }
 
 export class YouTubeMusicProvider implements IMusicProvider {
@@ -39,7 +40,12 @@ export class YouTubeMusicProvider implements IMusicProvider {
   private readonly catalog: DeezerCatalog | null;
 
   public constructor(options: YouTubeMusicProviderOptions = {}) {
-    this.catalog = options.enableLiveNetwork ? new DeezerCatalog() : null;
+    this.catalog =
+      options.catalog !== undefined
+        ? options.catalog
+        : options.enableLiveNetwork
+          ? new DeezerCatalog()
+          : null;
     this.lang = options.lang ?? 'es';
     this.location = options.location ?? 'ES';
     this.enableLiveNetwork = options.enableLiveNetwork ?? false;
@@ -229,15 +235,33 @@ export class YouTubeMusicProvider implements IMusicProvider {
     return getFallbackArtistDetail(artistId);
   }
 
-  public async getAlbum(albumId: string, _signal?: AbortSignal): Promise<AlbumDetail> {
-    if (this.catalog && /^\d+$/.test(albumId)) {
+  public async getAlbum(
+    albumId: string,
+    _signal?: AbortSignal,
+    hint?: { title?: string; artist?: string }
+  ): Promise<AlbumDetail> {
+    const cleanId = albumId.replace(/^(dz-album-|dz:)/, '');
+    if (this.catalog && /^\d+$/.test(cleanId)) {
       try {
-        return await this.catalog.album(albumId, _signal);
+        return await this.catalog.album(cleanId, _signal);
       } catch {
         // fallback
       }
     }
-    return getFallbackAlbumDetail(albumId);
+    const fallback = getFallbackAlbumDetail(albumId);
+    const titleQuery = hint?.title?.trim() || fallback.album.title;
+    const artistQuery = hint?.artist?.trim() || fallback.album.artists[0]?.name;
+    if (this.catalog && titleQuery) {
+      try {
+        const resolved = await this.catalog.albumByQuery(titleQuery, artistQuery, _signal);
+        if (resolved && resolved.tracks.length > 0) {
+          return resolved;
+        }
+      } catch {
+        // fallback
+      }
+    }
+    return fallback;
   }
 
   public async getPlaylist(
@@ -413,9 +437,17 @@ export class HttpProxyMusicProvider implements IMusicProvider {
     return remote && remote.id ? remote : null;
   }
 
-  public async getAlbum(albumId: string, signal?: AbortSignal): Promise<AlbumDetail> {
+  public async getAlbum(
+    albumId: string,
+    signal?: AbortSignal,
+    hint?: { title?: string; artist?: string }
+  ): Promise<AlbumDetail> {
+    const params = new URLSearchParams();
+    if (hint?.title?.trim()) params.set('title', hint.title.trim());
+    if (hint?.artist?.trim()) params.set('artist', hint.artist.trim());
+    const qs = params.toString() ? `?${params.toString()}` : '';
     const remote = await this.fetchApiJson<AlbumDetail>(
-      `/api/album/${encodeURIComponent(albumId)}`,
+      `/api/album/${encodeURIComponent(albumId)}${qs}`,
       signal
     );
     if (remote && remote.album) {
@@ -437,6 +469,22 @@ export class HttpProxyMusicProvider implements IMusicProvider {
       return remote;
     }
     return getFallbackPlaylistDetail(playlistId);
+  }
+
+  public async getMusixmatchLyrics(
+    title: string,
+    artist: string,
+    durationSec?: number,
+    signal?: AbortSignal
+  ): Promise<{ syncedLyrics?: string | null; plainLyrics?: string | null } | null> {
+    const params = new URLSearchParams({ title, artist });
+    if (durationSec && Number.isFinite(durationSec) && durationSec > 0) {
+      params.set('duration', String(Math.round(durationSec)));
+    }
+    return this.fetchApiJson<{ syncedLyrics?: string | null; plainLyrics?: string | null }>(
+      `/api/lyrics/musixmatch?${params.toString()}`,
+      signal
+    );
   }
 
   public async getPlainLyricsFallback(videoId: string, signal?: AbortSignal): Promise<string | null> {

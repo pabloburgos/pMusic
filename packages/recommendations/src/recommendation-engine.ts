@@ -10,6 +10,7 @@ import {
   normalizeSearchText,
   type AlbumSummary,
   type ArtistAffinityRecord,
+  type ArtistSummary,
   type AutocompleteSuggestion,
   type HomeEditorialMix,
   type HomeEditorialShelf,
@@ -52,6 +53,49 @@ const MIX_PALETTES = [
   '#5E5CE6',
 ] as const;
 
+const SPANISH_ACCENT_RE = /[áéíóúüñ¿¡]/i;
+const SPANISH_TITLE_WORDS = new Set([
+  'de', 'del', 'la', 'las', 'el', 'los', 'en', 'con', 'por', 'para', 'que', 'te', 'me',
+  'se', 'mi', 'tu', 'su', 'nos', 'yo', 'un', 'una', 'no', 'si', 'mas', 'como', 'cuando',
+  'donde', 'noche', 'noches', 'amor', 'vida', 'dios', 'muevo', 'calle', 'corazon', 'fuego',
+  'luna', 'sol', 'mar', 'besos', 'besame', 'ojos', 'boca', 'solo', 'sola', 'nada', 'todo',
+  'siempre', 'nunca', 'ahora', 'manana', 'ayer', 'bueno', 'malo', 'diabla', 'normal',
+  'invierno', 'contigo', 'sumisa', 'sordo', 'resaca', 'aire', 'cayetano', 'cangrinaje',
+  'monaco', 'perro', 'negro', 'nuevayol', 'bala', 'lleve', 'volando', 'dime', 'quiero',
+  'sabe', 'pasar', 'gente', 'mira', 'toma', 'dale', 'va', 'voy', 'soy', 'eres', 'pobre',
+  'rico', 'oro', 'plata', 'cielo', 'infierno', 'alma', 'mente', 'cuerpo', 'lado', 'verano',
+]);
+const KNOWN_ES_SCENE_ARTISTS = new Set([
+  'cruz cafune', 'la pantera', 'bad bunny', 'quevedo', 'saiko', 'morad', 'rels b',
+  'dellafuente', 'feid', 'lucho rk', 'abhir hathi', 'bejo', 'juseph', 'd valentino',
+  'dvalentino', 'mvrk', 'came beats', 'bluu', 'sneaky wh', 'beny jr', 'bb trickz',
+  'rusowsky', 'judeline', 'ralphie choo', 'rvfv', 'omar montes', 'kidd keo', 'recycled j',
+  'kable', 'pablete', 'gonzalo moreno', 'miky woodz', 'eladio carrion', 'myke towers',
+  'rauw alejandro', 'rosalia', 'ctangana', 'c tangana', 'alizzz', 'natos y waor', 'ayax',
+  'kaze', 'hard gz', 'delao', 'hoke', 'ill pekeño', 'ill pequeno', 'ergo pro', 'disobey',
+  'yunq beef', 'yung beef', 'sticky ma', 'rojuu', 'claudia', 'maikel delacalle',
+]);
+
+function collapseNormalized(input: string): string {
+  return normalizeSearchText(input).replace(/[^a-z0-9]+/g, '');
+}
+
+const NON_SPANISH_DIACRITIC_RE = /[šŠčČžŽćĆđĐłŁøØß]/;
+
+function scoreSpanishTitleCues(title: string): number {
+  if (NON_SPANISH_DIACRITIC_RE.test(title)) return 0;
+  let score = 0;
+  const hasEsAccent = SPANISH_ACCENT_RE.test(title);
+  if (hasEsAccent) score += 28;
+  const words = tokenizeNormalized(title);
+  const hitWords = words.filter((w) => SPANISH_TITLE_WORDS.has(w));
+  const hasLongEsWord = hitWords.some((w) => w.length >= 4);
+  if (hasEsAccent || hasLongEsWord || hitWords.length >= 2) {
+    score += Math.min(48, hitWords.length * 16);
+  }
+  return score;
+}
+
 function tokenizeNormalized(input: string): string[] {
   const clean = normalizeSearchText(input)
     .replace(/[^a-z0-9\s]+/g, ' ')
@@ -67,6 +111,7 @@ function scoreEntityQueryMatch(
   albumName?: string
 ): number {
   const normQuery = normalizeSearchText(query).replace(/[^a-z0-9\s]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const collapsedQuery = collapseNormalized(query);
   const queryTokens = tokenizeNormalized(query);
   if (!normQuery || queryTokens.length === 0) return 0;
 
@@ -75,11 +120,15 @@ function scoreEntityQueryMatch(
   const normArtists = artists
     .map((a) => normalizeSearchText(a).replace(/[^a-z0-9\s]+/g, ' ').replace(/\s+/g, ' ').trim())
     .filter(Boolean);
+  const collapsedArtists = artists.map((a) => collapseNormalized(a)).filter(Boolean);
   const artistWords = new Set(normArtists.flatMap((a) => tokenizeNormalized(a)));
   const albumWords = new Set(albumName ? tokenizeNormalized(albumName) : []);
 
   let score = 0;
   if (normTitle === normQuery) score += 180;
+  if (collapsedQuery.length >= 4 && collapsedArtists.some((a) => a === collapsedQuery)) {
+    score += 155;
+  }
   for (const a of normArtists) {
     if (`${a} ${normTitle}` === normQuery || `${normTitle} ${a}` === normQuery) {
       score += 185;
@@ -387,11 +436,18 @@ export class RecommendationEngine implements IRecommendationEngine {
           track.artists.map((a) => a.name),
           track.album?.name
         );
+        const sceneFit = this.isSpanishSceneDominant() ? this.scoreTrackSceneFit(track) : 0;
         return {
           track,
           primaryArtistKey: normalizeArtistKey(track.artists[0]?.name ?? ''),
           queryScore,
-          score: queryScore + artistScore * 0.25 + genreBonus * 0.15 + skipPenalty + positionBonus * 0.2,
+          score:
+            queryScore +
+            artistScore * 0.25 +
+            genreBonus * 0.15 +
+            sceneFit * 3.0 +
+            skipPenalty +
+            positionBonus * 0.2,
         };
       }
 
@@ -489,28 +545,180 @@ export class RecommendationEngine implements IRecommendationEngine {
       .slice(0, 8);
   }
 
+  private isSpanishSceneDominant(): boolean {
+    const checkGenres = (genres: readonly string[]) =>
+      genres.some((g) => /urbano|trap_canarias|reggaeton|latin|flamenco|pop_es|es/i.test(g));
+    for (const s of this.seeds.values()) {
+      if (checkGenres(s.genres)) return true;
+    }
+    for (const rec of this.affinities.values()) {
+      if (rec.score >= 2 && checkGenres(rec.genres)) return true;
+    }
+    return false;
+  }
+
+  private scoreTrackSceneFit(track: Track): number {
+    let score = scoreSpanishTitleCues(track.title);
+    if (track.album?.name) {
+      score += Math.round(scoreSpanishTitleCues(track.album.name) * 0.5);
+    }
+    const hasSceneArtist = track.artists.some((a) => {
+      const k = normalizeArtistKey(a.name);
+      const ck = collapseNormalized(a.name);
+      return (
+        KNOWN_ES_SCENE_ARTISTS.has(k) ||
+        KNOWN_ES_SCENE_ARTISTS.has(ck) ||
+        this.getEffectiveAffinity(a.name) >= 3
+      );
+    });
+    if (hasSceneArtist) score += 75;
+    if ((track.genres ?? []).some((g) => /urbano|trap_canarias|reggaeton|latin/i.test(g))) {
+      score += 25;
+    }
+    return score;
+  }
+
+  private scoreArtistSceneBonus(
+    artist: ArtistSummary,
+    trackSceneMap?: Map<string, number>
+  ): number {
+    if (!this.isSpanishSceneDominant()) return 0;
+    const key = normalizeArtistKey(artist.name);
+    const cKey = collapseNormalized(artist.name);
+    let bonus = 0;
+    if (KNOWN_ES_SCENE_ARTISTS.has(key) || KNOWN_ES_SCENE_ARTISTS.has(cKey)) {
+      bonus += 90;
+    }
+    if (trackSceneMap) {
+      const trackCue = Math.max(trackSceneMap.get(key) ?? 0, trackSceneMap.get(cKey) ?? 0);
+      bonus += Math.min(85, trackCue);
+    }
+    return bonus;
+  }
+
+  public rerankSearchBundle(query: string, bundle: SearchResultBundle): SearchResultBundle {
+    const songs = this.rerankTracks(bundle.songs, { query });
+    const normQuery = normalizeSearchText(query);
+    const collapsedQuery = collapseNormalized(query);
+    const queryTokens = tokenizeNormalized(query);
+
+    const trackSceneMap = new Map<string, number>();
+    for (const song of songs) {
+      const cue = this.scoreTrackSceneFit(song);
+      if (cue <= 0) continue;
+      for (const a of song.artists) {
+        const k = normalizeArtistKey(a.name);
+        const ck = collapseNormalized(a.name);
+        trackSceneMap.set(k, Math.max(trackSceneMap.get(k) ?? 0, cue));
+        trackSceneMap.set(ck, Math.max(trackSceneMap.get(ck) ?? 0, cue));
+      }
+    }
+
+    const artists = [...bundle.artists]
+      .map((artist, idx) => {
+        const normName = normalizeSearchText(artist.name);
+        const collapsedName = collapseNormalized(artist.name);
+        const artistWordSet = new Set(tokenizeNormalized(artist.name));
+        let matchScore = 0;
+        if (
+          normQuery.length > 0 &&
+          (normName === normQuery || (collapsedQuery.length >= 4 && collapsedName === collapsedQuery))
+        ) {
+          matchScore = 195;
+        } else if (
+          queryTokens.length > 0 &&
+          queryTokens.every((t) => artistWordSet.has(t))
+        ) {
+          matchScore = 170;
+        } else if (
+          normQuery.length > 0 &&
+          (normName.includes(normQuery) ||
+            normQuery.includes(normName) ||
+            (collapsedQuery.length >= 4 && collapsedName.includes(collapsedQuery)))
+        ) {
+          matchScore = 115;
+        }
+        const affinityBonus = this.getEffectiveAffinity(artist.name) * 4;
+        const sceneBonus = this.scoreArtistSceneBonus(artist, trackSceneMap);
+        return {
+          artist,
+          idx,
+          score: matchScore + affinityBonus + sceneBonus,
+        };
+      })
+      .sort((a, b) => b.score - a.score || a.idx - b.idx)
+      .map((x) => x.artist);
+
+    const albums = [...bundle.albums]
+      .map((album, idx) => {
+        const qScore = scoreEntityQueryMatch(
+          query,
+          album.title,
+          album.artists.map((a) => a.name)
+        );
+        const esBonus = this.isSpanishSceneDominant()
+          ? Math.round(scoreSpanishTitleCues(album.title) * 0.4)
+          : 0;
+        return { album, idx, score: qScore + esBonus };
+      })
+      .sort((a, b) => b.score - a.score || a.idx - b.idx)
+      .map((x) => x.album);
+
+    const reranked: SearchResultBundle = {
+      ...bundle,
+      songs,
+      artists,
+      albums,
+    };
+    const topResult = this.selectBestResult(query, reranked);
+    return {
+      ...reranked,
+      topResult,
+    };
+  }
+
   public selectBestResult(
     query: string,
     bundle: SearchResultBundle
   ): TopResultMatch | undefined {
     const normQuery = normalizeSearchText(query);
+    const collapsedQuery = collapseNormalized(query);
     const queryTokens = tokenizeNormalized(query);
+    const spanishDom = this.isSpanishSceneDominant();
+
+    const trackSceneMap = new Map<string, number>();
+    for (const s of bundle.songs) {
+      const cue = this.scoreTrackSceneFit(s);
+      if (cue <= 0) continue;
+      for (const a of s.artists) {
+        const k = normalizeArtistKey(a.name);
+        const ck = collapseNormalized(a.name);
+        trackSceneMap.set(k, Math.max(trackSceneMap.get(k) ?? 0, cue));
+        trackSceneMap.set(ck, Math.max(trackSceneMap.get(ck) ?? 0, cue));
+      }
+    }
 
     let bestCandidate: TopResultMatch | undefined = bundle.topResult;
     let bestScore = -Infinity;
 
     for (const artist of bundle.artists) {
       const normName = normalizeSearchText(artist.name);
-      const exact = normQuery.length > 0 && normName === normQuery ? 195 : 0;
+      const collapsedName = collapseNormalized(artist.name);
+      const exact =
+        normQuery.length > 0 &&
+        (normName === normQuery || (collapsedQuery.length >= 4 && collapsedName === collapsedQuery))
+          ? 195
+          : 0;
       const partial =
         exact === 0 && normQuery.length > 0 && (normName.includes(normQuery) || normQuery.includes(normName))
           ? 70
           : 0;
       const artistWordSet = new Set(tokenizeNormalized(artist.name));
       const allTokensInArtist =
-        queryTokens.length > 0 && queryTokens.every((t) => artistWordSet.has(t)) ? 150 : 0;
+        queryTokens.length > 0 && queryTokens.every((t) => artistWordSet.has(t)) ? 170 : 0;
       const affinity = this.getEffectiveAffinity(artist.name) * 0.4;
-      const score = Math.max(exact, allTokensInArtist, partial) + affinity;
+      const sceneBonus = this.scoreArtistSceneBonus(artist, trackSceneMap) * 0.6;
+      const score = Math.max(exact, allTokensInArtist, partial) + affinity + sceneBonus;
       if (score > bestScore) {
         bestScore = score;
         bestCandidate = { kind: 'artist', item: artist };
@@ -529,7 +737,8 @@ export class RecommendationEngine implements IRecommendationEngine {
           (m, a) => Math.max(m, this.getEffectiveAffinity(a.name)),
           0
         ) * 0.35;
-      const score = queryMatch + artistAffinity;
+      const sceneFit = spanishDom ? this.scoreTrackSceneFit(song) * 2.5 : 0;
+      const score = queryMatch + artistAffinity + sceneFit;
       if (score > bestScore) {
         bestScore = score;
         bestCandidate = { kind: 'song', item: song };

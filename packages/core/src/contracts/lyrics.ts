@@ -13,7 +13,7 @@ export interface LyricLine {
   words?: LrcWordTiming[];
 }
 
-export type LyricsSource = 'lrclib' | 'ytmusic' | 'none';
+export type LyricsSource = 'lrclib' | 'musixmatch' | 'ytmusic' | 'none';
 export type LyricsStatus = 'synced' | 'plain' | 'instrumental' | 'not_found';
 
 export interface LyricsDocument {

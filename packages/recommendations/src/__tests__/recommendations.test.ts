@@ -97,4 +97,40 @@ describe('@pmusic/recommendations', () => {
       expect(best.item.id).toBe('exact_1');
     }
   });
+
+  it('prioritizes Spanish-scene & dotted artist matches in rerankSearchBundle (e.g. "valentino" -> D.Valentino)', () => {
+    const engine = new RecommendationEngine();
+    const foreignBandTrack: Track = {
+      id: 'for_1',
+      title: 'Volim Te Još',
+      artists: [{ id: '83110262', name: 'Valentino' }],
+      durationSec: 210,
+      thumbnailUrl: 'https://example.com/for.jpg',
+      source: 'ytmusic',
+    };
+    const spanishTrack: Track = {
+      id: 'es_1',
+      title: 'Prettygyal',
+      artists: [
+        { id: '119371702', name: 'D.Valentino' },
+        { id: '999', name: 'Came Beats' },
+      ],
+      durationSec: 175,
+      thumbnailUrl: 'https://example.com/dv.jpg',
+      source: 'ytmusic',
+    };
+    const res = engine.rerankSearchBundle('valentino', {
+      query: 'valentino',
+      songs: [foreignBandTrack, spanishTrack],
+      videos: [],
+      artists: [
+        { id: '83110262', name: 'Valentino', thumbnailUrl: 'https://example.com/for.jpg' },
+        { id: '119371702', name: 'D.Valentino', thumbnailUrl: 'https://example.com/dv.jpg' },
+      ],
+      albums: [],
+      playlists: [],
+    });
+    expect(res.artists[0]?.name).toBe('D.Valentino');
+    expect(res.songs[0]?.id).toBe('es_1');
+  });
 });

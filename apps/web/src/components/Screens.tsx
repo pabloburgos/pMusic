@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Check,
   ChevronLeft,
@@ -201,7 +201,10 @@ export const TrackListRow: React.FC<{
               {track.title}
             </button>
             {track.isExplicit && (
-              <span className="shrink-0 rounded border pm-border pm-elevated px-1.5 py-0.5 text-[11px] font-bold leading-none pm-text-secondary">
+              <span
+                aria-label="Explícita"
+                className="inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-[3px] bg-[var(--pm-text-secondary)]/20 text-[9px] font-extrabold leading-none pm-text-secondary"
+              >
                 E
               </span>
             )}
@@ -402,6 +405,12 @@ const CarouselSection: React.FC<{
 }> = ({ title, subtitle, children }) => {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
 
+  useEffect(() => {
+    if (scrollerRef.current) {
+      scrollerRef.current.scrollLeft = 0;
+    }
+  }, [title]);
+
   const scrollByDir = (dir: -1 | 1) => {
     const el = scrollerRef.current;
     if (!el) return;
@@ -441,7 +450,7 @@ const CarouselSection: React.FC<{
 
       <div
         ref={scrollerRef}
-        className="pm-no-scrollbar flex snap-x gap-4 overflow-x-auto px-1 py-2"
+        className="pm-no-scrollbar flex snap-x scroll-pl-3 gap-4 overflow-x-auto px-3 py-2"
       >
         {children}
       </div>
@@ -557,7 +566,12 @@ export const DetailViewPanel: React.FC = () => {
                 image={al.thumbnailUrl}
                 title={al.title}
                 subtitle={String(al.year ?? '')}
-                onOpen={() => void openAlbumDetail(al.id)}
+                onOpen={() =>
+                  void openAlbumDetail(al.id, {
+                    title: al.title,
+                    artist: al.artists?.[0]?.name,
+                  })
+                }
               />
             ))}
           </CarouselSection>
@@ -1422,7 +1436,12 @@ export const HomeScreen: React.FC = () => {
                   />
                 </span>
               }
-              onOpen={() => void openAlbumDetail(al.id)}
+              onOpen={() =>
+                void openAlbumDetail(al.id, {
+                  title: al.title,
+                  artist: al.artists?.[0]?.name,
+                })
+              }
             />
           ))}
         </CarouselSection>
@@ -1462,6 +1481,10 @@ export const ExploreScreen: React.FC = () => {
   const {
     homeShelves,
     searchResults,
+    exploreSimilarTracks,
+    exploreEmergingArtists,
+    isLoadingExplore,
+    refreshExploreDiscovery,
     submitSearch,
     setActiveTab,
     playTrack,
@@ -1471,6 +1494,10 @@ export const ExploreScreen: React.FC = () => {
 
   const listen = homeShelves.find((s) => s.kind === 'listen_again');
   const releases = homeShelves.find((s) => s.kind === 'favorite_new_releases');
+  const similarDiscoverTracks =
+    exploreSimilarTracks.length > 0
+      ? exploreSimilarTracks.slice(0, 8)
+      : (listen?.tracks ?? []).slice(0, 6);
   const trendingSongs = (
     searchResults.songs.length > 0
       ? searchResults.songs
@@ -1480,17 +1507,28 @@ export const ExploreScreen: React.FC = () => {
     searchResults.albums.length > 0
       ? searchResults.albums
       : releases?.albums ?? [];
+  const emergingArtists = exploreEmergingArtists;
   const artists = searchResults.artists;
 
   return (
     <div className="pm-page-enter space-y-8">
-      <div>
-        <h1 className="text-[28px] font-bold tracking-tight pm-text-primary md:text-[32px]">
-          Explorar
-        </h1>
-        <p className="text-[13px] pm-text-tertiary">
-          Géneros, tendencias del momento y novedades seleccionadas
-        </p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-[28px] font-bold tracking-tight pm-text-primary md:text-[32px]">
+            Explorar
+          </h1>
+          <p className="text-[13px] pm-text-tertiary">
+            Algoritmo de descubrimiento afín a tu estilo, letras y escena emergente
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => void refreshExploreDiscovery(true)}
+          className="pm-btn-secondary pm-pressable inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold"
+        >
+          {isLoadingExplore && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+          <span>Actualizar recomendaciones</span>
+        </button>
       </div>
 
       {/* Genres Grid */}
@@ -1521,6 +1559,53 @@ export const ExploreScreen: React.FC = () => {
           ))}
         </div>
       </section>
+
+      {/* Personalized Mega Discovery: Similar to Your Taste */}
+      {similarDiscoverTracks.length > 0 && (
+        <section className="space-y-3">
+          <div>
+            <h2 className="text-[20px] font-bold tracking-tight pm-text-primary">
+              Para tu vibra · Similares a lo que escuchas
+            </h2>
+            <p className="text-[12.5px] pm-text-tertiary">
+              Temas con sonido, temática y colaboradores afines a tus escuchas recientes
+            </p>
+          </div>
+          <div className="grid grid-cols-1 gap-x-6 md:grid-cols-2">
+            {similarDiscoverTracks.map((t, i) => (
+              <TrackListRow
+                key={`explore-sim-${t.id}`}
+                track={t}
+                index={i}
+                queueContext={similarDiscoverTracks}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Emerging & Underground Scene Artists */}
+      {emergingArtists.length > 0 && (
+        <CarouselSection
+          title="Artistas emergentes para descubrir"
+          subtitle="Voces nuevas y colaboraciones de tu escena con potencial similar"
+        >
+          {emergingArtists.map((ar) => (
+            <CoverCard
+              key={`explore-emerging-${ar.id}`}
+              image={ar.thumbnailUrl}
+              title={ar.name}
+              subtitle={
+                ar.subscribersText
+                  ? `Emergente · ${ar.subscribersText}`
+                  : 'Escena afín'
+              }
+              round
+              onOpen={() => void openArtistDetail(ar.id || ar.name)}
+            />
+          ))}
+        </CarouselSection>
+      )}
 
       {/* Trending Songs */}
       {trendingSongs.length > 0 && (
@@ -1561,7 +1646,12 @@ export const ExploreScreen: React.FC = () => {
                   />
                 </span>
               }
-              onOpen={() => void openAlbumDetail(al.id)}
+              onOpen={() =>
+                void openAlbumDetail(al.id, {
+                  title: al.title,
+                  artist: al.artists?.[0]?.name,
+                })
+              }
             />
           ))}
         </CarouselSection>
@@ -2027,7 +2117,12 @@ export const SearchScreen: React.FC = () => {
                     />
                   </span>
                 }
-                onOpen={() => void openAlbumDetail(album.id)}
+                onOpen={() =>
+                  void openAlbumDetail(album.id, {
+                    title: album.title,
+                    artist: album.artists?.[0]?.name,
+                  })
+                }
               />
             ))}
           </CarouselSection>

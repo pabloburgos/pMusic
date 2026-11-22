@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { stripTrackTitleNoise } from '@pmusic/core';
 import { FALLBACK_TRACKS } from './catalog-fallback.ts';
 import type { DeezerCatalog } from './deezer-catalog.ts';
 import { isDeezerTrackId } from './deezer-catalog.ts';
@@ -21,14 +22,121 @@ interface Resolved {
 const YOUTUBE_ID_RE = /^[a-zA-Z0-9_-]{11}$/;
 const AUDIO_CLIENTS = ['ANDROID', 'YTMUSIC', 'MWEB', 'IOS'] as const;
 const BAD_VERSION_RE =
-  /(karaoke|remix|live|en vivo|cover|reaction|sped up|slowed|nightcore|instrumental|letra|lyrics)/;
+  /(karaoke|remix|live|en vivo|cover|reaction|sped up|slowed|nightcore|instrumental|letra|lyrics|tutorial|8d audio|reverb)/;
 
 function normText(s: string): string {
   return s
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]+/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
+}
+
+function tokenize(s: string): string[] {
+  const n = normText(s);
+  return n ? n.split(' ') : [];
+}
+
+export interface StreamCandidateInput {
+  candidateTitle: string;
+  candidateArtists?: string;
+  candidateAuthor?: string;
+  candidateDurationSec: number;
+  isYtMusicSong?: boolean;
+}
+
+export function scoreAudioCandidate(
+  target: { title: string; artist: string; durationSec: number },
+  cand: StreamCandidateInput
+): number {
+  const rawNormTitle = normText(target.title);
+  const strippedNormTitle = normText(stripTrackTitleNoise(target.title) || target.title);
+  const cleanTitle = strippedNormTitle || rawNormTitle;
+  const wantsSpecial = BAD_VERSION_RE.test(rawNormTitle);
+
+  const candTitle = normText(cand.candidateTitle);
+  const candStrippedTitle = normText(stripTrackTitleNoise(cand.candidateTitle) || cand.candidateTitle);
+  if (!candTitle || cand.candidateDurationSec < 40) return -Infinity;
+
+  if (!wantsSpecial && BAD_VERSION_RE.test(candTitle) && !BAD_VERSION_RE.test(cleanTitle)) {
+    return -Infinity;
+  }
+
+  const targetDur = target.durationSec;
+  if (targetDur > 45 && !wantsSpecial && Math.abs(cand.candidateDurationSec - targetDur) > 45) {
+    return -Infinity;
+  }
+
+  const titleTokens = tokenize(cleanTitle);
+  const sigTokens = titleTokens.filter((tok) => tok.length >= 2);
+  const checkTokens = sigTokens.length > 0 ? sigTokens : titleTokens;
+  const candTitleWords = new Set(tokenize(cand.candidateTitle));
+
+  const matchedTokens = checkTokens.filter(
+    (tok) => candTitleWords.has(tok) || candTitle.includes(tok)
+  ).length;
+  const titleOverlap = checkTokens.length > 0 ? matchedTokens / checkTokens.length : 0;
+
+  const exactTitle =
+    candTitle === cleanTitle ||
+    candStrippedTitle === cleanTitle ||
+    candTitle === rawNormTitle;
+
+  if (!exactTitle && titleOverlap < 0.5) {
+    return -Infinity;
+  }
+
+  const artistParts = target.artist
+    .split(/,|&|\bfeat\.?\b|\bft\.?\b/i)
+    .map((p) => normText(p))
+    .filter(Boolean);
+  const candArtistBlob = normText(
+    `${cand.candidateArtists ?? ''} ${cand.candidateAuthor ?? ''}`
+  );
+  const candFullBlob = `${candArtistBlob} ${candTitle}`.trim();
+
+  let artistMatchCount = 0;
+  for (const part of artistParts) {
+    const partCollapsed = part.replace(/\s+/g, '');
+    const candBlobCollapsed = candFullBlob.replace(/\s+/g, '');
+    if (
+      (part.length >= 2 && candFullBlob.includes(part)) ||
+      (partCollapsed.length >= 3 && candBlobCollapsed.includes(partCollapsed))
+    ) {
+      artistMatchCount++;
+    } else {
+      const aToks = tokenize(part).filter((w) => w.length >= 3);
+      if (aToks.length > 0 && aToks.every((w) => candFullBlob.includes(w))) {
+        artistMatchCount++;
+      }
+    }
+  }
+
+  const artistMatched = artistParts.length === 0 || artistMatchCount > 0;
+  const durDiff = targetDur > 0 ? Math.abs(cand.candidateDurationSec - targetDur) : 0;
+  if (!artistMatched && !(exactTitle && durDiff <= 8)) {
+    return -Infinity;
+  }
+
+  let score = cand.isYtMusicSong ? 4 : 0;
+  if (exactTitle) score += 8;
+  else if (candTitle.includes(cleanTitle) || cleanTitle.includes(candStrippedTitle)) score += 5;
+  score += Math.round(titleOverlap * 4);
+
+  if (artistParts.length > 0) {
+    score += artistMatchCount > 0 ? 6 + Math.min(3, artistMatchCount) : 0;
+  }
+  if (/topic|vevo|official|oficial/.test(candArtistBlob)) score += 2;
+  if (/audio/.test(candTitle)) score += 1;
+  if (targetDur > 0) {
+    if (durDiff <= 3) score += 3;
+    else if (durDiff <= 10) score += 1.5;
+    else score -= Math.min(5, durDiff / 6);
+  }
+
+  return score;
 }
 
 /**
@@ -136,7 +244,7 @@ export class AudioStreamResolver {
         const t = await this.catalog.track(trackId);
         return {
           title: t.title,
-          artist: t.artists[0]?.name ?? meta?.artist ?? '',
+          artist: t.artists.map((a) => a.name).join(', ') || meta?.artist || '',
           durationSec: t.durationSec || meta?.durationSec || 200,
         };
       } catch {
@@ -155,7 +263,7 @@ export class AudioStreamResolver {
     if (fallback) {
       return {
         title: fallback.title,
-        artist: fallback.artists[0]?.name ?? '',
+        artist: fallback.artists.map((a) => a.name).join(', '),
         durationSec: fallback.durationSec,
       };
     }
@@ -182,33 +290,32 @@ export class AudioStreamResolver {
     const info = await this.lookupTrackInfo(trackId, meta);
     if (!info) return null;
 
-    const cleanTitle = normText(info.title);
-    const cleanArtist = normText(info.artist);
-    const wantsSpecial = BAD_VERSION_RE.test(cleanTitle);
-    const baseQuery = `${info.artist} ${info.title}`.trim();
+    const strippedTitle = stripTrackTitleNoise(info.title) || info.title.trim();
+    const primaryArtist =
+      info.artist.split(/,|&|\bfeat\.?\b|\bft\.?\b/i)[0]?.trim() || info.artist.trim();
+    const focusedQuery = `${primaryArtist} ${strippedTitle}`.trim();
 
-    // 1) Priority: YouTube Music official songs search
+    // 1) Priority: YouTube Music official songs search with strict validation gate
     try {
-      const ytMusicRes = await yt.music.search(baseQuery, { type: 'song' });
+      const ytMusicRes = await yt.music.search(focusedQuery, { type: 'song' });
       const musicCandidates: Array<{ id: string; score: number }> = [];
       for (const sec of ytMusicRes?.contents ?? []) {
         for (const item of sec?.contents ?? []) {
           const id = item?.id ?? item?.video_id;
           const dur = Number(item?.duration?.seconds ?? 0);
-          if (typeof id !== 'string' || !YOUTUBE_ID_RE.test(id) || dur < 45) continue;
-          const t = normText(String(item?.title ?? item?.name ?? ''));
+          if (typeof id !== 'string' || !YOUTUBE_ID_RE.test(id) || dur < 40) continue;
           const itemArtists = Array.isArray(item?.artists)
-            ? normText(item.artists.map((a: any) => a?.name ?? '').join(' '))
+            ? item.artists.map((a: any) => a?.name ?? '').join(' ')
             : '';
-          let score = 3; // bonus for official YTMusic song shelf
-          if (t === cleanTitle) score += 5;
-          else if (t.includes(cleanTitle) || cleanTitle.includes(t)) score += 3;
-          if (cleanArtist && (itemArtists.includes(cleanArtist) || t.includes(cleanArtist))) {
-            score += 4;
+          const score = scoreAudioCandidate(info, {
+            candidateTitle: String(item?.title ?? item?.name ?? ''),
+            candidateArtists: itemArtists,
+            candidateDurationSec: dur,
+            isYtMusicSong: true,
+          });
+          if (score >= 6) {
+            musicCandidates.push({ id, score });
           }
-          if (!wantsSpecial && BAD_VERSION_RE.test(t)) score -= 5;
-          score -= Math.min(4, Math.abs(dur - info.durationSec) / 8);
-          musicCandidates.push({ id, score });
         }
       }
       musicCandidates.sort((a, b) => b.score - a.score);
@@ -220,25 +327,29 @@ export class AudioStreamResolver {
       // fall through to standard YouTube video search
     }
 
-    // 2) Fallback: Standard YouTube video search
-    const queries = [`${baseQuery} audio oficial`, baseQuery];
+    // 2) Fallback: Standard YouTube video search with focused queries & strict gate
+    const queries = Array.from(
+      new Set([
+        primaryArtist ? `${primaryArtist} - ${strippedTitle} audio` : strippedTitle,
+        primaryArtist ? `${primaryArtist} ${strippedTitle} topic` : '',
+        focusedQuery,
+      ].filter(Boolean))
+    );
     for (const q of queries) {
       try {
         const res = await yt.search(q, { type: 'video' });
         const candidates = (res?.videos ?? [])
-          .filter((v: any) => v?.id && Number(v.duration?.seconds) > 45)
-          .map((v: any) => {
-            const t = normText(String(v.title?.text ?? ''));
-            const author = normText(String(v.author?.name ?? ''));
-            let score = 0;
-            if (t.includes(cleanTitle)) score += 4;
-            if (cleanArtist && (t.includes(cleanArtist) || author.includes(cleanArtist))) score += 3;
-            if (/topic|vevo|official|oficial/.test(author)) score += 2;
-            if (/audio/.test(t)) score += 1;
-            if (!wantsSpecial && BAD_VERSION_RE.test(t)) score -= 5;
-            score -= Math.min(4, Math.abs(Number(v.duration.seconds) - info.durationSec) / 8);
-            return { id: String(v.id), score };
-          })
+          .filter((v: any) => v?.id && Number(v.duration?.seconds) >= 40)
+          .map((v: any) => ({
+            id: String(v.id),
+            score: scoreAudioCandidate(info, {
+              candidateTitle: String(v.title?.text ?? ''),
+              candidateAuthor: String(v.author?.name ?? ''),
+              candidateDurationSec: Number(v.duration.seconds),
+              isYtMusicSong: false,
+            }),
+          }))
+          .filter((c: { id: string; score: number }) => c.score >= 6)
           .sort((a: any, b: any) => b.score - a.score);
 
         for (const c of candidates.slice(0, 3)) {

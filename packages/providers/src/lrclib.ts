@@ -9,10 +9,29 @@ import {
 } from '@pmusic/core';
 import { defaultLrcParser } from './lrc-parser.ts';
 
+export interface MusixmatchLyricsPayload {
+  syncedLyrics?: string | null;
+  plainLyrics?: string | null;
+  source?: 'musixmatch';
+}
+
 export interface LrclibProviderOptions {
   baseUrl?: string;
   parser?: ILrcParser;
-  musicProvider?: Pick<IMusicProvider, 'getPlainLyricsFallback'>;
+  musicProvider?: Pick<IMusicProvider, 'getPlainLyricsFallback'> & {
+    getMusixmatchLyrics?: (
+      title: string,
+      artist: string,
+      durationSec?: number,
+      signal?: AbortSignal
+    ) => Promise<MusixmatchLyricsPayload | null>;
+  };
+  musixmatchFetcher?: (
+    title: string,
+    artist: string,
+    durationSec?: number,
+    signal?: AbortSignal
+  ) => Promise<MusixmatchLyricsPayload | null>;
   fetchFn?: typeof fetch;
   cacheTtlMs?: number;
 }
@@ -33,7 +52,8 @@ const LRCLIB_CLIENT_HEADER = 'pMusic/0.1.0 (https://github.com/pmusic/pmusic)';
 export class LrclibLyricsProvider implements ILyricsProvider {
   private readonly baseUrl: string;
   private readonly parser: ILrcParser;
-  private readonly musicProvider?: Pick<IMusicProvider, 'getPlainLyricsFallback'>;
+  private readonly musicProvider?: LrclibProviderOptions['musicProvider'];
+  private readonly musixmatchFetcher?: LrclibProviderOptions['musixmatchFetcher'];
   private readonly fetchFn: typeof fetch;
   private readonly cacheTtlMs: number;
   private readonly cache = new Map<string, LyricsDocument>();
@@ -42,6 +62,7 @@ export class LrclibLyricsProvider implements ILyricsProvider {
     this.baseUrl = (options.baseUrl ?? 'https://lrclib.net').replace(/\/+$/, '');
     this.parser = options.parser ?? defaultLrcParser;
     this.musicProvider = options.musicProvider;
+    this.musixmatchFetcher = options.musixmatchFetcher;
     this.fetchFn = options.fetchFn ?? globalThis.fetch.bind(globalThis);
     this.cacheTtlMs = options.cacheTtlMs ?? 30 * 60_000;
   }
@@ -76,7 +97,20 @@ export class LrclibLyricsProvider implements ILyricsProvider {
       }
     }
 
-    // 3. Fallback to YTMusic plain lyrics
+    // 3. Fallback to Musixmatch (synced LRC or plain lyrics via local backend proxy)
+    const mxmDoc = await this.fetchMusixmatchDocument(
+      query.trackId,
+      cleanTitle,
+      cleanArtist,
+      query.durationSec,
+      signal
+    );
+    if (mxmDoc && mxmDoc.status !== 'not_found') {
+      this.cache.set(cacheKey, mxmDoc);
+      return mxmDoc;
+    }
+
+    // 4. Fallback to YTMusic plain lyrics
     if (this.musicProvider) {
       try {
         const plainText = await this.musicProvider.getPlainLyricsFallback(query.trackId, signal);
@@ -252,11 +286,54 @@ export class LrclibLyricsProvider implements ILyricsProvider {
     return bestScore >= 2 ? best : null;
   }
 
-  private recordToDocument(trackId: string, record: LrclibApiRecord): LyricsDocument {
+  private async fetchMusixmatchDocument(
+    trackId: string,
+    title: string,
+    artist: string,
+    durationSec?: number,
+    signal?: AbortSignal
+  ): Promise<LyricsDocument | null> {
+    try {
+      let payload: MusixmatchLyricsPayload | null = null;
+      if (this.musixmatchFetcher) {
+        payload = await this.musixmatchFetcher(title, artist, durationSec, signal);
+      } else if (this.musicProvider?.getMusixmatchLyrics) {
+        payload = await this.musicProvider.getMusixmatchLyrics(title, artist, durationSec, signal);
+      } else {
+        const params = new URLSearchParams({ title, artist });
+        if (durationSec && Number.isFinite(durationSec) && durationSec > 0) {
+          params.set('duration', String(Math.round(durationSec)));
+        }
+        payload = await this.fetchJsonSafe<MusixmatchLyricsPayload>(
+          `/api/lyrics/musixmatch?${params.toString()}`,
+          signal
+        );
+      }
+      if (!payload) return null;
+      if (!payload.syncedLyrics && !payload.plainLyrics) return null;
+      const doc = this.recordToDocument(
+        trackId,
+        {
+          syncedLyrics: payload.syncedLyrics ?? null,
+          plainLyrics: payload.plainLyrics ?? null,
+        },
+        'musixmatch'
+      );
+      return doc.status !== 'not_found' ? doc : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private recordToDocument(
+    trackId: string,
+    record: LrclibApiRecord,
+    source: 'lrclib' | 'musixmatch' = 'lrclib'
+  ): LyricsDocument {
     if (record.instrumental) {
       return {
         trackId,
-        source: 'lrclib',
+        source,
         status: 'instrumental',
         lrclibId: record.id,
         offsetMs: 0,
@@ -279,7 +356,7 @@ export class LrclibLyricsProvider implements ILyricsProvider {
             : parsed.lines.map((l) => l.text);
         return {
           trackId,
-          source: 'lrclib',
+          source,
           status: 'synced',
           lrclibId: record.id,
           offsetMs: parsed.offsetMs,
@@ -299,7 +376,7 @@ export class LrclibLyricsProvider implements ILyricsProvider {
       if (plainLines.length > 0) {
         return {
           trackId,
-          source: 'lrclib',
+          source,
           status: 'plain',
           lrclibId: record.id,
           offsetMs: 0,

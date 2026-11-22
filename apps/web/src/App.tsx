@@ -344,7 +344,7 @@ export const App: React.FC = () => {
       : 0;
   const djCueCountdownSec =
     djMode.enabled && activeTransitionPlan
-      ? Math.max(0, Math.round(activeTransitionPlan.cueOutSec - positionSec))
+      ? Math.max(0, Math.round(activeTransitionPlan.cueOutSec - liveDockPosSec))
       : null;
   const currentBpm = trackAnalyses[currentTrack.id]?.bpm;
   const repeatLabel =
@@ -369,6 +369,10 @@ export const App: React.FC = () => {
     const rect = el.getBoundingClientRect();
     const pct = Math.max(0, Math.min(1, (clientX - rect.left) / Math.max(1, rect.width)));
     const nextSec = Math.round(pct * Math.max(1, durationSec));
+    dockClockRef.current = {
+      posSec: nextSec,
+      atMs: typeof performance !== 'undefined' ? performance.now() : 0,
+    };
     setSmoothDockPosSec(nextSec);
     seekTo(nextSec);
   };
@@ -402,7 +406,7 @@ export const App: React.FC = () => {
               type="button"
               aria-label="Ir al inicio"
               onClick={() => setActiveTab('Inicio')}
-              className="pm-hover flex items-center rounded-[10px] px-1.5 py-1"
+              className="pm-no-drag pm-hover pointer-events-auto relative z-20 flex items-center rounded-[10px] px-1.5 py-1"
             >
               <PMusicLogo size={28} showWordmark />
             </button>
@@ -411,11 +415,12 @@ export const App: React.FC = () => {
               <button
                 type="button"
                 aria-label="Volver"
+                data-testid="back-detail-btn"
                 onClick={() => closeDetailView()}
-                className="pm-btn-secondary pm-pressable inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-semibold"
+                className="pm-no-drag pm-btn-secondary pm-pressable pointer-events-auto relative z-20 inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-semibold"
               >
-                <ArrowLeft className="h-3.5 w-3.5" />
-                <span>Volver</span>
+                <ArrowLeft className="pointer-events-none h-3.5 w-3.5" />
+                <span className="pointer-events-none">Volver</span>
               </button>
             )}
           </div>
@@ -464,9 +469,11 @@ export const App: React.FC = () => {
       <div
         className={`relative z-10 flex min-h-0 flex-1 ${
           !isMobileViewport
-            ? playerBarStyle === 'classic-center'
-              ? 'gap-3 px-3 pt-3 pb-[104px]'
-              : 'gap-3 px-3 pt-3 pb-[98px]'
+            ? playerBarStyle === 'floating-island'
+              ? 'gap-3 px-3 pt-3 pb-3'
+              : playerBarStyle === 'classic-center'
+                ? 'gap-3 px-3 pt-3 pb-[104px]'
+                : 'gap-3 px-3 pt-3 pb-[98px]'
             : ''
         }`}
       >
@@ -855,7 +862,9 @@ export const App: React.FC = () => {
           className={
             isMobileViewport
               ? 'min-w-0 flex-1 overflow-y-auto px-4 pb-44 pt-0'
-              : 'h-full min-w-0 flex-1 overflow-y-auto px-7 pt-3 pb-8'
+              : `h-full min-w-0 flex-1 overflow-y-auto px-7 pt-3 ${
+                  playerBarStyle === 'floating-island' ? 'pb-28' : 'pb-8'
+                }`
           }
         >
           {/* Mobile Top Command Bar */}
@@ -929,7 +938,9 @@ export const App: React.FC = () => {
         {!isMobileViewport && rightPanelOpen && (
           <aside
             aria-label="En reproducción y siguiente"
-            className="pm-glass-surface hidden h-full w-[304px] shrink-0 flex-col gap-5 overflow-y-auto rounded-[20px] p-4 pm-no-scrollbar xl:flex"
+            className={`pm-glass-surface hidden h-full w-[304px] shrink-0 flex-col gap-5 overflow-y-auto rounded-[20px] p-4 pm-no-scrollbar xl:flex ${
+              playerBarStyle === 'floating-island' ? 'pb-24' : ''
+            }`}
           >
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold tracking-wide pm-text-secondary">
@@ -1199,7 +1210,7 @@ export const App: React.FC = () => {
           }}
           className={`pm-glass-regular fixed z-40 grid select-none items-center gap-4 overflow-hidden ${
             playerBarStyle === 'floating-island'
-              ? 'left-1/2 bottom-3.5 h-[72px] w-[min(960px,calc(100%-32px))] -translate-x-1/2 cursor-pointer grid-cols-[minmax(160px,1fr)_auto_minmax(160px,1fr)] rounded-full px-5'
+              ? 'left-1/2 bottom-3.5 h-[72px] w-[min(840px,calc(100%-32px))] -translate-x-1/2 cursor-pointer grid-cols-[minmax(160px,1fr)_auto_minmax(160px,1fr)] rounded-full px-5'
               : playerBarStyle === 'minimal-wave'
                 ? 'inset-x-3 bottom-3 h-[76px] cursor-pointer grid-cols-[minmax(200px,1fr)_minmax(300px,520px)_minmax(200px,1fr)] rounded-[18px] px-5'
                 : playerBarStyle === 'ambient-dock'
@@ -1207,17 +1218,28 @@ export const App: React.FC = () => {
                   : 'inset-x-3 bottom-3 h-[84px] grid-cols-[minmax(200px,1fr)_minmax(320px,540px)_minmax(200px,1fr)] rounded-[20px] px-5'
           }`}
         >
-          {/* Smooth Feathered Ambient Progress Fill (NO hard vertical border line) */}
+          {/* Exact-Position Subtle Ambient Progress Fill + Discreet White Playhead */}
           {playerBarStyle === 'ambient-dock' && (
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-y-0 left-0 z-0 transition-[background] duration-200"
-              style={{
-                width: `${Math.min(100, progressPct + 4)}%`,
-                background:
-                  'linear-gradient(90deg, color-mix(in srgb, var(--pm-ambient-1) 34%, transparent) 0%, color-mix(in srgb, var(--pm-ambient-2) 52%, transparent) calc(100% - 28px), transparent 100%)',
-              }}
-            />
+            <>
+              <div
+                aria-hidden="true"
+                data-testid="ambient-progress-fill"
+                className="pointer-events-none absolute inset-y-0 left-0 z-0 transition-[background] duration-200"
+                style={{
+                  width: `${progressPct}%`,
+                  background:
+                    'linear-gradient(90deg, color-mix(in srgb, var(--pm-ambient-1) 28%, transparent) 0%, color-mix(in srgb, var(--pm-ambient-2) 40%, transparent) calc(100% - 8px), transparent 100%)',
+                }}
+              />
+              {progressPct > 0.4 && progressPct < 99.8 && (
+                <div
+                  aria-hidden="true"
+                  data-testid="ambient-playhead"
+                  className="pointer-events-none absolute inset-y-2.5 z-10 w-[1.5px] -translate-x-1/2 rounded-full bg-white/65 shadow-[0_0_8px_rgba(255,255,255,0.4)]"
+                  style={{ left: `${progressPct}%` }}
+                />
+              )}
+            </>
           )}
 
           {/* Dynamic Floating Island Bottom Curve Progress Hairline */}
@@ -1258,18 +1280,15 @@ export const App: React.FC = () => {
             </div>
           )}
 
-          {/* Hover scrub aura + accessible slider for click/drag dock modes */}
+          {/* Stealth Hover White Scrub Hairline + Accessible Slider for Click/Drag Dock Modes */}
           {playerBarStyle !== 'classic-center' && (
             <>
               {dockHoverPct !== null && (
                 <div
                   aria-hidden="true"
-                  className="pointer-events-none absolute inset-y-0 left-0 z-0"
-                  style={{
-                    width: `${dockHoverPct}%`,
-                    background:
-                      'linear-gradient(90deg, color-mix(in srgb, var(--pm-ambient-1) 14%, transparent) 0%, transparent 100%)',
-                  }}
+                  data-testid="dock-hover-hairline"
+                  className="pointer-events-none absolute inset-y-2 z-10 w-[1.5px] -translate-x-1/2 rounded-full bg-white/45 shadow-[0_0_6px_rgba(255,255,255,0.3)]"
+                  style={{ left: `${dockHoverPct}%` }}
                 />
               )}
               {cueStartPct !== null && cueWidthPct > 0 && (
@@ -1355,7 +1374,7 @@ export const App: React.FC = () => {
                   {currentTrack.isExplicit && (
                     <span
                       aria-label="Explícita"
-                      className="pm-elevated inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-[3px] border pm-border px-1 text-[11px] font-bold leading-none pm-text-primary"
+                      className="inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-[3px] bg-[var(--pm-text-secondary)]/20 text-[9px] font-extrabold leading-none pm-text-secondary"
                     >
                       E
                     </span>

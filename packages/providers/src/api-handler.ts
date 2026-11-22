@@ -50,6 +50,129 @@ export function createPMusicApiHandler(options: PMusicApiHandlerOptions = {}) {
   const importer = new PlaylistImporter({ musicProvider: provider });
   const fetchFn = options.fetchFn ?? globalThis.fetch.bind(globalThis);
 
+  let mxmToken: string | null = null;
+  let mxmTokenExpiresAt = 0;
+  const mxmGuid = 'pMusicDesktop-1a2b3c4d';
+
+  async function getMusixmatchToken(): Promise<string | null> {
+    if (mxmToken && mxmTokenExpiresAt > Date.now()) return mxmToken;
+    try {
+      const res = await fetchFn(
+        'https://apic-desktop.musixmatch.com/ws/1.1/token.get?app_id=web-desktop-app-v1.0',
+        {
+          method: 'GET',
+          headers: {
+            Accept: 'application/json',
+            Cookie: `x-mxm-token-guid=${mxmGuid}`,
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          },
+        }
+      );
+      if (!res.ok) return null;
+      const json = (await res.json()) as {
+        message?: { header?: { status_code?: number }; body?: { user_token?: string } };
+      };
+      const code = json?.message?.header?.status_code;
+      const tok = json?.message?.body?.user_token;
+      if (code === 200 && tok && tok !== 'UpgradeOnlyUpgradeOnlyUpgradeOnlyUpgradeOnly') {
+        mxmToken = tok;
+        mxmTokenExpiresAt = Date.now() + 20 * 60_000;
+        return tok;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function fetchMusixmatchLyrics(
+    title: string,
+    artist: string,
+    durationSec?: number
+  ): Promise<{ syncedLyrics: string | null; plainLyrics: string | null }> {
+    const cleanWatermark = (raw: string): string =>
+      raw
+        .replace(/\*+\s*This Lyrics is NOT for Commercial use\s*\*+[\s\S]*/i, '')
+        .trim();
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const token = await getMusixmatchToken();
+      if (!token) break;
+      const params = new URLSearchParams({
+        format: 'json',
+        namespace: 'lyrics_richsynched',
+        subtitle_format: 'lrc',
+        app_id: 'web-desktop-app-v1.0',
+        usertoken: token,
+        q_track: title,
+        q_artist: artist,
+      });
+      if (durationSec && Number.isFinite(durationSec) && durationSec > 0) {
+        params.set('f_subtitle_length', String(Math.round(durationSec)));
+        params.set('f_subtitle_length_max_deviation', '8');
+      }
+      try {
+        const res = await fetchFn(
+          `https://apic-desktop.musixmatch.com/ws/1.1/macro.subtitles.get?${params.toString()}`,
+          {
+            method: 'GET',
+            headers: {
+              Accept: 'application/json',
+              Cookie: `x-mxm-token-guid=${mxmGuid}; AWSELB=unknown`,
+              'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            },
+          }
+        );
+        if (!res.ok) break;
+        const json = (await res.json()) as {
+          message?: {
+            header?: { status_code?: number };
+            body?: {
+              macro_calls?: {
+                'track.subtitles.get'?: {
+                  message?: {
+                    header?: { status_code?: number };
+                    body?: { subtitle_list?: Array<{ subtitle?: { subtitle_body?: string } }> };
+                  };
+                };
+                'track.lyrics.get'?: {
+                  message?: {
+                    header?: { status_code?: number };
+                    body?: { lyrics?: { lyrics_body?: string } };
+                  };
+                };
+              };
+            };
+          };
+        };
+        const topCode = json?.message?.header?.status_code;
+        if (topCode === 401 || topCode === 402) {
+          mxmToken = null;
+          mxmTokenExpiresAt = 0;
+          continue;
+        }
+        const calls = json?.message?.body?.macro_calls;
+        const subRaw =
+          calls?.['track.subtitles.get']?.message?.body?.subtitle_list?.[0]?.subtitle
+            ?.subtitle_body;
+        const lyrRaw = calls?.['track.lyrics.get']?.message?.body?.lyrics?.lyrics_body;
+        const syncedLyrics =
+          typeof subRaw === 'string' && subRaw.trim().length > 0 ? subRaw.trim() : null;
+        const cleanedPlain =
+          typeof lyrRaw === 'string' && lyrRaw.trim().length > 0 ? cleanWatermark(lyrRaw) : '';
+        return {
+          syncedLyrics,
+          plainLyrics: cleanedPlain.length > 0 ? cleanedPlain : null,
+        };
+      } catch {
+        break;
+      }
+    }
+    return { syncedLyrics: null, plainLyrics: null };
+  }
+
   return async function handleApiRequest(
     req: IncomingMessage,
     res: ServerResponse,
@@ -148,7 +271,14 @@ export function createPMusicApiHandler(options: PMusicApiHandlerOptions = {}) {
 
       if (pathname.startsWith('/api/album/')) {
         const albumId = decodeURIComponent(pathname.slice('/api/album/'.length));
-        const detail = await provider.getAlbum(albumId);
+        const title = urlObj.searchParams.get('title') ?? undefined;
+        const artist = urlObj.searchParams.get('artist') ?? undefined;
+        const getAlbumFn = provider.getAlbum.bind(provider) as (
+          id: string,
+          signal?: AbortSignal,
+          hint?: { title?: string; artist?: string }
+        ) => Promise<unknown>;
+        const detail = await getAlbumFn(albumId, undefined, { title, artist });
         sendJson(res, 200, detail);
         return true;
       }
@@ -157,6 +287,24 @@ export function createPMusicApiHandler(options: PMusicApiHandlerOptions = {}) {
         const playlistId = decodeURIComponent(pathname.slice('/api/playlist/'.length));
         const detail = await provider.getPlaylist(playlistId);
         sendJson(res, 200, detail);
+        return true;
+      }
+
+      if (pathname === '/api/lyrics/musixmatch') {
+        const title = (urlObj.searchParams.get('title') ?? '').trim();
+        const artist = (urlObj.searchParams.get('artist') ?? '').trim();
+        const durRaw = urlObj.searchParams.get('duration');
+        const duration = durRaw ? Number(durRaw) : undefined;
+        if (!title) {
+          sendJson(res, 200, { syncedLyrics: null, plainLyrics: null, source: 'musixmatch' });
+          return true;
+        }
+        const result = await fetchMusixmatchLyrics(
+          title,
+          artist,
+          duration && Number.isFinite(duration) ? duration : undefined
+        );
+        sendJson(res, 200, { ...result, source: 'musixmatch' });
         return true;
       }
 

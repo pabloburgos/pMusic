@@ -222,7 +222,7 @@ export const SpotlightSearchModal: React.FC = () => {
                             {t.isExplicit && (
                               <span
                                 aria-label="Explícita"
-                                className="pm-elevated inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-[3px] px-1 text-[11px] font-bold leading-none pm-text-primary"
+                                className="inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-[3px] bg-[var(--pm-text-secondary)]/20 text-[9px] font-extrabold leading-none pm-text-secondary"
                               >
                                 E
                               </span>
@@ -452,7 +452,7 @@ export const SpotlightSearchModal: React.FC = () => {
                             {t.isExplicit && (
                               <span
                                 aria-label="Explícita"
-                                className="pm-elevated inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-[3px] px-1 text-[11px] font-bold leading-none pm-text-primary"
+                                className="inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-[3px] bg-[var(--pm-text-secondary)]/20 text-[9px] font-extrabold leading-none pm-text-secondary"
                               >
                                 E
                               </span>

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render, screen, fireEvent } from '@testing-library/react';
 import { App } from '../App.tsx';
 import { ArtistLinks } from '../components/ArtistLinks.tsx';
+import { usePMusicStore } from '../store/usePMusicStore.ts';
 
 afterEach(() => {
   cleanup();
@@ -107,5 +108,23 @@ describe('@pmusic/web UI', () => {
     expect(screen.getByRole('link', { name: /Ir al artista Bad Bunny/i })).toBeDefined();
     expect(screen.getByRole('link', { name: /Ir al artista Bomba Estéreo/i })).toBeDefined();
     expect(screen.getByRole('link', { name: /Ir al artista Dei V/i })).toBeDefined();
+  });
+
+  it('pushes detail views onto detailViewHistory so Volver steps back gracefully', async () => {
+    render(<App />);
+    await usePMusicStore.getState().openArtistDetail('UC_BAD_BUNNY');
+    expect(usePMusicStore.getState().activeDetailView?.kind).toBe('artist');
+
+    await usePMusicStore.getState().openAlbumDetail('MPR_NSLQVAPM_2023');
+    expect(usePMusicStore.getState().activeDetailView?.kind).toBe('album');
+    expect(usePMusicStore.getState().detailViewHistory).toHaveLength(1);
+
+    const backBtn = screen.getByTestId('back-detail-btn');
+    fireEvent.click(backBtn);
+    expect(usePMusicStore.getState().activeDetailView?.kind).toBe('artist');
+    expect(usePMusicStore.getState().detailViewHistory).toHaveLength(0);
+
+    fireEvent.click(screen.getByTestId('back-detail-btn'));
+    expect(usePMusicStore.getState().activeDetailView).toBeNull();
   });
 });

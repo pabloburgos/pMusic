@@ -321,9 +321,14 @@ export const NowPlayingSheet: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => {
-                    const albumId = currentTrack.album?.id;
+                    const album = currentTrack.album;
                     setNowPlayingOpen(false);
-                    if (albumId) void openAlbumDetail(albumId);
+                    if (album?.id) {
+                      void openAlbumDetail(album.id, {
+                        title: album.name,
+                        artist: currentTrack.artists[0]?.name,
+                      });
+                    }
                   }}
                   className="max-w-full truncate text-left hover:text-white hover:underline"
                 >
@@ -799,24 +804,34 @@ export const NowPlayingSheet: React.FC = () => {
                                       Math.max(0.01, wEnd - wStart)
                                   )
                                 );
+                                const wordState =
+                                  wp <= 0.005
+                                    ? 'upcoming'
+                                    : wp >= 0.995
+                                      ? 'sung'
+                                      : 'active';
                                 const liftPx =
-                                  wp > 0 && wp < 1
-                                    ? '-2.2px'
-                                    : wp >= 1
-                                      ? '-0.8px'
+                                  wordState === 'active'
+                                    ? '-3.5px'
+                                    : wordState === 'sung'
+                                      ? '-1px'
                                       : '0px';
+                                const wordScale =
+                                  wordState === 'active' ? '1.035' : '1';
                                 const glowPx =
-                                  wp > 0.08
-                                    ? `${(6 * Math.sin(Math.min(1, wp) * Math.PI)).toFixed(1)}px`
+                                  wordState === 'active'
+                                    ? `${(8 * Math.sin(Math.min(1, wp) * Math.PI)).toFixed(1)}px`
                                     : '0px';
                                 return (
                                   <React.Fragment key={`${idx}-${wIdx}`}>
                                     <span
                                       className="pm-sing-word"
+                                      data-word-state={wordState}
                                       style={
                                         {
                                           '--word-p': `${Math.round(wp * 100)}%`,
                                           '--word-y': liftPx,
+                                          '--word-scale': wordScale,
                                           '--word-glow': glowPx,
                                         } as React.CSSProperties
                                       }
@@ -854,7 +869,7 @@ export const NowPlayingSheet: React.FC = () => {
                     No hay letra disponible para esta canción
                   </p>
                   <p className="mt-1 text-xs text-[#8E8E98]">
-                    LRCLIB no encontró letra sincronizada ni texto para esta pista.
+                    No se encontró letra sincronizada ni texto en LRCLIB ni Musixmatch para esta pista.
                   </p>
                 </div>
               )}
@@ -900,7 +915,7 @@ export const NowPlayingSheet: React.FC = () => {
                 <div className="flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.08] px-3.5 py-2 focus-within:border-white/40 focus-within:bg-white/[0.12]">
                   <Search className="h-3.5 w-3.5 shrink-0 text-[#D4D4E0]" />
                   <input
-                    type="search"
+                    type="text"
                     aria-label="Buscar canción para añadir a la cola"
                     placeholder="Buscar canción para añadir a la cola…"
                     value={queueSearchQuery}
@@ -929,7 +944,7 @@ export const NowPlayingSheet: React.FC = () => {
                         setQueueSearchQuery('');
                         setQueueSearchResults([]);
                       }}
-                      className="pm-pressable rounded-full p-0.5 text-[#D4D4E0] hover:bg-white/15 hover:text-white"
+                      className="pm-pressable inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[#D4D4E0] hover:bg-white/15 hover:text-white"
                     >
                       <X className="h-3.5 w-3.5" />
                     </button>

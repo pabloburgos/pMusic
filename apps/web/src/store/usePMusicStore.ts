@@ -8,6 +8,7 @@ import {
   type AlbumDetail,
   type ArtistAffinityRecord,
   type ArtistDetail,
+  type ArtistSummary,
   type AudioAnalyserData,
   type AudioStreamQuality,
   type AutocompleteSuggestion,
@@ -238,6 +239,7 @@ export interface PMusicStoreState {
   settingsOpen: boolean;
   spotlightOpen: boolean;
   activeDetailView: ActiveDetailView;
+  detailViewHistory: Exclude<ActiveDetailView, null>[];
   isOfflineNetwork: boolean;
   liquidGlassMode: boolean;
   graphicSaverMode: boolean;
@@ -306,6 +308,9 @@ export interface PMusicStoreState {
   recentSearchItems: RecentSearchItem[];
   seedArtists: SeedArtistConfig[];
   affinityProfile: ArtistAffinityRecord[];
+  exploreSimilarTracks: Track[];
+  exploreEmergingArtists: ArtistSummary[];
+  isLoadingExplore: boolean;
 
   // Library & Offline Cache
   libraryCategory: LibraryCategoryTab;
@@ -346,7 +351,10 @@ export interface PMusicStoreState {
   setSettingsOpen: (open: boolean) => void;
   setSpotlightOpen: (open: boolean) => void;
   openArtistDetail: (artistId: string) => Promise<void>;
-  openAlbumDetail: (albumId: string) => Promise<void>;
+  openAlbumDetail: (
+    albumId: string,
+    hint?: { title?: string; artist?: string }
+  ) => Promise<void>;
   openPlaylistDetail: (playlistId: string) => Promise<void>;
   openLocalPlaylistDetail: (playlistId: string) => void;
   closeDetailView: () => void;
@@ -468,6 +476,7 @@ export interface PMusicStoreState {
   setTrackInfoModalTrack: (track: Track | null) => void;
   exportLibraryJson: () => string;
   importLibraryJson: (rawJson: string) => Promise<number>;
+  refreshExploreDiscovery: (force?: boolean) => Promise<void>;
 }
 
 const initialTrack = FALLBACK_TRACKS[0]!;
@@ -554,23 +563,40 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       st.djMode.enabledTransitions
     );
 
-    // Live catch-up when Quick DJ is enabled mid-song so mix triggers smoothly ahead
     const latest = get();
-    const effDuration = latest.durationSec > 10 ? latest.durationSec : fromAna.durationSec;
-    if (
-      latest.djMode.style === 'quick' &&
-      latest.isPlaying &&
-      latest.positionSec >= plan.cueOutSec - 4 &&
-      latest.positionSec < Math.max(20, effDuration - plan.transitionDurationSec - 3)
-    ) {
-      plan = {
-        ...plan,
-        cueOutSec: Math.min(
-          Math.max(15, Math.round(effDuration - plan.transitionDurationSec - 1)),
-          Math.round(latest.positionSec + 8)
-        ),
-      };
+    const engineDur = audioEngine.getState().durationSec;
+    const effDuration =
+      engineDur > 10 ? engineDur : latest.durationSec > 10 ? latest.durationSec : fromAna.durationSec;
+    const safeTransDur = Math.min(plan.transitionDurationSec, Math.max(2, effDuration * 0.35));
+    const maxSafeCueOut = Math.max(4, Math.floor(effDuration - safeTransDur - 1));
+    let nextCueOut = Math.max(4, Math.min(plan.cueOutSec, maxSafeCueOut));
+
+    // Live catch-up when Quick DJ is enabled mid-song without resetting an already-armed countdown
+    const existingPlan = latest.activeTransitionPlan;
+    const sameArmedPair =
+      existingPlan &&
+      existingPlan.fromTrackId === latest.currentTrack.id &&
+      existingPlan.toTrackId === nextTrack.id &&
+      existingPlan.cueOutSec > latest.positionSec - 0.5 &&
+      existingPlan.cueOutSec - latest.positionSec <= 14;
+
+    if (latest.djMode.style === 'quick') {
+      if (sameArmedPair) {
+        nextCueOut = Math.max(4, Math.min(maxSafeCueOut, existingPlan.cueOutSec));
+      } else if (
+        latest.isPlaying &&
+        latest.positionSec >= nextCueOut - 4 &&
+        latest.positionSec < maxSafeCueOut
+      ) {
+        nextCueOut = Math.min(maxSafeCueOut, Math.round(latest.positionSec + 8));
+      }
     }
+
+    plan = {
+      ...plan,
+      transitionDurationSec: safeTransDur,
+      cueOutSec: nextCueOut,
+    };
 
     set({ activeTransitionPlan: plan });
     return plan;
@@ -589,8 +615,14 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         completionRatio: 1.0,
       });
 
-      await audioEngine.preloadNextDeck(nextTrack, plan.cueInSec);
-      await audioEngine.executeTransition(plan);
+      try {
+        await audioEngine.preloadNextDeck(nextTrack, plan.cueInSec);
+        await audioEngine.executeTransition(plan);
+      } catch {
+        djAutoTransitionInFlight = false;
+        await get().playTrack(nextTrack, get().queue, plan.cueInSec);
+        return;
+      }
 
       const enginePos = audioEngine.getState().positionSec;
       const landedPos =
@@ -690,6 +722,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   settingsOpen: false,
   spotlightOpen: false,
   activeDetailView: null,
+  detailViewHistory: [],
   isOfflineNetwork: typeof navigator !== 'undefined' ? !navigator.onLine : false,
   liquidGlassMode: true,
   graphicSaverMode: false,
@@ -828,6 +861,9 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   recentSearchItems: buildDefaultRecentSearchItems(),
   seedArtists: [...DEFAULT_SPANISH_URBAN_SEEDS],
   affinityProfile: recommendationEngine.getAffinityProfile(),
+  exploreSimilarTracks: [],
+  exploreEmergingArtists: [],
+  isLoadingExplore: false,
 
   libraryCategory: 'Todo',
   libraryFilterQuery: '',
@@ -1049,6 +1085,9 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
     applyAmbientPaletteForTrack(get().currentTrack);
     void get().loadLyricsForTrack(get().currentTrack);
+    if (typeof window !== 'undefined' && window.location?.protocol?.startsWith('http')) {
+      void get().refreshExploreDiscovery();
+    }
 
     const mediaController = new MediaSessionController({
       platformBridge: defaultPlatformBridge,
@@ -1102,7 +1141,17 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         const nextTrack = liveState.queue[nextIdx];
         if (nextTrack && nextTrack.id !== liveState.currentTrack.id) {
           const plan = liveState.activeTransitionPlan;
-          if (!plan || plan.fromTrackId !== liveState.currentTrack.id || plan.toTrackId !== nextTrack.id) {
+          const liveDur = engineState.durationSec || liveState.durationSec;
+          const planExceedsLiveDur =
+            Boolean(plan) &&
+            liveDur > 10 &&
+            plan!.cueOutSec > Math.max(5, liveDur - plan!.transitionDurationSec - 0.8);
+          if (
+            !plan ||
+            plan.fromTrackId !== liveState.currentTrack.id ||
+            plan.toTrackId !== nextTrack.id ||
+            planExceedsLiveDur
+          ) {
             void recomputeActiveDjPlan();
           } else {
             const preloadKey = `${liveState.currentTrack.id}->${nextTrack.id}@${plan.cueInSec}`;
@@ -1214,7 +1263,17 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }
   },
 
-  setActiveTab: (tab) => set({ activeTab: tab, activeDetailView: null, spotlightOpen: false }),
+  setActiveTab: (tab) => {
+    set({
+      activeTab: tab,
+      activeDetailView: null,
+      detailViewHistory: [],
+      spotlightOpen: false,
+    });
+    if (tab === 'Explorar' && get().exploreSimilarTracks.length === 0) {
+      void get().refreshExploreDiscovery();
+    }
+  },
   setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
   setRightPanelOpen: (open) => set({ rightPanelOpen: open }),
   setNowPlayingOpen: (open) => set({ nowPlayingOpen: open }),
@@ -1235,37 +1294,68 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   setSpotlightOpen: (open) => set({ spotlightOpen: open }),
 
   openArtistDetail: async (artistId) => {
+    const prev = get().activeDetailView;
     const data = await musicProvider.getArtist(artistId);
-    set({
+    set((s) => ({
+      detailViewHistory:
+        prev && !(prev.kind === 'artist' && prev.data.artist.id === data.artist.id)
+          ? [...s.detailViewHistory, prev].slice(-12)
+          : s.detailViewHistory,
       activeDetailView: { kind: 'artist', data },
       spotlightOpen: false,
       nowPlayingOpen: false,
-    });
+    }));
   },
-  openAlbumDetail: async (albumId) => {
-    const data = await musicProvider.getAlbum(albumId);
-    set({
+  openAlbumDetail: async (albumId, hint) => {
+    const prev = get().activeDetailView;
+    const data = await musicProvider.getAlbum(albumId, undefined, hint);
+    set((s) => ({
+      detailViewHistory:
+        prev && !(prev.kind === 'album' && prev.data.album.id === data.album.id)
+          ? [...s.detailViewHistory, prev].slice(-12)
+          : s.detailViewHistory,
       activeDetailView: { kind: 'album', data },
       spotlightOpen: false,
       nowPlayingOpen: false,
-    });
+    }));
   },
   openPlaylistDetail: async (playlistId) => {
+    const prev = get().activeDetailView;
     const data = await musicProvider.getPlaylist(playlistId);
-    set({
+    set((s) => ({
+      detailViewHistory:
+        prev && !(prev.kind === 'playlist' && prev.data.playlist.id === data.playlist.id)
+          ? [...s.detailViewHistory, prev].slice(-12)
+          : s.detailViewHistory,
       activeDetailView: { kind: 'playlist', data },
       spotlightOpen: false,
       nowPlayingOpen: false,
-    });
+    }));
   },
   openLocalPlaylistDetail: (playlistId) => {
-    set({
+    const prev = get().activeDetailView;
+    set((s) => ({
+      detailViewHistory:
+        prev && !(prev.kind === 'local_playlist' && prev.playlistId === playlistId)
+          ? [...s.detailViewHistory, prev].slice(-12)
+          : s.detailViewHistory,
       activeDetailView: { kind: 'local_playlist', playlistId },
       spotlightOpen: false,
       nowPlayingOpen: false,
-    });
+    }));
   },
-  closeDetailView: () => set({ activeDetailView: null }),
+  closeDetailView: () =>
+    set((s) => {
+      if (s.detailViewHistory.length > 0) {
+        const nextHistory = s.detailViewHistory.slice(0, -1);
+        const targetView = s.detailViewHistory[s.detailViewHistory.length - 1] ?? null;
+        return {
+          activeDetailView: targetView,
+          detailViewHistory: nextHistory,
+        };
+      }
+      return { activeDetailView: null, detailViewHistory: [] };
+    }),
 
   showToast: (message) => {
     if (toastTimer) {
@@ -1318,6 +1408,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         positionSec: effectiveStartSec,
         durationSec: track.durationSec,
         isPlaying: true,
+        activeTransitionPlan: null,
         currentLyrics: null,
         activeLyricIndex: -1,
         lyricsUserScrolled: false,
@@ -1509,6 +1600,9 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         ? lrcParser.findActiveLineIndex(lyrics.lines, positionSec * 1000)
         : -1;
     set({ positionSec, activeLyricIndex: activeIdx });
+    if (get().djMode.enabled) {
+      void recomputeActiveDjPlan();
+    }
     syncDiscordPresenceState();
   },
 
@@ -1951,12 +2045,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       ]);
       if (ticket !== searchTicket) return;
       const ranked = recommendationEngine.rankAutocomplete(query, remoteSuggestions);
-      const rerankedSongs = recommendationEngine.rerankTracks(rawBundle.songs, { query });
-      const bundle: SearchResultBundle = {
-        ...rawBundle,
-        songs: rerankedSongs,
-      };
-      const best = recommendationEngine.selectBestResult(query, bundle);
+      const bundle = recommendationEngine.rerankSearchBundle(query, rawBundle);
+      const best = bundle.topResult ?? recommendationEngine.selectBestResult(query, bundle);
       clientSearchCache.set(cacheKey, {
         at: Date.now(),
         bundle,
@@ -2682,6 +2772,178 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     });
     get().showToast(`Copia restaurada (${count} elementos)`);
     return count;
+  },
+
+  refreshExploreDiscovery: async (force = false) => {
+    const st = get();
+    if (st.isLoadingExplore) return;
+    if (!force && st.exploreSimilarTracks.length > 0 && st.exploreEmergingArtists.length > 0) {
+      return;
+    }
+    set({ isLoadingExplore: true });
+    try {
+      const profile = recommendationEngine.getAffinityProfile();
+      const topArtists = profile.slice(0, 3);
+      const topKeys = new Set(
+        topArtists.map((a) => a.artistName.trim().toLowerCase())
+      );
+
+      const recentPlayed = st.playHistory
+        .filter((h) => h.signalType !== 'skip_early')
+        .slice(0, 6)
+        .map((h) => h.track);
+      const likedSeedTracks = st.likedTracks.slice(0, 3).map((l) => l.track);
+      const fallbackSeeds = st.homeShelves.flatMap((s) => s.tracks ?? []).slice(0, 2);
+      const seedTracks = Array.from(
+        new Map(
+          [st.currentTrack, ...recentPlayed, ...likedSeedTracks, ...fallbackSeeds].map(
+            (t) => [t.id, t]
+          )
+        ).values()
+      ).slice(0, 2);
+
+      const [artistResults, relatedResults] = await Promise.all([
+        Promise.allSettled(
+          topArtists.map((a) => musicProvider.getArtist(a.artistId || a.artistName))
+        ),
+        Promise.allSettled(
+          seedTracks.map((t) => musicProvider.getRelated(t.id))
+        ),
+      ]);
+
+      const recentTrackIds = new Set<string>([
+        st.currentTrack.id,
+        ...st.playHistory.slice(0, 12).map((h) => h.trackId),
+      ]);
+      const seenTitleKeys = new Set<string>();
+      const candidateTrackMap = new Map<string, Track>();
+      const pushCandidateTrack = (t: Track) => {
+        if (!t?.id || recentTrackIds.has(t.id)) return;
+        const normKey = `${t.title.trim().toLowerCase()}::${(t.artists[0]?.name ?? '').trim().toLowerCase()}`;
+        if (seenTitleKeys.has(normKey)) return;
+        seenTitleKeys.add(normKey);
+        candidateTrackMap.set(t.id, t);
+      };
+
+      const emergingPool = new Map<
+        string,
+        { artist: ArtistSummary; score: number }
+      >();
+      const parseFanCount = (txt?: string): number => {
+        if (!txt) return 0;
+        const digits = txt.replace(/[^\d]/g, '');
+        return digits ? Number.parseInt(digits, 10) || 0 : 0;
+      };
+      const addEmergingCandidate = (artist: ArtistSummary, baseBoost: number) => {
+        const cleanName = artist.name.trim();
+        const key = cleanName.toLowerCase();
+        if (!cleanName || topKeys.has(key)) return;
+        const fans = parseFanCount(artist.subscribersText);
+        // Reward emerging / mid-sized scene artists with distinct identity
+        const emergingSweetSpot =
+          fans > 20 && fans < 250_000
+            ? 45
+            : fans >= 250_000 && fans < 1_500_000
+              ? 18
+              : fans === 0
+                ? 25
+                : 4;
+        const affinityBoost = recommendationEngine.getEffectiveAffinity(cleanName) * 2;
+        const total = baseBoost + emergingSweetSpot + affinityBoost;
+        const existing = emergingPool.get(key);
+        if (!existing || total > existing.score) {
+          emergingPool.set(key, { artist, score: total });
+        }
+      };
+
+      const relatedArtistsToFetch: ArtistSummary[] = [];
+      for (const r of artistResults) {
+        if (r.status !== 'fulfilled') continue;
+        for (const rel of r.value.relatedArtists ?? []) {
+          addEmergingCandidate(rel, 35);
+          relatedArtistsToFetch.push(rel);
+        }
+        for (const t of r.value.topSongs ?? []) {
+          // Include collaborations involving non-mainstream co-artists
+          if (t.artists.length > 1) {
+            pushCandidateTrack(t);
+            for (const co of t.artists) {
+              if (!topKeys.has(co.name.trim().toLowerCase())) {
+                addEmergingCandidate(
+                  {
+                    id: co.id ?? co.name,
+                    name: co.name,
+                    thumbnailUrl: t.thumbnailUrl,
+                    subscribersText: 'Colaboración en escena',
+                  },
+                  28
+                );
+              }
+            }
+          }
+        }
+      }
+
+      for (const relRes of relatedResults) {
+        if (relRes.status !== 'fulfilled') continue;
+        for (const t of relRes.value.tracks ?? []) {
+          pushCandidateTrack(t);
+        }
+        for (const relAr of relRes.value.artists ?? []) {
+          addEmergingCandidate(relAr, 30);
+          relatedArtistsToFetch.push(relAr);
+        }
+      }
+
+      // Fetch top tracks of up to 3 discovered emerging/related artists for fresh discoveries
+      const topRelatedPick = Array.from(emergingPool.values())
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 3)
+        .map((x) => x.artist);
+      if (topRelatedPick.length > 0) {
+        const extraArtistDetails = await Promise.allSettled(
+          topRelatedPick.map((a) => musicProvider.getArtist(a.id || a.name))
+        );
+        for (const res of extraArtistDetails) {
+          if (res.status !== 'fulfilled') continue;
+          for (const t of res.value.topSongs.slice(0, 4)) {
+            pushCandidateTrack(t);
+          }
+          for (const rel of (res.value.relatedArtists ?? []).slice(0, 4)) {
+            addEmergingCandidate(rel, 24);
+          }
+        }
+      }
+
+      const similarPool =
+        candidateTrackMap.size > 0
+          ? Array.from(candidateTrackMap.values())
+          : [...FALLBACK_TRACKS].filter((t) => t.id !== st.currentTrack.id);
+
+      const exploreSimilarTracks = recommendationEngine.rerankTracks(similarPool, {
+        maxPerArtistInWindow: 2,
+        limit: 12,
+      });
+
+      const fallbackEmerging = FALLBACK_ARTISTS.filter(
+        (a) => !topKeys.has(a.name.trim().toLowerCase())
+      );
+      const exploreEmergingArtists =
+        emergingPool.size > 0
+          ? Array.from(emergingPool.values())
+              .sort((a, b) => b.score - a.score)
+              .map((x) => x.artist)
+              .slice(0, 12)
+          : fallbackEmerging;
+
+      set({
+        exploreSimilarTracks,
+        exploreEmergingArtists,
+        isLoadingExplore: false,
+      });
+    } catch {
+      set({ isLoadingExplore: false });
+    }
   },
   };
 });

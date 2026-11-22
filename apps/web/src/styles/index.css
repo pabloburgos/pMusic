@@ -748,35 +748,55 @@ input[type="range"].pm-eq-vertical {
   color: #FFFFFF;
   opacity: 1;
   filter: none;
-  transform: scale(1.02) translateX(4px);
+  transform: scale(1.035) translateX(6px);
   transform-origin: left center;
-  text-shadow: 0 4px 28px rgba(255, 255, 255, 0.22);
+  text-shadow: 0 6px 32px rgba(255, 255, 255, 0.26);
   transition:
-    transform 320ms var(--ease-out),
+    transform 360ms cubic-bezier(0.22, 1, 0.36, 1),
     color 240ms ease,
     opacity 260ms ease,
     filter 280ms ease;
 }
 
-/* Apple Music Sing progressive word illumination */
+/* Apple Music Sing progressive word illumination without unsung edge bleed */
 .pm-sing-word {
   display: inline-block;
+  color: rgba(255, 255, 255, 0.36);
+  -webkit-text-fill-color: rgba(255, 255, 255, 0.36);
+  transform: translateY(var(--word-y, 0px)) scale(var(--word-scale, 1));
+  transform-origin: center bottom;
+  filter: drop-shadow(0 0 var(--word-glow, 0px) rgba(255, 255, 255, 0.45));
+  transition:
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 200ms ease,
+    color 180ms ease;
+  will-change: transform;
+}
+
+.pm-sing-word[data-word-state='upcoming'] {
+  color: rgba(255, 255, 255, 0.36);
+  -webkit-text-fill-color: rgba(255, 255, 255, 0.36);
+  background-image: none;
+}
+
+.pm-sing-word[data-word-state='active'] {
   color: #FFFFFF;
   background-image: linear-gradient(
     90deg,
     #FFFFFF 0%,
-    #FFFFFF var(--word-p, 0%),
-    rgba(255, 255, 255, 0.34) calc(var(--word-p, 0%) + 12%),
-    rgba(255, 255, 255, 0.34) 100%
+    #FFFFFF max(0%, calc(var(--word-p, 0%) - 4%)),
+    rgba(255, 255, 255, 0.36) calc(var(--word-p, 0%) + 6%),
+    rgba(255, 255, 255, 0.36) 100%
   );
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  transform: translateY(var(--word-y, 0px));
-  filter: drop-shadow(0 0 var(--word-glow, 0px) rgba(255, 255, 255, 0.42));
-  transition:
-    transform 180ms var(--ease-out),
-    filter 180ms ease;
+}
+
+.pm-sing-word[data-word-state='sung'] {
+  color: #FFFFFF;
+  -webkit-text-fill-color: #FFFFFF;
+  background-image: none;
 }
 
 .pm-lyric-line-inactive {

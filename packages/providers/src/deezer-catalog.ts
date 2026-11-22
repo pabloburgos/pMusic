@@ -75,6 +75,10 @@ function normalizeSearchStr(input: string): string {
     .trim();
 }
 
+function collapseSearchStr(input: string): string {
+  return normalizeSearchStr(input).replace(/\s+/g, '');
+}
+
 function tokenizeSearchStr(input: string): string[] {
   const clean = normalizeSearchStr(input);
   return clean ? clean.split(' ') : [];
@@ -88,9 +92,11 @@ function scoreFieldTokens(
   albumName?: string
 ): number {
   if (!normQuery || queryTokens.length === 0) return 0;
+  const collapsedQuery = normQuery.replace(/\s+/g, '');
   const normTitle = normalizeSearchStr(title);
   const titleWords = new Set(tokenizeSearchStr(title));
   const normArtists = artistNames.map((n) => normalizeSearchStr(n)).filter(Boolean);
+  const collapsedArtists = artistNames.map((n) => collapseSearchStr(n)).filter(Boolean);
   const artistWordSet = new Set(normArtists.flatMap((a) => tokenizeSearchStr(a)));
   const normAlbum = albumName ? normalizeSearchStr(albumName) : '';
   const albumWords = new Set(normAlbum ? tokenizeSearchStr(normAlbum) : []);
@@ -98,6 +104,7 @@ function scoreFieldTokens(
   let score = 0;
 
   if (normTitle === normQuery) score += 180;
+  if (collapsedArtists.some((a) => a === collapsedQuery)) score += 155;
   for (const a of normArtists) {
     if (`${a} ${normTitle}` === normQuery || `${normTitle} ${a}` === normQuery) {
       score += 185;
@@ -181,13 +188,23 @@ export function scoreAlbumForQuery(album: AlbumSummary, query: string): number {
 
 export function scoreArtistForQuery(artist: ArtistSummary, query: string): number {
   const normQuery = normalizeSearchStr(query);
+  const collapsedQuery = collapseSearchStr(query);
   const queryTokens = tokenizeSearchStr(query);
   if (!normQuery || queryTokens.length === 0) return 0;
   const normName = normalizeSearchStr(artist.name);
-  if (normName === normQuery) return 195;
+  const collapsedName = collapseSearchStr(artist.name);
+  if (normName === normQuery || (collapsedQuery.length >= 4 && collapsedName === collapsedQuery)) {
+    return 195;
+  }
   const nameWords = new Set(tokenizeSearchStr(artist.name));
   const wordHits = queryTokens.filter((t) => nameWords.has(t)).length;
-  if (wordHits === queryTokens.length) return 155;
+  if (wordHits === queryTokens.length) return 165;
+  if (
+    collapsedQuery.length >= 4 &&
+    (collapsedName.includes(collapsedQuery) || collapsedQuery.includes(collapsedName))
+  ) {
+    return 125;
+  }
   if (normName.includes(normQuery) || normQuery.includes(normName)) return 80;
   return wordHits * 24;
 }
@@ -467,12 +484,61 @@ export class DeezerCatalog {
 
     const [songs, artists, albums, playlists] = await Promise.all([
       want('song') || want('video') ? this.get(`/search?q=${q}&limit=25`, signal) : null,
-      want('artist') ? this.get(`/search/artist?q=${q}&limit=10`, signal) : null,
+      want('artist') ? this.get(`/search/artist?q=${q}&limit=35`, signal) : null,
       want('album') || ((want('song') || want('video')) && tokens.length >= 2)
         ? this.get(`/search/album?q=${q}&limit=10`, signal).catch(() => ({ data: [] }))
         : null,
       want('playlist') ? this.get(`/search/playlist?q=${q}&limit=8`, signal) : null,
     ]);
+
+    const rawArtistRows: Json[] = [...(artists?.data ?? [])];
+    const extraDotArtists: Json[] = [];
+    const extraArtistTracks: Json[] = [];
+
+    // Single-token search enhancement for punctuated initial artist names (e.g. "valentino" -> "D.Valentino")
+    if (tokens.length === 1 && tokens[0] && tokens[0].length >= 4 && (want('artist') || want('song'))) {
+      const tok = tokens[0];
+      const dotVariants: string[] = [];
+      if (!tok.startsWith('d')) {
+        dotVariants.push(`D.${rawQ}`);
+      } else if (tok.length >= 5) {
+        dotVariants.push(`d.${rawQ.slice(1)}`);
+      }
+      await Promise.all(
+        dotVariants.map((variant) =>
+          runTimedGet(`/search/artist?q=${encodeURIComponent(variant)}&limit=8`, 750).then((res) => {
+            for (const row of res?.data ?? []) {
+              extraDotArtists.push(row);
+            }
+          })
+        )
+      );
+    }
+
+    const seenArtistIds = new Set<string>();
+    const combinedRawArtists: Json[] = [];
+    for (const row of [...extraDotArtists, ...rawArtistRows]) {
+      const idStr = row?.id ? String(row.id) : '';
+      if (!idStr || seenArtistIds.has(idStr)) continue;
+      seenArtistIds.add(idStr);
+      combinedRawArtists.push(row);
+    }
+
+    // Fetch top tracks for dotted/initial artist variants so their Spanish songs appear alongside global hits
+    const dotMatchedArtists = extraDotArtists
+      .filter((raw) => scoreArtistForQuery(this.mapArtist(raw), rawQ) >= 120)
+      .slice(0, 2);
+    if (dotMatchedArtists.length > 0 && (want('song') || want('video'))) {
+      await Promise.all(
+        dotMatchedArtists.map((ar) =>
+          runTimedGet(`/artist/${encodeURIComponent(String(ar.id))}/top?limit=5`, 650).then((res) => {
+            for (const t of res?.data ?? []) {
+              extraArtistTracks.push(t);
+            }
+          })
+        )
+      );
+    }
 
     const albumListRaw: Json[] = albums?.data ?? [];
     const primaryRawSongs: Json[] = songs?.data ?? [];
@@ -535,6 +601,7 @@ export class DeezerCatalog {
       pushRawUnique(sRes?.data ?? []);
     }
     pushRawUnique(candidateAlbumTracks);
+    pushRawUnique(extraArtistTracks);
     pushRawUnique(primaryRawSongs);
 
     const enrichedList = await this.enrichTracks(
@@ -549,7 +616,7 @@ export class DeezerCatalog {
       .sort((a, b) => b.score - a.score || a.idx - b.idx)
       .map((x) => x.track);
 
-    const artistList = (artists?.data ?? [])
+    const artistList = combinedRawArtists
       .map((raw: Json, idx: number) => {
         const artist = this.mapArtist(raw);
         const fanBoost = Math.log10(Math.max(1, Number(raw.nb_fan) || 0) + 1) * 8;
@@ -696,7 +763,14 @@ export class DeezerCatalog {
 
   public async album(id: string, signal?: AbortSignal): Promise<AlbumDetail> {
     const a = await this.get(`/album/${encodeURIComponent(id)}`, signal);
-    const rawTracks = (a.tracks?.data ?? []).map((t: Json) => ({
+    let trackData: Json[] = a.tracks?.data ?? [];
+    if (a.nb_tracks && trackData.length < Number(a.nb_tracks)) {
+      const fullTracks = await this.get(`/album/${encodeURIComponent(id)}/tracks?limit=100`, signal).catch(() => null);
+      if (Array.isArray(fullTracks?.data) && fullTracks.data.length > trackData.length) {
+        trackData = fullTracks.data;
+      }
+    }
+    const rawTracks = trackData.map((t: Json) => ({
       ...t,
       artist: t.artist ?? a.artist,
       album: t.album ?? a,
@@ -711,6 +785,30 @@ export class DeezerCatalog {
       album: this.mapAlbum(a),
       tracks,
     } as AlbumDetail;
+  }
+
+  public async albumByQuery(title: string, artist?: string, signal?: AbortSignal): Promise<AlbumDetail | null> {
+    const cleanTitle = title.trim();
+    if (!cleanTitle) return null;
+    const queries = Array.from(
+      new Set([artist ? `${cleanTitle} ${artist}` : cleanTitle, cleanTitle].map((q) => q.trim()).filter(Boolean))
+    );
+    for (const q of queries) {
+      const res = await this.get(`/search/album?q=${encodeURIComponent(q)}&limit=12`, signal).catch(() => null);
+      const list: Json[] = res?.data ?? [];
+      if (list.length === 0) continue;
+      const scored = list
+        .map((al) => ({
+          al,
+          score: scoreAlbumForQuery(this.mapAlbum(al), q),
+        }))
+        .sort((a, b) => b.score - a.score);
+      const best = scored[0]?.al;
+      if (best?.id) {
+        return this.album(String(best.id), signal);
+      }
+    }
+    return null;
   }
 
   public async playlist(id: string, maxItems = 100, signal?: AbortSignal): Promise<PlaylistDetail> {

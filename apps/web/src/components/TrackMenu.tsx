@@ -279,7 +279,10 @@ export const TrackContextMenu: React.FC = () => {
           role="menuitem"
           onClick={async () => {
             closeTrackMenu();
-            await openAlbumDetail(track.album!.id!);
+            await openAlbumDetail(track.album!.id!, {
+              title: track.album!.name,
+              artist: track.artists[0]?.name,
+            });
           }}
           className="pm-hover pm-text-primary flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left text-xs font-medium"
         >

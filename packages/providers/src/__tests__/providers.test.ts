@@ -7,6 +7,7 @@ import {
   YouTubeMusicProvider,
   parseFeaturedArtistsFromTitle,
   parseSpotifyEmbedHtml,
+  scoreAudioCandidate,
   splitSpotifySubtitleArtists,
   synthesizeDeterministicWavBuffer,
 } from '../index.ts';
@@ -300,5 +301,105 @@ describe('@pmusic/providers', () => {
     const mw = await catalog.artistByName('Miky Woodz');
     expect(mw.artist.id).toBe('10177296');
     expect(mw.artist.name).toBe('Miky Woodz');
+  });
+
+  it('rejects unrelated artist/song audio candidates and accepts stripped titles with matching artist', () => {
+    const wrongArtist = scoreAudioCandidate(
+      { title: 'MONACO', artist: 'Bad Bunny', durationSec: 267 },
+      {
+        candidateTitle: 'Monaco Grand Prix Highlights',
+        candidateAuthor: 'F1 Channel',
+        candidateDurationSec: 265,
+      }
+    );
+    expect(wrongArtist).toBe(-Infinity);
+
+    const exactStrip = scoreAudioCandidate(
+      { title: 'PERRO NEGRO (feat. Feid)', artist: 'Bad Bunny, Feid', durationSec: 162 },
+      {
+        candidateTitle: 'PERRO NEGRO',
+        candidateArtists: 'Bad Bunny Feid',
+        candidateDurationSec: 163,
+        isYtMusicSong: true,
+      }
+    );
+    expect(exactStrip).toBeGreaterThanOrEqual(15);
+  });
+
+  it('falls back to Musixmatch lyrics when LRCLIB fails and resolves complete albums by query', async () => {
+    const mockLrclibFetch = (async () =>
+      new Response('Not found', { status: 404 })) as typeof fetch;
+
+    const lyr = new LrclibLyricsProvider({
+      fetchFn: mockLrclibFetch,
+      musixmatchFetcher: async () => ({
+        syncedLyrics: '[00:04.00]Verso desde Musixmatch\n[00:08.50]Sonando limpio',
+        plainLyrics: 'Verso desde Musixmatch\nSonando limpio',
+        source: 'musixmatch',
+      }),
+    });
+    const doc = await lyr.getLyrics({
+      trackId: 'mx_1',
+      title: 'Prettygyal',
+      artist: 'D.Valentino',
+      durationSec: 175,
+    });
+    expect(doc.source).toBe('musixmatch');
+    expect(doc.status).toBe('synced');
+    expect(doc.lines).toHaveLength(2);
+
+    const mockAlbumFetch = (async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes('/search/album?')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 501641511,
+                title: 'nadie sabe lo que va a pasar mañana',
+                artist: { id: 10583405, name: 'Bad Bunny' },
+                cover_medium: 'https://example.com/ns.jpg',
+                release_date: '2023-10-13',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('/album/501641511/tracks')) {
+        const list = Array.from({ length: 22 }, (_, i) => ({
+          id: 9000 + i,
+          title: `Track ${i + 1}`,
+          duration: 200,
+          artist: { id: 10583405, name: 'Bad Bunny' },
+          contributors: [{ id: 10583405, name: 'Bad Bunny' }],
+        }));
+        return new Response(JSON.stringify({ data: list }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (u.includes('/album/501641511')) {
+        return new Response(
+          JSON.stringify({
+            id: 501641511,
+            title: 'nadie sabe lo que va a pasar mañana',
+            nb_tracks: 22,
+            artist: { id: 10583405, name: 'Bad Bunny' },
+            tracks: { data: [] },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      return new Response(JSON.stringify({ data: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    const catalog = new DeezerCatalog(mockAlbumFetch);
+    const yt = new YouTubeMusicProvider({ catalog });
+    const fullAlbum = await yt.getAlbum('MPR_NSLQVAPM_2023');
+    expect(fullAlbum.tracks).toHaveLength(22);
   });
 });
