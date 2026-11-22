@@ -88,6 +88,7 @@ export const SettingsModal: React.FC = () => {
     themeId,
     playerBarStyle,
     accentPreset,
+    liquidGlassMode,
     visualizerEnabled,
     graphicSaverMode,
     reducedMotionPref,
@@ -119,6 +120,7 @@ export const SettingsModal: React.FC = () => {
     setTheme,
     setPlayerBarStyle,
     setAccentPreset,
+    setLiquidGlassMode,
     setVisualizerEnabled,
     setGraphicSaverMode,
     setReducedMotionPref,
@@ -487,6 +489,29 @@ export const SettingsModal: React.FC = () => {
                   data-surface="content"
                   className="pm-surface-card divide-y pm-border rounded-[16px] px-4 py-2"
                 >
+                  <div className="flex items-center justify-between gap-4 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[13.5px] font-bold pm-text-primary">
+                        Modo Liquid Glass integral
+                      </div>
+                      <div className="text-xs pm-text-secondary">
+                        Activado: cristal translúcido en menús, barra inferior, panel derecho y tarjetas · Desactivado: acabado sólido moderno opaco
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      data-testid="liquid-glass-toggle"
+                      aria-checked={liquidGlassMode}
+                      aria-label="Modo Liquid Glass integral"
+                      onClick={() => setLiquidGlassMode(!liquidGlassMode)}
+                      className={`shrink-0 rounded-full px-4 py-1.5 text-xs font-bold transition-all ${
+                        liquidGlassMode ? 'pm-btn-primary' : 'pm-btn-secondary'
+                      }`}
+                    >
+                      {liquidGlassMode ? 'Liquid Glass' : 'Sólido Moderno'}
+                    </button>
+                  </div>
                   <SwitchRow
                     title="Visualizador espectral en vivo"
                     description="Muestra barras animadas reactivas al audio en la vista de canción"

@@ -47,6 +47,14 @@ describe('@pmusic/web UI', () => {
     fireEvent.click(screen.getByTestId('theme-card-nordic-light'));
     expect(document.documentElement.dataset.theme).toBe('nordic-light');
 
+    const liquidGlassToggle = screen.getByTestId('liquid-glass-toggle');
+    fireEvent.click(liquidGlassToggle);
+    expect(document.documentElement.classList.contains('pm-solid-modern')).toBe(true);
+    expect(document.documentElement.classList.contains('pm-liquid-glass-all')).toBe(false);
+    fireEvent.click(liquidGlassToggle);
+    expect(document.documentElement.classList.contains('pm-liquid-glass-all')).toBe(true);
+    expect(document.documentElement.classList.contains('pm-solid-modern')).toBe(false);
+
     const ambientCard = screen.getByTestId('dock-style-ambient-dock');
     const classicCard = screen.getByTestId('dock-style-classic-center');
     fireEvent.click(ambientCard);

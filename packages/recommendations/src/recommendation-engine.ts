@@ -52,6 +52,84 @@ const MIX_PALETTES = [
   '#5E5CE6',
 ] as const;
 
+function tokenizeNormalized(input: string): string[] {
+  const clean = normalizeSearchText(input)
+    .replace(/[^a-z0-9\s]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return clean ? clean.split(' ') : [];
+}
+
+function scoreEntityQueryMatch(
+  query: string,
+  title: string,
+  artists: readonly string[],
+  albumName?: string
+): number {
+  const normQuery = normalizeSearchText(query).replace(/[^a-z0-9\s]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const queryTokens = tokenizeNormalized(query);
+  if (!normQuery || queryTokens.length === 0) return 0;
+
+  const normTitle = normalizeSearchText(title).replace(/[^a-z0-9\s]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const titleWords = new Set(tokenizeNormalized(title));
+  const normArtists = artists
+    .map((a) => normalizeSearchText(a).replace(/[^a-z0-9\s]+/g, ' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  const artistWords = new Set(normArtists.flatMap((a) => tokenizeNormalized(a)));
+  const albumWords = new Set(albumName ? tokenizeNormalized(albumName) : []);
+
+  let score = 0;
+  if (normTitle === normQuery) score += 180;
+  for (const a of normArtists) {
+    if (`${a} ${normTitle}` === normQuery || `${normTitle} ${a}` === normQuery) {
+      score += 185;
+      break;
+    }
+  }
+
+  let matchedTitle = 0;
+  let matchedArtist = 0;
+  let covered = 0;
+
+  for (const tok of queryTokens) {
+    const hitTitle = titleWords.has(tok);
+    const hitArtist = artistWords.has(tok);
+    const hitAlbum = albumWords.has(tok);
+
+    if (hitTitle) {
+      matchedTitle++;
+      score += 34;
+    } else if (normTitle.includes(tok)) {
+      score += 6;
+    }
+
+    if (hitArtist) {
+      matchedArtist++;
+      score += 30;
+    } else if (normArtists.some((a) => a.includes(tok))) {
+      score += 5;
+    }
+
+    if (!hitTitle && !hitArtist && hitAlbum) {
+      score += 14;
+    }
+
+    if (hitTitle || hitArtist || hitAlbum) {
+      covered++;
+    }
+  }
+
+  if (queryTokens.length >= 2 && matchedTitle >= 1 && matchedArtist >= 1) {
+    score += 150;
+    if (covered === queryTokens.length) score += 40;
+  } else if (covered === queryTokens.length) {
+    score += 95;
+  }
+
+  if (normTitle.startsWith(normQuery)) score += 18;
+  return score;
+}
+
 export class RecommendationEngine implements IRecommendationEngine {
   private readonly musicProvider?: Pick<
     IMusicProvider,
@@ -301,14 +379,36 @@ export class RecommendationEngine implements IRecommendationEngine {
       const skipPenalty = skippedTrackIds.has(track.id) ? -6.0 : 0;
       const positionBonus = Math.max(0, 1.2 - idx * 0.05);
 
+      const queryTrimmed = opts.query?.trim();
+      if (queryTrimmed) {
+        const queryScore = scoreEntityQueryMatch(
+          queryTrimmed,
+          track.title,
+          track.artists.map((a) => a.name),
+          track.album?.name
+        );
+        return {
+          track,
+          primaryArtistKey: normalizeArtistKey(track.artists[0]?.name ?? ''),
+          queryScore,
+          score: queryScore + artistScore * 0.25 + genreBonus * 0.15 + skipPenalty + positionBonus * 0.2,
+        };
+      }
+
       return {
         track,
         primaryArtistKey: normalizeArtistKey(track.artists[0]?.name ?? ''),
+        queryScore: 0,
         score: artistScore + genreBonus + skipPenalty + positionBonus,
       };
     });
 
     scored.sort((a, b) => b.score - a.score);
+
+    // When a search query is active, preserve top query matches in order instead of pushing them down
+    if (opts.query?.trim()) {
+      return scored.map((item) => item.track).slice(0, limit);
+    }
 
     // Diversity sliding window constraint so no single artist dominates consecutive slots
     const selected: Track[] = [];
@@ -394,19 +494,23 @@ export class RecommendationEngine implements IRecommendationEngine {
     bundle: SearchResultBundle
   ): TopResultMatch | undefined {
     const normQuery = normalizeSearchText(query);
+    const queryTokens = tokenizeNormalized(query);
 
     let bestCandidate: TopResultMatch | undefined = bundle.topResult;
     let bestScore = -Infinity;
 
     for (const artist of bundle.artists) {
       const normName = normalizeSearchText(artist.name);
-      const exact = normQuery.length > 0 && normName === normQuery ? 12 : 0;
+      const exact = normQuery.length > 0 && normName === normQuery ? 195 : 0;
       const partial =
-        normQuery.length > 0 && (normName.includes(normQuery) || normQuery.includes(normName))
-          ? 6
+        exact === 0 && normQuery.length > 0 && (normName.includes(normQuery) || normQuery.includes(normName))
+          ? 70
           : 0;
-      const affinity = this.getEffectiveAffinity(artist.name);
-      const score = exact + partial + affinity;
+      const artistWordSet = new Set(tokenizeNormalized(artist.name));
+      const allTokensInArtist =
+        queryTokens.length > 0 && queryTokens.every((t) => artistWordSet.has(t)) ? 150 : 0;
+      const affinity = this.getEffectiveAffinity(artist.name) * 0.4;
+      const score = Math.max(exact, allTokensInArtist, partial) + affinity;
       if (score > bestScore) {
         bestScore = score;
         bestCandidate = { kind: 'artist', item: artist };
@@ -414,14 +518,18 @@ export class RecommendationEngine implements IRecommendationEngine {
     }
 
     for (const song of bundle.songs) {
-      const normTitle = normalizeSearchText(song.title);
-      const exactTitle = normQuery.length > 0 && normTitle === normQuery ? 11 : 0;
-      const partialTitle = normQuery.length > 0 && normTitle.includes(normQuery) ? 5 : 0;
-      const artistAffinity = song.artists.reduce(
-        (m, a) => Math.max(m, this.getEffectiveAffinity(a.name)),
-        0
+      const queryMatch = scoreEntityQueryMatch(
+        query,
+        song.title,
+        song.artists.map((a) => a.name),
+        song.album?.name
       );
-      const score = exactTitle + partialTitle + artistAffinity * 0.85;
+      const artistAffinity =
+        song.artists.reduce(
+          (m, a) => Math.max(m, this.getEffectiveAffinity(a.name)),
+          0
+        ) * 0.35;
+      const score = queryMatch + artistAffinity;
       if (score > bestScore) {
         bestScore = score;
         bestCandidate = { kind: 'song', item: song };
@@ -429,13 +537,18 @@ export class RecommendationEngine implements IRecommendationEngine {
     }
 
     for (const album of bundle.albums) {
-      const normTitle = normalizeSearchText(album.title);
-      const exactAlbum = normQuery.length > 0 && normTitle === normQuery ? 9 : 0;
-      const artistAffinity = album.artists.reduce(
-        (m, a) => Math.max(m, this.getEffectiveAffinity(a.name)),
-        0
+      const queryMatch = scoreEntityQueryMatch(
+        query,
+        album.title,
+        album.artists.map((a) => a.name)
       );
-      const score = exactAlbum + artistAffinity * 0.7;
+      const artistAffinity =
+        album.artists.reduce(
+          (m, a) => Math.max(m, this.getEffectiveAffinity(a.name)),
+          0
+        ) * 0.25;
+      // Slightly prefer matching the song over the album card when both cover the query
+      const score = (queryMatch > 0 ? queryMatch - 10 : 0) + artistAffinity;
       if (score > bestScore) {
         bestScore = score;
         bestCandidate = { kind: 'album', item: album };

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" fill="none">
+  <defs>
+    <radialGradient id="pm-bg" cx="30%" cy="20%" r="85%">
+      <stop offset="0%" stop-color="#251C3E" />
+      <stop offset="52%" stop-color="#12111D" />
+      <stop offset="100%" stop-color="#08080D" />
+    </radialGradient>
+    <linearGradient id="pm-rim" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.45" />
+      <stop offset="50%" stop-color="#C084FC" stop-opacity="0.22" />
+      <stop offset="100%" stop-color="#38BDF8" stop-opacity="0.32" />
+    </linearGradient>
+    <linearGradient id="pm-glyph" x1="18%" y1="12%" x2="88%" y2="90%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="52%" stop-color="#E4D0FF" />
+      <stop offset="100%" stop-color="#67E8F9" />
+    </linearGradient>
+    <linearGradient id="pm-sheen" x1="10%" y1="0%" x2="80%" y2="65%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.22" />
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0" />
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="64" fill="url(#pm-bg)" />
+  <path d="M72 10H184C218 10 246 38 246 72V106C198 76 122 70 10 112V72C10 38 38 10 72 10Z" fill="url(#pm-sheen)" />
+  <rect x="10.5" y="10.5" width="235" height="235" rx="61.5" stroke="url(#pm-rim)" stroke-width="5" />
+  <rect x="64" y="60" width="28" height="142" rx="14" fill="url(#pm-glyph)" />
+  <path d="M92 98C92 73 113 56 142 56C174 56 198 79 198 112C198 145 174 168 142 168C118 168 100 155 92 136" stroke="url(#pm-glyph)" stroke-width="26" stroke-linecap="round" />
+  <circle cx="143" cy="112" r="14" fill="#38BDF8" />
+  <path d="M174 50C193 60 206 75 213 94" stroke="#C084FC" stroke-width="12" stroke-linecap="round" stroke-opacity="0.88" />
+</svg>

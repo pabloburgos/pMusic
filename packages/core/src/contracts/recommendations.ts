@@ -78,6 +78,7 @@ export interface RecommendationSignalMeta {
 }
 
 export interface RecommendationRerankOptions {
+  query?: string;
   limit?: number;
   explorationRate?: number;
   maxPerArtistInWindow?: number;

@@ -93,7 +93,7 @@ export const TrackContextMenu: React.FC = () => {
       aria-label={`Opciones para ${track.title}`}
       data-testid="track-context-menu"
       style={{ left, top }}
-      className="pm-elevated pm-border pm-menu-pop fixed z-[70] w-66 max-h-[78vh] overflow-y-auto rounded-[16px] border p-1.5 shadow-[0_24px_64px_rgba(0,0,0,0.68)] pm-no-scrollbar"
+      className="pm-glass-liquid pm-menu-pop fixed z-[70] w-66 max-h-[78vh] overflow-y-auto rounded-[18px] p-1.5 pm-no-scrollbar"
     >
       {/* Mini Track Header */}
       <div className="mb-1 flex items-center gap-2.5 border-b pm-border px-2.5 py-2">

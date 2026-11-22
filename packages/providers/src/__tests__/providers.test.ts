@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DeezerCatalog,
   LrcParser,
   LrclibLyricsProvider,
   PlaylistImporter,
@@ -159,5 +160,81 @@ describe('@pmusic/providers', () => {
       'Feid',
       'ATL Jacob',
     ]);
+  });
+
+  it('expands matching albums and ranks split artist+track intent #1 (e.g. "pablete diabla" -> Pablete - DIABLA)', async () => {
+    const mockFetch = (async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes('/search/track?')) {
+        return new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (u.includes('/search/album?')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 9901,
+                title: 'DIABLA',
+                artist: { id: 501, name: 'Pablete' },
+                cover_medium: 'https://example.com/diabla.jpg',
+                release_date: '2025-11-01',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('/album/9901/tracks')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 8801,
+                title: 'DIABLA',
+                title_short: 'DIABLA',
+                duration: 186,
+                artist: { id: 501, name: 'Pablete' },
+                contributors: [{ id: 501, name: 'Pablete' }],
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('/search?')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 1001,
+                title: 'El Puente del Diablo',
+                duration: 197,
+                artist: { id: 201, name: 'Nelson Poblete' },
+                contributors: [{ id: 201, name: 'Nelson Poblete' }],
+                album: { id: 301, title: 'Patios Interiores', cover_medium: 'https://example.com/nelson.jpg' },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      return new Response(JSON.stringify({ data: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    const catalog = new DeezerCatalog(mockFetch);
+    const res = await catalog.search('pablete diabla', 'all');
+    expect(res.songs[0]?.title).toBe('DIABLA');
+    expect(res.songs[0]?.artists[0]?.name).toBe('Pablete');
+    expect(res.topResult?.kind).toBe('song');
+    if (res.topResult?.kind === 'song') {
+      expect(res.topResult.item.title).toBe('DIABLA');
+      expect(res.topResult.item.artists[0]?.name).toBe('Pablete');
+    }
   });
 });

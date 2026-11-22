@@ -15,6 +15,10 @@ import '@fontsource/instrument-serif/400-italic.css';
 import './styles/index.css';
 import { App } from './App.tsx';
 
+if (typeof document !== 'undefined') {
+  document.documentElement.classList.add('pm-liquid-glass-all');
+}
+
 const container = document.getElementById('root');
 if (container) {
   createRoot(container).render(

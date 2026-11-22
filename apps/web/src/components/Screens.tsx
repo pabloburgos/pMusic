@@ -205,10 +205,11 @@ export const TrackListRow: React.FC<{
           <div className="flex min-w-0 items-center gap-1.5 overflow-hidden text-[12.5px] pm-text-secondary">
             <ArtistLinks
               artists={track.artists}
+              className="min-w-0 shrink-0 max-w-[75%]"
               linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
             />
             {track.album && (
-              <span className="hidden shrink-0 truncate pm-text-tertiary lg:inline">
+              <span className="hidden min-w-0 flex-1 truncate pm-text-tertiary lg:inline">
                 · {track.album.name}
               </span>
             )}

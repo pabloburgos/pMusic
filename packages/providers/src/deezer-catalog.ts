@@ -65,6 +65,133 @@ export function parseFeaturedArtistsFromTitle(title: string): string[] {
 
 type Json = Record<string, any>;
 
+function normalizeSearchStr(input: string): string {
+  return input
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function tokenizeSearchStr(input: string): string[] {
+  const clean = normalizeSearchStr(input);
+  return clean ? clean.split(' ') : [];
+}
+
+function scoreFieldTokens(
+  queryTokens: readonly string[],
+  normQuery: string,
+  title: string,
+  artistNames: readonly string[],
+  albumName?: string
+): number {
+  if (!normQuery || queryTokens.length === 0) return 0;
+  const normTitle = normalizeSearchStr(title);
+  const titleWords = new Set(tokenizeSearchStr(title));
+  const normArtists = artistNames.map((n) => normalizeSearchStr(n)).filter(Boolean);
+  const artistWordSet = new Set(normArtists.flatMap((a) => tokenizeSearchStr(a)));
+  const normAlbum = albumName ? normalizeSearchStr(albumName) : '';
+  const albumWords = new Set(normAlbum ? tokenizeSearchStr(normAlbum) : []);
+
+  let score = 0;
+
+  if (normTitle === normQuery) score += 180;
+  for (const a of normArtists) {
+    if (`${a} ${normTitle}` === normQuery || `${normTitle} ${a}` === normQuery) {
+      score += 185;
+      break;
+    }
+  }
+
+  let matchedInTitleCount = 0;
+  let matchedInArtistCount = 0;
+  let totalCoveredTokens = 0;
+
+  for (const tok of queryTokens) {
+    const inTitleWord = titleWords.has(tok);
+    const inArtistWord = artistWordSet.has(tok);
+    const inAlbumWord = albumWords.has(tok);
+
+    if (inTitleWord) {
+      matchedInTitleCount++;
+      score += 34;
+    } else if (normTitle.includes(tok)) {
+      score += 7;
+    }
+
+    if (inArtistWord) {
+      matchedInArtistCount++;
+      score += 30;
+    } else if (normArtists.some((a) => a.includes(tok))) {
+      score += 6;
+    }
+
+    if (!inTitleWord && !inArtistWord && inAlbumWord) {
+      score += 14;
+    }
+
+    if (inTitleWord || inArtistWord || inAlbumWord) {
+      totalCoveredTokens++;
+    }
+  }
+
+  // Split Artist + Track intent (e.g. "pablete diabla" -> Pablete in artists AND diabla in title)
+  if (queryTokens.length >= 2 && matchedInTitleCount >= 1 && matchedInArtistCount >= 1) {
+    score += 150;
+    if (totalCoveredTokens === queryTokens.length) {
+      score += 40;
+    }
+  } else if (totalCoveredTokens === queryTokens.length) {
+    score += 95;
+  }
+
+  // Boost clean exact/prefix matches on title when single or short query
+  if (normTitle.startsWith(normQuery)) score += 18;
+  if (normArtists.some((a) => a === normQuery)) score += 145;
+
+  return score;
+}
+
+export function scoreTrackForQuery(track: Track, query: string): number {
+  const normQuery = normalizeSearchStr(query);
+  const queryTokens = tokenizeSearchStr(query);
+  return scoreFieldTokens(
+    queryTokens,
+    normQuery,
+    track.title,
+    track.artists.map((a) => a.name),
+    track.album?.name
+  );
+}
+
+export function scoreAlbumForQuery(album: AlbumSummary, query: string): number {
+  const normQuery = normalizeSearchStr(query);
+  const queryTokens = tokenizeSearchStr(query);
+  const base = scoreFieldTokens(
+    queryTokens,
+    normQuery,
+    album.title,
+    album.artists.map((a) => a.name)
+  );
+  // Slight adjustment so exact song matches beat album cards when both exist
+  return base > 0 ? base - 8 : 0;
+}
+
+export function scoreArtistForQuery(artist: ArtistSummary, query: string): number {
+  const normQuery = normalizeSearchStr(query);
+  const queryTokens = tokenizeSearchStr(query);
+  if (!normQuery || queryTokens.length === 0) return 0;
+  const normName = normalizeSearchStr(artist.name);
+  if (normName === normQuery) return 195;
+  const nameWords = new Set(tokenizeSearchStr(artist.name));
+  const wordHits = queryTokens.filter((t) => nameWords.has(t)).length;
+  if (wordHits === queryTokens.length) return 155;
+  if (normName.includes(normQuery) || normQuery.includes(normName)) return 80;
+  return wordHits * 24;
+}
+
 const GENRE_CHART_MAP: Record<string, number> = {
   'género: latino': 197,
   'género: reggaetón': 122,
@@ -296,38 +423,157 @@ export class DeezerCatalog {
       };
     }
 
-    const q = encodeURIComponent(query.trim());
+    const rawQ = query.trim();
+    const q = encodeURIComponent(rawQ);
+    const tokens = tokenizeSearchStr(rawQ);
     const want = (f: SearchFilter) => filter === 'all' || filter === f;
-    const [songs, artists, albums, playlists] = await Promise.all([
+
+    const runTimedGet = async (path: string, timeoutMs = 1400): Promise<Json | null> => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      const onOuter = () => ctrl.abort();
+      signal?.addEventListener('abort', onOuter, { once: true });
+      try {
+        return await this.get(path, ctrl.signal);
+      } catch {
+        return null;
+      } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onOuter);
+      }
+    };
+
+    const structuredPromises: Array<Promise<Json | null>> = [];
+    if ((want('song') || want('video')) && tokens.length >= 2) {
+      const first = tokens[0]!;
+      const rest = tokens.slice(1).join(' ');
+      const last = tokens[tokens.length - 1]!;
+      const head = tokens.slice(0, -1).join(' ');
+      structuredPromises.push(
+        runTimedGet(`/search/track?q=${encodeURIComponent(`artist:"${first}" track:"${rest}"`)}&limit=10`),
+        runTimedGet(`/search/track?q=${encodeURIComponent(`artist:"${last}" track:"${head}"`)}&limit=10`)
+      );
+    }
+
+    const [songs, artists, albums, playlists, ...structuredTracks] = await Promise.all([
       want('song') || want('video') ? this.get(`/search?q=${q}&limit=30`, signal) : null,
       want('artist') ? this.get(`/search/artist?q=${q}&limit=8`, signal) : null,
-      want('album') ? this.get(`/search/album?q=${q}&limit=10`, signal) : null,
+      want('album') || ((want('song') || want('video')) && tokens.length >= 2)
+        ? this.get(`/search/album?q=${q}&limit=10`, signal).catch(() => ({ data: [] }))
+        : null,
       want('playlist') ? this.get(`/search/playlist?q=${q}&limit=8`, signal) : null,
+      ...structuredPromises,
     ]);
-    const rawSearchSongs = songs?.data ?? [];
-    const songList = await this.enrichTracks(
-      rawSearchSongs,
-      rawSearchSongs.map((t: Json) => this.mapTrack(t)),
+
+    const albumListRaw: Json[] = albums?.data ?? [];
+    const candidateAlbumTracks: Json[] = [];
+
+    if ((want('song') || want('video')) && tokens.length >= 2 && albumListRaw.length > 0) {
+      const matchingAlbums = albumListRaw
+        .map((al) => ({
+          al,
+          score: scoreAlbumForQuery(this.mapAlbum(al), rawQ),
+        }))
+        .filter((entry) => entry.score >= 60)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 2);
+
+      if (matchingAlbums.length > 0) {
+        const fetchedAlbums = await Promise.all(
+          matchingAlbums.map(({ al }) =>
+            runTimedGet(`/album/${encodeURIComponent(String(al.id))}/tracks?limit=25`).then((res) =>
+              (res?.data ?? []).map((t: Json) => ({
+                ...t,
+                artist: t.artist ?? al.artist,
+                album: t.album ?? al,
+              }))
+            )
+          )
+        );
+        for (const list of fetchedAlbums) {
+          candidateAlbumTracks.push(...list);
+        }
+      }
+    }
+
+    const mergedRaw: Json[] = [];
+    const seenRawIds = new Set<string>();
+    const pushRawUnique = (list: Json[]) => {
+      for (const item of list) {
+        if (!item || !item.id) continue;
+        const idStr = String(item.id);
+        if (seenRawIds.has(idStr)) continue;
+        seenRawIds.add(idStr);
+        mergedRaw.push(item);
+      }
+    };
+
+    for (const sRes of structuredTracks) {
+      pushRawUnique(sRes?.data ?? []);
+    }
+    pushRawUnique(candidateAlbumTracks);
+    pushRawUnique(songs?.data ?? []);
+
+    const enrichedList = await this.enrichTracks(
+      mergedRaw,
+      mergedRaw.map((t: Json) => this.mapTrack(t)),
       12,
       signal
     );
-    const artistList = (artists?.data ?? []).map((a: Json) => this.mapArtist(a));
+
+    const songList = enrichedList
+      .map((track, idx) => ({ track, idx, score: scoreTrackForQuery(track, rawQ) }))
+      .sort((a, b) => b.score - a.score || a.idx - b.idx)
+      .map((x) => x.track);
+
+    const artistList = (artists?.data ?? [])
+      .map((a: Json) => this.mapArtist(a))
+      .map((artist: ArtistSummary, idx: number) => ({
+        artist,
+        idx,
+        score: scoreArtistForQuery(artist, rawQ),
+      }))
+      .sort((a: { score: number; idx: number }, b: { score: number; idx: number }) => b.score - a.score || a.idx - b.idx)
+      .map((x: { artist: ArtistSummary }) => x.artist);
+
+    const albumList = (want('album') ? albumListRaw : [])
+      .map((a: Json) => this.mapAlbum(a))
+      .map((album: AlbumSummary, idx: number) => ({
+        album,
+        idx,
+        score: scoreAlbumForQuery(album, rawQ),
+      }))
+      .sort((a: { score: number; idx: number }, b: { score: number; idx: number }) => b.score - a.score || a.idx - b.idx)
+      .map((x: { album: AlbumSummary }) => x.album);
+
+    const topSong = songList[0];
     const topArtist = artistList[0];
-    const qn = query.trim().toLowerCase();
+    const topAlbum = albumList[0];
+
+    const songScore = topSong ? scoreTrackForQuery(topSong, rawQ) : -1;
+    const artistScore = topArtist ? scoreArtistForQuery(topArtist, rawQ) : -1;
+    const albumScore = topAlbum ? scoreAlbumForQuery(topAlbum, rawQ) : -1;
+
+    let topResult: SearchResultBundle['topResult'];
+    if (artistScore >= songScore && artistScore >= albumScore && topArtist) {
+      topResult = { kind: 'artist', item: topArtist };
+    } else if (songScore >= albumScore && topSong) {
+      topResult = { kind: 'song', item: topSong };
+    } else if (topAlbum) {
+      topResult = { kind: 'album', item: topAlbum };
+    } else if (topSong) {
+      topResult = { kind: 'song', item: topSong };
+    } else if (topArtist) {
+      topResult = { kind: 'artist', item: topArtist };
+    }
+
     return {
       query,
-      topResult:
-        topArtist && topArtist.name.toLowerCase().includes(qn)
-          ? { kind: 'artist', item: topArtist }
-          : songList[0]
-            ? { kind: 'song', item: songList[0] }
-            : topArtist
-              ? { kind: 'artist', item: topArtist }
-              : undefined,
+      topResult,
       songs: songList,
       videos: songList.slice(0, 4),
       artists: artistList,
-      albums: (albums?.data ?? []).map((a: Json) => this.mapAlbum(a)),
+      albums: albumList,
       playlists: (playlists?.data ?? []).map((p: Json) => this.mapPlaylist(p)),
     };
   }

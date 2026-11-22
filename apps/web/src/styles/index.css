@@ -18,8 +18,11 @@
   --pm-glass-regular-blur: 28px;
   --pm-glass-clear-bg: rgba(12, 12, 17, 0.62);
   --pm-glass-clear-blur: 20px;
-  --pm-glass-border: rgba(255, 255, 255, 0.10);
-  --pm-glass-highlight: rgba(255, 255, 255, 0.14);
+  --pm-glass-border: rgba(255, 255, 255, 0.12);
+  --pm-glass-highlight: rgba(255, 255, 255, 0.20);
+  --pm-glass-specular-top: rgba(255, 255, 255, 0.28);
+  --pm-glass-specular-bottom: rgba(255, 255, 255, 0.06);
+  --pm-glass-sheen: rgba(255, 255, 255, 0.11);
   --pm-glass-shadow: 0 20px 50px rgba(0, 0, 0, 0.56);
   --pm-bright-media-scrim: rgba(8, 8, 12, 0.44);
 
@@ -62,8 +65,11 @@
 
   --pm-glass-regular-bg: rgba(255, 253, 248, 0.84);
   --pm-glass-clear-bg: rgba(250, 247, 240, 0.76);
-  --pm-glass-border: rgba(20, 20, 26, 0.10);
-  --pm-glass-highlight: rgba(255, 255, 255, 0.85);
+  --pm-glass-border: rgba(20, 20, 26, 0.12);
+  --pm-glass-highlight: rgba(255, 255, 255, 0.92);
+  --pm-glass-specular-top: rgba(255, 255, 255, 0.95);
+  --pm-glass-specular-bottom: rgba(20, 20, 26, 0.06);
+  --pm-glass-sheen: rgba(255, 255, 255, 0.58);
   --pm-glass-shadow: 0 18px 46px rgba(32, 26, 18, 0.11);
 
   --pm-text-primary: #15151A;
@@ -359,29 +365,74 @@ code {
   app-region: no-drag;
 }
 
-/* Functional Chrome Liquid Glass (never nested, never on content cards/rows) */
+/* Functional Chrome Liquid Glass (Fresnel specular rims + luminous optical sheen) */
 .pm-glass-regular {
-  background-color: var(--pm-glass-regular-bg);
-  -webkit-backdrop-filter: blur(28px) saturate(180%);
-  backdrop-filter: blur(28px) saturate(180%);
+  background: linear-gradient(
+    155deg,
+    color-mix(in srgb, var(--pm-glass-regular-bg) 96%, white 4%) 0%,
+    var(--pm-glass-regular-bg) 52%,
+    color-mix(in srgb, var(--pm-glass-regular-bg) 92%, black 8%) 100%
+  );
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  backdrop-filter: blur(28px) saturate(190%);
   border: 1px solid var(--pm-glass-border);
-  box-shadow: var(--pm-glass-shadow), inset 0 1px 0 var(--pm-glass-highlight);
+  box-shadow:
+    var(--pm-glass-shadow),
+    inset 0 1px 0 var(--pm-glass-specular-top),
+    inset 0 -1px 0 var(--pm-glass-specular-bottom);
   color: var(--pm-text-primary);
 }
 
 .pm-glass-liquid {
   background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.14) 0%,
-    rgba(255, 255, 255, 0.06) 100%
+    155deg,
+    color-mix(in srgb, var(--pm-glass-regular-bg) 82%, var(--pm-glass-sheen)) 0%,
+    color-mix(in srgb, var(--pm-glass-regular-bg) 92%, transparent) 100%
   );
-  -webkit-backdrop-filter: blur(28px) saturate(200%);
-  backdrop-filter: blur(28px) saturate(200%);
-  border: 1px solid rgba(255, 255, 255, 0.22);
+  -webkit-backdrop-filter: blur(30px) saturate(210%);
+  backdrop-filter: blur(30px) saturate(210%);
+  border: 1px solid var(--pm-glass-border);
   box-shadow:
-    0 20px 52px rgba(0, 0, 0, 0.48),
-    inset 0 1px 0 rgba(255, 255, 255, 0.32),
-    inset 0 -1px 0 rgba(255, 255, 255, 0.07);
+    var(--pm-glass-shadow),
+    inset 0 1px 0 var(--pm-glass-specular-top),
+    inset 0 -1px 0 var(--pm-glass-specular-bottom);
+  color: var(--pm-text-primary);
+}
+
+.pm-glass-surface {
+  background-color: var(--pm-bg-surface);
+  color: var(--pm-text-primary);
+  border: 1px solid var(--pm-border-subtle);
+}
+
+html.pm-liquid-glass-all .pm-glass-surface {
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--pm-glass-regular-bg) 86%, var(--pm-glass-sheen)) 0%,
+    var(--pm-glass-regular-bg) 100%
+  );
+  -webkit-backdrop-filter: blur(24px) saturate(185%);
+  backdrop-filter: blur(24px) saturate(185%);
+  border: 1px solid var(--pm-glass-border);
+  box-shadow:
+    var(--pm-glass-shadow),
+    inset 0 1px 0 var(--pm-glass-specular-top),
+    inset 0 -1px 0 var(--pm-glass-specular-bottom);
+}
+
+/* Keep active backdrop-filter surfaces <= 4 whenever a full-screen dialog is open */
+html.pm-liquid-glass-all:has([role="dialog"]) .pm-glass-surface {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+html.pm-liquid-glass-all .pm-surface-card {
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--pm-bg-surface) 90%, var(--pm-glass-sheen)) 0%,
+    color-mix(in srgb, var(--pm-bg-surface) 88%, transparent) 100%
+  );
+  box-shadow: inset 0 1px 0 var(--pm-glass-specular-top);
 }
 
 .pm-glass-chip {
@@ -887,21 +938,30 @@ input.pm-input-frameless:focus-visible {
 }
 
 html.pm-reduced-transparency .pm-glass-regular,
-html.pm-reduced-transparency .pm-glass-clear {
+html.pm-reduced-transparency .pm-glass-clear,
+html.pm-reduced-transparency .pm-glass-surface,
+html.pm-solid-modern .pm-glass-regular,
+html.pm-solid-modern .pm-glass-clear,
+html.pm-solid-modern .pm-glass-surface {
   background: var(--pm-bg-surface) !important;
   background-color: var(--pm-bg-surface) !important;
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.18) !important;
 }
 html.pm-reduced-transparency .pm-glass-liquid,
-html.pm-reduced-transparency .pm-glass-chip {
-  background: #14141B !important;
-  background-color: #14141B !important;
+html.pm-reduced-transparency .pm-glass-chip,
+html.pm-solid-modern .pm-glass-liquid,
+html.pm-solid-modern .pm-glass-chip {
+  background: var(--pm-bg-elevated) !important;
+  background-color: var(--pm-bg-elevated) !important;
+  border-color: var(--pm-border-strong) !important;
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
-html.pm-reduced-transparency .pm-spotlight-backdrop {
-  background-color: rgba(7, 7, 10, 0.88) !important;
+html.pm-reduced-transparency .pm-spotlight-backdrop,
+html.pm-solid-modern .pm-spotlight-backdrop {
+  background-color: rgba(7, 7, 10, 0.80) !important;
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }

@@ -233,6 +233,7 @@ export interface PMusicStoreState {
   spotlightOpen: boolean;
   activeDetailView: ActiveDetailView;
   isOfflineNetwork: boolean;
+  liquidGlassMode: boolean;
   graphicSaverMode: boolean;
   reducedMotionPref: boolean;
   themeId: PMusicThemeId;
@@ -430,6 +431,7 @@ export interface PMusicStoreState {
     volume01?: number
   ) => Promise<void>;
   transferPlaybackToDevice: (targetDeviceId: string) => Promise<void>;
+  setLiquidGlassMode: (enabled: boolean) => void;
   setGraphicSaverMode: (enabled: boolean) => void;
   setReducedMotionPref: (enabled: boolean) => void;
   setTheme: (themeId: PMusicThemeId) => void;
@@ -641,6 +643,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       themeId: st.themeId,
       playerBarStyle: st.playerBarStyle,
       accentPreset: st.accentPreset,
+      liquidGlassMode: st.liquidGlassMode,
       graphicSaverMode: st.graphicSaverMode,
       reducedMotionPref: st.reducedMotionPref,
       visualizerEnabled: st.visualizerEnabled,
@@ -678,6 +681,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   spotlightOpen: false,
   activeDetailView: null,
   isOfflineNetwork: typeof navigator !== 'undefined' ? !navigator.onLine : false,
+  liquidGlassMode: true,
   graphicSaverMode: false,
   reducedMotionPref: false,
   themeId: 'obsidian',
@@ -907,6 +911,23 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       hydratedPrefs = null;
     }
 
+    const resolvedLiquidGlass =
+      hydratedPrefs && typeof hydratedPrefs.liquidGlassMode === 'boolean'
+        ? hydratedPrefs.liquidGlassMode
+        : hydratedPrefs
+          ? !Boolean(hydratedPrefs.graphicSaverMode)
+          : get().liquidGlassMode;
+
+    if (typeof document !== 'undefined') {
+      document.documentElement.classList.toggle('pm-liquid-glass-all', resolvedLiquidGlass);
+      document.documentElement.classList.toggle('pm-solid-modern', !resolvedLiquidGlass);
+      document.documentElement.classList.toggle('pm-reduced-transparency', !resolvedLiquidGlass);
+      document.documentElement.classList.toggle(
+        'pm-reduced-motion',
+        Boolean(hydratedPrefs?.reducedMotionPref ?? (!resolvedLiquidGlass))
+      );
+    }
+
     if (hydratedPrefs) {
       const resolvedTheme =
         typeof hydratedPrefs.themeId === 'string'
@@ -919,16 +940,6 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         applyAccentOverride(
           hydratedPrefs.accentPreset as PMusicAccentPresetId,
           resolvedTheme
-        );
-      }
-      if (typeof document !== 'undefined') {
-        document.documentElement.classList.toggle(
-          'pm-reduced-transparency',
-          Boolean(hydratedPrefs.graphicSaverMode)
-        );
-        document.documentElement.classList.toggle(
-          'pm-reduced-motion',
-          Boolean(hydratedPrefs.reducedMotionPref ?? hydratedPrefs.graphicSaverMode)
         );
       }
       if (typeof hydratedPrefs.streamQuality === 'string') {
@@ -975,7 +986,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
               (hydratedPrefs.playerBarStyle as PMusicPlayerBarStyle) ?? prev.playerBarStyle,
             accentPreset:
               (hydratedPrefs.accentPreset as PMusicAccentPresetId) ?? prev.accentPreset,
-            graphicSaverMode: Boolean(hydratedPrefs.graphicSaverMode ?? prev.graphicSaverMode),
+            liquidGlassMode: resolvedLiquidGlass,
+            graphicSaverMode: !resolvedLiquidGlass,
             reducedMotionPref: Boolean(hydratedPrefs.reducedMotionPref ?? prev.reducedMotionPref),
             visualizerEnabled: Boolean(hydratedPrefs.visualizerEnabled ?? prev.visualizerEnabled),
             lyricsSize: hydratedPrefs.lyricsSize ?? prev.lyricsSize,
@@ -1898,7 +1910,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       ]);
       if (ticket !== searchTicket) return;
       const ranked = recommendationEngine.rankAutocomplete(query, remoteSuggestions);
-      const rerankedSongs = recommendationEngine.rerankTracks(rawBundle.songs);
+      const rerankedSongs = recommendationEngine.rerankTracks(rawBundle.songs, { query });
       const bundle: SearchResultBundle = {
         ...rawBundle,
         songs: rerankedSongs,
@@ -2325,15 +2337,29 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     });
   },
 
-  setGraphicSaverMode: (enabled) => {
+  setLiquidGlassMode: (enabled) => {
+    const saver = !enabled;
     if (typeof document !== 'undefined') {
+      document.documentElement.classList.toggle('pm-liquid-glass-all', enabled);
+      document.documentElement.classList.toggle('pm-solid-modern', saver);
+      document.documentElement.classList.toggle('pm-reduced-transparency', saver);
+    }
+    set({ liquidGlassMode: enabled, graphicSaverMode: saver });
+    persistPrefsFromStore();
+  },
+
+  setGraphicSaverMode: (enabled) => {
+    const liquid = !enabled;
+    if (typeof document !== 'undefined') {
+      document.documentElement.classList.toggle('pm-liquid-glass-all', liquid);
+      document.documentElement.classList.toggle('pm-solid-modern', enabled);
       document.documentElement.classList.toggle('pm-reduced-transparency', enabled);
       document.documentElement.classList.toggle(
         'pm-reduced-motion',
         enabled || get().reducedMotionPref
       );
     }
-    set({ graphicSaverMode: enabled });
+    set({ graphicSaverMode: enabled, liquidGlassMode: liquid });
     persistPrefsFromStore();
   },
 

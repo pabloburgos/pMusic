@@ -924,7 +924,7 @@ export const App: React.FC = () => {
         {!isMobileViewport && rightPanelOpen && (
           <aside
             aria-label="En reproducción y siguiente"
-            className="pm-panel hidden h-full w-[304px] shrink-0 flex-col gap-5 overflow-y-auto rounded-[20px] p-4 pm-no-scrollbar xl:flex"
+            className="pm-glass-surface hidden h-full w-[304px] shrink-0 flex-col gap-5 overflow-y-auto rounded-[20px] p-4 pm-no-scrollbar xl:flex"
           >
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold tracking-wide pm-text-secondary">
@@ -1187,17 +1187,19 @@ export const App: React.FC = () => {
               : 'h-[84px]'
           }`}
         >
-          {/* Ambient Full-Dock Progress & Hover Preview (only in ambient-dock mode) */}
+          {/* Ambient Full-Dock Progress & Hover Preview Tinted with Active Song Cover Colors */}
           {playerBarStyle === 'ambient-dock' && (
             <>
               <div
                 aria-hidden="true"
-                className="pointer-events-none absolute inset-y-0 left-0 z-0 transition-[width] duration-150"
+                className="pointer-events-none absolute inset-y-0 left-0 z-0 transition-[width,background] duration-150"
                 style={{
                   width: `${progressPct}%`,
-                  borderRight: '1px solid var(--pm-dock-edge)',
+                  borderRight: '2px solid color-mix(in srgb, var(--pm-ambient-1) 75%, white)',
                   background:
-                    'linear-gradient(90deg, var(--pm-dock-fill-start) 0%, var(--pm-dock-fill-end) 100%)',
+                    'linear-gradient(90deg, color-mix(in srgb, var(--pm-ambient-1) 36%, transparent) 0%, color-mix(in srgb, var(--pm-ambient-2) 64%, transparent) 100%)',
+                  boxShadow:
+                    '2px 0 24px color-mix(in srgb, var(--pm-ambient-1) 42%, transparent)',
                 }}
               />
               {dockHoverPct !== null && (
@@ -1206,7 +1208,8 @@ export const App: React.FC = () => {
                   className="pointer-events-none absolute inset-y-0 left-0 z-0"
                   style={{
                     width: `${dockHoverPct}%`,
-                    backgroundColor: 'var(--pm-hover-tint)',
+                    backgroundColor:
+                      'color-mix(in srgb, var(--pm-ambient-1) 18%, transparent)',
                   }}
                 />
               )}
@@ -1429,7 +1432,13 @@ export const App: React.FC = () => {
                     max={Math.max(1, Math.round(durationSec))}
                     value={Math.min(Math.round(durationSec), Math.round(positionSec))}
                     onChange={(e) => seekTo(Number(e.target.value))}
-                    style={{ '--pm-fill': `${progressPct}%` } as React.CSSProperties}
+                    style={
+                      {
+                        '--pm-fill': `${progressPct}%`,
+                        '--pm-slider-active':
+                          'color-mix(in srgb, var(--pm-ambient-1) 62%, var(--pm-accent-primary))',
+                      } as React.CSSProperties
+                    }
                     className="pm-range-subtle relative z-10 w-full cursor-pointer"
                   />
                 </div>

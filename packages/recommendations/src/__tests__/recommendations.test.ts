@@ -60,4 +60,41 @@ describe('@pmusic/recommendations', () => {
     expect(suggestions[0]?.text).toBe('Cruz Cafuné');
     expect(suggestions[0]?.kind).toBe('artist');
   });
+
+  it('prioritizes split artist+track intent in both rerankTracks(query) and selectBestResult', () => {
+    const engine = new RecommendationEngine();
+    const noisy: Track = {
+      id: 'noisy_1',
+      title: 'El Puente del Diablo',
+      artists: [{ name: 'Nelson Poblete' }],
+      durationSec: 197,
+      thumbnailUrl: 'https://example.com/nelson.jpg',
+      source: 'ytmusic',
+    };
+    const exactMatch: Track = {
+      id: 'exact_1',
+      title: 'DIABLA',
+      artists: [{ name: 'Pablete' }],
+      album: { id: 'al_1', name: 'DIABLA' },
+      durationSec: 186,
+      thumbnailUrl: 'https://example.com/diabla.jpg',
+      source: 'ytmusic',
+    };
+
+    const reranked = engine.rerankTracks([noisy, exactMatch], { query: 'pablete diabla' });
+    expect(reranked[0]?.id).toBe('exact_1');
+
+    const best = engine.selectBestResult('pablete diabla', {
+      query: 'pablete diabla',
+      songs: [noisy, exactMatch],
+      videos: [],
+      artists: [],
+      albums: [],
+      playlists: [],
+    });
+    expect(best?.kind).toBe('song');
+    if (best?.kind === 'song') {
+      expect(best.item.id).toBe('exact_1');
+    }
+  });
 });
