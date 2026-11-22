@@ -633,27 +633,93 @@ input[type="range"]::-webkit-slider-thumb {
   }
 }
 
+/* Smooth Pill Range Sliders WITHOUT circular thumb dot */
+input[type="range"].pm-range-pill {
+  height: 18px;
+}
+
+input[type="range"].pm-range-pill::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    to right,
+    rgba(255, 255, 255, 0.92) var(--pm-fill, 0%),
+    rgba(255, 255, 255, 0.18) var(--pm-fill, 0%)
+  );
+  transition: height 160ms var(--ease-out), background 140ms var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  input[type="range"].pm-range-pill:hover::-webkit-slider-runnable-track {
+    height: 8px;
+  }
+}
+
+input[type="range"].pm-range-pill::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+input[type="range"].pm-range-pill::-moz-range-thumb {
+  width: 0;
+  height: 0;
+  opacity: 0;
+  border: 0;
+  background: transparent;
+}
+
+/* Vertical EQ Range Sliders inside Floating EQ Popover */
+input[type="range"].pm-eq-vertical {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  -webkit-appearance: slider-vertical;
+  width: 24px;
+  height: 112px;
+  cursor: pointer;
+}
+
 /* 3-bar Equalizer Playing Indicator */
 @keyframes pmEqBar {
   0%, 100% {
-    transform: scaleY(0.32);
+    transform: scaleY(0.28);
   }
-  50% {
+  35% {
+    transform: scaleY(0.95);
+  }
+  65% {
+    transform: scaleY(0.48);
+  }
+  85% {
     transform: scaleY(1);
   }
 }
 
 .pm-eq-bar-1 {
-  animation: pmEqBar 0.85s ease-in-out infinite;
-  transform-origin: bottom;
+  display: block;
+  height: 100%;
+  animation: pmEqBar 0.78s ease-in-out infinite;
+  transform-origin: bottom center;
+  will-change: transform;
 }
 .pm-eq-bar-2 {
-  animation: pmEqBar 0.65s ease-in-out 0.18s infinite;
-  transform-origin: bottom;
+  display: block;
+  height: 100%;
+  animation: pmEqBar 0.62s ease-in-out 0.16s infinite;
+  transform-origin: bottom center;
+  will-change: transform;
 }
 .pm-eq-bar-3 {
-  animation: pmEqBar 0.95s ease-in-out 0.34s infinite;
-  transform-origin: bottom;
+  display: block;
+  height: 100%;
+  animation: pmEqBar 0.88s ease-in-out 0.30s infinite;
+  transform-origin: bottom center;
+  will-change: transform;
 }
 
 /* Synced Lyrics Active, Depth Tiers & Apple Music Sing Animations */
@@ -768,19 +834,43 @@ input[type="range"]::-webkit-slider-thumb {
 /* Dynamic Ambient Mesh Animation (Used ONLY in Song / Now Playing view) */
 @keyframes pmAmbientDrift {
   0% {
-    transform: translate3d(0%, 0%, 0) scale(1);
+    transform: translate3d(-2%, -1%, 0) scale(1.02) rotate(0deg);
   }
-  50% {
-    transform: translate3d(2%, -1.5%, 0) scale(1.04);
+  33% {
+    transform: translate3d(3%, -2.5%, 0) scale(1.08) rotate(2deg);
+  }
+  66% {
+    transform: translate3d(-1.5%, 2.5%, 0) scale(1.05) rotate(-1.5deg);
   }
   100% {
-    transform: translate3d(0%, 0%, 0) scale(1);
+    transform: translate3d(-2%, -1%, 0) scale(1.02) rotate(0deg);
+  }
+}
+
+@keyframes pmAmbientGlowPulse {
+  0%, 100% {
+    opacity: 0.72;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    opacity: 0.96;
+    transform: translate3d(2%, -2%, 0) scale(1.06);
   }
 }
 
 .pm-ambient-mesh {
-  animation: pmAmbientDrift 24s ease-in-out infinite;
+  animation: pmAmbientDrift 18s ease-in-out infinite;
   will-change: transform;
+}
+
+.pm-ambient-orb {
+  animation: pmAmbientGlowPulse 11s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+.pm-popover-enter {
+  animation: pmMenuPop 170ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform-origin: bottom right;
 }
 
 /* Overlay subtle entrance */

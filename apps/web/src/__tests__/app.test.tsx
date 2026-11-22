@@ -34,8 +34,21 @@ describe('@pmusic/web UI', () => {
     expect(screen.getAllByText(/Tus Playlists/i).length).toBeGreaterThan(0);
   });
 
-  it('opens categorized SettingsModal, switches themes & dock styles, and explores audio/discord tabs', () => {
+  it('opens categorized SettingsModal, switches themes & dock styles, explores audio/discord tabs, and opens DJ & EQ popovers from dock', () => {
     render(<App />);
+    const header = document.querySelector('header');
+    expect(header?.querySelector('button[aria-label="Ajustes"]')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('dock-dj-btn'));
+    expect(screen.getByTestId('dj-popover')).toBeDefined();
+    expect(screen.getByTestId('dj-style-quick')).toBeDefined();
+    expect(screen.getByTestId('dj-style-full')).toBeDefined();
+
+    fireEvent.click(screen.getByTestId('dock-eq-btn'));
+    expect(screen.queryByTestId('dj-popover')).toBeNull();
+    expect(screen.getByTestId('eq-sheet')).toBeDefined();
+    fireEvent.click(screen.getByTestId('dock-eq-btn'));
+
     const settingsBtn = screen.getAllByRole('button', { name: /Ajustes/i })[0]!;
     fireEvent.click(settingsBtn);
 

@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Check,
+  Disc3,
   Download,
   GripVertical,
   Heart,
@@ -46,6 +47,10 @@ export const NowPlayingSheet: React.FC = () => {
     nowPlayingTab,
     setNowPlayingOpen,
     setNowPlayingTab,
+    eqSheetOpen,
+    setEqSheetOpen,
+    djPopoverOpen,
+    setDjPopoverOpen,
     themeId,
     reducedMotionPref,
     lyricsSize,
@@ -176,7 +181,6 @@ export const NowPlayingSheet: React.FC = () => {
   useEffect(() => {
     if (
       !nowPlayingOpen ||
-      nowPlayingTab !== 'Letras' ||
       !isPlaying ||
       typeof requestAnimationFrame !== 'function'
     ) {
@@ -190,7 +194,7 @@ export const NowPlayingSheet: React.FC = () => {
     };
     rafId = requestAnimationFrame(step);
     return () => cancelAnimationFrame(rafId);
-  }, [nowPlayingOpen, nowPlayingTab, isPlaying, durationSec]);
+  }, [nowPlayingOpen, isPlaying, durationSec]);
 
   useEffect(() => {
     if (!isElectronDesktop) return;
@@ -250,7 +254,7 @@ export const NowPlayingSheet: React.FC = () => {
   const dlStatus = offlineDownloads[currentTrack.id] ?? 'idle';
   const progressPct = Math.max(
     0,
-    Math.min(100, (positionSec / Math.max(1, durationSec)) * 100)
+    Math.min(100, (smoothPosSec / Math.max(1, durationSec)) * 100)
   );
   const volumePct = Math.round(volume * 100);
   const cueStartPct =
@@ -277,16 +281,16 @@ export const NowPlayingSheet: React.FC = () => {
   const PlayerDeckColumn = (compact = false) => (
     <div
       className={`flex flex-col items-center ${
-        compact ? 'w-full gap-5' : 'mx-auto w-full max-w-md gap-6'
+        compact ? 'w-full gap-5' : 'mx-auto w-full max-w-[420px] gap-6'
       }`}
     >
-      {/* Pure Unobstructed Artwork with directional swap animation */}
+      {/* Larger Centerpiece Artwork with smooth directional swap animation */}
       <div
         key={currentTrack.id}
         className={`${
           lastTrackDirection === 'prev' ? 'pm-cover-prev' : 'pm-cover-next'
-        } relative aspect-square overflow-hidden rounded-[22px] border border-white/15 bg-[#111115] shadow-[0_32px_80px_rgba(0,0,0,0.72)] transition-transform duration-300 ${
-          compact ? 'w-56 lg:w-72' : 'w-64 sm:w-80'
+        } relative aspect-square overflow-hidden rounded-[24px] border border-white/15 bg-[#111115] shadow-[0_36px_90px_rgba(0,0,0,0.75)] transition-transform duration-300 ease-out ${
+          compact ? 'w-64 lg:w-[340px] xl:w-[368px]' : 'w-72 sm:w-[386px] xl:w-[410px]'
         } ${isPlaying ? 'scale-100' : 'scale-[0.95]'}`}
       >
         <img
@@ -296,13 +300,13 @@ export const NowPlayingSheet: React.FC = () => {
         />
       </div>
 
-      {/* Title, Artist & Liquid Glass Quick Actions */}
+      {/* Title, Artist & Clean Quick Actions */}
       <div className="flex w-full items-center justify-between gap-4">
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-2xl font-bold tracking-tight text-[#F5F5F7]">
             {currentTrack.title}
           </h1>
-          <div className="flex flex-wrap items-center gap-x-1.5 text-[15px] text-[#C4C4CE]">
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[14.5px] text-[#C4C4CE]">
             <ArtistLinks
               artists={currentTrack.artists}
               singleLine={false}
@@ -330,17 +334,17 @@ export const NowPlayingSheet: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           <button
             type="button"
             aria-label={isLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
             aria-pressed={isLiked}
             onClick={() => void toggleLike(currentTrack)}
-            className={`pm-glass-chip flex h-10 w-10 items-center justify-center rounded-full ${
+            className={`pm-pressable flex h-9 w-9 items-center justify-center rounded-full bg-white/[0.08] transition-colors hover:bg-white/[0.16] ${
               isLiked ? 'text-[#FB7185]' : 'text-[#F5F5F7]'
             }`}
           >
-            <Heart className={`h-5 w-5 ${isLiked ? 'fill-current' : ''}`} />
+            <Heart className={`h-4.5 w-4.5 ${isLiked ? 'fill-current' : ''}`} />
           </button>
 
           <button
@@ -351,14 +355,14 @@ export const NowPlayingSheet: React.FC = () => {
                 : 'Descargar para escuchar offline'
             }
             onClick={() => void downloadTrackOffline(currentTrack)}
-            className="pm-glass-chip flex h-10 w-10 items-center justify-center rounded-full text-[#F5F5F7]"
+            className="pm-pressable flex h-9 w-9 items-center justify-center rounded-full bg-white/[0.08] text-[#F5F5F7] transition-colors hover:bg-white/[0.16]"
           >
             {dlStatus === 'downloading' ? (
-              <Loader2 className="h-5 w-5 animate-spin text-white" />
+              <Loader2 className="h-4.5 w-4.5 animate-spin text-white" />
             ) : dlStatus === 'downloaded' ? (
-              <Check className="h-5 w-5 text-[#34D399]" />
+              <Check className="h-4.5 w-4.5 text-[#34D399]" />
             ) : (
-              <Download className="h-5 w-5" />
+              <Download className="h-4.5 w-4.5" />
             )}
           </button>
 
@@ -369,20 +373,20 @@ export const NowPlayingSheet: React.FC = () => {
               const r = e.currentTarget.getBoundingClientRect();
               openTrackMenu(currentTrack, r.left - 210, r.bottom + 8);
             }}
-            className="pm-glass-chip flex h-10 w-10 items-center justify-center rounded-full text-[#F5F5F7]"
+            className="pm-pressable flex h-9 w-9 items-center justify-center rounded-full bg-white/[0.08] text-[#F5F5F7] transition-colors hover:bg-white/[0.16]"
           >
-            <MoreHorizontal className="h-5 w-5" />
+            <MoreHorizontal className="h-4.5 w-4.5" />
           </button>
         </div>
       </div>
 
-      {/* Filled Scrubber & DJ Cue Marker + Timestamps */}
-      <div className="w-full space-y-2">
+      {/* Smooth Pill Progress Bar WITHOUT Thumb Circle */}
+      <div className="w-full space-y-1.5">
         <div className="relative flex w-full items-center">
           {cueStartPct !== null && cueWidthPct > 0 && (
             <span
               aria-hidden="true"
-              className="pointer-events-none absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-[#C084FC]/70"
+              className="pointer-events-none absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-[#C084FC]/75"
               style={{
                 left: `${cueStartPct}%`,
                 width: `${cueWidthPct}%`,
@@ -395,20 +399,24 @@ export const NowPlayingSheet: React.FC = () => {
             aria-label="Progreso de la canción"
             min={0}
             max={Math.max(1, Math.round(durationSec))}
-            value={Math.min(Math.round(durationSec), Math.round(positionSec))}
-            onChange={(e) => seekTo(Number(e.target.value))}
+            value={Math.min(Math.round(durationSec), Math.round(smoothPosSec))}
+            onChange={(e) => {
+              const next = Number(e.target.value);
+              setSmoothPosSec(next);
+              seekTo(next);
+            }}
             style={{ '--pm-fill': `${progressPct}%` } as React.CSSProperties}
-            className="relative z-10 w-full"
+            className="pm-range-pill relative z-10 w-full cursor-pointer"
           />
         </div>
         <div className="tabular-nums flex justify-between text-xs font-medium text-[#C4C4CE]">
-          <span>{formatDurationSec(positionSec)}</span>
-          <span>-{formatDurationSec(Math.max(0, durationSec - positionSec))}</span>
+          <span>{formatDurationSec(smoothPosSec)}</span>
+          <span>{formatDurationSec(durationSec)}</span>
         </div>
       </div>
 
-      {/* Floating Transport Row: Symmetrical Frameless Shuffle/Repeat + Circular Glass Prev/Next + White Play */}
-      <div className="flex items-center justify-center gap-4 sm:gap-5">
+      {/* Minimalist Iconic Transport Row (Borderless Controls + Fluid Play Morph) */}
+      <div className="flex items-center justify-center gap-6 sm:gap-7">
         <button
           type="button"
           aria-label={
@@ -418,7 +426,7 @@ export const NowPlayingSheet: React.FC = () => {
           }
           aria-pressed={shuffleEnabled}
           onClick={() => toggleShuffle()}
-          className={`pm-pressable relative flex h-10 w-10 items-center justify-center rounded-full bg-transparent transition-colors ${
+          className={`pm-pressable relative flex h-10 w-10 items-center justify-center rounded-full transition-all hover:scale-110 ${
             shuffleEnabled
               ? 'text-white'
               : 'text-[#B4B4BE] hover:text-white'
@@ -428,7 +436,7 @@ export const NowPlayingSheet: React.FC = () => {
           {shuffleEnabled && (
             <span
               aria-hidden="true"
-              className="absolute bottom-1 h-1 w-1 rounded-full bg-white"
+              className="absolute bottom-0.5 h-1 w-1 rounded-full bg-white"
             />
           )}
         </button>
@@ -440,10 +448,10 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('prev');
             void prevTrack();
           }}
-          className="pm-glass-chip pm-pressable flex h-12 w-12 items-center justify-center rounded-full text-[#F5F5F7] hover:scale-105"
+          className="pm-pressable flex h-11 w-11 items-center justify-center rounded-full text-white/90 transition-all hover:scale-110 hover:text-white active:scale-90"
         >
           <SkipBack
-            className={`h-5 w-5 ${transportAnim === 'prev' ? 'pm-nudge-prev' : ''}`}
+            className={`h-6 w-6 fill-current ${transportAnim === 'prev' ? 'pm-nudge-prev' : ''}`}
           />
         </button>
 
@@ -454,14 +462,14 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('play');
             void togglePlayPause();
           }}
-          className={`pm-pressable flex h-[60px] w-[60px] items-center justify-center rounded-full bg-white text-[#070709] shadow-[0_12px_34px_rgba(255,255,255,0.28)] hover:scale-105 ${
+          className={`pm-pressable flex h-[62px] w-[62px] items-center justify-center rounded-full bg-white text-[#070709] shadow-[0_14px_38px_rgba(255,255,255,0.28)] transition-all duration-200 hover:scale-105 active:scale-95 ${
             transportAnim === 'play' ? 'pm-play-morph' : ''
           }`}
         >
           {isPlaying ? (
-            <Pause className="h-6 w-6 fill-current" />
+            <Pause className="h-6.5 w-6.5 fill-current transition-transform duration-150" />
           ) : (
-            <Play className="h-6 w-6 translate-x-[1px] fill-current" />
+            <Play className="h-6.5 w-6.5 translate-x-[1.5px] fill-current transition-transform duration-150" />
           )}
         </button>
 
@@ -472,10 +480,10 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('next');
             void nextTrack();
           }}
-          className="pm-glass-chip pm-pressable flex h-12 w-12 items-center justify-center rounded-full text-[#F5F5F7] hover:scale-105"
+          className="pm-pressable flex h-11 w-11 items-center justify-center rounded-full text-white/90 transition-all hover:scale-110 hover:text-white active:scale-90"
         >
           <SkipForward
-            className={`h-5 w-5 ${transportAnim === 'next' ? 'pm-nudge-next' : ''}`}
+            className={`h-6 w-6 fill-current ${transportAnim === 'next' ? 'pm-nudge-next' : ''}`}
           />
         </button>
 
@@ -484,7 +492,7 @@ export const NowPlayingSheet: React.FC = () => {
           aria-label={repeatLabel}
           aria-pressed={repeatMode !== 'off'}
           onClick={() => cycleRepeatMode()}
-          className={`pm-pressable relative flex h-10 w-10 items-center justify-center rounded-full bg-transparent transition-colors ${
+          className={`pm-pressable relative flex h-10 w-10 items-center justify-center rounded-full transition-all hover:scale-110 ${
             repeatMode !== 'off'
               ? 'text-white'
               : 'text-[#B4B4BE] hover:text-white'
@@ -498,14 +506,14 @@ export const NowPlayingSheet: React.FC = () => {
           {repeatMode !== 'off' && (
             <span
               aria-hidden="true"
-              className="absolute bottom-1 h-1 w-1 rounded-full bg-white"
+              className="absolute bottom-0.5 h-1 w-1 rounded-full bg-white"
             />
           )}
         </button>
       </div>
 
-      {/* Minimalist Player Volume Bar */}
-      <div className="flex w-full max-w-[280px] items-center gap-3 pt-1">
+      {/* Smooth Pill Volume Bar WITHOUT Thumb Circle */}
+      <div className="flex w-full max-w-[300px] items-center gap-3 pt-1">
         <button
           type="button"
           aria-label={volume === 0 ? 'Activar sonido' : 'Silenciar'}
@@ -527,7 +535,7 @@ export const NowPlayingSheet: React.FC = () => {
           value={volumePct}
           onChange={(e) => setVolume(Number(e.target.value) / 100)}
           style={{ '--pm-fill': `${volumePct}%` } as React.CSSProperties}
-          className="pm-range-subtle flex-1"
+          className="pm-range-pill flex-1 cursor-pointer"
         />
         <span className="tabular-nums w-9 text-right text-[11px] font-medium text-[#C4C4CE]">
           {volumePct}%
@@ -546,13 +554,28 @@ export const NowPlayingSheet: React.FC = () => {
       data-testid="now-playing-sheet"
       className="pm-sheet-enter pm-dark-sliders fixed inset-0 z-50 flex flex-col overflow-hidden bg-[#070709] text-[#F5F5F7]"
     >
-      {/* Dynamic Cover-Art Gradient Backdrop (Exclusive to Song / Now Playing view) */}
+      {/* Dynamic Living Song-Reactive Cover-Art Gradient Backdrop (Exclusive to Song / Now Playing view) */}
       <div
         aria-hidden="true"
-        className="pm-ambient-mesh pointer-events-none absolute inset-0 opacity-80"
+        className="pm-ambient-mesh pointer-events-none absolute -inset-12 opacity-90"
         style={{
           background:
-            'radial-gradient(circle at 18% 22%, var(--pm-ambient-1), transparent 56%), radial-gradient(circle at 82% 76%, var(--pm-ambient-2), transparent 58%), linear-gradient(180deg, var(--pm-ambient-3) 0%, #070709 100%)',
+            'radial-gradient(circle at 18% 22%, var(--pm-ambient-1), transparent 54%), radial-gradient(circle at 82% 76%, var(--pm-ambient-2), transparent 56%), radial-gradient(circle at 52% 45%, var(--pm-ambient-3), transparent 68%), linear-gradient(180deg, var(--pm-ambient-3) 0%, #070709 100%)',
+        }}
+      />
+      <div
+        aria-hidden="true"
+        className="pm-ambient-orb pointer-events-none absolute -left-24 top-1/4 h-96 w-96 rounded-full blur-3xl"
+        style={{
+          background: 'color-mix(in srgb, var(--pm-ambient-1) 52%, transparent)',
+        }}
+      />
+      <div
+        aria-hidden="true"
+        className="pm-ambient-orb pointer-events-none absolute -right-24 bottom-1/5 h-96 w-96 rounded-full blur-3xl"
+        style={{
+          animationDelay: '-5s',
+          background: 'color-mix(in srgb, var(--pm-ambient-2) 52%, transparent)',
         }}
       />
 
@@ -623,8 +646,8 @@ export const NowPlayingSheet: React.FC = () => {
         )}
 
         {nowPlayingTab === 'Letras' && (
-          <div className="pm-tab-enter mx-auto grid max-w-6xl grid-cols-1 gap-8 lg:grid-cols-12 lg:items-start">
-            <div className="hidden lg:sticky lg:top-4 lg:col-span-5 lg:block">
+          <div className="pm-tab-enter mx-auto grid min-h-[calc(100dvh-132px)] max-w-6xl grid-cols-1 gap-8 lg:grid-cols-12 lg:items-center">
+            <div className="hidden lg:sticky lg:top-8 lg:col-span-5 lg:block">
               {PlayerDeckColumn(true)}
             </div>
 
@@ -840,8 +863,8 @@ export const NowPlayingSheet: React.FC = () => {
         )}
 
         {nowPlayingTab === 'Cola' && (
-          <div className="pm-tab-enter mx-auto grid max-w-6xl grid-cols-1 gap-8 lg:grid-cols-12 lg:items-start">
-            <div className="hidden lg:sticky lg:top-4 lg:col-span-5 lg:block">
+          <div className="pm-tab-enter mx-auto grid min-h-[calc(100dvh-132px)] max-w-6xl grid-cols-1 gap-8 lg:grid-cols-12 lg:items-center">
+            <div className="hidden lg:sticky lg:top-8 lg:col-span-5 lg:block">
               {PlayerDeckColumn(true)}
             </div>
 
@@ -1179,6 +1202,37 @@ export const NowPlayingSheet: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Unobtrusive Floating DJ & EQ Micro-Controls in Bottom-Right of Now Playing */}
+      <div className="fixed right-6 bottom-5 z-20 flex items-center gap-2">
+        <button
+          type="button"
+          data-testid="nowplaying-dj-btn"
+          aria-label="Sesión DJ"
+          aria-pressed={djPopoverOpen}
+          onClick={() => setDjPopoverOpen(!djPopoverOpen)}
+          className={`pm-pressable pm-glass-chip inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold backdrop-blur-md transition-all ${
+            djMode.enabled
+              ? 'border-purple-400/50 bg-purple-500/25 text-purple-200'
+              : 'text-[#E5E5EA] hover:text-white'
+          }`}
+        >
+          <Disc3 className="h-3.5 w-3.5 text-purple-300" />
+          <span>{djMode.enabled ? `DJ ${djMode.style === 'quick' ? 'Rápida' : 'Completa'}` : 'Sesión DJ'}</span>
+        </button>
+
+        <button
+          type="button"
+          data-testid="nowplaying-eq-btn"
+          aria-label="Ecualizador"
+          aria-pressed={eqSheetOpen}
+          onClick={() => setEqSheetOpen(!eqSheetOpen)}
+          className="pm-pressable pm-glass-chip inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold text-[#E5E5EA] backdrop-blur-md transition-all hover:text-white"
+        >
+          <Sliders className="h-3.5 w-3.5" />
+          <span>EQ</span>
+        </button>
+      </div>
     </div>
   );
 };
@@ -1187,6 +1241,7 @@ export const EqAndCrossfadeSheet: React.FC = () => {
   const {
     eqSheetOpen,
     setEqSheetOpen,
+    nowPlayingOpen,
     userEq,
     safeCrossfade,
     djMode,
@@ -1196,178 +1251,301 @@ export const EqAndCrossfadeSheet: React.FC = () => {
     setSafeCrossfade,
   } = usePMusicStore();
 
+  React.useEffect(() => {
+    if (!eqSheetOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest(
+          '[data-testid="eq-sheet"], [data-testid="dock-eq-btn"], [data-testid="nowplaying-eq-btn"]',
+        )
+      ) {
+        return;
+      }
+      setEqSheetOpen(false);
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, [eqSheetOpen, setEqSheetOpen]);
+
   if (!eqSheetOpen) return null;
 
   const crossfadePct = Math.round((safeCrossfade.durationSec / 12) * 100);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div
-        aria-hidden="true"
-        onClick={() => setEqSheetOpen(false)}
-        className="pm-spotlight-backdrop absolute inset-0 bg-black/65"
-      />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Ecualizador y Crossfade"
-        data-testid="eq-sheet"
-        className="pm-glass-regular pm-modal-pop relative z-10 flex max-h-[88dvh] w-full max-w-2xl flex-col overflow-y-auto rounded-[22px] p-6 pm-text-primary"
+    <div
+      role="dialog"
+      aria-modal="false"
+      aria-label="Ecualizador y Crossfade"
+      data-testid="eq-sheet"
+        className={`pm-glass-liquid pm-popover-enter fixed right-4 z-[65] w-[364px] max-w-[calc(100vw-24px)] rounded-[22px] p-4 shadow-[0_28px_72px_rgba(0,0,0,0.62)] pm-text-primary ${
+          nowPlayingOpen ? 'bottom-[70px] right-6' : 'bottom-[102px]'
+        }`}
+        style={{
+          background:
+            'radial-gradient(circle at 18% 82%, color-mix(in srgb, var(--pm-ambient-1) 34%, transparent), transparent 62%), radial-gradient(circle at 86% 24%, color-mix(in srgb, var(--pm-ambient-2) 32%, transparent), transparent 60%), var(--pm-glass-regular-bg)',
+        }}
       >
-        <div className="flex items-center justify-between border-b pm-border pb-4">
-          <div className="flex items-center gap-2.5">
-            <Sliders className="h-5 w-5 pm-text-primary" />
-            <h2 className="text-lg font-bold pm-text-primary">
-              Ecualizador y Crossfade
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-[15px] font-bold leading-tight pm-text-primary">
+              Ecualizador
             </h2>
+            <p className="mt-0.5 text-[11.5px] pm-text-secondary">
+              Moldea el sonido banda por banda
+            </p>
           </div>
           <button
             type="button"
-            aria-label="Cerrar ecualizador"
-            onClick={() => setEqSheetOpen(false)}
-            className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-semibold"
+            role="switch"
+            aria-checked={userEq.enabled}
+            aria-label="Activar ecualizador"
+            onClick={() => setEqEnabled(!userEq.enabled)}
+            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 transition-colors ${
+              userEq.enabled ? 'bg-white' : 'bg-white/20'
+            }`}
           >
-            Cerrar
+            <span
+              className={`h-5 w-5 rounded-full shadow-sm transition-transform duration-200 ${
+                userEq.enabled
+                  ? 'translate-x-5 bg-[#0A0A0F]'
+                  : 'translate-x-0 bg-white'
+              }`}
+            />
           </button>
         </div>
 
-        <div className="mt-5 space-y-5">
-          <section
-            data-surface="content"
-            className="pm-surface-card rounded-[16px] p-4"
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold pm-text-primary">
-                  Crossfade seguro (0–12 s)
-                </h3>
-                <p className="text-xs pm-text-secondary">
-                  {djMode.enabled
-                    ? 'Pausado automáticamente mientras el Modo Sesión DJ está activo'
-                    : 'Transición suave de potencia constante entre canciones'}
-                </p>
-              </div>
+        {/* Presets Grid */}
+        <div className="mt-3.5 grid grid-cols-3 gap-1.5">
+          {USER_EQ_PRESETS.map((preset) => {
+            const active = userEq.preset === preset.id;
+            return (
               <button
+                key={preset.id}
                 type="button"
-                role="switch"
-                aria-checked={safeCrossfade.enabled}
-                aria-label="Activar Crossfade seguro"
-                disabled={djMode.enabled}
-                onClick={() =>
-                  setSafeCrossfade({ enabled: !safeCrossfade.enabled })
-                }
-                className={`rounded-full px-4 py-1.5 text-xs font-bold ${
-                  safeCrossfade.enabled && !djMode.enabled
-                    ? 'pm-btn-primary'
-                    : 'pm-btn-secondary'
+                aria-pressed={active}
+                onClick={() => setEqPreset(preset.id)}
+                className={`rounded-[10px] py-1.5 text-[11.5px] font-bold transition-all ${
+                  active
+                    ? 'bg-white text-[#070709] shadow-sm'
+                    : 'bg-white/[0.08] text-[var(--pm-text-secondary)] hover:bg-white/[0.15] hover:text-[var(--pm-text-primary)]'
                 }`}
               >
-                {safeCrossfade.enabled && !djMode.enabled
-                  ? 'Activo'
-                  : 'Inactivo'}
+                {preset.label}
               </button>
-            </div>
+            );
+          })}
+        </div>
 
-            <div className="mt-3 flex items-center gap-4">
-              <input
-                type="range"
-                role="slider"
-                aria-label="Duración de Crossfade en segundos"
-                min={0}
-                max={12}
-                step={1}
-                value={safeCrossfade.durationSec}
-                onChange={(e) =>
-                  setSafeCrossfade({ durationSec: Number(e.target.value) })
-                }
-                style={{ '--pm-fill': `${crossfadePct}%` } as React.CSSProperties}
-                className="flex-1"
-              />
-              <span className="tabular-nums text-sm font-bold pm-text-primary">
-                {safeCrossfade.durationSec} s
+        {/* Interactive Vertical Band Sliders */}
+        <div className="mt-4 grid grid-cols-5 gap-2">
+          {USER_EQ_FREQUENCIES_HZ.map((freq, idx) => {
+            const label = freq >= 1000 ? `${freq / 1000}k` : `${freq}`;
+            const ariaFreq = freq >= 1000 ? `${freq / 1000} kHz` : `${freq} Hz`;
+            const val = userEq.bandsDb[idx] ?? 0;
+            const pct = Math.max(0, Math.min(100, ((val + 12) / 24) * 100));
+            return (
+              <div key={freq} className="flex flex-col items-center gap-1.5">
+                <span className="tabular-nums text-[11px] font-semibold pm-text-primary">
+                  {val > 0 ? `+${val}` : val}
+                </span>
+                <div className="relative flex h-28 w-7 items-center justify-center">
+                  <div className="pointer-events-none relative h-24 w-1.5 overflow-hidden rounded-full bg-white/18">
+                    <div
+                      className="absolute inset-x-0 bottom-0 rounded-full bg-white/75"
+                      style={{ height: `${pct}%` }}
+                    />
+                  </div>
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute left-1/2 h-3 w-4 -translate-x-1/2 translate-y-1/2 rounded-full bg-white shadow-md"
+                    style={{ bottom: `calc(${pct * 0.86}% + 7px)` }}
+                  />
+                  <input
+                    type="range"
+                    role="slider"
+                    aria-label={`Banda EQ ${ariaFreq}`}
+                    min={-12}
+                    max={12}
+                    step={0.5}
+                    value={val}
+                    onChange={(e) => setEqBandGain(idx, Number(e.target.value))}
+                    className="pm-eq-vertical absolute inset-0 h-full w-full opacity-0"
+                  />
+                </div>
+                <span className="tabular-nums text-[11px] font-medium pm-text-tertiary">
+                  {label}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Compact Safe Crossfade Row */}
+        <div className="mt-3.5 border-t border-white/10 pt-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <span className="text-xs font-bold pm-text-primary">Crossfade</span>
+              <span className="ml-2 text-[11px] pm-text-tertiary">
+                {djMode.enabled
+                  ? 'En pausa con DJ'
+                  : `${safeCrossfade.durationSec} s`}
               </span>
             </div>
-          </section>
-
-          <section
-            data-surface="content"
-            className="pm-surface-card rounded-[16px] p-4"
-          >
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold pm-text-primary">
-                Ecualizador de 5 bandas
-              </h3>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={userEq.enabled}
-                aria-label="Activar ecualizador"
-                onClick={() => setEqEnabled(!userEq.enabled)}
-                className={`rounded-full px-4 py-1.5 text-xs font-bold ${
-                  userEq.enabled ? 'pm-btn-primary' : 'pm-btn-secondary'
-                }`}
-              >
-                {userEq.enabled ? 'EQ Activo' : 'EQ Inactivo'}
-              </button>
-            </div>
-
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              {USER_EQ_PRESETS.map((preset) => {
-                const active = userEq.preset === preset.id;
-                return (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    aria-pressed={active}
-                    onClick={() => setEqPreset(preset.id)}
-                    className={`rounded-full px-3.5 py-1.5 text-xs font-bold ${
-                      active ? 'pm-btn-primary' : 'pm-btn-secondary'
-                    }`}
-                  >
-                    {preset.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-5">
-              {USER_EQ_FREQUENCIES_HZ.map((freq, idx) => {
-                const label =
-                  freq >= 1000 ? `${freq / 1000} kHz` : `${freq} Hz`;
-                const val = userEq.bandsDb[idx] ?? 0;
-                const pct = Math.round(((val + 12) / 24) * 100);
-                return (
-                  <div
-                    key={freq}
-                    className="flex flex-col items-center gap-2 rounded-[12px] border pm-border pm-elevated p-3"
-                  >
-                    <span className="tabular-nums text-xs font-bold pm-text-primary">
-                      {val > 0 ? `+${val}` : val} dB
-                    </span>
-                    <input
-                      type="range"
-                      role="slider"
-                      aria-label={`Banda EQ ${label}`}
-                      min={-12}
-                      max={12}
-                      step={0.5}
-                      value={val}
-                      onChange={(e) =>
-                        setEqBandGain(idx, Number(e.target.value))
-                      }
-                      style={{ '--pm-fill': `${pct}%` } as React.CSSProperties}
-                      className="w-full"
-                    />
-                    <span className="tabular-nums text-xs font-medium pm-text-tertiary">
-                      {label}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={safeCrossfade.enabled}
+              aria-label="Activar Crossfade seguro"
+              disabled={djMode.enabled}
+              onClick={() =>
+                setSafeCrossfade({ enabled: !safeCrossfade.enabled })
+              }
+              className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold transition-colors disabled:opacity-45 ${
+                safeCrossfade.enabled && !djMode.enabled
+                  ? 'pm-btn-primary'
+                  : 'bg-white/10 pm-text-secondary'
+              }`}
+            >
+              {safeCrossfade.enabled && !djMode.enabled ? 'Activo' : 'Off'}
+            </button>
+          </div>
+          <input
+            type="range"
+            role="slider"
+            aria-label="Duración de Crossfade en segundos"
+            min={0}
+            max={12}
+            step={1}
+            value={safeCrossfade.durationSec}
+            onChange={(e) =>
+              setSafeCrossfade({ durationSec: Number(e.target.value) })
+            }
+            style={{ '--pm-fill': `${crossfadePct}%` } as React.CSSProperties}
+            className="pm-range-pill mt-2 w-full cursor-pointer"
+          />
         </div>
-      </div>
+    </div>
+  );
+};
+
+export const DjPopover: React.FC = () => {
+  const {
+    djPopoverOpen,
+    setDjPopoverOpen,
+    nowPlayingOpen,
+    djMode,
+    currentTrack,
+    trackAnalyses,
+    toggleDjMode,
+    setDjSessionStyle,
+  } = usePMusicStore();
+
+  React.useEffect(() => {
+    if (!djPopoverOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest(
+          '[data-testid="dj-popover"], [data-testid="dock-dj-btn"], [data-testid="nowplaying-dj-btn"]',
+        )
+      ) {
+        return;
+      }
+      setDjPopoverOpen(false);
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, [djPopoverOpen, setDjPopoverOpen]);
+
+  if (!djPopoverOpen) return null;
+
+  const ana = trackAnalyses[currentTrack.id];
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="false"
+      aria-label="Modo Sesión DJ"
+      data-testid="dj-popover"
+        className={`pm-glass-liquid pm-popover-enter fixed right-4 z-[65] w-[320px] max-w-[calc(100vw-24px)] rounded-[22px] p-4 shadow-[0_28px_72px_rgba(0,0,0,0.62)] pm-text-primary ${
+          nowPlayingOpen ? 'bottom-[70px] right-6' : 'bottom-[102px]'
+        }`}
+        style={{
+          background:
+            'radial-gradient(circle at 20% 20%, rgba(168, 85, 247, 0.24), transparent 60%), radial-gradient(circle at 82% 85%, color-mix(in srgb, var(--pm-ambient-2) 28%, transparent), transparent 62%), var(--pm-glass-regular-bg)',
+        }}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-1.5">
+              <Disc3 className="h-4 w-4 text-purple-400" />
+              <h2 className="text-[15px] font-bold leading-tight pm-text-primary">
+                Sesión DJ
+              </h2>
+            </div>
+            <p className="mt-0.5 text-[11.5px] pm-text-secondary">
+              {ana
+                ? `${Math.round(ana.bpm)} BPM${ana.camelotKey ? ` · ${ana.camelotKey}` : ''} · AutoMix inteligente`
+                : 'Elige cómo enlazar tus canciones'}
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            data-testid="dj-mode-toggle"
+            aria-checked={djMode.enabled}
+            aria-label="Activar Modo Sesión DJ"
+            onClick={() => void toggleDjMode()}
+            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 transition-colors ${
+              djMode.enabled ? 'bg-purple-500' : 'bg-white/20'
+            }`}
+          >
+            <span
+              className={`h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                djMode.enabled ? 'translate-x-5' : 'translate-x-0'
+              }`}
+            />
+          </button>
+        </div>
+
+        <div className="mt-3.5 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            data-testid="dj-style-quick"
+            aria-pressed={djMode.style === 'quick'}
+            onClick={() => void setDjSessionStyle('quick')}
+            className={`pm-pressable flex flex-col items-start gap-1 rounded-[14px] border p-3 text-left transition-all ${
+              djMode.style === 'quick'
+                ? 'border-purple-400/60 bg-purple-500/20 text-white shadow-sm'
+                : 'border-white/10 bg-white/[0.06] pm-text-secondary hover:bg-white/[0.12]'
+            }`}
+          >
+            <span className="text-xs font-bold">Rápida</span>
+            <span className="text-[11px] leading-snug opacity-80">
+              Mezcla directa al drop o estribillo
+            </span>
+          </button>
+
+          <button
+            type="button"
+            data-testid="dj-style-full"
+            aria-pressed={djMode.style === 'full'}
+            onClick={() => void setDjSessionStyle('full')}
+            className={`pm-pressable flex flex-col items-start gap-1 rounded-[14px] border p-3 text-left transition-all ${
+              djMode.style === 'full'
+                ? 'border-purple-400/60 bg-purple-500/20 text-white shadow-sm'
+                : 'border-white/10 bg-white/[0.06] pm-text-secondary hover:bg-white/[0.12]'
+            }`}
+          >
+            <span className="text-xs font-bold">Completa</span>
+            <span className="text-[11px] leading-snug opacity-80">
+              Respeta cada canción y cruza en el outro
+            </span>
+          </button>
+        </div>
     </div>
   );
 };

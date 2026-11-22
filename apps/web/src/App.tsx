@@ -53,6 +53,7 @@ import {
 } from './components/Screens.tsx';
 import {
   DevicesConnectSheet,
+  DjPopover,
   EqAndCrossfadeSheet,
   ImportPlaylistModal,
   NowPlayingSheet,
@@ -86,6 +87,7 @@ export const App: React.FC = () => {
     playlists,
     nowPlayingOpen,
     eqSheetOpen,
+    djPopoverOpen,
     devicesSheetOpen,
     importModalOpen,
     settingsOpen,
@@ -99,6 +101,7 @@ export const App: React.FC = () => {
     setNowPlayingOpen,
     setNowPlayingTab,
     setEqSheetOpen,
+    setDjPopoverOpen,
     setDevicesSheetOpen,
     setImportModalOpen,
     setSettingsOpen,
@@ -221,8 +224,9 @@ export const App: React.FC = () => {
 
       if (e.key === 'Escape') {
         if (spotlightOpen) setSpotlightOpen(false);
-        else if (nowPlayingOpen) setNowPlayingOpen(false);
+        else if (djPopoverOpen) setDjPopoverOpen(false);
         else if (eqSheetOpen) setEqSheetOpen(false);
+        else if (nowPlayingOpen) setNowPlayingOpen(false);
         else if (devicesSheetOpen) setDevicesSheetOpen(false);
         else if (importModalOpen) setImportModalOpen(false);
         else if (settingsOpen) setSettingsOpen(false);
@@ -288,6 +292,7 @@ export const App: React.FC = () => {
     spotlightOpen,
     nowPlayingOpen,
     eqSheetOpen,
+    djPopoverOpen,
     devicesSheetOpen,
     importModalOpen,
     settingsOpen,
@@ -298,6 +303,7 @@ export const App: React.FC = () => {
     setNowPlayingOpen,
     setNowPlayingTab,
     setEqSheetOpen,
+    setDjPopoverOpen,
     setDevicesSheetOpen,
     setImportModalOpen,
     setSettingsOpen,
@@ -401,21 +407,6 @@ export const App: React.FC = () => {
               <PMusicLogo size={28} showWordmark />
             </button>
 
-            <button
-              type="button"
-              aria-label={
-                sidebarCollapsed ? 'Expandir barra lateral' : 'Colapsar barra lateral'
-              }
-              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-              className="pm-hover inline-flex h-8 w-8 items-center justify-center rounded-lg pm-text-secondary hover:text-[var(--pm-text-primary)]"
-            >
-              {sidebarCollapsed ? (
-                <PanelLeftOpen className="h-4 w-4" />
-              ) : (
-                <PanelLeftClose className="h-4 w-4" />
-              )}
-            </button>
-
             {activeDetailView && (
               <button
                 type="button"
@@ -466,63 +457,6 @@ export const App: React.FC = () => {
                 </span>
               </button>
             )}
-
-            <button
-              type="button"
-              aria-label="Modo Sesión DJ"
-              aria-pressed={djMode.enabled}
-              onClick={() => void toggleDjMode()}
-              className={`pm-pressable inline-flex items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ${
-                djMode.enabled
-                  ? 'border border-purple-500/50 bg-purple-500/20 text-purple-400'
-                  : 'pm-btn-secondary'
-              }`}
-            >
-              <Disc3 className="h-3.5 w-3.5 text-purple-500" />
-              <span>{djMode.enabled ? 'DJ Activo' : 'Sesión DJ'}</span>
-            </button>
-
-            <button
-              type="button"
-              aria-label="Ecualizador"
-              onClick={() => setEqSheetOpen(true)}
-              className="pm-btn-secondary pm-pressable inline-flex items-center justify-center rounded-full p-2"
-            >
-              <Sliders className="h-4 w-4" />
-            </button>
-
-            <button
-              type="button"
-              aria-label="Dispositivos"
-              onClick={() => setDevicesSheetOpen(true)}
-              className="pm-btn-secondary pm-pressable inline-flex items-center justify-center rounded-full p-2 text-emerald-500"
-            >
-              <Wifi className="h-4 w-4" />
-            </button>
-
-            <button
-              type="button"
-              aria-label="Ajustes"
-              onClick={() => setSettingsOpen(true)}
-              className="pm-btn-secondary pm-pressable inline-flex items-center justify-center rounded-full p-2"
-            >
-              <Settings className="h-4 w-4" />
-            </button>
-
-            <button
-              type="button"
-              aria-label={
-                rightPanelOpen ? 'Ocultar panel de cola' : 'Mostrar panel de cola'
-              }
-              onClick={() => setRightPanelOpen(!rightPanelOpen)}
-              className="pm-btn-secondary pm-pressable hidden items-center justify-center rounded-full p-2 xl:inline-flex"
-            >
-              {rightPanelOpen ? (
-                <PanelRightClose className="h-4 w-4" />
-              ) : (
-                <PanelRightOpen className="h-4 w-4" />
-              )}
-            </button>
           </div>
         </header>
       )}
@@ -547,6 +481,32 @@ export const App: React.FC = () => {
             }`}
           >
             <div className="flex w-full min-h-0 flex-1 flex-col gap-3 overflow-y-auto pm-no-scrollbar">
+              {/* Unified Sidebar Panel Toggle Header */}
+              <div
+                className={`flex items-center ${
+                  sidebarCollapsed ? 'justify-center' : 'justify-between px-2'
+                }`}
+              >
+                {!sidebarCollapsed && (
+                  <span className="text-[11px] font-semibold tracking-wider pm-text-tertiary">
+                    EXPLORAR
+                  </span>
+                )}
+                <button
+                  type="button"
+                  title={sidebarCollapsed ? 'Expandir barra lateral' : 'Colapsar barra lateral'}
+                  aria-label={sidebarCollapsed ? 'Expandir barra lateral' : 'Colapsar barra lateral'}
+                  onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                  className="pm-hover inline-flex h-7 w-7 items-center justify-center rounded-lg pm-text-tertiary hover:text-[var(--pm-text-primary)]"
+                >
+                  {sidebarCollapsed ? (
+                    <PanelLeftOpen className="h-4 w-4" />
+                  ) : (
+                    <PanelLeftClose className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
+
               {/* Primary Navigation */}
               <nav
                 role="tablist"
@@ -975,14 +935,24 @@ export const App: React.FC = () => {
               <span className="text-xs font-bold tracking-wide pm-text-secondary">
                 EN REPRODUCCIÓN
               </span>
-              <button
-                type="button"
-                aria-label="Expandir reproductor"
-                onClick={() => setNowPlayingOpen(true)}
-                className="pm-hover rounded-full p-1.5 pm-text-tertiary hover:text-[var(--pm-text-primary)]"
-              >
-                <Maximize2 className="h-3.5 w-3.5" />
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  aria-label="Expandir reproductor"
+                  onClick={() => setNowPlayingOpen(true)}
+                  className="pm-hover rounded-full p-1.5 pm-text-tertiary hover:text-[var(--pm-text-primary)]"
+                >
+                  <Maximize2 className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Ocultar panel derecho"
+                  onClick={() => setRightPanelOpen(false)}
+                  className="pm-hover rounded-full p-1.5 pm-text-tertiary hover:text-[var(--pm-text-primary)]"
+                >
+                  <PanelRightClose className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </div>
 
             {/* Song card with subtle localized cover halo ONLY for the active track artwork */}
@@ -1407,7 +1377,7 @@ export const App: React.FC = () => {
                   triggerHeartBurst();
                   void toggleLike(currentTrack);
                 }}
-                className={`pm-pressable pm-dock-frost-btn inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
+                className={`pm-pressable pm-hover inline-flex shrink-0 items-center justify-center rounded-full p-2 ${
                   heartBurst ? 'pm-heart-pop' : ''
                 } ${
                   isLiked
@@ -1415,14 +1385,14 @@ export const App: React.FC = () => {
                     : 'pm-text-secondary hover:text-[var(--pm-text-primary)]'
                 }`}
               >
-                <Heart className={`h-3.5 w-3.5 ${isLiked ? 'fill-current' : ''}`} />
+                <Heart className={`h-4 w-4 ${isLiked ? 'fill-current' : ''}`} />
               </button>
             </div>
           </div>
 
-          {/* Center: Symmetrical Frosted Transport [Shuffle · Prev · Play · Next · Repeat] + Centered Timeline/Time */}
+          {/* Center: Symmetrical Clean Transport [Shuffle · Prev · Play · Next · Repeat] + Centered Timeline/Time */}
           <div className="pointer-events-none relative z-10 flex w-full flex-col items-center justify-center gap-1 justify-self-center">
-            <div className="pm-dock-interactive pointer-events-auto inline-flex items-center justify-center gap-2 sm:gap-2.5">
+            <div className="pm-dock-interactive pointer-events-auto inline-flex items-center justify-center gap-2 sm:gap-3">
               <button
                 type="button"
                 aria-label={
@@ -1432,7 +1402,7 @@ export const App: React.FC = () => {
                 }
                 aria-pressed={shuffleEnabled}
                 onClick={() => toggleShuffle()}
-                className={`pm-pressable pm-dock-frost-btn relative inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
+                className={`pm-pressable pm-hover relative inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
                   shuffleEnabled
                     ? 'pm-text-primary'
                     : 'pm-text-tertiary hover:text-[var(--pm-text-primary)]'
@@ -1455,7 +1425,7 @@ export const App: React.FC = () => {
                   triggerDockTransportAnim('prev');
                   void prevTrack();
                 }}
-                className="pm-pressable pm-dock-frost-btn inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-primary"
+                className="pm-pressable pm-hover inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-primary"
               >
                 <SkipBack
                   className={`h-4 w-4 ${dockTransportAnim === 'prev' ? 'pm-nudge-prev' : ''}`}
@@ -1487,7 +1457,7 @@ export const App: React.FC = () => {
                   triggerDockTransportAnim('next');
                   void nextTrack();
                 }}
-                className="pm-pressable pm-dock-frost-btn inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-primary"
+                className="pm-pressable pm-hover inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-primary"
               >
                 <SkipForward
                   className={`h-4 w-4 ${dockTransportAnim === 'next' ? 'pm-nudge-next' : ''}`}
@@ -1499,7 +1469,7 @@ export const App: React.FC = () => {
                 aria-label={repeatLabel}
                 aria-pressed={repeatMode !== 'off'}
                 onClick={() => cycleRepeatMode()}
-                className={`pm-pressable pm-dock-frost-btn relative inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
+                className={`pm-pressable pm-hover relative inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
                   repeatMode !== 'off'
                     ? 'pm-text-primary'
                     : 'pm-text-tertiary hover:text-[var(--pm-text-primary)]'
@@ -1573,32 +1543,36 @@ export const App: React.FC = () => {
             )}
           </div>
 
-          {/* Right: Balanced Utility Capsule */}
+          {/* Right: Balanced Frosted Utility Capsule */}
           <div className="pointer-events-none relative z-10 flex items-center justify-end">
             <div className="pm-dock-interactive pm-dock-cluster pm-elevated pointer-events-auto flex items-center gap-0.5 rounded-[14px] border pm-border p-1">
               <button
                 type="button"
+                data-testid="dock-dj-btn"
                 aria-label="Modo Sesión DJ"
-                aria-pressed={djMode.enabled}
-                onClick={() => {
-                  setNowPlayingOpen(true);
-                  setNowPlayingTab('Cola');
-                }}
+                aria-pressed={djMode.enabled || djPopoverOpen}
+                onClick={() => setDjPopoverOpen(!djPopoverOpen)}
                 className={`pm-pressable inline-flex h-8 items-center justify-center gap-1 rounded-[10px] px-2 text-[11px] font-bold ${
-                  djMode.enabled
-                    ? 'bg-purple-500/20 text-purple-400'
+                  djMode.enabled || djPopoverOpen
+                    ? 'bg-purple-500/25 text-purple-300'
                     : 'pm-text-secondary pm-hover hover:text-[var(--pm-text-primary)]'
                 }`}
               >
-                <Disc3 className="h-3.5 w-3.5 text-purple-500" />
+                <Disc3 className="h-3.5 w-3.5 text-purple-400" />
                 <span className="hidden xl:inline">DJ</span>
               </button>
 
               <button
                 type="button"
+                data-testid="dock-eq-btn"
                 aria-label="Ecualizador"
-                onClick={() => setEqSheetOpen(true)}
-                className="pm-pressable pm-hover inline-flex h-8 w-8 items-center justify-center rounded-[10px] pm-text-secondary hover:text-[var(--pm-text-primary)]"
+                aria-pressed={eqSheetOpen}
+                onClick={() => setEqSheetOpen(!eqSheetOpen)}
+                className={`pm-pressable inline-flex h-8 w-8 items-center justify-center rounded-[10px] ${
+                  eqSheetOpen
+                    ? 'bg-white/15 text-[var(--pm-text-primary)]'
+                    : 'pm-text-secondary pm-hover hover:text-[var(--pm-text-primary)]'
+                }`}
               >
                 <Sliders className="h-3.5 w-3.5" />
               </button>
@@ -1785,10 +1759,11 @@ export const App: React.FC = () => {
         </>
       )}
 
-      {/* Overlays / Modals / Spotlight & Context Menu */}
+      {/* Overlays / Modals / Spotlight, Dock Popovers & Context Menu */}
       <SpotlightSearchModal />
       <NowPlayingSheet />
       <EqAndCrossfadeSheet />
+      <DjPopover />
       <DevicesConnectSheet />
       <ImportPlaylistModal />
       <SettingsModal />

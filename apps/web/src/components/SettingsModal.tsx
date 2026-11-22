@@ -278,14 +278,109 @@ export const SettingsModal: React.FC = () => {
               <div className="space-y-5">
                 <div>
                   <h3 className="text-xl font-bold pm-text-primary">
-                    Temas y personalidad visual
+                    Apariencia, Cristal y Temas
                   </h3>
                   <p className="text-xs pm-text-secondary">
-                    Cambia completamente la paleta, los contrastes, el vidrio líquido y la tipografía editorial de pMusic
+                    Personaliza al instante el material de la interfaz, la paleta, la barra inferior y el acento visual
                   </p>
                 </div>
 
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {/* Interactive Material Selector FIRST: Liquid/Frosted Glass vs Solid Modern */}
+                <section
+                  data-surface="content"
+                  className="pm-surface-card space-y-3 rounded-[16px] p-4"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="text-sm font-bold pm-text-primary">
+                        Material de la interfaz
+                      </div>
+                      <p className="text-xs pm-text-secondary">
+                        Elige entre cristal translúcido Frosted/Liquid o acabado moderno sólido mate
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      data-testid="liquid-glass-toggle"
+                      aria-checked={liquidGlassMode}
+                      aria-label="Modo Liquid Glass integral"
+                      onClick={() => setLiquidGlassMode(!liquidGlassMode)}
+                      className={`shrink-0 rounded-full px-4 py-1.5 text-xs font-bold transition-all ${
+                        liquidGlassMode ? 'pm-btn-primary' : 'pm-btn-secondary'
+                      }`}
+                    >
+                      {liquidGlassMode ? 'Liquid Glass Activo' : 'Sólido Moderno'}
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      aria-pressed={liquidGlassMode}
+                      onClick={() => setLiquidGlassMode(true)}
+                      className={`pm-surface-card pm-card-lift flex flex-col gap-2 rounded-[14px] p-3.5 text-left ${
+                        liquidGlassMode ? 'ring-2 ring-[var(--pm-accent-primary)]' : ''
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold pm-text-primary">
+                          Frosted & Liquid Glass
+                        </span>
+                        {liquidGlassMode && (
+                          <span className="pm-btn-primary inline-flex h-4 w-4 items-center justify-center rounded-full">
+                            <Check className="h-2.5 w-2.5" />
+                          </span>
+                        )}
+                      </div>
+                      <div className="relative flex h-11 items-center gap-2 overflow-hidden rounded-lg border border-white/15 bg-gradient-to-r from-purple-500/25 via-sky-500/20 to-rose-500/25 px-3">
+                        <span className="h-5 w-10 rounded-full border border-white/30 bg-white/20 shadow-[inset_0_1px_0_rgba(255,255,255,0.35)]" />
+                        <span className="h-2 flex-1 rounded-full bg-white/30" />
+                      </div>
+                      <p className="text-[11px] pm-text-secondary">
+                        Menús emergentes, barras y paneles translúcidos con profundidad y desenfoque real
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      aria-pressed={!liquidGlassMode}
+                      onClick={() => setLiquidGlassMode(false)}
+                      className={`pm-surface-card pm-card-lift flex flex-col gap-2 rounded-[14px] p-3.5 text-left ${
+                        !liquidGlassMode ? 'ring-2 ring-[var(--pm-accent-primary)]' : ''
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold pm-text-primary">
+                          Sólido Moderno Mate
+                        </span>
+                        {!liquidGlassMode && (
+                          <span className="pm-btn-primary inline-flex h-4 w-4 items-center justify-center rounded-full">
+                            <Check className="h-2.5 w-2.5" />
+                          </span>
+                        )}
+                      </div>
+                      <div className="pm-elevated flex h-11 items-center gap-2 rounded-lg border pm-border px-3">
+                        <span className="h-5 w-10 rounded-full border pm-border bg-[var(--pm-bg-surface)]" />
+                        <span className="h-2 flex-1 rounded-full bg-current opacity-20" />
+                      </div>
+                      <p className="text-[11px] pm-text-secondary">
+                        Superficies opacas nítidas con cero transparencia y máximo ahorro gráfico
+                      </p>
+                    </button>
+                  </div>
+                </section>
+
+                <div className="space-y-2">
+                  <div>
+                    <div className="text-sm font-bold pm-text-primary">
+                      Temas y personalidad visual
+                    </div>
+                    <p className="text-xs pm-text-secondary">
+                      Paleta cromática, contraste y tipografía editorial para toda la interfaz
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {PMUSIC_THEMES.map((theme) => {
                     const selected = themeId === theme.id;
                     return (
@@ -329,6 +424,7 @@ export const SettingsModal: React.FC = () => {
                       </button>
                     );
                   })}
+                  </div>
                 </div>
 
                 {/* Customizable Dock Style */}
@@ -554,29 +650,6 @@ export const SettingsModal: React.FC = () => {
                   data-surface="content"
                   className="pm-surface-card divide-y pm-border rounded-[16px] px-4 py-2"
                 >
-                  <div className="flex items-center justify-between gap-4 py-2.5">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[13.5px] font-bold pm-text-primary">
-                        Modo Liquid Glass integral
-                      </div>
-                      <div className="text-xs pm-text-secondary">
-                        Activado: cristal translúcido en menús, barra inferior, panel derecho y tarjetas · Desactivado: acabado sólido moderno opaco
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      role="switch"
-                      data-testid="liquid-glass-toggle"
-                      aria-checked={liquidGlassMode}
-                      aria-label="Modo Liquid Glass integral"
-                      onClick={() => setLiquidGlassMode(!liquidGlassMode)}
-                      className={`shrink-0 rounded-full px-4 py-1.5 text-xs font-bold transition-all ${
-                        liquidGlassMode ? 'pm-btn-primary' : 'pm-btn-secondary'
-                      }`}
-                    >
-                      {liquidGlassMode ? 'Liquid Glass' : 'Sólido Moderno'}
-                    </button>
-                  </div>
                   <SwitchRow
                     title="Visualizador espectral en vivo"
                     description="Muestra barras animadas reactivas al audio en la vista de canción"

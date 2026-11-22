@@ -3,6 +3,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Copy,
   Disc3,
   Download,
   GripVertical,
@@ -12,10 +13,13 @@ import {
   Loader2,
   MoreHorizontal,
   Pause,
+  Pencil,
   Play,
   Plus,
   Search,
+  Share2,
   Trash2,
+  X,
 } from 'lucide-react';
 import { formatDurationSec, type Track } from '@pmusic/core';
 import {
@@ -454,14 +458,23 @@ export const DetailViewPanel: React.FC = () => {
     toggleDjMode,
     renamePlaylist,
     deletePlaylist,
+    duplicatePlaylist,
+    copyPlaylistTracksTo,
     addTrackToPlaylist,
     reorderPlaylistTrack,
     searchTracksForPlaylist,
     openAlbumDetail,
     openArtistDetail,
+    openLocalPlaylistDetail,
+    showToast,
   } = usePMusicStore();
 
+  const [isEditingName, setIsEditingName] = useState(false);
   const [editingName, setEditingName] = useState('');
+  const [plMenuOpen, setPlMenuOpen] = useState(false);
+  const [showCopyTargetMenu, setShowCopyTargetMenu] = useState(false);
+  const [confirmDeletePl, setConfirmDeletePl] = useState(false);
+  const [addFinderOverride, setAddFinderOverride] = useState<boolean | null>(null);
   const [playlistDropActive, setPlaylistDropActive] = useState(false);
   const [addSearchQuery, setAddSearchQuery] = useState('');
   const [addSearchResults, setAddSearchResults] = useState<Track[]>([]);
@@ -706,39 +719,127 @@ export const DetailViewPanel: React.FC = () => {
     addSearchQuery.trim() ? addSearchResults : searchResults.songs.slice(0, 8)
   ).filter((t) => !localPl.tracks.some((ex) => ex.id === t.id));
 
+  const otherPlaylists = playlists.filter((p) => p.id !== localPl.id);
+  const totalPlDurationSec = localPl.tracks.reduce((acc, t) => acc + (t.durationSec || 0), 0);
+  const totalPlMins = Math.max(0, Math.round(totalPlDurationSec / 60));
+  const isAddFinderOpen = addFinderOverride ?? localPl.tracks.length < 3;
+
+  const handleSharePlaylist = async () => {
+    const trackLines = localPl.tracks
+      .slice(0, 12)
+      .map((t, i) => `${i + 1}. ${t.title} — ${t.artists.map((a) => a.name).join(', ')}`)
+      .join('\n');
+    const summary = `Playlist pMusic: ${localPl.name} (${localPl.tracks.length} pistas)\n${trackLines}`;
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+        await navigator.share({ title: localPl.name, text: summary });
+      } else {
+        await navigator.clipboard?.writeText(summary);
+      }
+      showToast('Playlist lista para compartir (copiada al portapapeles)');
+    } catch {
+      await navigator.clipboard?.writeText(summary).catch(() => {});
+      showToast('Enlace y lista copiados al portapapeles');
+    }
+  };
+
   return (
-    <div className="pm-page-enter space-y-7">
+    <div className="pm-page-enter space-y-6">
       <div
         data-surface="content"
-        className="pm-surface-card space-y-5 rounded-[18px] p-6"
+        className="pm-surface-card relative rounded-[20px] p-6"
       >
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div className="flex items-end gap-5">
+        <div className="flex flex-col gap-5">
+          <div className="flex min-w-0 items-end gap-5">
             {localPl.coverUrl ?? localPl.tracks[0]?.thumbnailUrl ? (
               <img
                 src={localPl.coverUrl ?? localPl.tracks[0]?.thumbnailUrl}
                 alt={localPl.name}
-                className="h-28 w-28 rounded-[12px] object-cover shadow-xl sm:h-36 sm:w-36"
+                className="h-32 w-32 shrink-0 rounded-[14px] object-cover shadow-[0_18px_40px_rgba(0,0,0,0.45)] sm:h-40 sm:w-40"
               />
             ) : (
-              <div className="pm-elevated flex h-28 w-28 items-center justify-center rounded-[12px] border pm-border text-3xl font-bold pm-text-secondary sm:h-36 sm:w-36">
+              <div className="pm-elevated flex h-32 w-32 shrink-0 items-center justify-center rounded-[14px] border pm-border text-3xl font-bold pm-text-secondary sm:h-40 sm:w-40">
                 {localPl.name.slice(0, 1).toUpperCase()}
               </div>
             )}
-            <div className="space-y-1.5">
-              <span className="pm-elevated inline-block rounded-md border pm-border px-2.5 py-1 text-[11px] font-semibold pm-text-secondary">
-                TU PLAYLIST · {localPl.tracks.length} PISTAS
+
+            <div className="min-w-0 flex-1 space-y-2">
+              <span className="pm-elevated inline-flex items-center gap-1.5 rounded-md border pm-border px-2.5 py-1 text-[11px] font-semibold pm-text-secondary">
+                <span>TU PLAYLIST</span>
+                <span aria-hidden="true">·</span>
+                <span>{localPl.tracks.length} PISTAS</span>
+                {totalPlMins > 0 && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span>{totalPlMins} min</span>
+                  </>
+                )}
               </span>
-              <h1 className="text-3xl font-bold tracking-tight pm-text-primary">
-                {localPl.name}
-              </h1>
+
+              {isEditingName ? (
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    if (editingName.trim()) {
+                      await renamePlaylist(localPl.id, editingName.trim());
+                      showToast('Nombre actualizado');
+                    }
+                    setIsEditingName(false);
+                  }}
+                  className="flex flex-wrap items-center gap-2"
+                >
+                  <input
+                    type="text"
+                    autoFocus
+                    aria-label="Nuevo nombre de playlist"
+                    value={editingName}
+                    onChange={(e) => setEditingName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') setIsEditingName(false);
+                    }}
+                    className="pm-input rounded-full px-4 py-1.5 text-lg font-bold"
+                  />
+                  <button
+                    type="submit"
+                    className="pm-btn-primary rounded-full px-4 py-1.5 text-xs font-bold"
+                  >
+                    Guardar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingName(false)}
+                    className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-semibold"
+                  >
+                    Cancelar
+                  </button>
+                </form>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <h1 className="truncate text-3xl font-bold tracking-tight pm-text-primary sm:text-4xl">
+                    {localPl.name}
+                  </h1>
+                  <button
+                    type="button"
+                    aria-label="Editar nombre de playlist"
+                    onClick={() => {
+                      setEditingName(localPl.name);
+                      setIsEditingName(true);
+                    }}
+                    className="pm-hover rounded-full p-1.5 pm-text-tertiary hover:text-[var(--pm-text-primary)]"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              )}
+
               <p className="text-xs pm-text-secondary">
-                {localPl.description || 'Playlist personal sincronizada'}
+                {localPl.description || 'Playlist personal · Arrastra pistas para reordenar'}
               </p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          {/* Interactive Playlist Action Toolbar */}
+          <div className="relative flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => {
@@ -751,6 +852,7 @@ export const DetailViewPanel: React.FC = () => {
               <Play className="h-4 w-4 fill-current" />
               <span>Reproducir</span>
             </button>
+
             <button
               type="button"
               onClick={async () => {
@@ -764,38 +866,187 @@ export const DetailViewPanel: React.FC = () => {
               <Disc3 className="h-4 w-4 text-purple-500" />
               <span>Sesión DJ</span>
             </button>
+
             <button
               type="button"
-              aria-label="Eliminar playlist"
-              onClick={() => void deletePlaylist(localPl.id)}
-              className="pm-btn-secondary rounded-full px-4 py-2.5 text-xs font-semibold text-rose-500"
+              aria-label="Compartir playlist"
+              onClick={() => void handleSharePlaylist()}
+              className="pm-btn-secondary inline-flex items-center gap-1.5 rounded-full px-4 py-2.5 text-xs font-semibold"
             >
-              Eliminar
+              <Share2 className="h-3.5 w-3.5" />
+              <span>Compartir</span>
             </button>
-          </div>
-        </div>
 
-        <div className="flex gap-2">
-          <input
-            type="text"
-            aria-label="Nuevo nombre de playlist"
-            placeholder="Renombrar playlist..."
-            value={editingName}
-            onChange={(e) => setEditingName(e.target.value)}
-            className="pm-input rounded-full px-4 py-2 text-xs"
-          />
-          <button
-            type="button"
-            onClick={async () => {
-              if (editingName.trim()) {
-                await renamePlaylist(localPl.id, editingName.trim());
-                setEditingName('');
-              }
-            }}
-            className="pm-btn-secondary rounded-full px-4 py-2 text-xs font-semibold"
-          >
-            Renombrar
-          </button>
+            <button
+              type="button"
+              onClick={() => setAddFinderOverride(!isAddFinderOpen)}
+              className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-2.5 text-xs font-semibold ${
+                isAddFinderOpen ? 'pm-btn-primary' : 'pm-btn-secondary'
+              }`}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>Añadir</span>
+            </button>
+
+            <div className="relative">
+              <button
+                type="button"
+                data-testid="playlist-more-actions-btn"
+                aria-label="Más acciones de playlist"
+                aria-expanded={plMenuOpen}
+                onClick={() => {
+                  setPlMenuOpen(!plMenuOpen);
+                  setShowCopyTargetMenu(false);
+                  setConfirmDeletePl(false);
+                }}
+                className="pm-btn-secondary inline-flex h-9 w-9 items-center justify-center rounded-full"
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </button>
+
+              {plMenuOpen && (
+                <>
+                  <div
+                    aria-hidden="true"
+                    onClick={() => setPlMenuOpen(false)}
+                    className="fixed inset-0 z-40"
+                  />
+                  <div
+                    role="menu"
+                    data-testid="playlist-actions-menu"
+                    className="pm-glass-liquid pm-menu-pop absolute left-0 top-11 z-50 w-64 rounded-[18px] p-1.5 shadow-2xl"
+                    style={{
+                      background:
+                        'color-mix(in srgb, var(--pm-bg-surface) 92%, transparent)',
+                    }}
+                  >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setPlMenuOpen(false);
+                        setEditingName(localPl.name);
+                        setIsEditingName(true);
+                      }}
+                      className="pm-hover pm-text-primary flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-xs font-medium"
+                    >
+                      <Pencil className="h-4 w-4 pm-text-secondary" />
+                      <span>Renombrar playlist</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => setShowCopyTargetMenu(!showCopyTargetMenu)}
+                      className="pm-hover pm-text-primary flex w-full items-center justify-between rounded-[10px] px-3 py-2 text-left text-xs font-medium"
+                    >
+                      <span className="flex items-center gap-2.5">
+                        <ListPlus className="h-4 w-4 pm-text-secondary" />
+                        <span>Añadir a otra playlist</span>
+                      </span>
+                      <ChevronRight className="h-3.5 w-3.5 pm-text-tertiary" />
+                    </button>
+
+                    {showCopyTargetMenu && (
+                      <div className="mx-1.5 my-1 max-h-40 space-y-0.5 overflow-y-auto rounded-[10px] border pm-border bg-black/20 p-1">
+                        {otherPlaylists.length > 0 ? (
+                          otherPlaylists.map((target) => (
+                            <button
+                              key={target.id}
+                              type="button"
+                              onClick={async () => {
+                                await copyPlaylistTracksTo(localPl.id, target.id);
+                                setPlMenuOpen(false);
+                                setShowCopyTargetMenu(false);
+                              }}
+                              className="pm-hover pm-text-primary flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[11.5px] font-medium"
+                            >
+                              <span className="truncate">{target.name}</span>
+                              <span className="ml-2 shrink-0 text-[11px] pm-text-tertiary">
+                                {target.tracks.length}
+                              </span>
+                            </button>
+                          ))
+                        ) : (
+                          <div className="px-2.5 py-1.5 text-[11px] pm-text-tertiary">
+                            Crea otra playlist primero
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={async () => {
+                        setPlMenuOpen(false);
+                        const dup = await duplicatePlaylist(localPl.id);
+                        if (dup) openLocalPlaylistDetail(dup.id);
+                      }}
+                      className="pm-hover pm-text-primary flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-xs font-medium"
+                    >
+                      <Copy className="h-4 w-4 pm-text-secondary" />
+                      <span>Duplicar playlist</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={async () => {
+                        setPlMenuOpen(false);
+                        await handleSharePlaylist();
+                      }}
+                      className="pm-hover pm-text-primary flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-xs font-medium"
+                    >
+                      <Share2 className="h-4 w-4 pm-text-secondary" />
+                      <span>Compartir lista</span>
+                    </button>
+
+                    <div className="my-1 border-t pm-border" />
+
+                    {confirmDeletePl ? (
+                      <div className="flex items-center justify-between gap-1.5 rounded-[10px] bg-rose-500/15 px-2.5 py-2">
+                        <span className="text-[11px] font-semibold text-rose-400">
+                          ¿Confirmar?
+                        </span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              setPlMenuOpen(false);
+                              setConfirmDeletePl(false);
+                              await deletePlaylist(localPl.id);
+                            }}
+                            className="rounded-full bg-rose-500 px-2.5 py-1 text-[11px] font-bold text-white"
+                          >
+                            Eliminar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeletePl(false)}
+                            className="rounded-full bg-white/10 px-2 py-1 text-[11px] font-semibold"
+                          >
+                            No
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        aria-label="Eliminar playlist"
+                        onClick={() => setConfirmDeletePl(true)}
+                        className="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-xs font-semibold text-rose-400 hover:bg-rose-500/15"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        <span>Eliminar playlist</span>
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -845,7 +1096,8 @@ export const DetailViewPanel: React.FC = () => {
         )}
       </div>
 
-      {/* Spotify-style Inline Add Songs Search Section */}
+      {/* Collapsible Inline Add Songs Section (auto-open on small playlists, clean toggle on full ones) */}
+      {isAddFinderOpen && (
       <section
         data-surface="content"
         className="pm-surface-card space-y-4 rounded-[16px] p-5"
@@ -859,6 +1111,16 @@ export const DetailViewPanel: React.FC = () => {
               Busca temas o pulsa el menú ••• en cualquier canción de la app
             </p>
           </div>
+          {localPl.tracks.length >= 1 && (
+            <button
+              type="button"
+              aria-label="Ocultar buscador de playlist"
+              onClick={() => setAddFinderOverride(false)}
+              className="pm-hover rounded-full p-1.5 pm-text-tertiary hover:text-[var(--pm-text-primary)]"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
         </div>
 
         <form
@@ -932,6 +1194,7 @@ export const DetailViewPanel: React.FC = () => {
           ))}
         </div>
       </section>
+      )}
     </div>
   );
 };

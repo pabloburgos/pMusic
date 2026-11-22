@@ -232,6 +232,7 @@ export interface PMusicStoreState {
   nowPlayingOpen: boolean;
   nowPlayingTab: NowPlayingSubTab;
   eqSheetOpen: boolean;
+  djPopoverOpen: boolean;
   devicesSheetOpen: boolean;
   importModalOpen: boolean;
   settingsOpen: boolean;
@@ -339,6 +340,7 @@ export interface PMusicStoreState {
   setNowPlayingOpen: (open: boolean) => void;
   setNowPlayingTab: (tab: NowPlayingSubTab) => void;
   setEqSheetOpen: (open: boolean) => void;
+  setDjPopoverOpen: (open: boolean) => void;
   setDevicesSheetOpen: (open: boolean) => void;
   setImportModalOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
@@ -408,6 +410,8 @@ export interface PMusicStoreState {
   createPlaylist: (name: string, description?: string, tracks?: Track[]) => Promise<PlaylistRecord>;
   renamePlaylist: (playlistId: string, name: string) => Promise<void>;
   deletePlaylist: (playlistId: string) => Promise<void>;
+  duplicatePlaylist: (playlistId: string) => Promise<PlaylistRecord | null>;
+  copyPlaylistTracksTo: (sourcePlaylistId: string, targetPlaylistId: string) => Promise<number>;
   addTrackToPlaylist: (playlistId: string, track: Track) => Promise<void>;
   removeTrackFromPlaylist: (playlistId: string, trackId: string) => Promise<void>;
   reorderPlaylistTrack: (playlistId: string, fromIndex: number, toIndex: number) => Promise<void>;
@@ -680,6 +684,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   nowPlayingOpen: false,
   nowPlayingTab: 'Portada',
   eqSheetOpen: false,
+  djPopoverOpen: false,
   devicesSheetOpen: false,
   importModalOpen: false,
   settingsOpen: false,
@@ -929,7 +934,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       document.documentElement.classList.toggle('pm-reduced-transparency', !resolvedLiquidGlass);
       document.documentElement.classList.toggle(
         'pm-reduced-motion',
-        Boolean(hydratedPrefs?.reducedMotionPref ?? (!resolvedLiquidGlass))
+        Boolean(hydratedPrefs?.reducedMotionPref)
       );
     }
 
@@ -1214,7 +1219,16 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   setRightPanelOpen: (open) => set({ rightPanelOpen: open }),
   setNowPlayingOpen: (open) => set({ nowPlayingOpen: open }),
   setNowPlayingTab: (tab) => set({ nowPlayingTab: tab }),
-  setEqSheetOpen: (open) => set({ eqSheetOpen: open }),
+  setEqSheetOpen: (open) =>
+    set({
+      eqSheetOpen: open,
+      ...(open ? { djPopoverOpen: false } : {}),
+    }),
+  setDjPopoverOpen: (open) =>
+    set({
+      djPopoverOpen: open,
+      ...(open ? { eqSheetOpen: false } : {}),
+    }),
   setDevicesSheetOpen: (open) => set({ devicesSheetOpen: open }),
   setImportModalOpen: (open) => set({ importModalOpen: open, importError: null }),
   setSettingsOpen: (open) => set({ settingsOpen: open }),
@@ -2101,6 +2115,39 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           ? null
           : prev.activeDetailView,
     }));
+  },
+
+  duplicatePlaylist: async (playlistId) => {
+    const src = get().playlists.find((p) => p.id === playlistId);
+    if (!src) return null;
+    const created = await libraryStore.createPlaylist({
+      name: `${src.name} (copia)`,
+      description: src.description,
+      tracks: [...src.tracks],
+    });
+    set({ playlists: libraryStore.getPlaylists() });
+    get().showToast(`Playlist «${created.name}» creada`);
+    return created;
+  },
+
+  copyPlaylistTracksTo: async (sourcePlaylistId, targetPlaylistId) => {
+    const src = get().playlists.find((p) => p.id === sourcePlaylistId);
+    const dst = get().playlists.find((p) => p.id === targetPlaylistId);
+    if (!src || !dst) return 0;
+    let added = 0;
+    for (const track of src.tracks) {
+      if (!dst.tracks.some((ex) => ex.id === track.id)) {
+        await libraryStore.addTrackToPlaylist(dst.id, track);
+        added++;
+      }
+    }
+    set({ playlists: libraryStore.getPlaylists() });
+    get().showToast(
+      added > 0
+        ? `${added} ${added === 1 ? 'pista añadida' : 'pistas añadidas'} a «${dst.name}»`
+        : `Todas las canciones ya estaban en «${dst.name}»`
+    );
+    return added;
   },
 
   addTrackToPlaylist: async (playlistId, track) => {
