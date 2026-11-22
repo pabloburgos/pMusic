@@ -17,8 +17,7 @@ export const PMusicLogo: React.FC<PMusicLogoProps> = ({
   const showFull = variant ? variant === 'full' : showWordmark;
   const bgId = `pm-bg-${uid}`;
   const rimId = `pm-rim-${uid}`;
-  const glyphId = `pm-glyph-${uid}`;
-  const sheenId = `pm-sheen-${uid}`;
+  const accentBarId = `pm-bar-${uid}`;
 
   return (
     <span className={`inline-flex items-center gap-2.5 select-none ${className}`}>
@@ -29,36 +28,24 @@ export const PMusicLogo: React.FC<PMusicLogoProps> = ({
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
         aria-hidden="true"
-        className="shrink-0 drop-shadow-[0_4px_12px_rgba(0,0,0,0.35)]"
+        className="shrink-0 drop-shadow-[0_4px_10px_rgba(0,0,0,0.32)]"
       >
         <defs>
-          <radialGradient id={bgId} cx="30%" cy="20%" r="85%">
-            <stop offset="0%" stopColor="#251C3E" />
-            <stop offset="52%" stopColor="#12111D" />
-            <stop offset="100%" stopColor="#08080D" />
-          </radialGradient>
+          <linearGradient id={bgId} x1="20%" y1="0%" x2="80%" y2="100%">
+            <stop offset="0%" stopColor="#1F1D29" />
+            <stop offset="100%" stopColor="#0C0C11" />
+          </linearGradient>
           <linearGradient id={rimId} x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#FFFFFF" stopOpacity="0.45" />
-            <stop offset="50%" stopColor="#C084FC" stopOpacity="0.22" />
-            <stop offset="100%" stopColor="#38BDF8" stopOpacity="0.32" />
+            <stop offset="0%" stopColor="#FFFFFF" stopOpacity="0.24" />
+            <stop offset="100%" stopColor="#FFFFFF" stopOpacity="0.06" />
           </linearGradient>
-          <linearGradient id={glyphId} x1="18%" y1="12%" x2="88%" y2="90%">
-            <stop offset="0%" stopColor="#FFFFFF" />
-            <stop offset="52%" stopColor="#E4D0FF" />
-            <stop offset="100%" stopColor="#67E8F9" />
-          </linearGradient>
-          <linearGradient id={sheenId} x1="10%" y1="0%" x2="80%" y2="65%">
-            <stop offset="0%" stopColor="#FFFFFF" stopOpacity="0.22" />
-            <stop offset="100%" stopColor="#FFFFFF" stopOpacity="0" />
+          <linearGradient id={accentBarId} x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#F4EDFF" />
+            <stop offset="100%" stopColor="#C4B5FD" />
           </linearGradient>
         </defs>
 
-        {/* Sculptural Liquid Glass Squircle Base */}
         <rect x="8" y="8" width="240" height="240" rx="64" fill={`url(#${bgId})`} />
-        <path
-          d="M72 10H184C218 10 246 38 246 72V106C198 76 122 70 10 112V72C10 38 38 10 72 10Z"
-          fill={`url(#${sheenId})`}
-        />
         <rect
           x="10.5"
           y="10.5"
@@ -69,23 +56,11 @@ export const PMusicLogo: React.FC<PMusicLogoProps> = ({
           strokeWidth="5"
         />
 
-        {/* Bespoke Geometric Resonant "p" Acoustic Mark */}
-        <rect x="64" y="60" width="28" height="142" rx="14" fill={`url(#${glyphId})`} />
-        <path
-          d="M92 98C92 73 113 56 142 56C174 56 198 79 198 112C198 145 174 168 142 168C118 168 100 155 92 136"
-          stroke={`url(#${glyphId})`}
-          strokeWidth="26"
-          strokeLinecap="round"
-        />
-        {/* Core Resonance Pulse & Acoustic Arc */}
-        <circle cx="143" cy="112" r="14" fill="#38BDF8" />
-        <path
-          d="M174 50C193 60 206 75 213 94"
-          stroke="#C084FC"
-          strokeWidth="12"
-          strokeLinecap="round"
-          strokeOpacity="0.88"
-        />
+        {/* Signature 4-bar equalizer app mark */}
+        <rect x="52" y="92" width="26" height="72" rx="13" fill="#F8FAFC" />
+        <rect x="94" y="54" width="26" height="148" rx="13" fill={`url(#${accentBarId})`} />
+        <rect x="136" y="74" width="26" height="108" rx="13" fill="#F8FAFC" />
+        <rect x="178" y="108" width="26" height="40" rx="13" fill="#E2E8F0" />
       </svg>
 
       {showFull && (

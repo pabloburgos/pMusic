@@ -437,7 +437,7 @@ const CarouselSection: React.FC<{
 
       <div
         ref={scrollerRef}
-        className="pm-no-scrollbar flex snap-x gap-4 overflow-x-auto px-1 pb-1.5"
+        className="pm-no-scrollbar flex snap-x gap-4 overflow-x-auto px-1 py-2"
       >
         {children}
       </div>

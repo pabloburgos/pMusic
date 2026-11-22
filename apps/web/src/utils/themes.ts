@@ -8,7 +8,11 @@ export type PMusicThemeId =
   | 'emerald-forest'
   | 'crimson-rose';
 
-export type PMusicPlayerBarStyle = 'classic-center' | 'ambient-dock';
+export type PMusicPlayerBarStyle =
+  | 'classic-center'
+  | 'ambient-dock'
+  | 'floating-island'
+  | 'minimal-wave';
 
 export type PMusicAccentPresetId =
   | 'auto'

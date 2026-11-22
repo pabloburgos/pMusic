@@ -34,7 +34,8 @@ export const ArtistLinks: React.FC<ArtistLinksProps> = ({
       } ${className}`}
     >
       {list.map((artist, idx) => {
-        const target = artist.id?.trim() || artist.name.trim();
+        const cleanId = artist.id?.trim() ?? '';
+        const target = /^\d+$/.test(cleanId) ? cleanId : artist.name.trim();
         return (
           <React.Fragment key={`${target}-${idx}`}>
             {idx > 0 && <span className="mr-1 shrink-0 select-none opacity-75">,</span>}

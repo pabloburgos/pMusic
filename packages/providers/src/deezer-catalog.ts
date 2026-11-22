@@ -206,6 +206,8 @@ const GENRE_CHART_MAP: Record<string, number> = {
 export class DeezerCatalog {
   private readonly fetchFn: typeof fetch;
   private readonly cache = new Map<string, { at: number; data: unknown }>();
+  private readonly inFlight = new Map<string, Promise<Json>>();
+  private readonly searchCache = new Map<string, { at: number; bundle: SearchResultBundle }>();
 
   public constructor(fetchFn?: typeof fetch) {
     this.fetchFn = fetchFn ?? globalThis.fetch.bind(globalThis);
@@ -214,13 +216,27 @@ export class DeezerCatalog {
   private async get(path: string, signal?: AbortSignal): Promise<Json> {
     const hit = this.cache.get(path);
     if (hit && Date.now() - hit.at < 5 * 60_000) return hit.data as Json;
-    const res = await this.fetchFn(`${API}${path}`, { signal });
-    if (!res.ok) throw new Error(`Deezer ${res.status}`);
-    const data = (await res.json()) as Json;
-    if (data?.error) throw new Error(String(data.error?.message ?? 'Deezer error'));
-    this.cache.set(path, { at: Date.now(), data });
-    if (this.cache.size > 300) this.cache.delete(this.cache.keys().next().value as string);
-    return data;
+    if (!signal) {
+      const pending = this.inFlight.get(path);
+      if (pending) return pending;
+    }
+    const exec = (async () => {
+      const res = await this.fetchFn(`${API}${path}`, { signal });
+      if (!res.ok) throw new Error(`Deezer ${res.status}`);
+      const data = (await res.json()) as Json;
+      if (data?.error) throw new Error(String(data.error?.message ?? 'Deezer error'));
+      this.cache.set(path, { at: Date.now(), data });
+      if (this.cache.size > 400) this.cache.delete(this.cache.keys().next().value as string);
+      return data;
+    })();
+    if (!signal) {
+      this.inFlight.set(path, exec);
+    }
+    try {
+      return await exec;
+    } finally {
+      this.inFlight.delete(path);
+    }
   }
 
   public mapTrack(t: Json, albumOverride?: Json): Track {
@@ -424,11 +440,17 @@ export class DeezerCatalog {
     }
 
     const rawQ = query.trim();
+    const searchCacheKey = `${filter}::${normalizeSearchStr(rawQ)}`;
+    const cachedBundle = this.searchCache.get(searchCacheKey);
+    if (cachedBundle && Date.now() - cachedBundle.at < 5 * 60_000) {
+      return cachedBundle.bundle;
+    }
+
     const q = encodeURIComponent(rawQ);
     const tokens = tokenizeSearchStr(rawQ);
     const want = (f: SearchFilter) => filter === 'all' || filter === f;
 
-    const runTimedGet = async (path: string, timeoutMs = 1400): Promise<Json | null> => {
+    const runTimedGet = async (path: string, timeoutMs = 750): Promise<Json | null> => {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), timeoutMs);
       const onOuter = () => ctrl.abort();
@@ -443,32 +465,30 @@ export class DeezerCatalog {
       }
     };
 
-    const structuredPromises: Array<Promise<Json | null>> = [];
-    if ((want('song') || want('video')) && tokens.length >= 2) {
-      const first = tokens[0]!;
-      const rest = tokens.slice(1).join(' ');
-      const last = tokens[tokens.length - 1]!;
-      const head = tokens.slice(0, -1).join(' ');
-      structuredPromises.push(
-        runTimedGet(`/search/track?q=${encodeURIComponent(`artist:"${first}" track:"${rest}"`)}&limit=10`),
-        runTimedGet(`/search/track?q=${encodeURIComponent(`artist:"${last}" track:"${head}"`)}&limit=10`)
-      );
-    }
-
-    const [songs, artists, albums, playlists, ...structuredTracks] = await Promise.all([
-      want('song') || want('video') ? this.get(`/search?q=${q}&limit=30`, signal) : null,
-      want('artist') ? this.get(`/search/artist?q=${q}&limit=8`, signal) : null,
+    const [songs, artists, albums, playlists] = await Promise.all([
+      want('song') || want('video') ? this.get(`/search?q=${q}&limit=25`, signal) : null,
+      want('artist') ? this.get(`/search/artist?q=${q}&limit=10`, signal) : null,
       want('album') || ((want('song') || want('video')) && tokens.length >= 2)
         ? this.get(`/search/album?q=${q}&limit=10`, signal).catch(() => ({ data: [] }))
         : null,
       want('playlist') ? this.get(`/search/playlist?q=${q}&limit=8`, signal) : null,
-      ...structuredPromises,
     ]);
 
     const albumListRaw: Json[] = albums?.data ?? [];
+    const primaryRawSongs: Json[] = songs?.data ?? [];
+    const bestPrimaryScore = primaryRawSongs.reduce((best, raw) => {
+      const s = scoreTrackForQuery(this.mapTrack(raw), rawQ);
+      return s > best ? s : best;
+    }, 0);
+
+    const structuredTracks: Array<Json | null> = [];
     const candidateAlbumTracks: Json[] = [];
 
-    if ((want('song') || want('video')) && tokens.length >= 2 && albumListRaw.length > 0) {
+    if ((want('song') || want('video')) && tokens.length >= 2 && bestPrimaryScore < 165) {
+      const first = tokens[0]!;
+      const rest = tokens.slice(1).join(' ');
+      const last = tokens[tokens.length - 1]!;
+      const head = tokens.slice(0, -1).join(' ');
       const matchingAlbums = albumListRaw
         .map((al) => ({
           al,
@@ -478,22 +498,25 @@ export class DeezerCatalog {
         .sort((a, b) => b.score - a.score)
         .slice(0, 2);
 
-      if (matchingAlbums.length > 0) {
-        const fetchedAlbums = await Promise.all(
-          matchingAlbums.map(({ al }) =>
-            runTimedGet(`/album/${encodeURIComponent(String(al.id))}/tracks?limit=25`).then((res) =>
-              (res?.data ?? []).map((t: Json) => ({
-                ...t,
-                artist: t.artist ?? al.artist,
-                album: t.album ?? al,
-              }))
-            )
-          )
-        );
-        for (const list of fetchedAlbums) {
-          candidateAlbumTracks.push(...list);
-        }
-      }
+      const secondaryCalls: Array<Promise<void>> = [
+        runTimedGet(`/search/track?q=${encodeURIComponent(`artist:"${first}" track:"${rest}"`)}&limit=8`).then((res) => {
+          if (res) structuredTracks.push(res);
+        }),
+        runTimedGet(`/search/track?q=${encodeURIComponent(`artist:"${last}" track:"${head}"`)}&limit=8`).then((res) => {
+          if (res) structuredTracks.push(res);
+        }),
+        ...matchingAlbums.map(({ al }) =>
+          runTimedGet(`/album/${encodeURIComponent(String(al.id))}/tracks?limit=20`).then((res) => {
+            const list = (res?.data ?? []).map((t: Json) => ({
+              ...t,
+              artist: t.artist ?? al.artist,
+              album: t.album ?? al,
+            }));
+            candidateAlbumTracks.push(...list);
+          })
+        ),
+      ];
+      await Promise.all(secondaryCalls);
     }
 
     const mergedRaw: Json[] = [];
@@ -512,12 +535,12 @@ export class DeezerCatalog {
       pushRawUnique(sRes?.data ?? []);
     }
     pushRawUnique(candidateAlbumTracks);
-    pushRawUnique(songs?.data ?? []);
+    pushRawUnique(primaryRawSongs);
 
     const enrichedList = await this.enrichTracks(
       mergedRaw,
       mergedRaw.map((t: Json) => this.mapTrack(t)),
-      12,
+      6,
       signal
     );
 
@@ -527,12 +550,15 @@ export class DeezerCatalog {
       .map((x) => x.track);
 
     const artistList = (artists?.data ?? [])
-      .map((a: Json) => this.mapArtist(a))
-      .map((artist: ArtistSummary, idx: number) => ({
-        artist,
-        idx,
-        score: scoreArtistForQuery(artist, rawQ),
-      }))
+      .map((raw: Json, idx: number) => {
+        const artist = this.mapArtist(raw);
+        const fanBoost = Math.log10(Math.max(1, Number(raw.nb_fan) || 0) + 1) * 8;
+        return {
+          artist,
+          idx,
+          score: scoreArtistForQuery(artist, rawQ) + fanBoost,
+        };
+      })
       .sort((a: { score: number; idx: number }, b: { score: number; idx: number }) => b.score - a.score || a.idx - b.idx)
       .map((x: { artist: ArtistSummary }) => x.artist);
 
@@ -567,7 +593,7 @@ export class DeezerCatalog {
       topResult = { kind: 'artist', item: topArtist };
     }
 
-    return {
+    const bundle: SearchResultBundle = {
       query,
       topResult,
       songs: songList,
@@ -576,6 +602,11 @@ export class DeezerCatalog {
       albums: albumList,
       playlists: (playlists?.data ?? []).map((p: Json) => this.mapPlaylist(p)),
     };
+    this.searchCache.set(searchCacheKey, { at: Date.now(), bundle });
+    if (this.searchCache.size > 120) {
+      this.searchCache.delete(this.searchCache.keys().next().value as string);
+    }
+    return bundle;
   }
 
   public async suggestions(input: string, signal?: AbortSignal): Promise<string[]> {
@@ -613,14 +644,27 @@ export class DeezerCatalog {
 
   public async artistByName(name: string, signal?: AbortSignal): Promise<ArtistDetail> {
     const cleaned = name.trim();
-    const res = await this.get(`/search/artist?q=${encodeURIComponent(cleaned)}&limit=4`, signal);
+    const res = await this.get(`/search/artist?q=${encodeURIComponent(cleaned)}&limit=15`, signal);
     const list = (res.data ?? []) as Json[];
     if (list.length === 0) {
       throw new Error(`Artista no encontrado: ${name}`);
     }
-    const lower = cleaned.toLowerCase();
+    const normTarget = normalizeSearchStr(cleaned);
+    const exactMatches = list
+      .filter((a) => normalizeSearchStr(String(a.name ?? '')) === normTarget)
+      .sort((a, b) => (Number(b.nb_fan) || 0) - (Number(a.nb_fan) || 0));
+
     const best =
-      list.find((a) => String(a.name ?? '').trim().toLowerCase() === lower) ?? list[0]!;
+      exactMatches[0] ??
+      [...list].sort((a, b) => {
+        const sA =
+          scoreArtistForQuery(this.mapArtist(a), cleaned) +
+          Math.log10(Math.max(1, Number(a.nb_fan) || 0) + 1) * 18;
+        const sB =
+          scoreArtistForQuery(this.mapArtist(b), cleaned) +
+          Math.log10(Math.max(1, Number(b.nb_fan) || 0) + 1) * 18;
+        return sB - sA;
+      })[0]!;
     return this.artist(String(best.id), signal);
   }
 

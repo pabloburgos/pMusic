@@ -132,6 +132,7 @@ export const App: React.FC = () => {
   const [dockHoverPct, setDockHoverPct] = useState<number | null>(null);
   const [heartBurst, setHeartBurst] = useState(false);
   const [dockTransportAnim, setDockTransportAnim] = useState<'prev' | 'next' | 'play' | null>(null);
+  const [smoothDockPosSec, setSmoothDockPosSec] = useState<number>(positionSec);
   const isElectronDesktop = isElectronDesktopRuntime();
 
   const swipeStartXRef = useRef<number | null>(null);
@@ -139,6 +140,34 @@ export const App: React.FC = () => {
   const dockBarRef = useRef<HTMLElement | null>(null);
   const scrubDraggingRef = useRef(false);
   const dockAnimTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dockClockRef = useRef({
+    posSec: positionSec,
+    atMs: typeof performance !== 'undefined' ? performance.now() : 0,
+  });
+
+  useEffect(() => {
+    dockClockRef.current = {
+      posSec: positionSec,
+      atMs: typeof performance !== 'undefined' ? performance.now() : 0,
+    };
+    setSmoothDockPosSec(positionSec);
+  }, [positionSec, currentTrack.id, isPlaying]);
+
+  useEffect(() => {
+    if (!isPlaying || isMobileViewport || typeof requestAnimationFrame !== 'function') {
+      return;
+    }
+    let rafId = 0;
+    const step = (now: number) => {
+      const elapsed = Math.max(0, (now - dockClockRef.current.atMs) / 1000);
+      setSmoothDockPosSec(
+        Math.min(Math.max(1, durationSec), dockClockRef.current.posSec + elapsed)
+      );
+      rafId = requestAnimationFrame(step);
+    };
+    rafId = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(rafId);
+  }, [isPlaying, isMobileViewport, durationSec]);
 
   const triggerDockTransportAnim = (kind: 'prev' | 'next' | 'play') => {
     setDockTransportAnim(null);
@@ -207,10 +236,20 @@ export const App: React.FC = () => {
         void togglePlayPause();
       } else if (e.key === 'ArrowRight') {
         e.preventDefault();
-        seekTo(Math.min(durationSec, positionSec + 5));
+        if (e.shiftKey) {
+          seekTo(Math.min(durationSec, positionSec + 5));
+        } else {
+          triggerDockTransportAnim('next');
+          void nextTrack();
+        }
       } else if (e.key === 'ArrowLeft') {
         e.preventDefault();
-        seekTo(Math.max(0, positionSec - 5));
+        if (e.shiftKey) {
+          seekTo(Math.max(0, positionSec - 5));
+        } else {
+          triggerDockTransportAnim('prev');
+          void prevTrack();
+        }
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
         setVolume(Math.min(1, Number((volume + 0.03).toFixed(2))));
@@ -266,6 +305,8 @@ export const App: React.FC = () => {
     toggleShuffle,
     cycleRepeatMode,
     seekTo,
+    nextTrack,
+    prevTrack,
     setVolume,
     toggleMute,
     toggleDjMode,
@@ -274,9 +315,10 @@ export const App: React.FC = () => {
 
   const isLiked = likedTracks.some((l) => l.trackId === currentTrack.id);
   const dlStatus = offlineDownloads[currentTrack.id] ?? 'idle';
+  const liveDockPosSec = isMobileViewport ? positionSec : smoothDockPosSec;
   const progressPct = Math.max(
     0,
-    Math.min(100, (positionSec / Math.max(1, durationSec)) * 100)
+    Math.min(100, (liveDockPosSec / Math.max(1, durationSec)) * 100)
   );
   const volumePct = Math.round(volume * 100);
   const upNextQueue = queue.slice(queueIndex + 1, queueIndex + 6);
@@ -320,7 +362,9 @@ export const App: React.FC = () => {
     if (!el) return;
     const rect = el.getBoundingClientRect();
     const pct = Math.max(0, Math.min(1, (clientX - rect.left) / Math.max(1, rect.width)));
-    seekTo(Math.round(pct * Math.max(1, durationSec)));
+    const nextSec = Math.round(pct * Math.max(1, durationSec));
+    setSmoothDockPosSec(nextSec);
+    seekTo(nextSec);
   };
 
   const handleMiniPlayerSwipeStart = (clientX: number) => {
@@ -346,8 +390,8 @@ export const App: React.FC = () => {
     >
       {/* Unified Desktop Header & Integrated Frameless Windows Drag Bar */}
       {!isMobileViewport && (
-        <header className="pm-drag-region pm-canvas z-30 flex h-12 w-full shrink-0 items-center justify-between gap-3 border-b pm-border px-3">
-          <div className="pm-no-drag flex items-center gap-2">
+        <header className="pm-drag-region pm-canvas relative z-30 flex h-12 w-full shrink-0 items-center justify-between gap-3 border-b pm-border px-3">
+          <div className="pm-no-drag relative z-10 flex items-center gap-2">
             <button
               type="button"
               aria-label="Ir al inicio"
@@ -385,11 +429,12 @@ export const App: React.FC = () => {
             )}
           </div>
 
-          <div className="flex flex-1 items-center justify-center">
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
             <button
               type="button"
+              data-testid="top-center-search-btn"
               onClick={() => setSpotlightOpen(true)}
-              className="pm-no-drag pm-input pm-text-tertiary flex w-72 items-center justify-between gap-2 rounded-full px-3.5 py-1.5 text-xs transition-colors hover:border-[var(--pm-border-strong)] hover:text-[var(--pm-text-primary)] lg:w-96"
+              className="pm-no-drag pm-input pm-text-tertiary pointer-events-auto flex w-60 items-center justify-between gap-2 rounded-full px-3.5 py-1.5 text-xs transition-colors hover:border-[var(--pm-border-strong)] hover:text-[var(--pm-text-primary)] md:w-72 lg:w-96"
             >
               <span className="flex items-center gap-2">
                 <Search className="h-3.5 w-3.5 pm-text-secondary" />
@@ -402,7 +447,7 @@ export const App: React.FC = () => {
           </div>
 
           <div
-            className={`pm-no-drag flex items-center gap-1.5 ${
+            className={`pm-no-drag relative z-10 flex items-center gap-1.5 ${
               isElectronDesktop ? 'mr-[138px]' : ''
             }`}
           >
@@ -1128,14 +1173,15 @@ export const App: React.FC = () => {
         )}
       </div>
 
-      {/* Desktop Customizable Floating Liquid Glass Player Bar (>= 768px) */}
+      {/* Desktop Customizable Floating Frosted/Liquid Glass Player Bar (>= 768px) */}
       {!isMobileViewport && (
         <footer
           ref={dockBarRef}
           aria-label="Reproductor de escritorio"
           data-testid="desktop-player-bar"
+          data-dock-style={playerBarStyle}
           onPointerDown={(e) => {
-            if (playerBarStyle !== 'ambient-dock') return;
+            if (playerBarStyle === 'classic-center') return;
             const target = e.target as HTMLElement | null;
             if (
               target?.closest(
@@ -1149,7 +1195,7 @@ export const App: React.FC = () => {
             seekFromClientX(e.clientX);
           }}
           onPointerMove={(e) => {
-            if (playerBarStyle !== 'ambient-dock') return;
+            if (playerBarStyle === 'classic-center') return;
             const rect = e.currentTarget.getBoundingClientRect();
             const pct = Math.max(
               0,
@@ -1181,35 +1227,78 @@ export const App: React.FC = () => {
             scrubDraggingRef.current = false;
             setDockHoverPct(null);
           }}
-          className={`pm-glass-regular fixed inset-x-3 bottom-3 z-40 grid select-none grid-cols-[minmax(200px,1fr)_minmax(320px,540px)_minmax(200px,1fr)] items-center gap-4 overflow-hidden rounded-[20px] px-5 ${
-            playerBarStyle === 'ambient-dock'
-              ? 'h-[80px] cursor-pointer'
-              : 'h-[84px]'
+          className={`pm-glass-regular fixed z-40 grid select-none items-center gap-4 overflow-hidden ${
+            playerBarStyle === 'floating-island'
+              ? 'left-1/2 bottom-3.5 h-[72px] w-[min(960px,calc(100%-32px))] -translate-x-1/2 cursor-pointer grid-cols-[minmax(160px,1fr)_auto_minmax(160px,1fr)] rounded-full px-5'
+              : playerBarStyle === 'minimal-wave'
+                ? 'inset-x-3 bottom-3 h-[76px] cursor-pointer grid-cols-[minmax(200px,1fr)_minmax(300px,520px)_minmax(200px,1fr)] rounded-[18px] px-5'
+                : playerBarStyle === 'ambient-dock'
+                  ? 'inset-x-3 bottom-3 h-[80px] cursor-pointer grid-cols-[minmax(200px,1fr)_minmax(320px,540px)_minmax(200px,1fr)] rounded-[20px] px-5'
+                  : 'inset-x-3 bottom-3 h-[84px] grid-cols-[minmax(200px,1fr)_minmax(320px,540px)_minmax(200px,1fr)] rounded-[20px] px-5'
           }`}
         >
-          {/* Ambient Full-Dock Progress & Hover Preview Tinted with Active Song Cover Colors */}
+          {/* Smooth Feathered Ambient Progress Fill (NO hard vertical border line) */}
           {playerBarStyle === 'ambient-dock' && (
-            <>
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-y-0 left-0 z-0 transition-[background] duration-200"
+              style={{
+                width: `${Math.min(100, progressPct + 4)}%`,
+                background:
+                  'linear-gradient(90deg, color-mix(in srgb, var(--pm-ambient-1) 34%, transparent) 0%, color-mix(in srgb, var(--pm-ambient-2) 52%, transparent) calc(100% - 28px), transparent 100%)',
+              }}
+            />
+          )}
+
+          {/* Dynamic Floating Island Bottom Curve Progress Hairline */}
+          {playerBarStyle === 'floating-island' && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-x-7 bottom-0 z-10 h-[3px] overflow-hidden rounded-full bg-white/12"
+            >
               <div
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-y-0 left-0 z-0 transition-[width,background] duration-150"
+                className="h-full rounded-full"
                 style={{
                   width: `${progressPct}%`,
-                  borderRight: '2px solid color-mix(in srgb, var(--pm-ambient-1) 75%, white)',
                   background:
-                    'linear-gradient(90deg, color-mix(in srgb, var(--pm-ambient-1) 36%, transparent) 0%, color-mix(in srgb, var(--pm-ambient-2) 64%, transparent) 100%)',
+                    'linear-gradient(90deg, color-mix(in srgb, var(--pm-ambient-1) 80%, var(--pm-accent-primary)) 0%, var(--pm-accent-primary) 100%)',
                   boxShadow:
-                    '2px 0 24px color-mix(in srgb, var(--pm-ambient-1) 42%, transparent)',
+                    '0 0 12px color-mix(in srgb, var(--pm-ambient-1) 70%, transparent)',
                 }}
               />
+            </div>
+          )}
+
+          {/* Minimal Studio Top Edge Glowing Progress Line */}
+          {playerBarStyle === 'minimal-wave' && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-x-0 top-0 z-10 h-[3px] bg-white/10"
+            >
+              <div
+                className="h-full rounded-r-full"
+                style={{
+                  width: `${progressPct}%`,
+                  background:
+                    'linear-gradient(90deg, color-mix(in srgb, var(--pm-ambient-2) 70%, var(--pm-accent-primary)) 0%, color-mix(in srgb, var(--pm-ambient-1) 85%, white) 100%)',
+                  boxShadow:
+                    '0 0 16px color-mix(in srgb, var(--pm-ambient-1) 65%, transparent)',
+                }}
+              />
+            </div>
+          )}
+
+          {/* Hover scrub aura + accessible slider for click/drag dock modes */}
+          {playerBarStyle !== 'classic-center' && (
+            <>
               {dockHoverPct !== null && (
                 <div
                   aria-hidden="true"
                   className="pointer-events-none absolute inset-y-0 left-0 z-0"
                   style={{
                     width: `${dockHoverPct}%`,
-                    backgroundColor:
-                      'color-mix(in srgb, var(--pm-ambient-1) 18%, transparent)',
+                    background:
+                      'linear-gradient(90deg, color-mix(in srgb, var(--pm-ambient-1) 14%, transparent) 0%, transparent 100%)',
                   }}
                 />
               )}
@@ -1238,8 +1327,12 @@ export const App: React.FC = () => {
                 aria-label="Posición de reproducción"
                 min={0}
                 max={Math.max(1, Math.round(durationSec))}
-                value={Math.min(Math.round(durationSec), Math.round(positionSec))}
-                onChange={(e) => seekTo(Number(e.target.value))}
+                value={Math.min(Math.round(durationSec), Math.round(liveDockPosSec))}
+                onChange={(e) => {
+                  const next = Number(e.target.value);
+                  setSmoothDockPosSec(next);
+                  seekTo(next);
+                }}
                 className="sr-only"
               />
             </>
@@ -1259,9 +1352,28 @@ export const App: React.FC = () => {
                   alt={currentTrack.title}
                   className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
                 />
+                {playerBarStyle === 'minimal-wave' && isPlaying && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute right-1 bottom-1 flex h-4 items-end gap-[2px] rounded bg-black/65 px-1 py-0.5"
+                  >
+                    <span
+                      className="pm-eq-bar w-[2px] rounded-full bg-white"
+                      style={{ height: '70%', animationDelay: '0ms' }}
+                    />
+                    <span
+                      className="pm-eq-bar w-[2px] rounded-full bg-white"
+                      style={{ height: '100%', animationDelay: '160ms' }}
+                    />
+                    <span
+                      className="pm-eq-bar w-[2px] rounded-full bg-white"
+                      style={{ height: '55%', animationDelay: '320ms' }}
+                    />
+                  </span>
+                )}
               </button>
 
-              <div className="min-w-0 max-w-[200px] xl:max-w-[250px]">
+              <div className="min-w-0 max-w-[200px] xl:max-w-[240px]">
                 <button
                   type="button"
                   onClick={() => setNowPlayingOpen(true)}
@@ -1295,7 +1407,7 @@ export const App: React.FC = () => {
                   triggerHeartBurst();
                   void toggleLike(currentTrack);
                 }}
-                className={`pm-pressable pm-hover inline-flex shrink-0 items-center justify-center rounded-full p-2 ${
+                className={`pm-pressable pm-dock-frost-btn inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
                   heartBurst ? 'pm-heart-pop' : ''
                 } ${
                   isLiked
@@ -1303,14 +1415,14 @@ export const App: React.FC = () => {
                     : 'pm-text-secondary hover:text-[var(--pm-text-primary)]'
                 }`}
               >
-                <Heart className={`h-4 w-4 ${isLiked ? 'fill-current' : ''}`} />
+                <Heart className={`h-3.5 w-3.5 ${isLiked ? 'fill-current' : ''}`} />
               </button>
             </div>
           </div>
 
-          {/* Center: Symmetrical Transport [Shuffle · Prev · Play · Next · Repeat] + Centered Timeline/Time */}
+          {/* Center: Symmetrical Frosted Transport [Shuffle · Prev · Play · Next · Repeat] + Centered Timeline/Time */}
           <div className="pointer-events-none relative z-10 flex w-full flex-col items-center justify-center gap-1 justify-self-center">
-            <div className="pm-dock-interactive pointer-events-auto inline-flex items-center justify-center gap-2 sm:gap-3">
+            <div className="pm-dock-interactive pointer-events-auto inline-flex items-center justify-center gap-2 sm:gap-2.5">
               <button
                 type="button"
                 aria-label={
@@ -1320,7 +1432,7 @@ export const App: React.FC = () => {
                 }
                 aria-pressed={shuffleEnabled}
                 onClick={() => toggleShuffle()}
-                className={`pm-pressable pm-hover relative inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
+                className={`pm-pressable pm-dock-frost-btn relative inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
                   shuffleEnabled
                     ? 'pm-text-primary'
                     : 'pm-text-tertiary hover:text-[var(--pm-text-primary)]'
@@ -1343,7 +1455,7 @@ export const App: React.FC = () => {
                   triggerDockTransportAnim('prev');
                   void prevTrack();
                 }}
-                className="pm-pressable pm-hover inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-primary"
+                className="pm-pressable pm-dock-frost-btn inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-primary"
               >
                 <SkipBack
                   className={`h-4 w-4 ${dockTransportAnim === 'prev' ? 'pm-nudge-prev' : ''}`}
@@ -1375,7 +1487,7 @@ export const App: React.FC = () => {
                   triggerDockTransportAnim('next');
                   void nextTrack();
                 }}
-                className="pm-pressable pm-hover inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-primary"
+                className="pm-pressable pm-dock-frost-btn inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-primary"
               >
                 <SkipForward
                   className={`h-4 w-4 ${dockTransportAnim === 'next' ? 'pm-nudge-next' : ''}`}
@@ -1387,7 +1499,7 @@ export const App: React.FC = () => {
                 aria-label={repeatLabel}
                 aria-pressed={repeatMode !== 'off'}
                 onClick={() => cycleRepeatMode()}
-                className={`pm-pressable pm-hover relative inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
+                className={`pm-pressable pm-dock-frost-btn relative inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
                   repeatMode !== 'off'
                     ? 'pm-text-primary'
                     : 'pm-text-tertiary hover:text-[var(--pm-text-primary)]'
@@ -1411,7 +1523,7 @@ export const App: React.FC = () => {
             {playerBarStyle === 'classic-center' ? (
               <div className="pm-dock-interactive pointer-events-auto flex w-full max-w-[500px] items-center gap-2.5">
                 <span className="tabular-nums w-9 shrink-0 select-none text-right text-[11px] font-medium pm-text-tertiary">
-                  {formatDurationSec(positionSec)}
+                  {formatDurationSec(liveDockPosSec)}
                 </span>
                 <div className="relative flex flex-1 items-center">
                   {cueStartPct !== null && cueWidthPct > 0 && (
@@ -1430,8 +1542,12 @@ export const App: React.FC = () => {
                     aria-label="Posición de reproducción"
                     min={0}
                     max={Math.max(1, Math.round(durationSec))}
-                    value={Math.min(Math.round(durationSec), Math.round(positionSec))}
-                    onChange={(e) => seekTo(Number(e.target.value))}
+                    value={Math.min(Math.round(durationSec), Math.round(liveDockPosSec))}
+                    onChange={(e) => {
+                      const next = Number(e.target.value);
+                      setSmoothDockPosSec(next);
+                      seekTo(next);
+                    }}
                     style={
                       {
                         '--pm-fill': `${progressPct}%`,
@@ -1448,7 +1564,7 @@ export const App: React.FC = () => {
               </div>
             ) : (
               <div className="tabular-nums flex items-center justify-center gap-2 select-none text-[11px] font-medium pm-text-tertiary">
-                <span>{formatDurationSec(positionSec)}</span>
+                <span>{formatDurationSec(liveDockPosSec)}</span>
                 <span aria-hidden="true" className="opacity-50">
                   ·
                 </span>

@@ -108,6 +108,15 @@ export const NowPlayingSheet: React.FC = () => {
   const prevRowTopsRef = useRef<Map<string, number>>(new Map());
   const transportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const movedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lyricsScrollResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const markLyricsUserScrolled = () => {
+    setLyricsUserScrolled(true);
+    if (lyricsScrollResumeTimerRef.current) clearTimeout(lyricsScrollResumeTimerRef.current);
+    lyricsScrollResumeTimerRef.current = setTimeout(() => {
+      setLyricsUserScrolled(false);
+    }, 4500);
+  };
 
   const triggerTransportAnim = (kind: 'prev' | 'next' | 'play') => {
     setTransportAnim(null);
@@ -200,6 +209,26 @@ export const NowPlayingSheet: React.FC = () => {
     };
   }, [isElectronDesktop, nowPlayingOpen, themeId]);
 
+  const smoothPosMs = smoothPosSec * 1000;
+  let liveLyricIdx = -1;
+  if (currentLyrics && currentLyrics.status === 'synced' && currentLyrics.lines.length > 0) {
+    for (let i = 0; i < currentLyrics.lines.length; i++) {
+      if (currentLyrics.lines[i]!.timeMs <= smoothPosMs + 120) {
+        liveLyricIdx = i;
+      } else {
+        break;
+      }
+    }
+  }
+  const resolvedActiveLyricIdx =
+    currentLyrics && currentLyrics.lines.length > 0
+      ? liveLyricIdx >= 0
+        ? liveLyricIdx
+        : activeLyricIndex >= 0
+          ? activeLyricIndex
+          : 0
+      : -1;
+
   useEffect(() => {
     if (
       nowPlayingOpen &&
@@ -213,7 +242,7 @@ export const NowPlayingSheet: React.FC = () => {
         block: 'center',
       });
     }
-  }, [nowPlayingOpen, nowPlayingTab, activeLyricIndex, lyricsUserScrolled]);
+  }, [nowPlayingOpen, nowPlayingTab, resolvedActiveLyricIdx, lyricsUserScrolled]);
 
   if (!nowPlayingOpen) return null;
 
@@ -238,13 +267,6 @@ export const NowPlayingSheet: React.FC = () => {
           )
         )
       : 0;
-  const smoothPosMs = smoothPosSec * 1000;
-  const resolvedActiveLyricIdx =
-    currentLyrics && currentLyrics.lines.length > 0
-      ? activeLyricIndex >= 0
-        ? activeLyricIndex
-        : 0
-      : -1;
   const repeatLabel =
     repeatMode === 'one'
       ? 'Repetir esta canción (siguiente: desactivar)'
@@ -608,8 +630,8 @@ export const NowPlayingSheet: React.FC = () => {
 
             <div
               data-testid="synced-lyrics-view"
-              onWheel={() => setLyricsUserScrolled(true)}
-              onTouchMove={() => setLyricsUserScrolled(true)}
+              onWheel={markLyricsUserScrolled}
+              onTouchMove={markLyricsUserScrolled}
               className="space-y-6 lg:col-span-7"
             >
               <div className="flex items-center justify-between lg:hidden">
@@ -636,10 +658,15 @@ export const NowPlayingSheet: React.FC = () => {
               </div>
 
               {lyricsUserScrolled && (
-                <div className="flex justify-end">
+                <div className="sticky top-2 z-20 flex justify-end">
                   <button
                     type="button"
-                    onClick={() => setLyricsUserScrolled(false)}
+                    onClick={() => {
+                      if (lyricsScrollResumeTimerRef.current) {
+                        clearTimeout(lyricsScrollResumeTimerRef.current);
+                      }
+                      setLyricsUserScrolled(false);
+                    }}
                     className="rounded-full bg-white px-4 py-1.5 text-xs font-bold text-[#070709] shadow-md"
                   >
                     Sincronizar con la reproducción

@@ -6,12 +6,9 @@ import {
   Download,
   Gamepad2,
   Palette,
-  Plus,
   RefreshCw,
-  RotateCcw,
   Settings,
   Sliders,
-  Sparkles,
   Timer,
   Upload,
   X,
@@ -33,7 +30,6 @@ type SettingsCategoryId =
   | 'dj'
   | 'discord'
   | 'reproduccion'
-  | 'gustos'
   | 'cuenta';
 
 const CATEGORIES: ReadonlyArray<{
@@ -46,7 +42,6 @@ const CATEGORIES: ReadonlyArray<{
   { id: 'dj', label: 'Sesión DJ', icon: <Disc3 className="h-4 w-4" /> },
   { id: 'discord', label: 'Discord RPC', icon: <Gamepad2 className="h-4 w-4" /> },
   { id: 'reproduccion', label: 'Reproducción', icon: <Timer className="h-4 w-4" /> },
-  { id: 'gustos', label: 'Algoritmo y Gustos', icon: <Sparkles className="h-4 w-4" /> },
   { id: 'cuenta', label: 'Cuenta y Datos', icon: <Database className="h-4 w-4" /> },
 ];
 
@@ -110,11 +105,6 @@ export const SettingsModal: React.FC = () => {
     discordRpcStatus,
     sleepTimerMode,
     sleepTimerRemainingSec,
-    seedArtists,
-    affinityProfile,
-    supabaseUrlInput,
-    supabaseAnonKeyInput,
-    deviceName,
     authState,
     offlineEntries,
     setTheme,
@@ -150,10 +140,6 @@ export const SettingsModal: React.FC = () => {
     refreshDiscordRpcStatus,
     setSleepTimer,
     cancelSleepTimer,
-    addSeedArtist,
-    removeSeedArtist,
-    resetTasteProfile,
-    configureSupabase,
     signInSupabase,
     signUpSupabase,
     signOutSupabase,
@@ -164,12 +150,8 @@ export const SettingsModal: React.FC = () => {
   } = usePMusicStore();
 
   const [activeCategory, setActiveCategory] = useState<SettingsCategoryId>('apariencia');
-  const [urlVal, setUrlVal] = useState(supabaseUrlInput);
-  const [keyVal, setKeyVal] = useState(supabaseAnonKeyInput);
-  const [devNameVal, setDevNameVal] = useState(deviceName);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [newSeedName, setNewSeedName] = useState('');
   const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [clientIdInput, setClientIdInput] = useState(discordRpcConfig.clientId);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -194,7 +176,6 @@ export const SettingsModal: React.FC = () => {
   };
   const crossfadePct = Math.round((safeCrossfade.durationSec / 12) * 100);
   const balancePct = Math.round(((stereoBalance + 1) / 2) * 100);
-  const maxAffinity = Math.max(1, ...(affinityProfile.map((a) => a.score) || [1]));
 
   const statusBadgeText =
     discordRpcStatus.status === 'connected'
@@ -419,7 +400,7 @@ export const SettingsModal: React.FC = () => {
                     >
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold pm-text-primary">
-                          Barra Ambiental Completa
+                          Barra Ambiental Fluida
                         </span>
                         {playerBarStyle === 'ambient-dock' && (
                           <span className="pm-btn-primary inline-flex h-4 w-4 items-center justify-center rounded-full">
@@ -428,7 +409,13 @@ export const SettingsModal: React.FC = () => {
                         )}
                       </div>
                       <div className="pm-elevated relative flex flex-col items-center justify-center gap-1 overflow-hidden rounded-lg border pm-border px-3 py-2.5">
-                        <div className="pointer-events-none absolute inset-y-0 left-0 w-1/2 bg-[var(--pm-accent-primary)] opacity-15 border-r border-[var(--pm-accent-primary)]" />
+                        <div
+                          className="pointer-events-none absolute inset-y-0 left-0 w-3/5"
+                          style={{
+                            background:
+                              'linear-gradient(90deg, color-mix(in srgb, var(--pm-accent-primary) 28%, transparent) 0%, color-mix(in srgb, var(--pm-accent-primary) 12%, transparent) 78%, transparent 100%)',
+                          }}
+                        />
                         <div className="relative z-10 flex items-center gap-2">
                           <span className="h-1.5 w-1.5 rounded-full bg-current pm-text-tertiary" />
                           <span className="h-2 w-2 rounded-full bg-current pm-text-secondary" />
@@ -441,7 +428,85 @@ export const SettingsModal: React.FC = () => {
                         </span>
                       </div>
                       <p className="text-[11px] pm-text-secondary">
-                        Toda la cápsula funciona como línea de tiempo inmersiva al arrastrar o pulsar
+                        Degradado suave del color del álbum sin cortes bruscos en toda la cápsula
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      data-testid="dock-style-floating-island"
+                      aria-pressed={playerBarStyle === 'floating-island'}
+                      onClick={() => setPlayerBarStyle('floating-island')}
+                      className={`pm-surface-card pm-card-lift flex flex-col gap-2.5 rounded-[14px] p-3.5 text-left ${
+                        playerBarStyle === 'floating-island'
+                          ? 'ring-2 ring-[var(--pm-accent-primary)]'
+                          : ''
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold pm-text-primary">
+                          Isla Flotante Frost
+                        </span>
+                        {playerBarStyle === 'floating-island' && (
+                          <span className="pm-btn-primary inline-flex h-4 w-4 items-center justify-center rounded-full">
+                            <Check className="h-2.5 w-2.5" />
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center justify-center py-1">
+                        <div className="pm-elevated relative flex w-4/5 flex-col items-center gap-1 overflow-hidden rounded-full border pm-border px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            <span className="h-2 w-2 rounded-full bg-current pm-text-secondary" />
+                            <span className="h-3.5 w-3.5 rounded-full bg-[var(--pm-accent-primary)]" />
+                            <span className="h-2 w-2 rounded-full bg-current pm-text-secondary" />
+                          </div>
+                          <div className="pointer-events-none absolute inset-x-4 bottom-0 h-[2.5px] rounded-full bg-current/15">
+                            <div className="h-full w-1/2 rounded-full bg-[var(--pm-accent-primary)]" />
+                          </div>
+                        </div>
+                      </div>
+                      <p className="text-[11px] pm-text-secondary">
+                        Cápsula compacta centrada estilo Dynamic Island con línea inferior de progreso
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      data-testid="dock-style-minimal-wave"
+                      aria-pressed={playerBarStyle === 'minimal-wave'}
+                      onClick={() => setPlayerBarStyle('minimal-wave')}
+                      className={`pm-surface-card pm-card-lift flex flex-col gap-2.5 rounded-[14px] p-3.5 text-left ${
+                        playerBarStyle === 'minimal-wave'
+                          ? 'ring-2 ring-[var(--pm-accent-primary)]'
+                          : ''
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold pm-text-primary">
+                          Minimalista Studio
+                        </span>
+                        {playerBarStyle === 'minimal-wave' && (
+                          <span className="pm-btn-primary inline-flex h-4 w-4 items-center justify-center rounded-full">
+                            <Check className="h-2.5 w-2.5" />
+                          </span>
+                        )}
+                      </div>
+                      <div className="pm-elevated relative flex flex-col items-center justify-center gap-1.5 overflow-hidden rounded-lg border pm-border px-3 py-2.5">
+                        <div className="pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-current/15">
+                          <div className="h-full w-2/3 rounded-r-full bg-[var(--pm-accent-primary)]" />
+                        </div>
+                        <div className="flex w-full items-center justify-between pt-0.5">
+                          <span className="inline-flex items-end gap-0.5">
+                            <span className="h-2 w-0.5 rounded-full bg-[var(--pm-accent-primary)]" />
+                            <span className="h-3 w-0.5 rounded-full bg-[var(--pm-accent-primary)]" />
+                            <span className="h-1.5 w-0.5 rounded-full bg-[var(--pm-accent-primary)]" />
+                          </span>
+                          <span className="h-3 w-3 rounded-full bg-[var(--pm-accent-primary)]" />
+                          <span className="h-1.5 w-6 rounded-full bg-current/25" />
+                        </div>
+                      </div>
+                      <p className="text-[11px] pm-text-secondary">
+                        Filamento luminoso superior interactivo e indicador espectral minimalista
                       </p>
                     </button>
                   </div>
@@ -1175,114 +1240,15 @@ export const SettingsModal: React.FC = () => {
               </div>
             )}
 
-            {/* 6. ALGORITMO Y GUSTOS */}
-            {activeCategory === 'gustos' && (
-              <div className="space-y-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h3 className="text-xl font-bold pm-text-primary">
-                      Algoritmo de recomendaciones y artistas semilla
-                    </h3>
-                    <p className="text-xs pm-text-secondary">
-                      Tus artistas preferidos y escuchas completas moldean Inicio y AutoMix
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void resetTasteProfile()}
-                    className="pm-btn-secondary inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold"
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" />
-                    <span>Restablecer gustos</span>
-                  </button>
-                </div>
-
-                <section
-                  data-surface="content"
-                  className="pm-surface-card space-y-4 rounded-[16px] p-4"
-                >
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      aria-label="Añadir artista favorito"
-                      placeholder="Ej. Cruz Cafuné, La Pantera, Bad Bunny..."
-                      value={newSeedName}
-                      onChange={(e) => setNewSeedName(e.target.value)}
-                      className="pm-input flex-1 rounded-full px-4 py-2 text-xs"
-                    />
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        await addSeedArtist(newSeedName);
-                        setNewSeedName('');
-                      }}
-                      className="pm-btn-primary inline-flex items-center gap-1 rounded-full px-4 py-2 text-xs font-bold"
-                    >
-                      <Plus className="h-4 w-4" />
-                      <span>Añadir</span>
-                    </button>
-                  </div>
-
-                  <div className="flex flex-wrap gap-1.5">
-                    {seedArtists.slice(0, 12).map((seed) => (
-                      <span
-                        key={seed.artistKey}
-                        className="pm-panel flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold"
-                      >
-                        <span>{seed.displayName}</span>
-                        <button
-                          type="button"
-                          aria-label={`Eliminar semilla ${seed.displayName}`}
-                          onClick={() => void removeSeedArtist(seed.artistKey)}
-                          className="pm-text-tertiary hover:text-[#F87171]"
-                        >
-                          ×
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-
-                  <div className="space-y-2 border-t pm-border pt-3">
-                    <div className="text-xs font-bold pm-text-primary">
-                      Top afinidad calculada
-                    </div>
-                    {affinityProfile.slice(0, 5).map((aff) => {
-                      const pct = Math.max(8, Math.round((aff.score / maxAffinity) * 100));
-                      return (
-                        <div key={aff.artistName} className="space-y-1">
-                          <div className="flex justify-between text-xs pm-text-secondary">
-                            <span className="font-medium pm-text-primary">{aff.artistName}</span>
-                            <span className="tabular-nums">+{aff.score.toFixed(1)}</span>
-                          </div>
-                          <div
-                            className="h-1.5 w-full overflow-hidden rounded-full"
-                            style={{ backgroundColor: 'var(--pm-slider-track)' }}
-                          >
-                            <div
-                              className="h-full rounded-full"
-                              style={{
-                                width: `${pct}%`,
-                                backgroundColor: 'var(--pm-accent-primary)',
-                              }}
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </section>
-              </div>
-            )}
-
-            {/* 7. CUENTA Y DATOS */}
+            {/* 6. CUENTA Y DATOS */}
             {activeCategory === 'cuenta' && (
               <div className="space-y-5">
                 <div>
                   <h3 className="text-xl font-bold pm-text-primary">
-                    Cuenta Supabase PC ↔ Móvil, Copia JSON y Almacenamiento
+                    Cuenta pMusic, Copia JSON y Almacenamiento
                   </h3>
                   <p className="text-xs pm-text-secondary">
-                    Sincroniza tu colección entre Windows y Android o exporta tus listas en JSON
+                    Guarda tu biblioteca en la nube con tu cuenta pMusic para escuchar desde cualquier dispositivo o exporta tus listas
                   </p>
                 </div>
 
@@ -1290,54 +1256,26 @@ export const SettingsModal: React.FC = () => {
                   data-surface="content"
                   className="pm-surface-card space-y-3 rounded-[16px] p-4"
                 >
-                  <h4 className="text-sm font-bold pm-text-primary">
-                    Interconexión PC ↔ Móvil (Supabase Free Tier)
-                  </h4>
-                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-                    <input
-                      type="text"
-                      aria-label="Nombre de este dispositivo"
-                      placeholder="Nombre del dispositivo"
-                      value={devNameVal}
-                      onChange={(e) => setDevNameVal(e.target.value)}
-                      className="pm-input rounded-full px-4 py-2 text-xs"
-                    />
-                    <input
-                      type="text"
-                      aria-label="Supabase Project URL"
-                      placeholder="https://xyz.supabase.co"
-                      value={urlVal}
-                      onChange={(e) => setUrlVal(e.target.value)}
-                      className="pm-input rounded-full px-4 py-2 text-xs"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-2 sm:flex-row">
-                    <input
-                      type="password"
-                      aria-label="Supabase Anon Key"
-                      placeholder="sb_publishable_..."
-                      value={keyVal}
-                      onChange={(e) => setKeyVal(e.target.value)}
-                      className="pm-input flex-1 rounded-full px-4 py-2 text-xs"
-                    />
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        await configureSupabase(urlVal, keyVal, devNameVal);
-                        setAuthNotice('Configuración guardada correctamente.');
-                      }}
-                      className="pm-btn-primary rounded-full px-4 py-2 text-xs font-bold"
-                    >
-                      Guardar conexión
-                    </button>
+                  <div>
+                    <h4 className="text-sm font-bold pm-text-primary">
+                      Tu cuenta pMusic
+                    </h4>
+                    <p className="text-xs pm-text-secondary">
+                      La sincronización entre PC y móvil se conecta automáticamente al iniciar sesión con tu cuenta
+                    </p>
                   </div>
 
-                  <div className="border-t pm-border pt-3">
+                  <div>
                     {authState.connected ? (
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold text-[#34D399]">
-                          Sesión iniciada como {authState.email}
-                        </span>
+                      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border pm-border px-3.5 py-2.5">
+                        <div className="space-y-0.5">
+                          <div className="text-xs font-bold text-[#34D399]">
+                            Sesión iniciada · Sincronización en la nube activa
+                          </div>
+                          <div className="text-xs pm-text-secondary">
+                            {authState.email}
+                          </div>
+                        </div>
                         <button
                           type="button"
                           onClick={() => void signOutSupabase()}
@@ -1354,7 +1292,7 @@ export const SettingsModal: React.FC = () => {
                           placeholder="tu@email.com"
                           value={email}
                           onChange={(e) => setEmail(e.target.value)}
-                          className="pm-input flex-1 rounded-full px-4 py-2 text-xs"
+                          className="pm-input min-w-[180px] flex-1 rounded-full px-4 py-2 text-xs"
                         />
                         <input
                           type="password"
@@ -1362,7 +1300,7 @@ export const SettingsModal: React.FC = () => {
                           placeholder="Contraseña"
                           value={password}
                           onChange={(e) => setPassword(e.target.value)}
-                          className="pm-input flex-1 rounded-full px-4 py-2 text-xs"
+                          className="pm-input min-w-[150px] flex-1 rounded-full px-4 py-2 text-xs"
                         />
                         <button
                           type="button"
@@ -1484,7 +1422,8 @@ export const SettingsModal: React.FC = () => {
                       {[
                         ['Espacio', 'Play / Pausa'],
                         ['Ctrl+K / /', 'Buscador Spotlight'],
-                        ['← / →', 'Avanzar / Retroceder 5 s'],
+                        ['← / →', 'Canción anterior / siguiente'],
+                        ['Shift + ← / →', 'Retroceder / Avanzar 5 s'],
                         ['↑ / ↓', 'Subir / Bajar volumen'],
                         ['L', 'Abrir Letras Sing'],
                         ['Q', 'Abrir Cola DJ'],

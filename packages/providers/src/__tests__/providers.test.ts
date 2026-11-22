@@ -237,4 +237,68 @@ describe('@pmusic/providers', () => {
       expect(res.topResult.item.artists[0]?.name).toBe('Pablete');
     }
   });
+
+  it('resolves artistByName using normalized exact match + highest fan count (La Pantera 7524936 & Miky Woodz 10177296)', async () => {
+    const mockFetch = (async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes('/search/artist?')) {
+        if (u.includes('Miky')) {
+          return new Response(
+            JSON.stringify({
+              data: [
+                { id: 412798571, name: 'Miky Woodz', nb_fan: 0 },
+                { id: 10177296, name: 'Miky Woodz', nb_fan: 427195 },
+              ],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            data: [
+              { id: 307769181, name: 'La Pantera', nb_fan: 12 },
+              { id: 7524936, name: 'La Pantera', nb_fan: 7478 },
+              { id: 2969, name: 'Pantera', nb_fan: 1625364 },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('/artist/7524936')) {
+        return new Response(
+          JSON.stringify({
+            id: 7524936,
+            name: 'La Pantera',
+            nb_fan: 7478,
+            picture_xl: 'https://example.com/lp.jpg',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('/artist/10177296')) {
+        return new Response(
+          JSON.stringify({
+            id: 10177296,
+            name: 'Miky Woodz',
+            nb_fan: 427195,
+            picture_xl: 'https://example.com/mw.jpg',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      return new Response(JSON.stringify({ data: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    const catalog = new DeezerCatalog(mockFetch);
+    const lp = await catalog.artistByName('La Pantera');
+    expect(lp.artist.id).toBe('7524936');
+    expect(lp.artist.name).toBe('La Pantera');
+
+    const mw = await catalog.artistByName('Miky Woodz');
+    expect(mw.artist.id).toBe('10177296');
+    expect(mw.artist.name).toBe('Miky Woodz');
+  });
 });

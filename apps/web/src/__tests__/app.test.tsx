@@ -57,10 +57,21 @@ describe('@pmusic/web UI', () => {
 
     const ambientCard = screen.getByTestId('dock-style-ambient-dock');
     const classicCard = screen.getByTestId('dock-style-classic-center');
+    const islandCard = screen.getByTestId('dock-style-floating-island');
+    const minimalCard = screen.getByTestId('dock-style-minimal-wave');
     fireEvent.click(ambientCard);
     expect(ambientCard.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(islandCard);
+    expect(islandCard.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(minimalCard);
+    expect(minimalCard.getAttribute('aria-pressed')).toBe('true');
     fireEvent.click(classicCard);
     expect(classicCard.getAttribute('aria-pressed')).toBe('true');
+
+    expect(screen.queryByTestId('settings-category-gustos')).toBeNull();
+    fireEvent.click(screen.getByTestId('settings-category-cuenta'));
+    expect(screen.queryByLabelText('Supabase Project URL')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Tu cuenta pMusic' })).toBeDefined();
 
     fireEvent.click(screen.getByTestId('settings-category-discord'));
     expect(screen.getByRole('heading', { name: 'Discord Rich Presence' })).toBeDefined();

@@ -85,6 +85,11 @@ export type RecentSearchItem =
     };
 
 const RECENT_SEARCH_ITEMS_STORAGE_KEY = 'pmusic_recent_search_items_v1';
+const CLIENT_SEARCH_CACHE_TTL_MS = 3 * 60_000;
+const clientSearchCache = new Map<
+  string,
+  { at: number; bundle: SearchResultBundle; best?: TopResultMatch; suggestions: AutocompleteSuggestion[] }
+>();
 
 function buildDefaultRecentSearchItems(): RecentSearchItem[] {
   const now = Date.now();
@@ -983,7 +988,12 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         ? {
             themeId: (hydratedPrefs.themeId as PMusicThemeId) ?? prev.themeId,
             playerBarStyle:
-              (hydratedPrefs.playerBarStyle as PMusicPlayerBarStyle) ?? prev.playerBarStyle,
+              hydratedPrefs.playerBarStyle === 'classic-center' ||
+              hydratedPrefs.playerBarStyle === 'ambient-dock' ||
+              hydratedPrefs.playerBarStyle === 'floating-island' ||
+              hydratedPrefs.playerBarStyle === 'minimal-wave'
+                ? hydratedPrefs.playerBarStyle
+                : prev.playerBarStyle,
             accentPreset:
               (hydratedPrefs.accentPreset as PMusicAccentPresetId) ?? prev.accentPreset,
             liquidGlassMode: resolvedLiquidGlass,
@@ -1897,16 +1907,33 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   setLyricsUserScrolled: (scrolled) => set({ lyricsUserScrolled: scrolled }),
 
   setSearchQuery: async (query, immediate = false) => {
+    const trimmed = query.trim();
+    const cacheKey = trimmed.toLowerCase();
+    const cached = clientSearchCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < CLIENT_SEARCH_CACHE_TTL_MS) {
+      ++searchTicket;
+      set({
+        searchQuery: query,
+        autocompleteSuggestions: cached.suggestions,
+        searchResults: cached.bundle,
+        bestResult: cached.best,
+        isSearching: false,
+      });
+      return;
+    }
+
     set({ searchQuery: query, isSearching: true });
     const ticket = ++searchTicket;
-    if (!immediate && query) {
-      await new Promise((r) => setTimeout(r, 240));
+    if (!immediate && trimmed) {
+      await new Promise((r) => setTimeout(r, 120));
       if (ticket !== searchTicket) return;
     }
     try {
-      const [remoteSuggestions, rawBundle] = await Promise.all([
-        musicProvider.getSearchSuggestions(query).catch(() => [] as string[]),
+      const [rawBundle, remoteSuggestions] = await Promise.all([
         musicProvider.search(query, 'all'),
+        trimmed.length >= 2
+          ? musicProvider.getSearchSuggestions(query).catch(() => [] as string[])
+          : Promise.resolve([] as string[]),
       ]);
       if (ticket !== searchTicket) return;
       const ranked = recommendationEngine.rankAutocomplete(query, remoteSuggestions);
@@ -1916,6 +1943,15 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         songs: rerankedSongs,
       };
       const best = recommendationEngine.selectBestResult(query, bundle);
+      clientSearchCache.set(cacheKey, {
+        at: Date.now(),
+        bundle,
+        best,
+        suggestions: ranked,
+      });
+      if (clientSearchCache.size > 60) {
+        clientSearchCache.delete(clientSearchCache.keys().next().value as string);
+      }
       set({
         autocompleteSuggestions: ranked,
         searchResults: bundle,
