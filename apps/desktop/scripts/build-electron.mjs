@@ -248,7 +248,7 @@ await esbuild.build({
   target: 'node22',
   format: 'cjs',
   outfile: resolve(distElectron, 'main.cjs'),
-  external: ['electron', 'youtubei.js', 'googlevideo'],
+  external: ['electron'],
 });
 
 await esbuild.build({

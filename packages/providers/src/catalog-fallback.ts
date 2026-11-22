@@ -21,8 +21,8 @@ export const FALLBACK_TRACKS: readonly Track[] = [
     artists: [{ id: 'UC_CRUZ_CAFUNE', name: 'Cruz Cafuné' }],
     album: { id: 'MPR_MMCD_2023', name: 'Me Muevo Con Dios' },
     durationSec: 214,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300&q=80',
-    thumbnailHighUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/cover/31ce02d03c38ec93ed9d3cc45cb0b89f/250x250-000000-80-0-0.jpg',
+    thumbnailHighUrl: 'https://cdn-images.dzcdn.net/images/cover/31ce02d03c38ec93ed9d3cc45cb0b89f/500x500-000000-80-0-0.jpg',
     isExplicit: true,
     source: 'ytmusic',
     releaseYear: 2023,
@@ -34,8 +34,8 @@ export const FALLBACK_TRACKS: readonly Track[] = [
     artists: [{ id: 'UC_CRUZ_CAFUNE', name: 'Cruz Cafuné' }],
     album: { id: 'MPR_MMCD_2023', name: 'Me Muevo Con Dios' },
     durationSec: 198,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300&q=80',
-    thumbnailHighUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/cover/31ce02d03c38ec93ed9d3cc45cb0b89f/250x250-000000-80-0-0.jpg',
+    thumbnailHighUrl: 'https://cdn-images.dzcdn.net/images/cover/31ce02d03c38ec93ed9d3cc45cb0b89f/500x500-000000-80-0-0.jpg',
     isExplicit: true,
     source: 'ytmusic',
     releaseYear: 2023,
@@ -50,8 +50,8 @@ export const FALLBACK_TRACKS: readonly Track[] = [
     ],
     album: { id: 'MPR_MMCD_2023', name: 'Me Muevo Con Dios' },
     durationSec: 206,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300&q=80',
-    thumbnailHighUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/cover/31ce02d03c38ec93ed9d3cc45cb0b89f/250x250-000000-80-0-0.jpg',
+    thumbnailHighUrl: 'https://cdn-images.dzcdn.net/images/cover/31ce02d03c38ec93ed9d3cc45cb0b89f/500x500-000000-80-0-0.jpg',
     isExplicit: true,
     source: 'ytmusic',
     releaseYear: 2023,
@@ -67,8 +67,8 @@ export const FALLBACK_TRACKS: readonly Track[] = [
     ],
     album: { id: 'MPR_CAYETANO_2022', name: 'Cayetano Remix' },
     durationSec: 224,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&q=80',
-    thumbnailHighUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=600&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/cover/512f75e91673c205d0eb833d6d3ccaa4/250x250-000000-80-0-0.jpg',
+    thumbnailHighUrl: 'https://cdn-images.dzcdn.net/images/cover/512f75e91673c205d0eb833d6d3ccaa4/500x500-000000-80-0-0.jpg',
     isExplicit: true,
     source: 'ytmusic',
     releaseYear: 2022,
@@ -80,8 +80,8 @@ export const FALLBACK_TRACKS: readonly Track[] = [
     artists: [{ id: 'UC_LA_PANTERA', name: 'La Pantera' }],
     album: { id: 'MPR_UNA_BALA_2024', name: 'Una Bala' },
     durationSec: 176,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&q=80',
-    thumbnailHighUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=600&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/cover/512f75e91673c205d0eb833d6d3ccaa4/250x250-000000-80-0-0.jpg',
+    thumbnailHighUrl: 'https://cdn-images.dzcdn.net/images/cover/512f75e91673c205d0eb833d6d3ccaa4/500x500-000000-80-0-0.jpg',
     isExplicit: true,
     source: 'ytmusic',
     releaseYear: 2024,
@@ -93,8 +93,8 @@ export const FALLBACK_TRACKS: readonly Track[] = [
     artists: [{ id: 'UC_BAD_BUNNY', name: 'Bad Bunny' }],
     album: { id: 'MPR_NSLQVAPM_2023', name: 'nadie sabe lo que va a pasar mañana' },
     durationSec: 267,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&q=80',
-    thumbnailHighUrl: 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=600&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/cover/f840891b70f6e240b8ecaec49346bd6a/250x250-000000-80-0-0.jpg',
+    thumbnailHighUrl: 'https://cdn-images.dzcdn.net/images/cover/f840891b70f6e240b8ecaec49346bd6a/500x500-000000-80-0-0.jpg',
     isExplicit: true,
     source: 'ytmusic',
     releaseYear: 2023,
@@ -109,8 +109,8 @@ export const FALLBACK_TRACKS: readonly Track[] = [
     ],
     album: { id: 'MPR_NSLQVAPM_2023', name: 'nadie sabe lo que va a pasar mañana' },
     durationSec: 162,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&q=80',
-    thumbnailHighUrl: 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=600&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/cover/f840891b70f6e240b8ecaec49346bd6a/250x250-000000-80-0-0.jpg',
+    thumbnailHighUrl: 'https://cdn-images.dzcdn.net/images/cover/f840891b70f6e240b8ecaec49346bd6a/500x500-000000-80-0-0.jpg',
     isExplicit: true,
     source: 'ytmusic',
     releaseYear: 2023,
@@ -122,8 +122,8 @@ export const FALLBACK_TRACKS: readonly Track[] = [
     artists: [{ id: 'UC_QUEVEDO', name: 'Quevedo' }],
     album: { id: 'MPR_DONDE_QUIERO_2023', name: 'Donde Quiero Estar' },
     durationSec: 186,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=300&q=80',
-    thumbnailHighUrl: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/cover/eec6fccccb5cdca0db12f5e579d1a94b/250x250-000000-80-0-0.jpg',
+    thumbnailHighUrl: 'https://cdn-images.dzcdn.net/images/cover/eec6fccccb5cdca0db12f5e579d1a94b/500x500-000000-80-0-0.jpg',
     isExplicit: false,
     source: 'ytmusic',
     releaseYear: 2023,
@@ -135,8 +135,8 @@ export const FALLBACK_TRACKS: readonly Track[] = [
     artists: [{ id: 'UC_SAIKO', name: 'Saiko' }],
     album: { id: 'MPR_SAKURA_2024', name: 'SAKURA' },
     durationSec: 191,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1459749411175-04bf5292ceea?w=300&q=80',
-    thumbnailHighUrl: 'https://images.unsplash.com/photo-1459749411175-04bf5292ceea?w=600&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/cover/cb875f669e36bf5907fb48a6ba0954b1/250x250-000000-80-0-0.jpg',
+    thumbnailHighUrl: 'https://cdn-images.dzcdn.net/images/cover/cb875f669e36bf5907fb48a6ba0954b1/500x500-000000-80-0-0.jpg',
     isExplicit: false,
     source: 'ytmusic',
     releaseYear: 2024,
@@ -148,8 +148,8 @@ export const FALLBACK_TRACKS: readonly Track[] = [
     artists: [{ id: 'UC_MORAD', name: 'Morad' }],
     album: { id: 'MPR_MDLR_2022', name: 'Reinsertado' },
     durationSec: 178,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=300&q=80',
-    thumbnailHighUrl: 'https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=600&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/cover/786686d45b6429ffada5e4535b0f4b2f/250x250-000000-80-0-0.jpg',
+    thumbnailHighUrl: 'https://cdn-images.dzcdn.net/images/cover/786686d45b6429ffada5e4535b0f4b2f/500x500-000000-80-0-0.jpg',
     isExplicit: true,
     source: 'ytmusic',
     releaseYear: 2022,
@@ -161,8 +161,8 @@ export const FALLBACK_TRACKS: readonly Track[] = [
     artists: [{ id: 'UC_DELLAFUENTE', name: 'Dellafuente' }],
     album: { id: 'MPR_TORII_2024', name: 'Torii Yama' },
     durationSec: 195,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1487180144351-b8472da7d491?w=300&q=80',
-    thumbnailHighUrl: 'https://images.unsplash.com/photo-1487180144351-b8472da7d491?w=600&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/cover/cc914a02907765512b5e9185e84b02df/250x250-000000-80-0-0.jpg',
+    thumbnailHighUrl: 'https://cdn-images.dzcdn.net/images/cover/cc914a02907765512b5e9185e84b02df/500x500-000000-80-0-0.jpg',
     isExplicit: false,
     source: 'ytmusic',
     releaseYear: 2024,
@@ -174,8 +174,8 @@ export const FALLBACK_TRACKS: readonly Track[] = [
     artists: [{ id: 'UC_RELS_B', name: 'Rels B' }],
     album: { id: 'MPR_AFROLOVA_2023', name: 'afroLOVA 23' },
     durationSec: 210,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=300&q=80',
-    thumbnailHighUrl: 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/cover/460dfe68b79a8751019b98245edd1cb2/250x250-000000-80-0-0.jpg',
+    thumbnailHighUrl: 'https://cdn-images.dzcdn.net/images/cover/460dfe68b79a8751019b98245edd1cb2/500x500-000000-80-0-0.jpg',
     isExplicit: false,
     source: 'ytmusic',
     releaseYear: 2023,
@@ -187,49 +187,49 @@ export const FALLBACK_ARTISTS: readonly ArtistSummary[] = [
   {
     id: 'UC_CRUZ_CAFUNE',
     name: 'Cruz Cafuné',
-    thumbnailUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/artist/bb773f14fbb13df8c06ec91cb8b936d9/500x500-000000-80-0-0.jpg',
     subscribersText: '1,2 M de suscriptores',
   },
   {
     id: 'UC_LA_PANTERA',
     name: 'La Pantera',
-    thumbnailUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/artist/8fd0e086b496ff441a7f604c6d4eac70/500x500-000000-80-0-0.jpg',
     subscribersText: '820 mil suscriptores',
   },
   {
     id: 'UC_BAD_BUNNY',
     name: 'Bad Bunny',
-    thumbnailUrl: 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/artist/044a3f315b041864887a8dd8709e6926/500x500-000000-80-0-0.jpg',
     subscribersText: '48,5 M de suscriptores',
   },
   {
     id: 'UC_QUEVEDO',
     name: 'Quevedo',
-    thumbnailUrl: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=300&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/artist/79880cc1b999b15567e332203464c34e/500x500-000000-80-0-0.jpg',
     subscribersText: '4,9 M de suscriptores',
   },
   {
     id: 'UC_SAIKO',
     name: 'Saiko',
-    thumbnailUrl: 'https://images.unsplash.com/photo-1459749411175-04bf5292ceea?w=300&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/artist/3043a18022677b1fd95cb043d00bab63/500x500-000000-80-0-0.jpg',
     subscribersText: '2,1 M de suscriptores',
   },
   {
     id: 'UC_MORAD',
     name: 'Morad',
-    thumbnailUrl: 'https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=300&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/artist/4c4e5e8049c0d7ff36e9fb8924dff724/500x500-000000-80-0-0.jpg',
     subscribersText: '3,8 M de suscriptores',
   },
   {
     id: 'UC_DELLAFUENTE',
     name: 'Dellafuente',
-    thumbnailUrl: 'https://images.unsplash.com/photo-1487180144351-b8472da7d491?w=300&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/artist/cc914a02907765512b5e9185e84b02df/500x500-000000-80-0-0.jpg',
     subscribersText: '1,1 M de suscriptores',
   },
   {
     id: 'UC_RELS_B',
     name: 'Rels B',
-    thumbnailUrl: 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=300&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/artist/d504648fd4842cfa7c89d9f835dac4e8/500x500-000000-80-0-0.jpg',
     subscribersText: '5,4 M de suscriptores',
   },
 ] as const;
@@ -240,35 +240,35 @@ export const FALLBACK_ALBUMS: readonly AlbumSummary[] = [
     title: 'Me Muevo Con Dios',
     artists: [{ id: 'UC_CRUZ_CAFUNE', name: 'Cruz Cafuné' }],
     year: 2023,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/cover/31ce02d03c38ec93ed9d3cc45cb0b89f/500x500-000000-80-0-0.jpg',
   },
   {
     id: 'MPR_UNA_BALA_2024',
     title: 'Una Bala',
     artists: [{ id: 'UC_LA_PANTERA', name: 'La Pantera' }],
     year: 2024,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/cover/512f75e91673c205d0eb833d6d3ccaa4/500x500-000000-80-0-0.jpg',
   },
   {
     id: 'MPR_NSLQVAPM_2023',
     title: 'nadie sabe lo que va a pasar mañana',
     artists: [{ id: 'UC_BAD_BUNNY', name: 'Bad Bunny' }],
     year: 2023,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/cover/f840891b70f6e240b8ecaec49346bd6a/500x500-000000-80-0-0.jpg',
   },
   {
     id: 'MPR_DONDE_QUIERO_2023',
     title: 'Donde Quiero Estar',
     artists: [{ id: 'UC_QUEVEDO', name: 'Quevedo' }],
     year: 2023,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=300&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/cover/eec6fccccb5cdca0db12f5e579d1a94b/500x500-000000-80-0-0.jpg',
   },
   {
     id: 'MPR_SAKURA_2024',
     title: 'SAKURA',
     artists: [{ id: 'UC_SAIKO', name: 'Saiko' }],
     year: 2024,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1459749411175-04bf5292ceea?w=300&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/cover/cb875f669e36bf5907fb48a6ba0954b1/500x500-000000-80-0-0.jpg',
   },
 ] as const;
 
@@ -278,7 +278,7 @@ export const FALLBACK_PLAYLISTS: readonly PlaylistSummary[] = [
     title: 'Urbano España & Canarias',
     author: 'pMusic Editorial',
     trackCount: 12,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/cover/31ce02d03c38ec93ed9d3cc45cb0b89f/500x500-000000-80-0-0.jpg',
     source: 'ytmusic',
   },
   {
@@ -286,7 +286,7 @@ export const FALLBACK_PLAYLISTS: readonly PlaylistSummary[] = [
     title: 'Sesión DJ Club Urbano',
     author: 'pMusic AutoMix',
     trackCount: 10,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&q=80',
+    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/cover/512f75e91673c205d0eb833d6d3ccaa4/500x500-000000-80-0-0.jpg',
     source: 'ytmusic',
   },
 ] as const;
@@ -435,25 +435,33 @@ export function getFallbackRelated(videoId: string): RelatedResult {
  * and intro/drop/outro envelope so `<audio crossOrigin="anonymous">` and Web Audio API
  * decodeAudioData / AnalyserNode always work deterministically even offline.
  */
-export function synthesizeDeterministicWavBuffer(durationSec = 12, bpm = 120): Buffer {
+export function synthesizeDeterministicWavBuffer(durationSec = 12, bpm = 120): Uint8Array {
   const sampleRate = 22050;
   const numSamples = Math.max(sampleRate, Math.floor(durationSec * sampleRate));
   const dataBytes = numSamples * 2;
-  const buf = Buffer.alloc(44 + dataBytes);
+  const ab = new ArrayBuffer(44 + dataBytes);
+  const view = new DataView(ab);
+  const bytes = new Uint8Array(ab);
 
-  buf.write('RIFF', 0);
-  buf.writeUInt32LE(36 + dataBytes, 4);
-  buf.write('WAVE', 8);
-  buf.write('fmt ', 12);
-  buf.writeUInt32LE(16, 16);
-  buf.writeUInt16LE(1, 20); // PCM
-  buf.writeUInt16LE(1, 22); // Mono
-  buf.writeUInt32LE(sampleRate, 24);
-  buf.writeUInt32LE(sampleRate * 2, 28);
-  buf.writeUInt16LE(2, 32);
-  buf.writeUInt16LE(16, 34);
-  buf.write('data', 36);
-  buf.writeUInt32LE(dataBytes, 40);
+  const writeAscii = (offset: number, str: string) => {
+    for (let i = 0; i < str.length; i++) {
+      bytes[offset + i] = str.charCodeAt(i);
+    }
+  };
+
+  writeAscii(0, 'RIFF');
+  view.setUint32(4, 36 + dataBytes, true);
+  writeAscii(8, 'WAVE');
+  writeAscii(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // Mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeAscii(36, 'data');
+  view.setUint32(40, dataBytes, true);
 
   const beatPeriodSec = 60 / Math.max(60, Math.min(180, bpm));
   for (let i = 0; i < numSamples; i++) {
@@ -466,8 +474,11 @@ export function synthesizeDeterministicWavBuffer(durationSec = 12, bpm = 120): B
     const bassSample = Math.sin(2 * Math.PI * 110 * t) * 0.55;
     const leadSample = Math.sin(2 * Math.PI * 220 * t) * 0.35;
     const sample = Math.max(-1, Math.min(1, (bassSample + leadSample) * kickEnv * sectionGain));
-    buf.writeInt16LE(Math.round(sample * 28000), 44 + i * 2);
+    view.setInt16(44 + i * 2, Math.round(sample * 28000), true);
   }
 
-  return buf;
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(ab);
+  }
+  return bytes;
 }

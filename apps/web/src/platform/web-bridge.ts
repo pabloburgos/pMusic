@@ -158,7 +158,10 @@ export function createPlatformBridge(): IPlatformBridge {
       const offlineUrl = await offlineStorage.getAudioUrl(videoId);
       if (offlineUrl) return offlineUrl;
       const base = desktopBridge?.getApiBaseUrl ? await desktopBridge.getApiBaseUrl() : '';
-      return `${base.replace(/\/+$/, '')}/api/stream/${encodeURIComponent(videoId)}?quality=${quality}`;
+      const authHeaders = desktopBridge?.getAuthHeaders ? await desktopBridge.getAuthHeaders() : {};
+      const token = authHeaders['X-PMusic-Token'] ?? authHeaders['x-pmusic-token'];
+      const tokenQuery = token ? `&token=${encodeURIComponent(token)}` : '';
+      return `${base.replace(/\/+$/, '')}/api/stream/${encodeURIComponent(videoId)}?quality=${quality}${tokenQuery}`;
     },
     async nativeFetch(url: string, init?: NativeFetchRequest): Promise<NativeFetchResponse> {
       const res = await fetch(url, {

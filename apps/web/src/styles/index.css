@@ -2,17 +2,16 @@
 
 :root {
   color-scheme: dark;
-  --pm-bg-canvas: #08080C;
-  --pm-bg-elevated: #101016;
-  --pm-bg-grouped: #14141C;
-  --pm-bg-card: #121219;
-  --pm-bg-card-hover: #1A1A24;
+  --pm-bg-canvas: #070709;
+  --pm-bg-surface: #111115;
+  --pm-bg-elevated: #16161C;
+  --pm-bg-hover: #1D1D25;
 
-  --pm-glass-regular-bg: rgba(14, 14, 20, 0.74);
+  --pm-glass-regular-bg: rgba(14, 14, 18, 0.74);
   --pm-glass-regular-blur: 28px;
-  --pm-glass-clear-bg: rgba(12, 12, 18, 0.58);
+  --pm-glass-clear-bg: rgba(12, 12, 16, 0.58);
   --pm-glass-clear-blur: 20px;
-  --pm-glass-border: rgba(255, 255, 255, 0.08);
+  --pm-glass-border: rgba(255, 255, 255, 0.09);
   --pm-glass-highlight: rgba(255, 255, 255, 0.12);
   --pm-bright-media-scrim: rgba(8, 8, 12, 0.44);
 
@@ -29,7 +28,10 @@
 
   --pm-ambient-1: #5E2B97;
   --pm-ambient-2: #0F4C81;
-  --pm-ambient-3: #141428;
+  --pm-ambient-3: #111024;
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 * {
@@ -53,7 +55,7 @@ body,
   overflow-x: hidden;
 }
 
-/* Subtle custom scrollbars */
+/* Custom minimal scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -66,42 +68,92 @@ body,
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.26);
+  background: rgba(255, 255, 255, 0.28);
 }
 
 .tabular-nums {
   font-variant-numeric: tabular-nums;
 }
 
-/* Functional Chrome Liquid Glass Surfaces (strictly non-nested, never on content cards/rows) */
+.pm-no-scrollbar {
+  scrollbar-width: none;
+}
+.pm-no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Functional Chrome Liquid Glass (never nested, never on content cards/rows) */
 .pm-glass-regular {
-  background-color: rgba(14, 14, 20, 0.76);
+  background-color: rgba(14, 14, 18, 0.76);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
   backdrop-filter: blur(28px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.09);
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.11);
 }
 
 .pm-glass-clear {
-  background-color: rgba(12, 12, 18, 0.60);
+  background-color: rgba(12, 12, 16, 0.62);
+  -webkit-backdrop-filter: blur(20px) saturate(165%);
   backdrop-filter: blur(20px) saturate(165%);
   border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.09);
 }
 
-/* Quiet Fill Content Surfaces (Liner / Apple Music dark surface hierarchy, zero backdrop-filter) */
+/* Solid Content Surfaces (Apple Music + Spotify hierarchy, zero blur, zero gradients) */
 .pm-surface-card {
-  background-color: #121219;
+  background-color: var(--pm-bg-surface);
   border: 1px solid rgba(255, 255, 255, 0.06);
   backdrop-filter: none !important;
-  transition: background-color 0.16s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.16s ease, transform 0.16s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: background-color 160ms var(--ease-out), border-color 160ms var(--ease-out);
 }
 
-.pm-surface-card:hover {
-  background-color: #181822;
-  border-color: rgba(255, 255, 255, 0.11);
+@media (hover: hover) and (pointer: fine) {
+  .pm-surface-card:hover {
+    background-color: var(--pm-bg-elevated);
+    border-color: rgba(255, 255, 255, 0.11);
+  }
 }
 
-/* Sleek Custom Range Sliders (Scrubber, Volume, EQ) */
+/* Emil Kowalski tactile button press */
+button,
+[role="button"] {
+  transition: background-color 160ms var(--ease-out), color 160ms var(--ease-out), border-color 160ms var(--ease-out), transform 140ms var(--ease-out), opacity 160ms var(--ease-out);
+}
+
+button:active:not(:disabled),
+[role="button"]:active:not([aria-disabled="true"]) {
+  transform: scale(0.97);
+}
+
+/* Cover card hover play reveal (pointer devices) */
+.pm-cover-play {
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 170ms var(--ease-out), transform 170ms var(--ease-out), background-color 140ms var(--ease-out);
+}
+
+.pm-cover-card:focus-within .pm-cover-play,
+.group:focus-visible .pm-cover-play {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .pm-cover-card:hover .pm-cover-play,
+  .group:hover .pm-cover-play {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (hover: none) {
+  .pm-cover-card .pm-cover-play {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Custom Filled Range Sliders (--pm-fill sets active progress track) */
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
@@ -110,62 +162,101 @@ input[type="range"] {
 }
 
 input[type="range"]::-webkit-slider-runnable-track {
-  height: 5px;
+  height: 4px;
   border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.18);
-  transition: background-color 0.15s ease, height 0.15s ease;
+  background: linear-gradient(
+    to right,
+    #FFFFFF var(--pm-fill, 0%),
+    rgba(255, 255, 255, 0.18) var(--pm-fill, 0%)
+  );
+  transition: height 140ms var(--ease-out);
 }
 
-input[type="range"]:hover::-webkit-slider-runnable-track {
-  background: rgba(255, 255, 255, 0.28);
+@media (hover: hover) and (pointer: fine) {
+  input[type="range"]:hover::-webkit-slider-runnable-track {
+    height: 5px;
+  }
 }
 
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 13px;
-  height: 13px;
+  width: 12px;
+  height: 12px;
   border-radius: 9999px;
   background: #FFFFFF;
   margin-top: -4px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
-  transition: transform 0.15s cubic-bezier(0.22, 1, 0.36, 1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+  transition: transform 140ms var(--ease-out), opacity 140ms var(--ease-out);
 }
 
-input[type="range"]:hover::-webkit-slider-thumb {
-  transform: scale(1.18);
+@media (hover: hover) and (pointer: fine) {
+  input[type="range"].pm-range-subtle::-webkit-slider-thumb {
+    opacity: 0;
+    transform: scale(0.75);
+  }
+  input[type="range"].pm-range-subtle:hover::-webkit-slider-thumb,
+  input[type="range"].pm-range-subtle:focus-visible::-webkit-slider-thumb {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
-/* Synced Lyrics Active & Inactive lines */
+/* 3-bar Equalizer Playing Indicator */
+@keyframes pmEqBar {
+  0%, 100% {
+    transform: scaleY(0.32);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+.pm-eq-bar-1 {
+  animation: pmEqBar 0.85s ease-in-out infinite;
+  transform-origin: bottom;
+}
+.pm-eq-bar-2 {
+  animation: pmEqBar 0.65s ease-in-out 0.18s infinite;
+  transform-origin: bottom;
+}
+.pm-eq-bar-3 {
+  animation: pmEqBar 0.95s ease-in-out 0.34s infinite;
+  transform-origin: bottom;
+}
+
+/* Synced Lyrics Active & Inactive lines (Apple Music Sing feel) */
 .pm-lyric-line-active {
   color: #FFFFFF;
   opacity: 1;
   filter: none;
-  transform: scale(1.015);
+  transform: scale(1.012);
   transform-origin: left center;
   text-shadow: 0 4px 24px rgba(255, 255, 255, 0.18);
-  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.22s ease, filter 0.22s ease;
+  transition: transform 220ms var(--ease-out), color 200ms ease, filter 200ms ease;
 }
 
 .pm-lyric-line-inactive {
   color: #AEAEB2;
   opacity: 1;
-  filter: blur(1.4px);
-  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.22s ease, filter 0.22s ease;
+  filter: blur(1.3px);
+  transition: transform 220ms var(--ease-out), color 200ms ease, filter 200ms ease;
 }
 
-.pm-lyric-line-inactive:hover {
-  color: #E5E5EA;
-  filter: blur(0.4px);
+@media (hover: hover) and (pointer: fine) {
+  .pm-lyric-line-inactive:hover {
+    color: #F5F5F7;
+    filter: blur(0.2px);
+  }
 }
 
-/* Dynamic Ambient Mesh Animation */
+/* Dynamic Ambient Mesh Animation (Used ONLY in Song / Now Playing view) */
 @keyframes pmAmbientDrift {
   0% {
     transform: translate3d(0%, 0%, 0) scale(1);
   }
   50% {
-    transform: translate3d(2.5%, -1.5%, 0) scale(1.04);
+    transform: translate3d(2%, -1.5%, 0) scale(1.04);
   }
   100% {
     transform: translate3d(0%, 0%, 0) scale(1);
@@ -175,6 +266,22 @@ input[type="range"]:hover::-webkit-slider-thumb {
 .pm-ambient-mesh {
   animation: pmAmbientDrift 24s ease-in-out infinite;
   will-change: transform;
+}
+
+/* Overlay subtle entrance */
+@keyframes pmSheetEnter {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.pm-sheet-enter {
+  animation: pmSheetEnter 220ms var(--ease-drawer) both;
 }
 
 /* Apple HIG Hit-Target Enforcement: 44x44px mobile (<768px), 28x28px desktop (>=768px) */
@@ -229,6 +336,7 @@ input:focus-visible {
   .pm-glass-regular,
   .pm-glass-clear {
     background-color: #14141B !important;
+    -webkit-backdrop-filter: none !important;
     backdrop-filter: none !important;
   }
 }
@@ -236,12 +344,17 @@ input:focus-visible {
 html.pm-reduced-transparency .pm-glass-regular,
 html.pm-reduced-transparency .pm-glass-clear {
   background-color: #14141B !important;
+  -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
 
 /* Accessibility Media Query 2: Reduced Motion */
 @media (prefers-reduced-motion: reduce) {
-  .pm-ambient-mesh {
+  .pm-ambient-mesh,
+  .pm-eq-bar-1,
+  .pm-eq-bar-2,
+  .pm-eq-bar-3,
+  .pm-sheet-enter {
     animation: none !important;
   }
   .pm-lyric-line-inactive {
@@ -256,7 +369,11 @@ html.pm-reduced-transparency .pm-glass-clear {
   }
 }
 
-html.pm-reduced-motion .pm-ambient-mesh {
+html.pm-reduced-motion .pm-ambient-mesh,
+html.pm-reduced-motion .pm-eq-bar-1,
+html.pm-reduced-motion .pm-eq-bar-2,
+html.pm-reduced-motion .pm-eq-bar-3,
+html.pm-reduced-motion .pm-sheet-enter {
   animation: none !important;
 }
 html.pm-reduced-motion .pm-lyric-line-inactive {

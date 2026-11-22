@@ -1,21 +1,19 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
-  ArrowLeft,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Disc3,
   Download,
   Heart,
   ListMusic,
+  ListPlus,
   Loader2,
   Pause,
   Play,
   Plus,
   Search,
-  Settings,
-  Sliders,
-  Sparkles,
   Trash2,
-  Wifi,
 } from 'lucide-react';
 import { formatDurationSec, type Track } from '@pmusic/core';
 import {
@@ -31,6 +29,17 @@ function getSpanishGreeting(): string {
   return 'Buenas noches';
 }
 
+const PlayingEqBars: React.FC = () => (
+  <span
+    aria-hidden="true"
+    className="inline-flex h-3.5 w-3.5 items-end justify-center gap-[2px]"
+  >
+    <span className="pm-eq-bar-1 h-full w-[2.5px] rounded-full bg-white" />
+    <span className="pm-eq-bar-2 h-full w-[2.5px] rounded-full bg-white" />
+    <span className="pm-eq-bar-3 h-full w-[2.5px] rounded-full bg-white" />
+  </span>
+);
+
 export const TrackListRow: React.FC<{
   track: Track;
   index?: number;
@@ -41,76 +50,90 @@ export const TrackListRow: React.FC<{
     isPlaying,
     likedTracks,
     offlineDownloads,
-    trackAnalyses,
     playTrack,
     togglePlayPause,
     toggleLike,
     downloadTrackOffline,
+    addToQueue,
     openArtistDetail,
   } = usePMusicStore();
 
   const isCurrent = currentTrack.id === track.id;
   const isLiked = likedTracks.some((l) => l.trackId === track.id);
   const dlStatus = offlineDownloads[track.id] ?? 'idle';
-  const ana = trackAnalyses[track.id];
+
+  const handleRowPlay = () => {
+    if (isCurrent) {
+      void togglePlayPause();
+    } else {
+      void playTrack(track, queueContext);
+    }
+  };
 
   return (
     <div
       role="row"
       data-surface="content"
-      className={`pm-surface-card group flex h-16 items-center justify-between gap-3 rounded-[12px] px-3.5 transition-all ${
-        isCurrent ? 'border-white/25 bg-[#191924]' : ''
+      className={`group flex h-16 items-center justify-between gap-3 rounded-[10px] px-2.5 transition-colors hover:bg-white/[0.06] ${
+        isCurrent ? 'bg-white/[0.09]' : ''
       }`}
     >
-      <div className="flex min-w-0 flex-1 items-center gap-3.5">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
         {typeof index === 'number' && (
-          <span className="tabular-nums hidden w-5 text-center text-xs font-medium text-[#8E8E98] sm:inline-block">
-            {isCurrent && isPlaying ? '▶' : index + 1}
+          <span className="tabular-nums hidden w-5 shrink-0 text-center text-xs font-medium text-[#8E8E98] sm:inline-flex sm:items-center sm:justify-center">
+            {isCurrent && isPlaying ? (
+              <PlayingEqBars />
+            ) : isCurrent ? (
+              '▶'
+            ) : (
+              index + 1
+            )}
           </span>
         )}
 
         <button
           type="button"
           aria-label={`Reproducir ${track.title}`}
-          onClick={() => {
-            if (isCurrent) {
-              void togglePlayPause();
-            } else {
-              void playTrack(track, queueContext);
-            }
-          }}
-          className="relative h-11 w-11 shrink-0 overflow-hidden rounded-[8px] bg-[#101016] shadow-md"
+          onClick={handleRowPlay}
+          className="relative h-11 w-11 shrink-0 overflow-hidden rounded-[8px] bg-[#141419]"
         >
           <img
             src={track.thumbnailUrl}
             alt={track.title}
-            className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
+            loading="lazy"
+            className="h-full w-full object-cover"
           />
           <span
-            className={`absolute inset-0 flex items-center justify-center bg-black/50 text-white transition-opacity ${
+            className={`absolute inset-0 flex items-center justify-center bg-black/55 text-white transition-opacity ${
               isCurrent ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
             }`}
           >
             {isCurrent && isPlaying ? (
               <Pause className="h-4 w-4 fill-current" />
             ) : (
-              <Play className="h-4 w-4 fill-current" />
+              <Play className="h-4 w-4 translate-x-[1px] fill-current" />
             )}
           </span>
         </button>
 
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-[14px] font-medium text-[#F5F5F7]">
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={handleRowPlay}
+              className={`truncate text-left text-[14px] font-medium hover:underline ${
+                isCurrent ? 'text-white' : 'text-[#F5F5F7]'
+              }`}
+            >
               {track.title}
-            </span>
+            </button>
             {track.isExplicit && (
-              <span className="rounded bg-white/10 px-1.5 py-0.2 text-[10px] font-semibold text-[#B4B4BE]">
+              <span className="shrink-0 rounded bg-white/[0.12] px-1.5 py-0.5 text-[10px] font-bold leading-none text-[#B4B4BE]">
                 E
               </span>
             )}
           </div>
-          <div className="flex items-center gap-1.5 truncate text-[13px] text-[#B4B4BE]">
+          <div className="flex items-center gap-1.5 truncate text-[12.5px] text-[#B4B4BE]">
             <span
               role="link"
               tabIndex={0}
@@ -139,12 +162,15 @@ export const TrackListRow: React.FC<{
         </div>
       </div>
 
-      <div className="flex items-center gap-2.5">
-        {ana && (
-          <span className="tabular-nums hidden rounded-md border border-white/[0.07] bg-[#0D0D13] px-2 py-0.5 text-[11px] font-medium text-[#B4B4BE] sm:inline-block">
-            {ana.bpm} BPM
-          </span>
-        )}
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          aria-label={`Añadir ${track.title} a la cola`}
+          onClick={() => addToQueue(track)}
+          className="hidden items-center justify-center rounded-full p-2 text-[#8E8E98] opacity-0 transition-opacity hover:bg-white/[0.08] hover:text-white group-hover:opacity-100 focus-visible:opacity-100 sm:flex"
+        >
+          <ListPlus className="h-4 w-4" />
+        </button>
 
         <button
           type="button"
@@ -155,10 +181,10 @@ export const TrackListRow: React.FC<{
           }
           aria-pressed={isLiked}
           onClick={() => void toggleLike(track)}
-          className={`flex items-center justify-center rounded-lg p-2 transition-colors ${
+          className={`flex items-center justify-center rounded-full p-2 ${
             isLiked
               ? 'text-[#F43F5E]'
-              : 'text-[#8E8E98] hover:text-[#F5F5F7]'
+              : 'text-[#8E8E98] hover:bg-white/[0.08] hover:text-[#F5F5F7]'
           }`}
         >
           <Heart className={`h-4 w-4 ${isLiked ? 'fill-current' : ''}`} />
@@ -172,7 +198,7 @@ export const TrackListRow: React.FC<{
               : `Descargar ${track.title} offline`
           }
           onClick={() => void downloadTrackOffline(track)}
-          className="flex items-center justify-center rounded-lg p-2 text-[#8E8E98] hover:text-[#F5F5F7]"
+          className="flex items-center justify-center rounded-full p-2 text-[#8E8E98] hover:bg-white/[0.08] hover:text-[#F5F5F7]"
         >
           {dlStatus === 'downloading' ? (
             <Loader2 className="h-4 w-4 animate-spin text-white" />
@@ -191,15 +217,132 @@ export const TrackListRow: React.FC<{
   );
 };
 
+const CoverCard: React.FC<{
+  image: string;
+  title: string;
+  subtitle?: string;
+  badge?: string;
+  round?: boolean;
+  onOpen: () => void;
+  onPlay?: () => void;
+}> = ({ image, title, subtitle, badge, round, onOpen, onPlay }) => (
+  <article
+    data-surface="content"
+    className="pm-cover-card group w-[152px] shrink-0 snap-start rounded-[12px] bg-[#111115] p-2.5 transition-colors hover:bg-[#18181E] md:w-[178px]"
+  >
+    <div className="relative">
+      <button
+        type="button"
+        aria-label={`Abrir ${title}`}
+        onClick={onOpen}
+        className="block w-full text-left"
+      >
+        <img
+          src={image}
+          alt={title}
+          loading="lazy"
+          className={`aspect-square w-full bg-[#16161C] object-cover shadow-[0_8px_24px_rgba(0,0,0,0.5)] ${
+            round ? 'rounded-full' : 'rounded-[8px]'
+          }`}
+        />
+      </button>
+      {badge && (
+        <span className="pointer-events-none absolute top-2 left-2 rounded bg-[#070709]/90 px-2 py-0.5 text-[10px] font-bold tracking-wider text-[#F5F5F7]">
+          {badge}
+        </span>
+      )}
+      {onPlay && (
+        <button
+          type="button"
+          aria-label={`Reproducir ${title}`}
+          onClick={onPlay}
+          className="pm-cover-play absolute right-2 bottom-2 flex h-11 w-11 items-center justify-center rounded-full bg-white text-[#070709] shadow-xl hover:scale-105"
+        >
+          <Play className="h-5 w-5 translate-x-[1px] fill-current" />
+        </button>
+      )}
+    </div>
+    <div className={`mt-2.5 ${round ? 'text-center' : ''}`}>
+      <button
+        type="button"
+        onClick={onOpen}
+        className="block w-full truncate text-left text-[14px] font-semibold text-[#F5F5F7] hover:underline"
+      >
+        <span className={round ? 'block text-center' : ''}>{title}</span>
+      </button>
+      {subtitle && (
+        <div className="mt-0.5 line-clamp-2 text-[12px] text-[#8E8E98]">
+          {subtitle}
+        </div>
+      )}
+    </div>
+  </article>
+);
+
+const CarouselSection: React.FC<{
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}> = ({ title, subtitle, children }) => {
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+
+  const scrollByDir = (dir: -1 | 1) => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    el.scrollBy({ left: dir * 520, behavior: 'smooth' });
+  };
+
+  return (
+    <section className="space-y-3">
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <h2 className="text-[20px] font-bold tracking-tight text-[#F5F5F7] md:text-[22px]">
+            {title}
+          </h2>
+          {subtitle && (
+            <p className="text-[12.5px] text-[#8E8E98]">{subtitle}</p>
+          )}
+        </div>
+        <div className="hidden items-center gap-1.5 md:flex">
+          <button
+            type="button"
+            aria-label={`Desplazar ${title} a la izquierda`}
+            onClick={() => scrollByDir(-1)}
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-[#141419] text-[#B4B4BE] hover:bg-[#1E1E26] hover:text-white"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            aria-label={`Desplazar ${title} a la derecha`}
+            onClick={() => scrollByDir(1)}
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-[#141419] text-[#B4B4BE] hover:bg-[#1E1E26] hover:text-white"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+
+      <div
+        ref={scrollerRef}
+        className="pm-no-scrollbar -mx-4 flex snap-x gap-3.5 overflow-x-auto px-4 pb-1 md:-mx-8 md:px-8"
+      >
+        {children}
+      </div>
+    </section>
+  );
+};
+
 export const DetailViewPanel: React.FC = () => {
   const {
     activeDetailView,
-    closeDetailView,
     playlists,
     playTrack,
     toggleDjMode,
     renamePlaylist,
     deletePlaylist,
+    openAlbumDetail,
+    openArtistDetail,
   } = usePMusicStore();
 
   const [editingName, setEditingName] = useState('');
@@ -207,47 +350,41 @@ export const DetailViewPanel: React.FC = () => {
   if (!activeDetailView) return null;
 
   if (activeDetailView.kind === 'artist') {
-    const { artist, description, topSongs, albums } = activeDetailView.data;
+    const { artist, description, topSongs, albums, relatedArtists } =
+      activeDetailView.data;
     return (
-      <div className="space-y-7">
-        <button
-          type="button"
-          onClick={() => closeDetailView()}
-          className="inline-flex items-center gap-2 rounded-[10px] border border-white/[0.08] bg-[#121219] px-3.5 py-2 text-xs font-medium text-[#F5F5F7] hover:bg-[#1A1A24]"
+      <div className="space-y-8">
+        <section
+          data-surface="content"
+          className="pm-surface-card flex flex-col gap-6 rounded-[18px] p-6 sm:flex-row sm:items-end"
         >
-          <ArrowLeft className="h-4 w-4" />
-          <span>Volver</span>
-        </button>
-
-        {/* Liner-style EntityHero */}
-        <div className="pm-surface-card flex flex-col gap-6 rounded-[20px] p-6 sm:flex-row sm:items-end">
           <img
             src={artist.thumbnailUrl}
             alt={artist.name}
-            className="h-36 w-36 rounded-[16px] object-cover shadow-[0_20px_50px_rgba(0,0,0,0.65)] sm:h-40 sm:w-40"
+            className="h-36 w-36 shrink-0 rounded-full object-cover shadow-[0_18px_48px_rgba(0,0,0,0.65)] sm:h-44 sm:w-44"
           />
-          <div className="flex-1 space-y-2.5">
-            <div className="inline-flex items-center gap-2 rounded-md bg-white/[0.07] px-2.5 py-1 text-[11px] font-semibold tracking-wide text-[#B4B4BE]">
-              <span>ARTISTA</span>
-              <span>·</span>
-              <span>{topSongs.length} PISTAS POPULARES</span>
-            </div>
-            <h1 className="text-3xl font-bold tracking-tight text-[#F5F5F7] md:text-4xl">
+          <div className="min-w-0 flex-1 space-y-2">
+            <span className="inline-block rounded-md bg-white/[0.08] px-2.5 py-1 text-[11px] font-semibold tracking-wide text-[#B4B4BE]">
+              ARTISTA · {topSongs.length} CANCIONES POPULARES
+            </span>
+            <h1 className="truncate text-3xl font-bold tracking-tight text-[#F5F5F7] md:text-5xl">
               {artist.name}
             </h1>
-            <p className="text-sm text-[#B4B4BE]">
-              {artist.subscribersText ?? description}
-            </p>
+            {(artist.subscribersText || description) && (
+              <p className="text-sm text-[#B4B4BE]">
+                {artist.subscribersText ?? description}
+              </p>
+            )}
             <div className="flex flex-wrap gap-2.5 pt-2">
               <button
                 type="button"
                 onClick={() => {
                   if (topSongs[0]) void playTrack(topSongs[0], topSongs);
                 }}
-                className="inline-flex items-center gap-2 rounded-[10px] bg-white px-5 py-2.5 text-xs font-bold text-[#08080C] shadow-sm hover:bg-white/90"
+                className="inline-flex items-center gap-2 rounded-full bg-white px-6 py-2.5 text-xs font-bold text-[#070709] hover:bg-white/90"
               >
                 <Play className="h-4 w-4 fill-current" />
-                <span>Reproducir todo</span>
+                <span>Reproducir</span>
               </button>
               <button
                 type="button"
@@ -255,20 +392,18 @@ export const DetailViewPanel: React.FC = () => {
                   await toggleDjMode(true);
                   if (topSongs[0]) await playTrack(topSongs[0], topSongs);
                 }}
-                className="inline-flex items-center gap-2 rounded-[10px] border border-white/[0.12] bg-[#1A1A26] px-4 py-2.5 text-xs font-semibold text-[#F5F5F7] hover:bg-[#222232]"
+                className="inline-flex items-center gap-2 rounded-full border border-white/[0.12] bg-[#16161C] px-5 py-2.5 text-xs font-semibold text-[#F5F5F7] hover:bg-[#1E1E26]"
               >
                 <Disc3 className="h-4 w-4 text-[#C084FC]" />
                 <span>Sesión DJ {artist.name}</span>
               </button>
             </div>
           </div>
-        </div>
+        </section>
 
-        <section className="space-y-2.5">
-          <h2 className="text-[18px] font-semibold text-[#F5F5F7]">
-            Canciones populares
-          </h2>
-          <div className="space-y-1.5">
+        <section className="space-y-2">
+          <h2 className="text-[20px] font-bold text-[#F5F5F7]">Populares</h2>
+          <div className="space-y-0.5">
             {topSongs.map((track, idx) => (
               <TrackListRow
                 key={track.id}
@@ -281,32 +416,32 @@ export const DetailViewPanel: React.FC = () => {
         </section>
 
         {albums.length > 0 && (
-          <section className="space-y-3">
-            <h2 className="text-[18px] font-semibold text-[#F5F5F7]">
-              Discografía
-            </h2>
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-              {albums.map((al) => (
-                <article
-                  key={al.id}
-                  data-surface="content"
-                  className="pm-surface-card rounded-[14px] p-3"
-                >
-                  <img
-                    src={al.thumbnailUrl}
-                    alt={al.title}
-                    className="aspect-square w-full rounded-[10px] object-cover"
-                  />
-                  <div className="mt-2.5 truncate text-[14px] font-medium text-[#F5F5F7]">
-                    {al.title}
-                  </div>
-                  <div className="text-[12px] text-[#8E8E98]">
-                    {al.year ?? 2024}
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
+          <CarouselSection title="Discografía">
+            {albums.map((al) => (
+              <CoverCard
+                key={al.id}
+                image={al.thumbnailUrl}
+                title={al.title}
+                subtitle={String(al.year ?? '')}
+                onOpen={() => void openAlbumDetail(al.id)}
+              />
+            ))}
+          </CarouselSection>
+        )}
+
+        {relatedArtists && relatedArtists.length > 0 && (
+          <CarouselSection title="Artistas similares">
+            {relatedArtists.map((rel) => (
+              <CoverCard
+                key={rel.id}
+                image={rel.thumbnailUrl}
+                title={rel.name}
+                subtitle={rel.subscribersText ?? 'Artista'}
+                round
+                onOpen={() => void openArtistDetail(rel.id)}
+              />
+            ))}
+          </CarouselSection>
         )}
       </div>
     );
@@ -316,30 +451,21 @@ export const DetailViewPanel: React.FC = () => {
     const { album, tracks } = activeDetailView.data;
     return (
       <div className="space-y-7">
-        <button
-          type="button"
-          onClick={() => closeDetailView()}
-          className="inline-flex items-center gap-2 rounded-[10px] border border-white/[0.08] bg-[#121219] px-3.5 py-2 text-xs font-medium text-[#F5F5F7] hover:bg-[#1A1A24]"
+        <section
+          data-surface="content"
+          className="pm-surface-card flex flex-col gap-6 rounded-[18px] p-6 sm:flex-row sm:items-end"
         >
-          <ArrowLeft className="h-4 w-4" />
-          <span>Volver</span>
-        </button>
-
-        <div className="pm-surface-card flex flex-col gap-6 rounded-[20px] p-6 sm:flex-row sm:items-end">
           <img
             src={album.thumbnailUrl}
             alt={album.title}
-            className="h-36 w-36 rounded-[14px] object-cover shadow-[0_20px_50px_rgba(0,0,0,0.65)] sm:h-40 sm:w-40"
+            className="h-40 w-40 shrink-0 rounded-[12px] object-cover shadow-[0_18px_48px_rgba(0,0,0,0.65)] sm:h-44 sm:w-44"
           />
-          <div className="flex-1 space-y-2.5">
-            <div className="inline-flex items-center gap-2 rounded-md bg-white/[0.07] px-2.5 py-1 text-[11px] font-semibold text-[#B4B4BE]">
-              <span>ÁLBUM</span>
-              <span>·</span>
-              <span>{album.year ?? 2024}</span>
-              <span>·</span>
-              <span>{tracks.length} CANCIONES</span>
-            </div>
-            <h1 className="text-3xl font-bold tracking-tight text-[#F5F5F7]">
+          <div className="min-w-0 flex-1 space-y-2">
+            <span className="inline-block rounded-md bg-white/[0.08] px-2.5 py-1 text-[11px] font-semibold text-[#B4B4BE]">
+              ÁLBUM {album.year ? `· ${album.year}` : ''} · {tracks.length}{' '}
+              CANCIONES
+            </span>
+            <h1 className="truncate text-3xl font-bold tracking-tight text-[#F5F5F7] md:text-4xl">
               {album.title}
             </h1>
             <p className="text-sm text-[#B4B4BE]">
@@ -351,16 +477,27 @@ export const DetailViewPanel: React.FC = () => {
                 onClick={() => {
                   if (tracks[0]) void playTrack(tracks[0], tracks);
                 }}
-                className="inline-flex items-center gap-2 rounded-[10px] bg-white px-5 py-2.5 text-xs font-bold text-[#08080C] hover:bg-white/90"
+                className="inline-flex items-center gap-2 rounded-full bg-white px-6 py-2.5 text-xs font-bold text-[#070709] hover:bg-white/90"
               >
                 <Play className="h-4 w-4 fill-current" />
                 <span>Reproducir álbum</span>
               </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  await toggleDjMode(true);
+                  if (tracks[0]) await playTrack(tracks[0], tracks);
+                }}
+                className="inline-flex items-center gap-2 rounded-full border border-white/[0.12] bg-[#16161C] px-5 py-2.5 text-xs font-semibold text-[#F5F5F7] hover:bg-[#1E1E26]"
+              >
+                <Disc3 className="h-4 w-4 text-[#C084FC]" />
+                <span>Sesión DJ</span>
+              </button>
             </div>
           </div>
-        </div>
+        </section>
 
-        <div className="space-y-1.5">
+        <div className="space-y-0.5">
           {tracks.map((t, idx) => (
             <TrackListRow
               key={t.id}
@@ -378,32 +515,24 @@ export const DetailViewPanel: React.FC = () => {
     const { playlist, tracks } = activeDetailView.data;
     return (
       <div className="space-y-7">
-        <button
-          type="button"
-          onClick={() => closeDetailView()}
-          className="inline-flex items-center gap-2 rounded-[10px] border border-white/[0.08] bg-[#121219] px-3.5 py-2 text-xs font-medium text-[#F5F5F7] hover:bg-[#1A1A24]"
+        <section
+          data-surface="content"
+          className="pm-surface-card flex flex-col gap-6 rounded-[18px] p-6 sm:flex-row sm:items-end"
         >
-          <ArrowLeft className="h-4 w-4" />
-          <span>Volver</span>
-        </button>
-
-        <div className="pm-surface-card flex flex-col gap-6 rounded-[20px] p-6 sm:flex-row sm:items-end">
           <img
             src={playlist.thumbnailUrl}
             alt={playlist.title}
-            className="h-36 w-36 rounded-[14px] object-cover shadow-[0_20px_50px_rgba(0,0,0,0.65)] sm:h-40 sm:w-40"
+            className="h-40 w-40 shrink-0 rounded-[12px] object-cover shadow-[0_18px_48px_rgba(0,0,0,0.65)] sm:h-44 sm:w-44"
           />
-          <div className="flex-1 space-y-2.5">
-            <div className="inline-flex items-center gap-2 rounded-md bg-white/[0.07] px-2.5 py-1 text-[11px] font-semibold text-[#B4B4BE]">
-              <span>PLAYLIST</span>
-              <span>·</span>
-              <span>{tracks.length} CANCIONES</span>
-            </div>
-            <h1 className="text-3xl font-bold tracking-tight text-[#F5F5F7]">
+          <div className="min-w-0 flex-1 space-y-2">
+            <span className="inline-block rounded-md bg-white/[0.08] px-2.5 py-1 text-[11px] font-semibold text-[#B4B4BE]">
+              PLAYLIST · {tracks.length} CANCIONES
+            </span>
+            <h1 className="truncate text-3xl font-bold tracking-tight text-[#F5F5F7] md:text-4xl">
               {playlist.title}
             </h1>
             <p className="text-sm text-[#B4B4BE]">
-              {playlist.author ?? 'pMusic Editorial'}
+              {playlist.author ?? 'pMusic'}
             </p>
             <div className="flex flex-wrap gap-2.5 pt-2">
               <button
@@ -411,7 +540,7 @@ export const DetailViewPanel: React.FC = () => {
                 onClick={() => {
                   if (tracks[0]) void playTrack(tracks[0], tracks);
                 }}
-                className="inline-flex items-center gap-2 rounded-[10px] bg-white px-5 py-2.5 text-xs font-bold text-[#08080C] hover:bg-white/90"
+                className="inline-flex items-center gap-2 rounded-full bg-white px-6 py-2.5 text-xs font-bold text-[#070709] hover:bg-white/90"
               >
                 <Play className="h-4 w-4 fill-current" />
                 <span>Reproducir</span>
@@ -422,16 +551,16 @@ export const DetailViewPanel: React.FC = () => {
                   await toggleDjMode(true);
                   if (tracks[0]) await playTrack(tracks[0], tracks);
                 }}
-                className="inline-flex items-center gap-2 rounded-[10px] border border-white/[0.12] bg-[#1A1A26] px-4 py-2.5 text-xs font-semibold text-[#F5F5F7] hover:bg-[#222232]"
+                className="inline-flex items-center gap-2 rounded-full border border-white/[0.12] bg-[#16161C] px-5 py-2.5 text-xs font-semibold text-[#F5F5F7] hover:bg-[#1E1E26]"
               >
                 <Disc3 className="h-4 w-4 text-[#C084FC]" />
                 <span>Sesión DJ AutoMix</span>
               </button>
             </div>
           </div>
-        </div>
+        </section>
 
-        <div className="space-y-1.5">
+        <div className="space-y-0.5">
           {tracks.map((t, idx) => (
             <TrackListRow
               key={t.id}
@@ -450,28 +579,36 @@ export const DetailViewPanel: React.FC = () => {
 
   return (
     <div className="space-y-7">
-      <button
-        type="button"
-        onClick={() => closeDetailView()}
-        className="inline-flex items-center gap-2 rounded-[10px] border border-white/[0.08] bg-[#121219] px-3.5 py-2 text-xs font-medium text-[#F5F5F7] hover:bg-[#1A1A24]"
+      <div
+        data-surface="content"
+        className="pm-surface-card space-y-5 rounded-[18px] p-6"
       >
-        <ArrowLeft className="h-4 w-4" />
-        <span>Volver a Biblioteca</span>
-      </button>
-
-      <div className="pm-surface-card space-y-5 rounded-[20px] p-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
-          <div className="space-y-1.5">
-            <span className="inline-block rounded-md bg-white/[0.07] px-2.5 py-1 text-[11px] font-semibold text-[#B4B4BE]">
-              COLECCIÓN · {localPl.tracks.length} PISTAS
-            </span>
-            <h1 className="text-3xl font-bold tracking-tight text-[#F5F5F7]">
-              {localPl.name}
-            </h1>
-            <p className="text-xs text-[#B4B4BE]">
-              {localPl.description || 'Playlist personal sincronizada'}
-            </p>
+          <div className="flex items-end gap-5">
+            {localPl.coverUrl ?? localPl.tracks[0]?.thumbnailUrl ? (
+              <img
+                src={localPl.coverUrl ?? localPl.tracks[0]?.thumbnailUrl}
+                alt={localPl.name}
+                className="h-28 w-28 rounded-[12px] object-cover shadow-xl sm:h-36 sm:w-36"
+              />
+            ) : (
+              <div className="flex h-28 w-28 items-center justify-center rounded-[12px] bg-[#181820] text-3xl font-bold text-[#B4B4BE] sm:h-36 sm:w-36">
+                {localPl.name.slice(0, 1).toUpperCase()}
+              </div>
+            )}
+            <div className="space-y-1.5">
+              <span className="inline-block rounded-md bg-white/[0.08] px-2.5 py-1 text-[11px] font-semibold text-[#B4B4BE]">
+                TU PLAYLIST · {localPl.tracks.length} PISTAS
+              </span>
+              <h1 className="text-3xl font-bold tracking-tight text-[#F5F5F7]">
+                {localPl.name}
+              </h1>
+              <p className="text-xs text-[#B4B4BE]">
+                {localPl.description || 'Playlist personal sincronizada'}
+              </p>
+            </div>
           </div>
+
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
@@ -480,7 +617,7 @@ export const DetailViewPanel: React.FC = () => {
                   void playTrack(localPl.tracks[0], localPl.tracks);
                 }
               }}
-              className="inline-flex items-center gap-2 rounded-[10px] bg-white px-5 py-2.5 text-xs font-bold text-[#08080C] hover:bg-white/90"
+              className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-xs font-bold text-[#070709] hover:bg-white/90"
             >
               <Play className="h-4 w-4 fill-current" />
               <span>Reproducir</span>
@@ -493,7 +630,7 @@ export const DetailViewPanel: React.FC = () => {
                   await playTrack(localPl.tracks[0], localPl.tracks);
                 }
               }}
-              className="inline-flex items-center gap-2 rounded-[10px] border border-white/[0.12] bg-[#1A1A26] px-4 py-2.5 text-xs font-semibold text-[#F5F5F7]"
+              className="inline-flex items-center gap-2 rounded-full border border-white/[0.12] bg-[#16161C] px-4 py-2.5 text-xs font-semibold text-[#F5F5F7]"
             >
               <Disc3 className="h-4 w-4 text-[#C084FC]" />
               <span>Sesión DJ</span>
@@ -502,7 +639,7 @@ export const DetailViewPanel: React.FC = () => {
               type="button"
               aria-label="Eliminar playlist"
               onClick={() => void deletePlaylist(localPl.id)}
-              className="rounded-[10px] border border-white/[0.08] bg-[#1A1215] px-3.5 py-2.5 text-xs font-semibold text-[#F87171]"
+              className="rounded-full border border-white/[0.08] bg-[#1E1215] px-4 py-2.5 text-xs font-semibold text-[#F87171]"
             >
               Eliminar
             </button>
@@ -516,7 +653,7 @@ export const DetailViewPanel: React.FC = () => {
             placeholder="Renombrar playlist..."
             value={editingName}
             onChange={(e) => setEditingName(e.target.value)}
-            className="rounded-[10px] border border-white/10 bg-[#0D0D13] px-3.5 py-2 text-xs text-[#F5F5F7]"
+            className="rounded-full border border-white/10 bg-[#0B0B0E] px-4 py-2 text-xs text-[#F5F5F7]"
           />
           <button
             type="button"
@@ -526,14 +663,14 @@ export const DetailViewPanel: React.FC = () => {
                 setEditingName('');
               }
             }}
-            className="rounded-[10px] border border-white/10 bg-[#181822] px-4 py-2 text-xs font-semibold text-[#F5F5F7]"
+            className="rounded-full border border-white/10 bg-[#181820] px-4 py-2 text-xs font-semibold text-[#F5F5F7]"
           >
             Renombrar
           </button>
         </div>
       </div>
 
-      <div className="space-y-1.5">
+      <div className="space-y-0.5">
         {localPl.tracks.map((t, idx) => (
           <TrackListRow
             key={t.id}
@@ -547,302 +684,230 @@ export const DetailViewPanel: React.FC = () => {
   );
 };
 
+const HOME_CHIPS = ['Todo', 'Música', 'Mixes', 'Álbumes'] as const;
+
 export const HomeScreen: React.FC = () => {
   const {
     homeShelves,
-    currentTrack,
-    queue,
-    djMode,
     isOfflineNetwork,
     playTrack,
     toggleDjMode,
-    setImportModalOpen,
-    setDevicesSheetOpen,
-    setEqSheetOpen,
-    setSettingsOpen,
-    setNowPlayingOpen,
-    setNowPlayingTab,
     openAlbumDetail,
+    openArtistDetail,
   } = usePMusicStore();
+  const [chip, setChip] = useState<(typeof HOME_CHIPS)[number]>('Todo');
+
+  const listen = homeShelves.find((s) => s.kind === 'listen_again');
+  const mixes = homeShelves.find((s) => s.kind === 'mixes_for_you');
+  const because = homeShelves.find((s) => s.kind === 'because_you_listened');
+  const releases = homeShelves.find((s) => s.kind === 'favorite_new_releases');
+  const quick = (listen?.tracks ?? []).slice(0, 6);
+  const show = (name: (typeof HOME_CHIPS)[number]) =>
+    chip === 'Todo' || chip === name;
+
+  const artistCards = Array.from(
+    new Map(
+      (releases?.tracks ?? []).flatMap((t) =>
+        t.artists.slice(0, 1).map((a) => [
+          a.id ?? a.name,
+          { a, img: t.thumbnailHighUrl ?? t.thumbnailUrl },
+        ] as const)
+      )
+    ).values()
+  );
 
   return (
-    <div className="space-y-9">
-      {/* Minimal Top Bar */}
+    <div className="space-y-8">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-[#F5F5F7] md:text-[28px]">
-            {getSpanishGreeting()}
-          </h1>
-          <p className="text-[13px] text-[#B4B4BE]">
-            Escena Urbana Española · Bad Bunny, La Pantera, Cruz Cafuné
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            aria-pressed={djMode.enabled}
-            onClick={() => void toggleDjMode()}
-            className={`inline-flex items-center gap-1.5 rounded-[10px] border px-3.5 py-2 text-xs font-semibold transition-colors ${
-              djMode.enabled
-                ? 'border-[#C084FC]/50 bg-[#231738] text-[#F5F5F7]'
-                : 'border-white/[0.08] bg-[#121219] text-[#F5F5F7] hover:bg-[#1A1A24]'
-            }`}
-          >
-            <Disc3 className="h-4 w-4 text-[#C084FC]" />
-            <span>{djMode.enabled ? 'Sesión DJ activa' : 'Modo Sesión DJ'}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setEqSheetOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-[10px] border border-white/[0.08] bg-[#121219] px-3.5 py-2 text-xs font-medium text-[#F5F5F7] hover:bg-[#1A1A24]"
-          >
-            <Sliders className="h-4 w-4 text-[#B4B4BE]" />
-            <span>EQ / Crossfade</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setImportModalOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-[10px] border border-white/[0.08] bg-[#121219] px-3.5 py-2 text-xs font-medium text-[#F5F5F7] hover:bg-[#1A1A24]"
-          >
-            <ListMusic className="h-4 w-4 text-[#B4B4BE]" />
-            <span>Importar</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setDevicesSheetOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-[10px] border border-white/[0.08] bg-[#121219] px-3.5 py-2 text-xs font-medium text-[#F5F5F7] hover:bg-[#1A1A24]"
-          >
-            <Wifi className="h-4 w-4 text-[#34D399]" />
-            <span>Dispositivos</span>
-          </button>
-
-          <button
-            type="button"
-            aria-label="Ajustes"
-            onClick={() => setSettingsOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-[10px] border border-white/[0.08] bg-[#121219] px-3.5 py-2 text-xs font-medium text-[#F5F5F7] hover:bg-[#1A1A24]"
-          >
-            <Settings className="h-4 w-4 text-[#B4B4BE]" />
-            <span>Ajustes</span>
-          </button>
-        </div>
+        <h1 className="text-[28px] font-bold tracking-tight text-[#F5F5F7] md:text-[32px]">
+          {getSpanishGreeting()}
+        </h1>
       </div>
 
-      {/* Liner-inspired Featured Entity Hero */}
-      <section
-        data-surface="content"
-        className="pm-surface-card relative overflow-hidden rounded-[20px] p-6 md:p-7"
-      >
-        <div className="relative z-10 flex flex-col gap-6 sm:flex-row sm:items-end">
-          <img
-            src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
-            alt={currentTrack.title}
-            className="h-36 w-36 shrink-0 rounded-[14px] object-cover shadow-[0_24px_60px_rgba(0,0,0,0.75)] sm:h-40 sm:w-40"
-          />
-
-          <div className="min-w-0 flex-1 space-y-2.5">
-            <div className="inline-flex items-center gap-2 rounded-md border border-white/[0.08] bg-[#0D0D13] px-2.5 py-1 text-[11px] font-semibold tracking-wider text-[#B4B4BE]">
-              <Sparkles className="h-3 w-3 text-[#C084FC]" />
-              <span>DESTACADO EN TU PERFIL · {queue.length} PISTAS</span>
-            </div>
-
-            <h2 className="truncate text-2xl font-bold tracking-tight text-[#F5F5F7] md:text-[32px]">
-              {currentTrack.title}
-            </h2>
-
-            <p className="truncate text-[15px] text-[#B4B4BE]">
-              {currentTrack.artists.map((a) => a.name).join(', ')}
-              {currentTrack.album ? ` · ${currentTrack.album.name}` : ''}
-            </p>
-
-            <div className="flex flex-wrap items-center gap-2.5 pt-2">
-              <button
-                type="button"
-                onClick={() => void playTrack(currentTrack, queue)}
-                className="inline-flex items-center gap-2 rounded-[10px] bg-white px-5 py-2.5 text-xs font-bold text-[#08080C] shadow-sm transition-transform hover:bg-white/90 active:scale-95"
-              >
-                <Play className="h-4 w-4 fill-current" />
-                <span>Reproducir ahora</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={async () => {
-                  await toggleDjMode(true);
-                  await playTrack(currentTrack, queue);
-                }}
-                className="inline-flex items-center gap-2 rounded-[10px] border border-white/[0.12] bg-[#1A1A26] px-4 py-2.5 text-xs font-semibold text-[#F5F5F7] hover:bg-[#222232]"
-              >
-                <Disc3 className="h-4 w-4 text-[#C084FC]" />
-                <span>Sesión DJ AutoMix</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setNowPlayingOpen(true);
-                  setNowPlayingTab('Letras');
-                }}
-                className="inline-flex items-center gap-2 rounded-[10px] border border-white/[0.08] bg-[#121219] px-4 py-2.5 text-xs font-medium text-[#B4B4BE] hover:text-white"
-              >
-                <span>Ver letras sincronizadas</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
+      {/* Spotify-style Filter Pills */}
+      <div role="tablist" aria-label="Filtros de inicio" className="flex flex-wrap gap-2">
+        {HOME_CHIPS.map((c) => (
+          <button
+            key={c}
+            type="button"
+            role="tab"
+            aria-selected={chip === c}
+            onClick={() => setChip(c)}
+            className={`rounded-full px-4 py-1.5 text-[13px] font-semibold ${
+              chip === c
+                ? 'bg-white text-[#070709]'
+                : 'bg-[#16161C] text-[#F5F5F7] hover:bg-[#1F1F28]'
+            }`}
+          >
+            {c}
+          </button>
+        ))}
+      </div>
 
       {isOfflineNetwork && (
         <div
           role="status"
-          className="pm-surface-card rounded-2xl border border-[#FBBF24]/40 px-4 py-3 text-xs font-semibold text-[#F5F5F7]"
+          className="rounded-xl border border-[#FBBF24]/30 bg-[#1B160B] px-4 py-3 text-[13px] font-medium text-[#F5F5F7]"
         >
-          Modo sin conexión activo — Reproduciendo desde tu caché offline y catálogo local.
+          Sin conexión. Mostrando tu caché offline y catálogo guardado.
         </div>
       )}
 
-      {/* 4 Editorial Shelves */}
-      {homeShelves.map((shelf) => (
-        <section key={shelf.id} className="space-y-3.5">
-          <div className="flex items-baseline justify-between">
-            <div>
-              <h2 className="text-[20px] font-bold tracking-tight text-[#F5F5F7]">
-                {shelf.title}
-              </h2>
-              {shelf.subtitle && (
-                <p className="text-[12.5px] text-[#8E8E98]">
-                  {shelf.subtitle}
-                </p>
-              )}
-            </div>
-          </div>
-
-          {shelf.kind === 'mixes_for_you' && shelf.mixes && (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              {shelf.mixes.map((mix, mixIdx) => {
-                const badgeHues = [
-                  'from-[#581C87] to-[#1E1B4B]',
-                  'from-[#0C4A6E] to-[#111827]',
-                  'from-[#064E3B] to-[#111827]',
-                ];
-                const grad = badgeHues[mixIdx % badgeHues.length]!;
-                return (
-                  <article
-                    key={mix.id}
-                    data-surface="content"
-                    className="pm-surface-card group flex flex-col justify-between overflow-hidden rounded-[16px] p-4"
-                  >
-                    <div className="relative aspect-[16/10] w-full overflow-hidden rounded-[12px] bg-[#0D0D13]">
-                      <img
-                        src={mix.coverUrl}
-                        alt={mix.title}
-                        className="h-full w-full object-cover opacity-85 transition-transform duration-300 group-hover:scale-105"
-                      />
-                      <div
-                        className={`absolute inset-0 bg-gradient-to-t ${grad} opacity-60`}
-                      />
-                      <div className="absolute top-3 left-3 rounded-md bg-black/60 px-2.5 py-1 text-[10px] font-bold tracking-wider text-white">
-                        DAILY MIX · AUTOMIX
-                      </div>
-                    </div>
-
-                    <div className="mt-3.5 space-y-1">
-                      <h3 className="truncate text-[16px] font-bold text-[#F5F5F7]">
-                        {mix.title}
-                      </h3>
-                      <p className="line-clamp-2 text-[12.5px] text-[#B4B4BE]">
-                        {mix.subtitle}
-                      </p>
-                    </div>
-
-                    <div className="mt-4 flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (mix.tracks[0]) void playTrack(mix.tracks[0], mix.tracks);
-                        }}
-                        className="flex flex-1 items-center justify-center gap-1.5 rounded-[10px] bg-white py-2 text-xs font-bold text-[#08080C] hover:bg-white/90"
-                      >
-                        <Play className="h-3.5 w-3.5 fill-current" />
-                        <span>Reproducir Mix</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          await toggleDjMode(true);
-                          if (mix.tracks[0]) await playTrack(mix.tracks[0], mix.tracks);
-                        }}
-                        className="flex items-center justify-center gap-1 rounded-[10px] border border-white/[0.12] bg-[#1A1A26] px-3.5 py-2 text-xs font-semibold text-[#F5F5F7] hover:bg-[#222232]"
-                      >
-                        <Disc3 className="h-3.5 w-3.5 text-[#C084FC]" />
-                        <span>DJ</span>
-                      </button>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          )}
-
-          {shelf.kind === 'favorite_new_releases' && shelf.albums && (
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-5">
-              {shelf.albums.map((album) => (
-                <article
-                  key={album.id}
-                  data-surface="content"
-                  className="pm-surface-card group flex flex-col rounded-[14px] p-3"
+      {/* 2x3 Quick-Access Grid (Spotify signature) */}
+      {chip === 'Todo' && quick.length > 0 && (
+        <section aria-label="Escuchar de nuevo">
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+            {quick.map((t) => (
+              <div
+                key={t.id}
+                data-surface="content"
+                className="group flex items-center gap-3 overflow-hidden rounded-[8px] border border-white/[0.05] bg-[#121217] pr-3 transition-colors hover:bg-[#1A1A22]"
+              >
+                <button
+                  type="button"
+                  aria-label={`Reproducir ${t.title}`}
+                  onClick={() => void playTrack(t, listen?.tracks)}
+                  className="flex min-w-0 flex-1 items-center gap-3 text-left"
                 >
-                  <button
-                    type="button"
-                    onClick={() => void openAlbumDetail(album.id)}
-                    className="text-left"
-                  >
-                    <div className="overflow-hidden rounded-[10px] bg-[#0D0D13] shadow-md">
-                      <img
-                        src={album.thumbnailUrl}
-                        alt={album.title}
-                        className="aspect-square w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                      />
-                    </div>
-                    <div className="mt-2.5 truncate text-[14px] font-medium text-[#F5F5F7]">
-                      {album.title}
+                  <img
+                    src={t.thumbnailUrl}
+                    alt={t.title}
+                    className="h-14 w-14 shrink-0 object-cover"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[14px] font-semibold text-[#F5F5F7]">
+                      {t.title}
                     </div>
                     <div className="truncate text-[12px] text-[#8E8E98]">
-                      {album.artists.map((a) => a.name).join(', ')} · {album.year ?? 2024}
+                      {t.artists.map((a) => a.name).join(', ')}
                     </div>
-                  </button>
-                </article>
-              ))}
-            </div>
-          )}
-
-          {(shelf.kind === 'listen_again' ||
-            shelf.kind === 'because_you_listened') &&
-            shelf.tracks && (
-              <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                {shelf.tracks.slice(0, 6).map((track, idx) => (
-                  <TrackListRow
-                    key={`${shelf.id}-${track.id}`}
-                    track={track}
-                    index={idx}
-                    queueContext={shelf.tracks}
-                  />
-                ))}
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Play ${t.title}`}
+                  onClick={() => void playTrack(t, listen?.tracks)}
+                  className="pm-cover-play flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-[#070709] shadow-md"
+                >
+                  <Play className="h-4 w-4 translate-x-[1px] fill-current" />
+                </button>
               </div>
-            )}
+            ))}
+          </div>
         </section>
-      ))}
+      )}
+
+      {/* Mixes para ti (Solid artwork cards, ZERO gradient overlays) */}
+      {show('Mixes') && mixes?.mixes && (
+        <CarouselSection
+          title="Mixes para ti"
+          subtitle="Mezclas personalizadas con Modo Sesión DJ"
+        >
+          {mixes.mixes.map((mix) => (
+            <CoverCard
+              key={mix.id}
+              image={mix.coverUrl}
+              title={mix.title}
+              subtitle={mix.subtitle}
+              badge="AUTOMIX"
+              onOpen={() =>
+                mix.tracks[0] && void playTrack(mix.tracks[0], mix.tracks)
+              }
+              onPlay={() => {
+                void toggleDjMode(true);
+                if (mix.tracks[0]) void playTrack(mix.tracks[0], mix.tracks);
+              }}
+            />
+          ))}
+        </CarouselSection>
+      )}
+
+      {/* Porque escuchaste a... */}
+      {show('Música') && because?.tracks && because.tracks.length > 0 && (
+        <CarouselSection title={because.title} subtitle={because.subtitle}>
+          {because.tracks.map((t) => (
+            <CoverCard
+              key={t.id}
+              image={t.thumbnailHighUrl ?? t.thumbnailUrl}
+              title={t.title}
+              subtitle={t.artists.map((a) => a.name).join(', ')}
+              onOpen={() => void playTrack(t, because.tracks)}
+              onPlay={() => void playTrack(t, because.tracks)}
+            />
+          ))}
+        </CarouselSection>
+      )}
+
+      {/* Éxitos del momento (Clean flat rows) */}
+      {show('Música') && listen?.tracks && listen.tracks.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="text-[20px] font-bold tracking-tight text-[#F5F5F7] md:text-[22px]">
+            Escuchar de nuevo
+          </h2>
+          <div className="grid grid-cols-1 gap-x-6 md:grid-cols-2">
+            {listen.tracks.slice(0, 8).map((t, i) => (
+              <TrackListRow
+                key={`listen-${t.id}`}
+                track={t}
+                index={i}
+                queueContext={listen.tracks}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Álbumes para ti */}
+      {show('Álbumes') && releases?.albums && releases.albums.length > 0 && (
+        <CarouselSection title="Álbumes para ti">
+          {releases.albums.map((al) => (
+            <CoverCard
+              key={al.id}
+              image={al.thumbnailUrl}
+              title={al.title}
+              subtitle={[al.year, al.artists.map((a) => a.name).join(', ')]
+                .filter(Boolean)
+                .join(' · ')}
+              onOpen={() => void openAlbumDetail(al.id)}
+            />
+          ))}
+        </CarouselSection>
+      )}
+
+      {/* Artistas destacados */}
+      {chip === 'Todo' && artistCards.length > 0 && (
+        <CarouselSection title="Tus artistas favoritos">
+          {artistCards.map(({ a, img }) => (
+            <CoverCard
+              key={a.id ?? a.name}
+              image={img}
+              title={a.name}
+              subtitle="Artista"
+              round
+              onOpen={() => void openArtistDetail(a.id ?? a.name)}
+            />
+          ))}
+        </CarouselSection>
+      )}
     </div>
   );
 };
 
+const GENRE_CARDS = [
+  { label: 'Latino', query: 'Género: Latino', accent: '#EF4444' },
+  { label: 'Reggaetón', query: 'Género: Reggaetón', accent: '#F59E0B' },
+  { label: 'Rap & Hip-Hop', query: 'Género: Rap & Hip-Hop', accent: '#C084FC' },
+  { label: 'Pop', query: 'Género: Pop', accent: '#3B82F6' },
+  { label: 'Electrónica', query: 'Género: Electrónica', accent: '#06B6D4' },
+  { label: 'R&B', query: 'Género: R&B', accent: '#EC4899' },
+  { label: 'Dance', query: 'Género: Dance', accent: '#10B981' },
+  { label: 'Rock', query: 'Género: Rock', accent: '#F97316' },
+] as const;
+
 export const SearchScreen: React.FC = () => {
   const {
     searchQuery,
+    isSearching,
     searchScope,
     searchResults,
     bestResult,
@@ -869,46 +934,49 @@ export const SearchScreen: React.FC = () => {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight text-[#F5F5F7] md:text-[28px]">
+        <h1 className="text-[28px] font-bold tracking-tight text-[#F5F5F7]">
           Buscar
         </h1>
         <p className="text-[13px] text-[#8E8E98]">
-          Algoritmo personalizado · Priorizando tus artistas y escena urbana española
+          Millones de canciones, artistas, álbumes y listas completas
         </p>
       </div>
 
-      {/* Sleek Quiet-Fill Search Box */}
+      {/* Sleek Solid Search Field */}
       <form
         role="search"
         onSubmit={(e) => {
           e.preventDefault();
           void submitSearch();
         }}
-        className="flex items-center gap-3 rounded-[14px] border border-white/[0.10] bg-[#121219] px-4 py-2.5 focus-within:border-white/30"
+        className="flex items-center gap-3 rounded-full border border-white/[0.09] bg-[#131318] px-4 py-2 focus-within:border-white/30"
       >
-        <Search className="h-5 w-5 text-[#8E8E98]" />
+        <Search className="h-4 w-4 shrink-0 text-[#B4B4BE]" />
         <input
           type="search"
           role="searchbox"
           aria-label="Buscar canciones, artistas o álbumes"
-          placeholder="Buscar artistas, canciones, álbumes (ej. Cruz Cafuné, La Pantera, Bad Bunny)..."
+          placeholder="¿Qué te apetece escuchar hoy?"
           value={searchQuery}
           onChange={(e) => void setSearchQuery(e.target.value)}
           className="flex-1 bg-transparent text-[14px] font-medium text-[#F5F5F7] placeholder:text-[#8E8E98] focus:outline-none"
         />
+        {isSearching && (
+          <Loader2 className="h-4 w-4 animate-spin text-[#B4B4BE]" />
+        )}
         {searchQuery && (
           <button
             type="button"
             aria-label="Limpiar búsqueda"
-            onClick={() => void setSearchQuery('')}
-            className="rounded-lg bg-white/[0.08] px-3 py-1 text-xs font-medium text-[#B4B4BE] hover:text-white"
+            onClick={() => void setSearchQuery('', true)}
+            className="rounded-full bg-white/[0.09] px-3 py-1 text-xs font-semibold text-[#F5F5F7] hover:bg-white/[0.16]"
           >
             Limpiar
           </button>
         )}
       </form>
 
-      {/* Autocomplete Chips & Recent Searches */}
+      {/* Autocomplete & Recent Searches */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-1.5">
           {autocompleteSuggestions.slice(0, 6).map((sug) => (
@@ -916,7 +984,7 @@ export const SearchScreen: React.FC = () => {
               key={sug.text}
               type="button"
               onClick={() => void submitSearch(sug.text)}
-              className="rounded-[9px] border border-white/[0.07] bg-[#121219] px-3 py-1.5 text-xs font-medium text-[#F5F5F7] hover:bg-[#1A1A24]"
+              className="rounded-full border border-white/[0.06] bg-[#121217] px-3.5 py-1.5 text-xs font-medium text-[#F5F5F7] hover:bg-[#1B1B22]"
             >
               {sug.text}
             </button>
@@ -924,14 +992,14 @@ export const SearchScreen: React.FC = () => {
         </div>
 
         {recentSearches.length > 0 && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs text-[#8E8E98]">Recientes:</span>
             {recentSearches.slice(0, 3).map((rec) => (
               <button
                 key={rec}
                 type="button"
                 onClick={() => void submitSearch(rec)}
-                className="rounded-lg bg-[#0D0D13] px-2.5 py-1 text-xs text-[#B4B4BE] hover:text-white"
+                className="rounded-full bg-[#131318] px-3 py-1 text-xs text-[#B4B4BE] hover:text-white"
               >
                 {rec}
               </button>
@@ -939,13 +1007,41 @@ export const SearchScreen: React.FC = () => {
             <button
               type="button"
               onClick={() => clearRecentSearches()}
-              className="text-xs font-medium text-[#F5F5F7] underline-offset-2 hover:underline"
+              className="text-xs font-medium text-[#B4B4BE] hover:text-white hover:underline"
             >
-              Borrar historial
+              Borrar
             </button>
           </div>
         )}
       </div>
+
+      {/* Browse Genres (shown when search box is empty on Todo) */}
+      {!searchQuery.trim() && searchScope === 'Todo' && (
+        <section className="space-y-3">
+          <h2 className="text-[18px] font-bold text-[#F5F5F7]">
+            Explorar géneros
+          </h2>
+          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+            {GENRE_CARDS.map((g) => (
+              <button
+                key={g.query}
+                type="button"
+                onClick={() => void submitSearch(g.query)}
+                className="flex items-center gap-3 rounded-[10px] border border-white/[0.06] bg-[#111115] px-4 py-3.5 text-left hover:bg-[#181820]"
+              >
+                <span
+                  aria-hidden="true"
+                  className="h-5 w-1.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: g.accent }}
+                />
+                <span className="truncate text-[13.5px] font-semibold text-[#F5F5F7]">
+                  {g.label}
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* 5 Scope Filter Tabs */}
       <div
@@ -962,10 +1058,10 @@ export const SearchScreen: React.FC = () => {
               role="tab"
               aria-selected={active}
               onClick={() => setSearchScope(scope)}
-              className={`rounded-[10px] px-4 py-2 text-xs font-bold transition-colors ${
+              className={`rounded-full px-4 py-1.5 text-xs font-bold ${
                 active
-                  ? 'bg-white text-[#08080C]'
-                  : 'border border-white/[0.07] bg-[#121219] text-[#B4B4BE] hover:text-white'
+                  ? 'bg-white text-[#070709]'
+                  : 'bg-[#16161C] text-[#B4B4BE] hover:bg-[#1F1F28] hover:text-white'
               }`}
             >
               {scope}
@@ -974,17 +1070,17 @@ export const SearchScreen: React.FC = () => {
         })}
       </div>
 
-      {/* Hero Best Result Card (Mejor resultado) */}
-      {(searchScope === 'Todo' || searchScope === 'Artistas' || searchScope === 'Canciones') &&
-        bestResult && (
-          <section className="space-y-2.5">
-            <h2 className="text-[16px] font-semibold text-[#F5F5F7]">
+      {/* Spotify Desktop 2-Column Top Result + Top 4 Songs */}
+      {searchScope === 'Todo' && bestResult ? (
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+          <section className="space-y-2.5 lg:col-span-5">
+            <h2 className="text-[18px] font-bold text-[#F5F5F7]">
               Mejor resultado
             </h2>
             <div
               data-testid="best-result-card"
               data-surface="content"
-              className="pm-surface-card flex flex-wrap items-center justify-between gap-4 rounded-[18px] p-5"
+              className="pm-surface-card group flex flex-col justify-between gap-4 rounded-[16px] p-5"
             >
               {bestResult.kind === 'artist' && (
                 <>
@@ -992,42 +1088,44 @@ export const SearchScreen: React.FC = () => {
                     <img
                       src={bestResult.item.thumbnailUrl}
                       alt={bestResult.item.name}
-                      className="h-20 w-20 rounded-full object-cover shadow-lg"
+                      className="h-24 w-24 shrink-0 rounded-full object-cover shadow-xl"
                     />
-                    <div>
+                    <div className="min-w-0">
                       <span className="inline-block rounded-md bg-white/[0.08] px-2.5 py-0.5 text-[11px] font-semibold text-[#B4B4BE]">
-                        ARTISTA DESTACADO
+                        ARTISTA
                       </span>
-                      <h3 className="mt-1 text-xl font-bold text-[#F5F5F7]">
+                      <h3 className="mt-1.5 truncate text-2xl font-bold text-[#F5F5F7]">
                         {bestResult.item.name}
                       </h3>
                       <p className="text-xs text-[#8E8E98]">
-                        {bestResult.item.subscribersText ?? 'Escena Urbana Española'}
+                        {bestResult.item.subscribersText ?? 'Artista'}
                       </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => void openArtistDetail(bestResult.item.id)}
-                      className="rounded-[10px] border border-white/[0.10] bg-[#1A1A26] px-4 py-2 text-xs font-semibold text-[#F5F5F7]"
-                    >
-                      Ver perfil
-                    </button>
-                    <button
-                      type="button"
                       aria-label={`Reproducir ${bestResult.item.name}`}
                       onClick={() => {
                         const song =
                           searchResults.songs.find((s) =>
-                            s.artists.some((a) => a.name === bestResult.item.name)
+                            s.artists.some(
+                              (a) => a.name === bestResult.item.name
+                            )
                           ) ?? searchResults.songs[0];
                         if (song) void playTrack(song, searchResults.songs);
                       }}
-                      className="inline-flex items-center gap-1.5 rounded-[10px] bg-white px-4 py-2 text-xs font-bold text-[#08080C]"
+                      className="inline-flex items-center gap-1.5 rounded-full bg-white px-5 py-2 text-xs font-bold text-[#070709] hover:bg-white/90"
                     >
                       <Play className="h-4 w-4 fill-current" />
                       <span>Reproducir</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void openArtistDetail(bestResult.item.id)}
+                      className="rounded-full border border-white/[0.12] bg-[#16161C] px-4 py-2 text-xs font-semibold text-[#F5F5F7] hover:bg-[#1E1E26]"
+                    >
+                      Ver perfil
                     </button>
                   </div>
                 </>
@@ -1037,44 +1135,136 @@ export const SearchScreen: React.FC = () => {
                 <>
                   <div className="flex items-center gap-4">
                     <img
-                      src={bestResult.item.thumbnailUrl}
+                      src={
+                        bestResult.item.thumbnailHighUrl ??
+                        bestResult.item.thumbnailUrl
+                      }
                       alt={bestResult.item.title}
-                      className="h-20 w-20 rounded-[12px] object-cover shadow-lg"
+                      className="h-24 w-24 shrink-0 rounded-[12px] object-cover shadow-xl"
                     />
-                    <div>
+                    <div className="min-w-0">
                       <span className="inline-block rounded-md bg-white/[0.08] px-2.5 py-0.5 text-[11px] font-semibold text-[#B4B4BE]">
                         CANCIÓN
                       </span>
-                      <h3 className="mt-1 text-xl font-bold text-[#F5F5F7]">
+                      <h3 className="mt-1.5 truncate text-2xl font-bold text-[#F5F5F7]">
                         {bestResult.item.title}
                       </h3>
-                      <p className="text-xs text-[#8E8E98]">
+                      <p className="truncate text-xs text-[#B4B4BE]">
                         {bestResult.item.artists.map((a) => a.name).join(', ')}
                       </p>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    aria-label={`Reproducir ${bestResult.item.title}`}
-                    onClick={() =>
-                      void playTrack(bestResult.item, searchResults.songs)
-                    }
-                    className="inline-flex items-center gap-1.5 rounded-[10px] bg-white px-4 py-2 text-xs font-bold text-[#08080C]"
-                  >
-                    <Play className="h-4 w-4 fill-current" />
-                    <span>Reproducir</span>
-                  </button>
+                  <div>
+                    <button
+                      type="button"
+                      aria-label={`Reproducir ${bestResult.item.title}`}
+                      onClick={() =>
+                        void playTrack(bestResult.item, searchResults.songs)
+                      }
+                      className="inline-flex items-center gap-1.5 rounded-full bg-white px-5 py-2 text-xs font-bold text-[#070709] hover:bg-white/90"
+                    >
+                      <Play className="h-4 w-4 fill-current" />
+                      <span>Reproducir</span>
+                    </button>
+                  </div>
                 </>
               )}
             </div>
           </section>
-        )}
 
-      {/* Songs Section */}
-      {(searchScope === 'Todo' || searchScope === 'Canciones') && (
-        <section className="space-y-2.5">
-          <h2 className="text-[16px] font-semibold text-[#F5F5F7]">Canciones</h2>
-          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+          <section className="space-y-2 lg:col-span-7">
+            <h2 className="text-[18px] font-bold text-[#F5F5F7]">Canciones</h2>
+            <div className="space-y-0.5">
+              {searchResults.songs.slice(0, 4).map((track, idx) => (
+                <TrackListRow
+                  key={track.id}
+                  track={track}
+                  index={idx}
+                  queueContext={searchResults.songs}
+                />
+              ))}
+            </div>
+          </section>
+        </div>
+      ) : (
+        (searchScope === 'Artistas' || searchScope === 'Canciones') &&
+        bestResult && (
+          <section className="space-y-2.5">
+            <h2 className="text-[18px] font-bold text-[#F5F5F7]">
+              Mejor resultado
+            </h2>
+            <div
+              data-testid="best-result-card"
+              data-surface="content"
+              className="pm-surface-card flex flex-wrap items-center justify-between gap-4 rounded-[16px] p-5"
+            >
+              {bestResult.kind === 'artist' ? (
+                <>
+                  <div className="flex items-center gap-4">
+                    <img
+                      src={bestResult.item.thumbnailUrl}
+                      alt={bestResult.item.name}
+                      className="h-20 w-20 rounded-full object-cover"
+                    />
+                    <div>
+                      <span className="inline-block rounded-md bg-white/[0.08] px-2.5 py-0.5 text-[11px] font-semibold text-[#B4B4BE]">
+                        ARTISTA
+                      </span>
+                      <h3 className="mt-1 text-xl font-bold text-[#F5F5F7]">
+                        {bestResult.item.name}
+                      </h3>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void openArtistDetail(bestResult.item.id)}
+                    className="rounded-full bg-white px-5 py-2 text-xs font-bold text-[#070709]"
+                  >
+                    Ver perfil
+                  </button>
+                </>
+              ) : (
+                bestResult.kind === 'song' && (
+                  <>
+                    <div className="flex items-center gap-4">
+                      <img
+                        src={bestResult.item.thumbnailUrl}
+                        alt={bestResult.item.title}
+                        className="h-20 w-20 rounded-[10px] object-cover"
+                      />
+                      <div>
+                        <span className="inline-block rounded-md bg-white/[0.08] px-2.5 py-0.5 text-[11px] font-semibold text-[#B4B4BE]">
+                          CANCIÓN
+                        </span>
+                        <h3 className="mt-1 text-xl font-bold text-[#F5F5F7]">
+                          {bestResult.item.title}
+                        </h3>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void playTrack(bestResult.item, searchResults.songs)
+                      }
+                      className="rounded-full bg-white px-5 py-2 text-xs font-bold text-[#070709]"
+                    >
+                      Reproducir
+                    </button>
+                  </>
+                )
+              )}
+            </div>
+          </section>
+        )
+      )}
+
+      {/* Full Songs List in Canciones tab OR remaining songs in Todo */}
+      {searchScope === 'Canciones' && (
+        <section className="space-y-2">
+          <h2 className="text-[18px] font-bold text-[#F5F5F7]">
+            Todas las canciones
+          </h2>
+          <div className="space-y-0.5">
             {searchResults.songs.map((track, idx) => (
               <TrackListRow
                 key={track.id}
@@ -1087,113 +1277,74 @@ export const SearchScreen: React.FC = () => {
         </section>
       )}
 
-      {/* Artists Section */}
-      {(searchScope === 'Todo' || searchScope === 'Artistas') && (
-        <section className="space-y-2.5">
-          <h2 className="text-[16px] font-semibold text-[#F5F5F7]">Artistas</h2>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      {searchScope === 'Todo' && searchResults.songs.length > 4 && (
+        <section className="space-y-2">
+          <h2 className="text-[18px] font-bold text-[#F5F5F7]">
+            Más resultados
+          </h2>
+          <div className="grid grid-cols-1 gap-x-6 md:grid-cols-2">
+            {searchResults.songs.slice(4, 16).map((track, idx) => (
+              <TrackListRow
+                key={track.id}
+                track={track}
+                index={idx + 4}
+                queueContext={searchResults.songs}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Artists Carousel / Grid */}
+      {(searchScope === 'Todo' || searchScope === 'Artistas') &&
+        searchResults.artists.length > 0 && (
+          <CarouselSection title="Artistas">
             {searchResults.artists.map((artist) => (
-              <article
+              <CoverCard
                 key={artist.id}
-                data-surface="content"
-                className="pm-surface-card flex flex-col items-center rounded-[16px] p-4 text-center"
-              >
-                <img
-                  src={artist.thumbnailUrl}
-                  alt={artist.name}
-                  className="h-20 w-20 rounded-full object-cover shadow-md"
-                />
-                <div className="mt-2.5 truncate text-[14px] font-semibold text-[#F5F5F7]">
-                  {artist.name}
-                </div>
-                <div className="text-xs text-[#8E8E98]">
-                  {artist.subscribersText ?? 'Artista'}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void openArtistDetail(artist.id)}
-                  className="mt-3 rounded-[9px] border border-white/[0.08] bg-[#0D0D13] px-3.5 py-1.5 text-xs font-semibold text-[#F5F5F7] hover:bg-white hover:text-[#08080C]"
-                >
-                  Ver artista
-                </button>
-              </article>
+                image={artist.thumbnailUrl}
+                title={artist.name}
+                subtitle={artist.subscribersText ?? 'Artista'}
+                round
+                onOpen={() => void openArtistDetail(artist.id)}
+              />
             ))}
-          </div>
-        </section>
-      )}
+          </CarouselSection>
+        )}
 
-      {/* Albums Section */}
-      {(searchScope === 'Todo' || searchScope === 'Álbumes') && (
-        <section className="space-y-2.5">
-          <h2 className="text-[16px] font-semibold text-[#F5F5F7]">Álbumes</h2>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      {/* Albums Carousel */}
+      {(searchScope === 'Todo' || searchScope === 'Álbumes') &&
+        searchResults.albums.length > 0 && (
+          <CarouselSection title="Álbumes">
             {searchResults.albums.map((album) => (
-              <article
+              <CoverCard
                 key={album.id}
-                data-surface="content"
-                className="pm-surface-card rounded-[14px] p-3"
-              >
-                <button
-                  type="button"
-                  onClick={() => void openAlbumDetail(album.id)}
-                  className="w-full text-left"
-                >
-                  <img
-                    src={album.thumbnailUrl}
-                    alt={album.title}
-                    className="aspect-square w-full rounded-[10px] object-cover"
-                  />
-                  <div className="mt-2 truncate text-[14px] font-medium text-[#F5F5F7]">
-                    {album.title}
-                  </div>
-                  <div className="truncate text-xs text-[#8E8E98]">
-                    {album.artists.map((a) => a.name).join(', ')}
-                  </div>
-                </button>
-              </article>
+                image={album.thumbnailUrl}
+                title={album.title}
+                subtitle={[album.year, album.artists.map((a) => a.name).join(', ')]
+                  .filter(Boolean)
+                  .join(' · ')}
+                onOpen={() => void openAlbumDetail(album.id)}
+              />
             ))}
-          </div>
-        </section>
-      )}
+          </CarouselSection>
+        )}
 
-      {/* Playlists Section */}
-      {(searchScope === 'Todo' || searchScope === 'Playlists') && (
-        <section className="space-y-2.5">
-          <h2 className="text-[16px] font-semibold text-[#F5F5F7]">Playlists</h2>
-          <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+      {/* Playlists Carousel */}
+      {(searchScope === 'Todo' || searchScope === 'Playlists') &&
+        searchResults.playlists.length > 0 && (
+          <CarouselSection title="Playlists">
             {searchResults.playlists.map((pl) => (
-              <article
+              <CoverCard
                 key={pl.id}
-                data-surface="content"
-                className="pm-surface-card flex items-center justify-between gap-4 rounded-[16px] p-4"
-              >
-                <div className="flex items-center gap-3.5">
-                  <img
-                    src={pl.thumbnailUrl}
-                    alt={pl.title}
-                    className="h-16 w-16 rounded-[10px] object-cover"
-                  />
-                  <div>
-                    <div className="text-[15px] font-bold text-[#F5F5F7]">
-                      {pl.title}
-                    </div>
-                    <div className="text-xs text-[#8E8E98]">
-                      {pl.author ?? 'pMusic'} · {pl.trackCount ?? 12} canciones
-                    </div>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void openPlaylistDetail(pl.id)}
-                  className="rounded-[10px] bg-white px-4 py-2 text-xs font-bold text-[#08080C]"
-                >
-                  Abrir
-                </button>
-              </article>
+                image={pl.thumbnailUrl}
+                title={pl.title}
+                subtitle={`${pl.author ?? 'pMusic'} · ${pl.trackCount ?? 0} canciones`}
+                onOpen={() => void openPlaylistDetail(pl.id)}
+              />
             ))}
-          </div>
-        </section>
-      )}
+          </CarouselSection>
+        )}
     </div>
   );
 };
@@ -1214,6 +1365,7 @@ export const LibraryScreen: React.FC = () => {
     openLocalPlaylistDetail,
     setImportModalOpen,
     removeOfflineTrack,
+    playTrack,
   } = usePMusicStore();
 
   const [newPlaylistName, setNewPlaylistName] = useState('');
@@ -1242,7 +1394,7 @@ export const LibraryScreen: React.FC = () => {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-[#F5F5F7] md:text-[28px]">
+          <h1 className="text-[28px] font-bold tracking-tight text-[#F5F5F7]">
             Biblioteca
           </h1>
           <p className="text-[13px] text-[#8E8E98]">
@@ -1253,7 +1405,7 @@ export const LibraryScreen: React.FC = () => {
         <button
           type="button"
           onClick={() => setImportModalOpen(true)}
-          className="inline-flex items-center gap-2 rounded-[10px] bg-white px-4 py-2 text-xs font-bold text-[#08080C] hover:bg-white/90"
+          className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-2 text-xs font-bold text-[#070709] hover:bg-white/90"
         >
           <ListMusic className="h-4 w-4" />
           <span>Importar playlist</span>
@@ -1276,10 +1428,10 @@ export const LibraryScreen: React.FC = () => {
                 role="tab"
                 aria-selected={active}
                 onClick={() => setLibraryCategory(cat)}
-                className={`rounded-[10px] px-4 py-1.5 text-xs font-bold ${
+                className={`rounded-full px-4 py-1.5 text-xs font-bold ${
                   active
-                    ? 'bg-white text-[#08080C]'
-                    : 'border border-white/[0.07] bg-[#121219] text-[#B4B4BE] hover:text-white'
+                    ? 'bg-white text-[#070709]'
+                    : 'bg-[#16161C] text-[#B4B4BE] hover:bg-[#1F1F28] hover:text-white'
                 }`}
               >
                 {cat}
@@ -1294,20 +1446,23 @@ export const LibraryScreen: React.FC = () => {
           placeholder="Filtrar en tu biblioteca..."
           value={libraryFilterQuery}
           onChange={(e) => setLibraryFilterQuery(e.target.value)}
-          className="rounded-[10px] border border-white/10 bg-[#121219] px-3.5 py-2 text-xs text-[#F5F5F7] placeholder:text-[#8E8E98]"
+          className="rounded-full border border-white/10 bg-[#131318] px-4 py-2 text-xs text-[#F5F5F7] placeholder:text-[#8E8E98]"
         />
       </div>
 
       {/* Create New Playlist Quick Bar */}
       {(libraryCategory === 'Todo' || libraryCategory === 'Playlists') && (
-        <div className="pm-surface-card flex flex-wrap items-center gap-2.5 rounded-[16px] p-4">
+        <div
+          data-surface="content"
+          className="pm-surface-card flex flex-wrap items-center gap-2.5 rounded-[14px] p-3.5"
+        >
           <input
             type="text"
             aria-label="Nombre de la nueva playlist"
             placeholder="Nueva playlist (ej. Sesión Canarias)..."
             value={newPlaylistName}
             onChange={(e) => setNewPlaylistName(e.target.value)}
-            className="flex-1 rounded-[10px] border border-white/10 bg-[#0D0D13] px-3.5 py-2 text-xs text-[#F5F5F7] placeholder:text-[#8E8E98]"
+            className="flex-1 rounded-full border border-white/10 bg-[#0B0B0E] px-4 py-2 text-xs text-[#F5F5F7] placeholder:text-[#8E8E98]"
           />
           <button
             type="button"
@@ -1320,7 +1475,7 @@ export const LibraryScreen: React.FC = () => {
               );
               setNewPlaylistName('');
             }}
-            className="inline-flex items-center gap-1.5 rounded-[10px] bg-white px-4 py-2 text-xs font-bold text-[#08080C]"
+            className="inline-flex items-center gap-1.5 rounded-full bg-white px-4 py-2 text-xs font-bold text-[#070709]"
           >
             <Plus className="h-4 w-4" />
             <span>Crear playlist</span>
@@ -1331,44 +1486,60 @@ export const LibraryScreen: React.FC = () => {
       {/* Playlists Section */}
       {(libraryCategory === 'Todo' || libraryCategory === 'Playlists') && (
         <section className="space-y-3">
-          <h2 className="text-[16px] font-semibold text-[#F5F5F7]">
+          <h2 className="text-[18px] font-bold text-[#F5F5F7]">
             Tus Playlists ({filteredPlaylists.length})
           </h2>
           {filteredPlaylists.length > 0 ? (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {filteredPlaylists.map((pl) => (
-                <article
-                  key={pl.id}
-                  data-surface="content"
-                  className="pm-surface-card flex items-center justify-between gap-3 rounded-[14px] p-4"
-                >
-                  <div>
-                    <h3 className="text-[15px] font-bold text-[#F5F5F7]">
-                      {pl.name}
-                    </h3>
-                    <p className="text-xs text-[#8E8E98]">
-                      {pl.tracks.length} canciones · {pl.source}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => openLocalPlaylistDetail(pl.id)}
-                      className="rounded-[9px] bg-white px-3.5 py-1.5 text-xs font-bold text-[#08080C]"
-                    >
-                      Ver
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`Eliminar ${pl.name}`}
-                      onClick={() => void deletePlaylist(pl.id)}
-                      className="rounded-[9px] bg-[#0D0D13] p-2 text-[#8E8E98] hover:text-[#F87171]"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                </article>
-              ))}
+              {filteredPlaylists.map((pl) => {
+                const thumb = pl.coverUrl ?? pl.tracks[0]?.thumbnailUrl;
+                return (
+                  <article
+                    key={pl.id}
+                    data-surface="content"
+                    className="pm-surface-card flex items-center justify-between gap-3 rounded-[12px] p-3.5"
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      {thumb ? (
+                        <img
+                          src={thumb}
+                          alt={pl.name}
+                          className="h-12 w-12 shrink-0 rounded-[8px] object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[8px] bg-[#181820] text-sm font-bold text-[#B4B4BE]">
+                          {pl.name.slice(0, 1).toUpperCase()}
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <h3 className="truncate text-[15px] font-bold text-[#F5F5F7]">
+                          {pl.name}
+                        </h3>
+                        <p className="text-xs text-[#8E8E98]">
+                          {pl.tracks.length} canciones · {pl.source}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => openLocalPlaylistDetail(pl.id)}
+                        className="rounded-full bg-white px-3.5 py-1.5 text-xs font-bold text-[#070709]"
+                      >
+                        Ver
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Eliminar ${pl.name}`}
+                        onClick={() => void deletePlaylist(pl.id)}
+                        className="rounded-full bg-[#16161C] p-2 text-[#8E8E98] hover:text-[#F87171]"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           ) : (
             <p className="text-xs text-[#8E8E98]">
@@ -1380,12 +1551,12 @@ export const LibraryScreen: React.FC = () => {
 
       {/* Liked Tracks Section */}
       {(libraryCategory === 'Todo' || libraryCategory === 'Me gusta') && (
-        <section className="space-y-3">
-          <h2 className="text-[16px] font-semibold text-[#F5F5F7]">
+        <section className="space-y-2.5">
+          <h2 className="text-[18px] font-bold text-[#F5F5F7]">
             Canciones que te gustan ({filteredLikes.length})
           </h2>
           {filteredLikes.length > 0 ? (
-            <div className="space-y-1.5">
+            <div className="space-y-0.5">
               {filteredLikes.map((item, idx) => (
                 <TrackListRow
                   key={item.trackId}
@@ -1405,8 +1576,8 @@ export const LibraryScreen: React.FC = () => {
 
       {/* Offline Downloads Section */}
       {(libraryCategory === 'Todo' || libraryCategory === 'Descargas') && (
-        <section className="space-y-3">
-          <h2 className="text-[16px] font-semibold text-[#F5F5F7]">
+        <section className="space-y-2.5">
+          <h2 className="text-[18px] font-bold text-[#F5F5F7]">
             En este dispositivo · Offline ({offlineEntries.length})
           </h2>
           {offlineEntries.length > 0 ? (
@@ -1414,26 +1585,37 @@ export const LibraryScreen: React.FC = () => {
               {offlineEntries.map((entry) => {
                 const track =
                   searchResults.songs.find((s) => s.id === entry.trackId) ??
-                  searchResults.songs[0]!;
+                  likedTracks.find((l) => l.trackId === entry.trackId)?.track ??
+                  playHistory.find((h) => h.track.id === entry.trackId)?.track;
                 return (
                   <div
                     key={entry.trackId}
-                    className="pm-surface-card flex items-center justify-between rounded-[12px] p-3.5"
+                    data-surface="content"
+                    className="pm-surface-card flex items-center justify-between gap-3 rounded-[10px] p-3"
                   >
-                    <div>
-                      <div className="text-sm font-semibold text-[#F5F5F7]">
-                        {track.title}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (track) void playTrack(track);
+                      }}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <div className="truncate text-sm font-semibold text-[#F5F5F7]">
+                        {track?.title ?? entry.trackId}
                       </div>
                       <div className="text-xs text-[#8E8E98]">
-                        Disponible sin conexión · {(entry.sizeBytes / 1024).toFixed(0)} KB
+                        Disponible sin conexión ·{' '}
+                        {entry.sizeBytes > 1024 * 1024
+                          ? `${(entry.sizeBytes / (1024 * 1024)).toFixed(1)} MB`
+                          : `${(entry.sizeBytes / 1024).toFixed(0)} KB`}
                       </div>
-                    </div>
+                    </button>
                     <button
                       type="button"
                       onClick={() => void removeOfflineTrack(entry.trackId)}
-                      className="rounded-lg bg-[#0D0D13] px-3 py-1.5 text-xs font-semibold text-[#F87171]"
+                      className="rounded-full bg-[#16161C] px-3.5 py-1.5 text-xs font-semibold text-[#F87171] hover:bg-[#241418]"
                     >
-                      Borrar descarga
+                      Borrar
                     </button>
                   </div>
                 );
@@ -1441,7 +1623,7 @@ export const LibraryScreen: React.FC = () => {
             </div>
           ) : (
             <p className="text-xs text-[#8E8E98]">
-              Descarga canciones con el icono de flecha para escucharlas en tu móvil sin gastar datos.
+              Descarga canciones con el icono de flecha para escucharlas sin conexión.
             </p>
           )}
         </section>
@@ -1449,19 +1631,19 @@ export const LibraryScreen: React.FC = () => {
 
       {/* Listening History Section */}
       {(libraryCategory === 'Todo' || libraryCategory === 'Historial') && (
-        <section className="space-y-3">
-          <h2 className="text-[16px] font-semibold text-[#F5F5F7]">
+        <section className="space-y-2.5">
+          <h2 className="text-[18px] font-bold text-[#F5F5F7]">
             Historial reciente ({playHistory.length})
           </h2>
           {playHistory.length > 0 ? (
-            <div className="space-y-1.5">
+            <div className="space-y-0.5">
               {playHistory.slice(0, 12).map((h, idx) => (
                 <TrackListRow key={h.id} track={h.track} index={idx} />
               ))}
             </div>
           ) : (
             <p className="text-xs text-[#8E8E98]">
-              Tu historial alimenta automáticamente el algoritmo de recomendaciones.
+              Tu historial alimenta automáticamente las recomendaciones.
             </p>
           )}
         </section>

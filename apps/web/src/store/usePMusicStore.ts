@@ -45,7 +45,6 @@ import {
   LrcParser,
   LrclibLyricsProvider,
   PlaylistImporter,
-  synthesizeDeterministicWavBuffer,
 } from '@pmusic/providers';
 import {
   DjCuePlanner,
@@ -55,6 +54,7 @@ import {
 import { RecommendationEngine } from '@pmusic/recommendations';
 import { LibraryStore, SyncEngine } from '@pmusic/sync';
 import { defaultPlatformBridge } from '../platform/web-bridge.ts';
+import { applyAmbientPaletteFromCover } from '../utils/cover-color.ts';
 
 export type MainNavTab = 'Inicio' | 'Buscar' | 'Biblioteca';
 export type NowPlayingSubTab = 'Portada' | 'Letras' | 'Cola';
@@ -106,36 +106,34 @@ const recommendationEngine = new RecommendationEngine({
   },
 });
 
+async function resolveTrackStreamUrl(track: Track): Promise<string> {
+  const baseUrl = await defaultPlatformBridge.buildStreamUrl(track.id, 'high');
+  if (baseUrl.startsWith('blob:') || baseUrl.startsWith('data:')) {
+    return baseUrl;
+  }
+  const sep = baseUrl.includes('?') ? '&' : '?';
+  const artist = track.artists[0]?.name ?? '';
+  return `${baseUrl}${sep}title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(artist)}&durationSec=${Math.round(track.durationSec || 200)}`;
+}
+
 const djPlanner = new DjCuePlanner();
 const audioEngine = new DualDeckAudioEngine({
-  resolveStreamUrl: async (track) => defaultPlatformBridge.buildStreamUrl(track.id, 'high'),
+  resolveStreamUrl: resolveTrackStreamUrl,
 });
 
 let importAbortController: AbortController | null = null;
-
-const AMBIENT_PALETTES: readonly [string, string, string][] = [
-  ['#5E2B97', '#0F4C81', '#141428'],
-  ['#7A1C4B', '#1B3B6F', '#121324'],
-  ['#1E5128', '#191A19', '#0D2818'],
-  ['#6B2D5C', '#222E50', '#131522'],
-];
+let searchTicket = 0;
+let lyricsTicket = 0;
 
 function applyAmbientPaletteForTrack(track: Track | null): void {
-  if (typeof document === 'undefined') return;
-  const idx = track
-    ? track.id.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0) % AMBIENT_PALETTES.length
-    : 0;
-  const palette = AMBIENT_PALETTES[idx] ?? AMBIENT_PALETTES[0]!;
-  const root = document.documentElement;
-  root.style.setProperty('--pm-ambient-1', palette[0]);
-  root.style.setProperty('--pm-ambient-2', palette[1]);
-  root.style.setProperty('--pm-ambient-3', palette[2]);
+  applyAmbientPaletteFromCover(track);
 }
 
 export interface PMusicStoreState {
   // Navigation & Sheets
   activeTab: MainNavTab;
   sidebarCollapsed: boolean;
+  rightPanelOpen: boolean;
   nowPlayingOpen: boolean;
   nowPlayingTab: NowPlayingSubTab;
   eqSheetOpen: boolean;
@@ -175,6 +173,7 @@ export interface PMusicStoreState {
   // Home & Search & Recommendations
   homeShelves: HomeEditorialShelf[];
   searchQuery: string;
+  isSearching: boolean;
   searchScope: SearchScopeTab;
   searchResults: SearchResultBundle;
   bestResult?: TopResultMatch;
@@ -212,6 +211,7 @@ export interface PMusicStoreState {
   initApp: () => Promise<void>;
   setActiveTab: (tab: MainNavTab) => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
+  setRightPanelOpen: (open: boolean) => void;
   setNowPlayingOpen: (open: boolean) => void;
   setNowPlayingTab: (tab: NowPlayingSubTab) => void;
   setEqSheetOpen: (open: boolean) => void;
@@ -252,7 +252,7 @@ export interface PMusicStoreState {
   setLyricsUserScrolled: (scrolled: boolean) => void;
 
   // Search & Recommendations Actions
-  setSearchQuery: (query: string) => Promise<void>;
+  setSearchQuery: (query: string, immediate?: boolean) => Promise<void>;
   submitSearch: (query?: string) => Promise<void>;
   setSearchScope: (scope: SearchScopeTab) => void;
   clearRecentSearches: () => void;
@@ -311,6 +311,7 @@ let previousVolumeBeforeMute = 0.85;
 export const usePMusicStore = create<PMusicStoreState>((set, get) => ({
   activeTab: 'Inicio',
   sidebarCollapsed: typeof window !== 'undefined' ? window.innerWidth < 1024 : false,
+  rightPanelOpen: typeof window !== 'undefined' ? window.innerWidth >= 1280 : false,
   nowPlayingOpen: false,
   nowPlayingTab: 'Portada',
   eqSheetOpen: false,
@@ -408,6 +409,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => ({
     },
   ],
   searchQuery: '',
+  isSearching: false,
   searchScope: 'Todo',
   searchResults: initialBundle,
   bestResult: initialBundle.topResult,
@@ -473,6 +475,13 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => ({
     }
 
     const shelves = await recommendationEngine.buildHomeShelves();
+    for (const shelf of shelves) {
+      for (const track of shelf.tracks ?? []) {
+        if (!analyses[track.id]) {
+          analyses[track.id] = await djPlanner.analyzeTrack(track.id, null, track.durationSec);
+        }
+      }
+    }
 
     set({
       playlists: libraryStore.getPlaylists(),
@@ -486,6 +495,24 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => ({
       homeShelves: shelves,
       onlineDevices: syncEngine.getOnlineDevices(),
     });
+
+    const firstReal = shelves.flatMap((s) => s.tracks ?? [])[0];
+    if (firstReal && !get().isPlaying) {
+      const realQueue = shelves.find((s) => s.kind === 'listen_again')?.tracks ?? [firstReal];
+      set({ currentTrack: firstReal, queue: realQueue, queueIndex: 0, durationSec: firstReal.durationSec, positionSec: 0 });
+    }
+
+    if (typeof window !== 'undefined' && window.location?.protocol?.startsWith('http') && !get().searchQuery) {
+      void musicProvider.search('', 'all').then((bundle) => {
+        if (!get().searchQuery && bundle.songs.length > 0) {
+          const reranked = recommendationEngine.rerankTracks(bundle.songs);
+          set({
+            searchResults: { ...bundle, songs: reranked },
+            bestResult: recommendationEngine.selectBestResult('', { ...bundle, songs: reranked }),
+          });
+        }
+      }).catch(() => {});
+    }
 
     applyAmbientPaletteForTrack(get().currentTrack);
     void get().loadLyricsForTrack(get().currentTrack);
@@ -584,6 +611,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => ({
 
   setActiveTab: (tab) => set({ activeTab: tab, activeDetailView: null }),
   setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
+  setRightPanelOpen: (open) => set({ rightPanelOpen: open }),
   setNowPlayingOpen: (open) => set({ nowPlayingOpen: open }),
   setNowPlayingTab: (tab) => set({ nowPlayingTab: tab }),
   setEqSheetOpen: (open) => set({ eqSheetOpen: open }),
@@ -639,11 +667,14 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => ({
       positionSec: effectiveStartSec,
       durationSec: track.durationSec,
       isPlaying: true,
+      currentLyrics: null,
+      activeLyricIndex: -1,
+      lyricsUserScrolled: false,
     });
 
     applyAmbientPaletteForTrack(track);
-    await audioEngine.loadAndPlay(track, effectiveStartSec);
     void get().loadLyricsForTrack(track);
+    await audioEngine.loadAndPlay(track, effectiveStartSec);
 
     void syncEngine.updatePresence({
       is_active: true,
@@ -954,6 +985,9 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => ({
   },
 
   loadLyricsForTrack: async (track) => {
+    const ticket = ++lyricsTicket;
+    set({ currentLyrics: null, activeLyricIndex: -1, lyricsUserScrolled: false });
+
     const doc = await lyricsProvider.getLyrics({
       trackId: track.id,
       title: track.title,
@@ -962,35 +996,12 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => ({
       durationSec: track.durationSec,
     });
 
+    if (ticket !== lyricsTicket || get().currentTrack.id !== track.id) {
+      return;
+    }
+
     if (doc.status === 'not_found') {
-      // Build deterministic synced lyrics fallback so Synced Lyrics view always has rich Spanish lines
-      const syntheticLrc = [
-        `[00:00.00]${track.title} — ${track.artists.map((a) => a.name).join(', ')}`,
-        '[00:04.00]Subiendo desde las islas con todo el equipo',
-        '[00:09.00]La noche brilla mientras suena el bajo en el club',
-        '[00:15.00]♪',
-        '[00:20.00]Me muevo firme sin perder el norte ni la fe',
-        '[00:26.00]Desde Canarias hasta Madrid sonando en pMusic',
-        '[00:34.00]Todo el bloque cantando el estribillo a una voz',
-      ].join('\n');
-      const parsed = lrcParser.parse(syntheticLrc);
-      const fallbackSynced: LyricsDocument = {
-        trackId: track.id,
-        source: 'lrclib',
-        status: 'synced',
-        offsetMs: 0,
-        lines: parsed.lines,
-        plainLines: parsed.lines.map((l) => l.text),
-        fetchedAtMs: Date.now(),
-      };
-      set({
-        currentLyrics: fallbackSynced,
-        activeLyricIndex: lrcParser.findActiveLineIndex(
-          fallbackSynced.lines,
-          get().positionSec * 1000
-        ),
-        lyricsUserScrolled: false,
-      });
+      set({ currentLyrics: null, activeLyricIndex: -1, lyricsUserScrolled: false });
       return;
     }
 
@@ -1006,22 +1017,37 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => ({
 
   setLyricsUserScrolled: (scrolled) => set({ lyricsUserScrolled: scrolled }),
 
-  setSearchQuery: async (query) => {
-    set({ searchQuery: query });
-    const remoteSuggestions = await musicProvider.getSearchSuggestions(query);
-    const ranked = recommendationEngine.rankAutocomplete(query, remoteSuggestions);
-    const rawBundle = await musicProvider.search(query, 'all');
-    const rerankedSongs = recommendationEngine.rerankTracks(rawBundle.songs);
-    const bundle: SearchResultBundle = {
-      ...rawBundle,
-      songs: rerankedSongs,
-    };
-    const best = recommendationEngine.selectBestResult(query, bundle);
-    set({
-      autocompleteSuggestions: ranked,
-      searchResults: bundle,
-      bestResult: best,
-    });
+  setSearchQuery: async (query, immediate = false) => {
+    set({ searchQuery: query, isSearching: true });
+    const ticket = ++searchTicket;
+    if (!immediate && query) {
+      await new Promise((r) => setTimeout(r, 240));
+      if (ticket !== searchTicket) return;
+    }
+    try {
+      const [remoteSuggestions, rawBundle] = await Promise.all([
+        musicProvider.getSearchSuggestions(query).catch(() => [] as string[]),
+        musicProvider.search(query, 'all'),
+      ]);
+      if (ticket !== searchTicket) return;
+      const ranked = recommendationEngine.rankAutocomplete(query, remoteSuggestions);
+      const rerankedSongs = recommendationEngine.rerankTracks(rawBundle.songs);
+      const bundle: SearchResultBundle = {
+        ...rawBundle,
+        songs: rerankedSongs,
+      };
+      const best = recommendationEngine.selectBestResult(query, bundle);
+      set({
+        autocompleteSuggestions: ranked,
+        searchResults: bundle,
+        bestResult: best,
+        isSearching: false,
+      });
+    } catch {
+      if (ticket === searchTicket) {
+        set({ isSearching: false });
+      }
+    }
   },
 
   submitSearch: async (query) => {
@@ -1035,7 +1061,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => ({
         ].slice(0, 8),
       }));
     }
-    await get().setSearchQuery(q);
+    await get().setSearchQuery(q, true);
   },
 
   setSearchScope: (scope) => set({ searchScope: scope }),
@@ -1145,10 +1171,12 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => ({
     }));
 
     try {
-      const wavBytes = synthesizeDeterministicWavBuffer(8, 120);
-      const copyBuf = new ArrayBuffer(wavBytes.byteLength);
-      new Uint8Array(copyBuf).set(wavBytes);
-      await defaultPlatformBridge.offlineStorage.saveAudio(track.id, copyBuf, 'audio/wav');
+      const url = await resolveTrackStreamUrl(track);
+      const headers = await defaultPlatformBridge.getAuthHeaders();
+      const res = await fetch(url, { headers });
+      if (!res.ok) throw new Error('stream');
+      const buf = await res.arrayBuffer();
+      await defaultPlatformBridge.offlineStorage.saveAudio(track.id, buf, res.headers.get('content-type') ?? 'audio/mp4');
       const entries = await defaultPlatformBridge.offlineStorage.listOfflineIds();
       set((prev) => ({
         offlineDownloads: { ...prev.offlineDownloads, [track.id]: 'downloaded' },

@@ -7,7 +7,7 @@ import { App } from '../App.tsx';
 describe('@pmusic/web UI', () => {
   it('renders pMusic shell without errors, displays editorial Home shelves, and navigates to Buscar and Biblioteca', async () => {
     render(<App />);
-    expect(screen.getAllByText(/Escuchar de nuevo/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Buenos días|Buenas tardes|Buenas noches/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Mixes para ti/i).length).toBeGreaterThan(0);
 
     const searchTab = screen.getAllByRole('tab', { name: /Buscar/i })[0]!;

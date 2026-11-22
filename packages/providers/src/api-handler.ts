@@ -7,6 +7,8 @@ import {
   type SpotifyEmbedExtraction,
 } from './importer.ts';
 import { YouTubeMusicProvider } from './ytmusic.ts';
+import { DeezerCatalog } from './deezer-catalog.ts';
+import { AudioStreamResolver } from './yt-stream.ts';
 
 export interface PMusicApiHandlerOptions {
   musicProvider?: IMusicProvider;
@@ -14,26 +16,36 @@ export interface PMusicApiHandlerOptions {
   fetchFn?: typeof fetch;
 }
 
-const cachedWavBuffer = synthesizeDeterministicWavBuffer(12, 122);
+let cachedWavBuffer: Uint8Array | null = null;
+function getCachedWavBuffer(): Uint8Array {
+  if (!cachedWavBuffer) {
+    cachedWavBuffer = synthesizeDeterministicWavBuffer(12, 122);
+  }
+  return cachedWavBuffer;
+}
+
+const textEncoder = new TextEncoder();
 
 function setCorsHeaders(res: ServerResponse): void {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Authorization, X-PMusic-Token, Lrclib-Client');
-  res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges, X-PMusic-Stream-Source');
 }
 
 function sendJson(res: ServerResponse, status: number, payload: unknown): void {
   setCorsHeaders(res);
   const body = JSON.stringify(payload);
+  const bytes = textEncoder.encode(body);
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  res.setHeader('Content-Length', Buffer.byteLength(body));
-  res.end(body);
+  res.setHeader('Content-Length', bytes.byteLength);
+  res.end(bytes);
 }
 
 export function createPMusicApiHandler(options: PMusicApiHandlerOptions = {}) {
-  const provider = options.musicProvider ?? new YouTubeMusicProvider();
+  const provider = options.musicProvider ?? new YouTubeMusicProvider({ enableLiveNetwork: true });
+  const streamResolver = new AudioStreamResolver(new DeezerCatalog());
   const importer = new PlaylistImporter({ musicProvider: provider });
   const fetchFn = options.fetchFn ?? globalThis.fetch.bind(globalThis);
 
@@ -223,10 +235,26 @@ export function createPMusicApiHandler(options: PMusicApiHandlerOptions = {}) {
       }
 
       if (pathname.startsWith('/api/stream/')) {
-        const total = cachedWavBuffer.length;
+        const streamId = decodeURIComponent(pathname.slice('/api/stream/'.length));
+        const titleParam = urlObj.searchParams.get('title') ?? undefined;
+        const artistParam = urlObj.searchParams.get('artist') ?? undefined;
+        const durParam = urlObj.searchParams.get('durationSec');
+        const durationSec = durParam ? Number(durParam) : undefined;
+        if (
+          await streamResolver.pipe(streamId, req, res, {
+            title: titleParam,
+            artist: artistParam,
+            durationSec: Number.isFinite(durationSec) ? durationSec : undefined,
+          })
+        ) {
+          return true;
+        }
+        const wav = getCachedWavBuffer();
+        const total = wav.byteLength;
         res.setHeader('Accept-Ranges', 'bytes');
         res.setHeader('Content-Type', 'audio/wav');
         res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('X-PMusic-Stream-Source', 'offline-wav');
 
         const rangeHeader = req.headers.range;
         if (typeof rangeHeader === 'string' && rangeHeader.startsWith('bytes=')) {
@@ -235,11 +263,11 @@ export function createPMusicApiHandler(options: PMusicApiHandlerOptions = {}) {
           const endRaw = parts[1] && parts[1].length > 0 ? Number.parseInt(parts[1], 10) : total - 1;
           const start = Number.isFinite(startRaw) && startRaw >= 0 ? Math.min(startRaw, total - 1) : 0;
           const end = Number.isFinite(endRaw) && endRaw >= start ? Math.min(endRaw, total - 1) : total - 1;
-          const chunk = cachedWavBuffer.subarray(start, end + 1);
+          const chunk = wav.subarray(start, end + 1);
 
           res.statusCode = 206;
           res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
-          res.setHeader('Content-Length', chunk.length);
+          res.setHeader('Content-Length', chunk.byteLength);
           if (req.method === 'HEAD') {
             res.end();
           } else {
@@ -253,7 +281,7 @@ export function createPMusicApiHandler(options: PMusicApiHandlerOptions = {}) {
         if (req.method === 'HEAD') {
           res.end();
         } else {
-          res.end(cachedWavBuffer);
+          res.end(wav);
         }
         return true;
       }

@@ -21,6 +21,7 @@ import {
   getFallbackRelated,
   searchFallbackCatalog,
 } from './catalog-fallback.ts';
+import { DeezerCatalog, isDeezerTrackId } from './deezer-catalog.ts';
 
 export interface YouTubeMusicProviderOptions {
   lang?: string;
@@ -35,8 +36,10 @@ export class YouTubeMusicProvider implements IMusicProvider {
   private readonly enableLiveNetwork: boolean;
   private readonly proxyBaseUrl: string;
   private innertubePromise: Promise<unknown> | null = null;
+  private readonly catalog: DeezerCatalog | null;
 
   public constructor(options: YouTubeMusicProviderOptions = {}) {
+    this.catalog = options.enableLiveNetwork ? new DeezerCatalog() : null;
     this.lang = options.lang ?? 'es';
     this.location = options.location ?? 'ES';
     this.enableLiveNetwork = options.enableLiveNetwork ?? false;
@@ -77,6 +80,14 @@ export class YouTubeMusicProvider implements IMusicProvider {
     filter: SearchFilter = 'all',
     _signal?: AbortSignal
   ): Promise<SearchResultBundle> {
+    if (this.catalog) {
+      try {
+        const b = await this.catalog.search(query, filter, _signal);
+        if (b.songs.length || b.artists.length || b.albums.length) return b;
+      } catch {
+        // fallback
+      }
+    }
     const yt = await this.getInnertube();
     if (yt) {
       try {
@@ -127,6 +138,14 @@ export class YouTubeMusicProvider implements IMusicProvider {
 
   public async getSearchSuggestions(input: string, _signal?: AbortSignal): Promise<string[]> {
     const trimmed = input.trim();
+    if (this.catalog && trimmed) {
+      try {
+        const s = await this.catalog.suggestions(trimmed, _signal);
+        if (s.length) return s;
+      } catch {
+        // fallback
+      }
+    }
     if (!trimmed) {
       return [
         'Cruz Cafuné',
@@ -150,6 +169,13 @@ export class YouTubeMusicProvider implements IMusicProvider {
   }
 
   public async getHomeFeed(_moodFilter?: string, _signal?: AbortSignal): Promise<HomeFeedResult> {
+    if (this.catalog) {
+      try {
+        return await this.catalog.home(_signal);
+      } catch {
+        // fallback
+      }
+    }
     return getFallbackHomeFeed();
   }
 
@@ -158,6 +184,13 @@ export class YouTubeMusicProvider implements IMusicProvider {
     _automix = true,
     _signal?: AbortSignal
   ): Promise<Track[]> {
+    if (this.catalog && isDeezerTrackId(videoId)) {
+      try {
+        return (await this.catalog.related(videoId, _signal)).tracks;
+      } catch {
+        // fallback
+      }
+    }
     const currentIdx = FALLBACK_TRACKS.findIndex((t) => t.id === videoId);
     if (currentIdx === -1) return [...FALLBACK_TRACKS];
     return [
@@ -167,14 +200,35 @@ export class YouTubeMusicProvider implements IMusicProvider {
   }
 
   public async getRelated(videoId: string, _signal?: AbortSignal): Promise<RelatedResult> {
+    if (this.catalog && isDeezerTrackId(videoId)) {
+      try {
+        return await this.catalog.related(videoId, _signal);
+      } catch {
+        // fallback
+      }
+    }
     return getFallbackRelated(videoId);
   }
 
   public async getArtist(artistId: string, _signal?: AbortSignal): Promise<ArtistDetail> {
+    if (this.catalog && /^\d+$/.test(artistId)) {
+      try {
+        return await this.catalog.artist(artistId, _signal);
+      } catch {
+        // fallback
+      }
+    }
     return getFallbackArtistDetail(artistId);
   }
 
   public async getAlbum(albumId: string, _signal?: AbortSignal): Promise<AlbumDetail> {
+    if (this.catalog && /^\d+$/.test(albumId)) {
+      try {
+        return await this.catalog.album(albumId, _signal);
+      } catch {
+        // fallback
+      }
+    }
     return getFallbackAlbumDetail(albumId);
   }
 
@@ -183,6 +237,13 @@ export class YouTubeMusicProvider implements IMusicProvider {
     maxItems = 100,
     _signal?: AbortSignal
   ): Promise<PlaylistDetail> {
+    if (this.catalog && /^\d+$/.test(playlistId.replace(/^VL/, ''))) {
+      try {
+        return await this.catalog.playlist(playlistId, maxItems, _signal);
+      } catch {
+        // fallback
+      }
+    }
     const detail = getFallbackPlaylistDetail(playlistId);
     return {
       playlist: detail.playlist,

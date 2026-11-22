@@ -4,3 +4,5 @@ export * from './importer.ts';
 export * from './catalog-fallback.ts';
 export * from './ytmusic.ts';
 export * from './api-handler.ts';
+export * from './deezer-catalog.ts';
+export * from './yt-stream.ts';

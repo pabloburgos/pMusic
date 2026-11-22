@@ -455,9 +455,26 @@ export class RecommendationEngine implements IRecommendationEngine {
     let catalogAlbums: AlbumSummary[] = [];
 
     if (this.musicProvider) {
-      const bundle = await this.musicProvider.search('', 'all', signal);
-      catalogSongs = this.rerankTracks(bundle.songs);
-      catalogAlbums = bundle.albums;
+      const bundles = await Promise.all(
+        ['', topArtist1, topArtist2, topArtist3].map((q) =>
+          this.musicProvider!.search(q, 'all', signal).catch(() => null)
+        )
+      );
+      const ok = bundles.filter((b): b is NonNullable<typeof b> => Boolean(b));
+      const seen = new Set<string>();
+      const merged: Track[] = [];
+      const maxLen = Math.max(0, ...ok.map((b) => b.songs.length));
+      for (let i = 0; i < maxLen; i++) {
+        for (const b of ok) {
+          const s = b.songs[i];
+          if (s && !seen.has(s.id)) {
+            seen.add(s.id);
+            merged.push(s);
+          }
+        }
+      }
+      catalogSongs = this.rerankTracks(merged);
+      catalogAlbums = ok.flatMap((b) => b.albums).filter((a, i, arr) => arr.findIndex((x) => x.id === a.id) === i).slice(0, 10);
     }
 
     const listenAgainTracks: Track[] = [];
