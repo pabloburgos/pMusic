@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { formatDurationSec } from '@pmusic/core';
 import { usePMusicStore } from '../store/usePMusicStore.ts';
+import { ArtistLinks } from './ArtistLinks.tsx';
 
 export const SpotlightSearchModal: React.FC = () => {
   const {
@@ -75,9 +76,9 @@ export const SpotlightSearchModal: React.FC = () => {
             setSpotlightOpen(false);
             setActiveTab('Buscar');
           }}
-          className="flex items-center gap-3 rounded-[14px] border border-white/[0.12] bg-[#16161B] px-4 py-2.5 shadow-[0_24px_64px_rgba(0,0,0,0.78)] focus-within:border-white/25"
+          className="pm-elevated pm-border flex items-center gap-3 rounded-[14px] border px-4 py-2.5 shadow-[0_24px_64px_rgba(0,0,0,0.45)] focus-within:border-[var(--pm-border-strong)]"
         >
-          <Search className="h-4 w-4 shrink-0 text-[#9A9AA6]" />
+          <Search className="h-4 w-4 shrink-0 pm-text-tertiary" />
           <input
             ref={inputRef}
             type="search"
@@ -86,10 +87,10 @@ export const SpotlightSearchModal: React.FC = () => {
             placeholder="Buscar"
             value={searchQuery}
             onChange={(e) => void setSearchQuery(e.target.value)}
-            className="pm-input-frameless flex-1 bg-transparent text-[14px] font-medium text-[#F5F5F7] placeholder:text-[#8E8E98] focus:outline-none"
+            className="pm-input-frameless flex-1 bg-transparent text-[14px] font-medium pm-text-primary placeholder:text-[var(--pm-text-tertiary)] focus:outline-none"
           />
           {isSearching && (
-            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[#B4B4BE]" />
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin pm-text-secondary" />
           )}
           {hasQuery && (
             <button
@@ -99,7 +100,7 @@ export const SpotlightSearchModal: React.FC = () => {
                 void setSearchQuery('', true);
                 inputRef.current?.focus();
               }}
-              className="flex h-7 w-7 items-center justify-center rounded-full text-[#8E8E98] hover:bg-white/[0.08] hover:text-white"
+              className="pm-text-tertiary pm-hover flex h-7 w-7 items-center justify-center rounded-full"
             >
               <X className="h-3.5 w-3.5" />
             </button>
@@ -109,19 +110,19 @@ export const SpotlightSearchModal: React.FC = () => {
         {/* Floating Dropdown Card */}
         <div
           data-testid="spotlight-search-panel"
-          className="mt-2 max-h-[68vh] overflow-y-auto rounded-[16px] border border-white/[0.10] bg-[#141419] p-2 shadow-[0_32px_84px_rgba(0,0,0,0.88)] pm-no-scrollbar"
+          className="pm-panel mt-2 max-h-[68vh] overflow-y-auto rounded-[16px] p-2 shadow-[0_32px_84px_rgba(0,0,0,0.55)] pm-no-scrollbar"
         >
           {!hasQuery ? (
             <div>
               <div className="flex items-center justify-between px-3 py-2">
-                <span className="text-xs font-medium text-[#8E8E98]">
+                <span className="text-xs font-medium pm-text-tertiary">
                   Búsquedas recientes
                 </span>
                 {recentSearchItems.length > 0 && (
                   <button
                     type="button"
                     onClick={() => clearRecentSearchItems()}
-                    className="rounded-md px-2 py-1 text-xs font-medium text-[#B4B4BE] hover:bg-white/[0.07] hover:text-white"
+                    className="pm-text-secondary pm-hover rounded-md px-2 py-1 text-xs font-medium"
                   >
                     Borrar
                   </button>
@@ -136,7 +137,7 @@ export const SpotlightSearchModal: React.FC = () => {
                         <div
                           key={item.id}
                           role="listitem"
-                          className="group flex h-14 items-center gap-2 rounded-[10px] px-2 transition-colors hover:bg-white/[0.07]"
+                          className="pm-hover group flex h-14 items-center gap-2 rounded-[10px] px-2 transition-colors"
                         >
                           <button
                             type="button"
@@ -157,10 +158,10 @@ export const SpotlightSearchModal: React.FC = () => {
                               className="h-10 w-10 shrink-0 rounded-full object-cover shadow-sm"
                             />
                             <div className="min-w-0 flex-1">
-                              <div className="truncate text-[14px] font-semibold text-[#F5F5F7]">
+                              <div className="truncate text-[14px] font-semibold pm-text-primary">
                                 {item.name}
                               </div>
-                              <div className="truncate text-xs text-[#8E8E98]">
+                              <div className="truncate text-xs pm-text-tertiary">
                                 Artistas
                               </div>
                             </div>
@@ -170,7 +171,7 @@ export const SpotlightSearchModal: React.FC = () => {
                             type="button"
                             aria-label={`Quitar ${item.name} de recientes`}
                             onClick={() => removeRecentSearchItem(item.id)}
-                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#8E8E98] hover:bg-white/[0.10] hover:text-white"
+                            className="pm-text-tertiary pm-hover flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
                           >
                             <X className="h-3.5 w-3.5" />
                           </button>
@@ -179,51 +180,61 @@ export const SpotlightSearchModal: React.FC = () => {
                     }
 
                     const t = item.track;
-                    const artistNames = t.artists.map((a) => a.name).join(', ');
                     return (
                       <div
                         key={item.id}
                         role="listitem"
-                        className="group flex h-14 items-center gap-2 rounded-[10px] px-2 transition-colors hover:bg-white/[0.07]"
+                        className="pm-hover group flex h-14 items-center gap-2 rounded-[10px] px-2 transition-colors"
                       >
                         <button
                           type="button"
+                          aria-label={`Reproducir ${t.title}`}
                           onClick={() => {
                             addRecentSearchTrack(t);
                             setSpotlightOpen(false);
                             void playTrack(t);
                           }}
-                          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                          className="relative h-10 w-10 shrink-0 overflow-hidden rounded-[7px]"
                         >
-                          <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-[7px] bg-[#1C1C24]">
-                            <img
-                              src={t.thumbnailUrl}
-                              alt={t.title}
-                              className="h-full w-full object-cover"
-                            />
-                            <span className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 transition-opacity group-hover:opacity-100">
-                              <Play className="h-3.5 w-3.5 translate-x-[1px] fill-current text-white" />
-                            </span>
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-[14px] font-semibold text-[#F5F5F7]">
-                              {t.title}
-                            </div>
-                            <div className="flex items-center gap-1.5 truncate text-xs text-[#8E8E98]">
-                              {t.isExplicit && (
-                                <span
-                                  aria-label="Explícita"
-                                  className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-[3px] bg-white/[0.16] px-1 text-[11px] font-bold leading-none text-[#F5F5F7]"
-                                >
-                                  E
-                                </span>
-                              )}
-                              <span className="truncate">{artistNames}</span>
-                            </div>
-                          </div>
+                          <img
+                            src={t.thumbnailUrl}
+                            alt={t.title}
+                            className="h-full w-full object-cover"
+                          />
+                          <span className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 transition-opacity group-hover:opacity-100">
+                            <Play className="h-3.5 w-3.5 translate-x-[1px] fill-current text-white" />
+                          </span>
                         </button>
 
-                        <span className="tabular-nums hidden pr-1 text-xs text-[#8E8E98] sm:inline">
+                        <div className="min-w-0 flex-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              addRecentSearchTrack(t);
+                              setSpotlightOpen(false);
+                              void playTrack(t);
+                            }}
+                            className="block max-w-full truncate text-left text-[14px] font-semibold pm-text-primary hover:underline"
+                          >
+                            {t.title}
+                          </button>
+                          <div className="flex items-center gap-1.5 truncate text-xs pm-text-tertiary">
+                            {t.isExplicit && (
+                              <span
+                                aria-label="Explícita"
+                                className="pm-elevated inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-[3px] px-1 text-[11px] font-bold leading-none pm-text-primary"
+                              >
+                                E
+                              </span>
+                            )}
+                            <ArtistLinks
+                              artists={t.artists}
+                              onBeforeNavigate={() => setSpotlightOpen(false)}
+                            />
+                          </div>
+                        </div>
+
+                        <span className="tabular-nums hidden pr-1 text-xs pm-text-tertiary sm:inline">
                           {formatDurationSec(t.durationSec)}
                         </span>
 
@@ -234,7 +245,7 @@ export const SpotlightSearchModal: React.FC = () => {
                             const r = e.currentTarget.getBoundingClientRect();
                             openTrackMenu(t, r.left - 210, r.bottom + 6);
                           }}
-                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#8E8E98] hover:bg-white/[0.10] hover:text-white"
+                          className="pm-text-tertiary pm-hover flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
                         >
                           <MoreVertical className="h-3.5 w-3.5" />
                         </button>
@@ -243,7 +254,7 @@ export const SpotlightSearchModal: React.FC = () => {
                           type="button"
                           aria-label={`Quitar ${t.title} de recientes`}
                           onClick={() => removeRecentSearchItem(item.id)}
-                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#8E8E98] hover:bg-white/[0.10] hover:text-white"
+                          className="pm-text-tertiary pm-hover flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
                         >
                           <X className="h-3.5 w-3.5" />
                         </button>
@@ -253,7 +264,7 @@ export const SpotlightSearchModal: React.FC = () => {
                 </div>
               ) : (
                 <div className="space-y-4 px-3 py-6 text-center">
-                  <p className="text-xs text-[#8E8E98]">
+                  <p className="text-xs pm-text-tertiary">
                     Busca canciones, artistas o álbumes al instante
                   </p>
                   <div className="flex flex-wrap items-center justify-center gap-1.5">
@@ -262,7 +273,7 @@ export const SpotlightSearchModal: React.FC = () => {
                         key={seed.artistKey}
                         type="button"
                         onClick={() => void setSearchQuery(seed.displayName, true)}
-                        className="rounded-full border border-white/[0.08] bg-[#1A1A22] px-3 py-1 text-xs font-medium text-[#E5E5EA] hover:bg-white hover:text-[#070709]"
+                        className="pm-btn-secondary rounded-full px-3 py-1 text-xs font-medium"
                       >
                         {seed.displayName}
                       </button>
@@ -275,14 +286,14 @@ export const SpotlightSearchModal: React.FC = () => {
             <div className="space-y-3 p-1">
               {bestResult && (
                 <div>
-                  <div className="px-2.5 pb-1 text-[11px] font-semibold tracking-wide text-[#8E8E98]">
+                  <div className="px-2.5 pb-1 text-[11px] font-semibold tracking-wide pm-text-tertiary">
                     MEJOR RESULTADO
                   </div>
                   {bestResult.kind === 'artist' ? (
                     <div
                       data-testid="best-result-card"
                       data-surface="content"
-                      className="flex items-center justify-between gap-3 rounded-[12px] border border-white/[0.08] bg-[#1A1A22] px-3 py-2.5"
+                      className="pm-elevated pm-border flex items-center justify-between gap-3 rounded-[12px] border px-3 py-2.5"
                     >
                       <button
                         type="button"
@@ -303,10 +314,10 @@ export const SpotlightSearchModal: React.FC = () => {
                           className="h-11 w-11 shrink-0 rounded-full object-cover"
                         />
                         <div className="min-w-0 flex-1">
-                          <div className="truncate text-[14px] font-bold text-[#F5F5F7]">
+                          <div className="truncate text-[14px] font-bold pm-text-primary">
                             {bestResult.item.name}
                           </div>
-                          <div className="flex items-center gap-1 text-xs text-[#B4B4BE]">
+                          <div className="flex items-center gap-1 text-xs pm-text-secondary">
                             <User className="h-3 w-3" />
                             <span>Artista</span>
                           </div>
@@ -325,7 +336,7 @@ export const SpotlightSearchModal: React.FC = () => {
                             void playTrack(song, searchResults.songs);
                           }
                         }}
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-[#070709] hover:scale-105"
+                        className="pm-btn-primary flex h-9 w-9 shrink-0 items-center justify-center rounded-full hover:scale-105"
                         aria-label={`Reproducir ${bestResult.item.name}`}
                       >
                         <Play className="h-4 w-4 translate-x-[1px] fill-current" />
@@ -336,32 +347,45 @@ export const SpotlightSearchModal: React.FC = () => {
                       <div
                         data-testid="best-result-card"
                         data-surface="content"
-                        className="flex items-center justify-between gap-3 rounded-[12px] border border-white/[0.08] bg-[#1A1A22] px-3 py-2.5"
+                        className="pm-elevated pm-border flex items-center justify-between gap-3 rounded-[12px] border px-3 py-2.5"
                       >
-                        <button
-                          type="button"
-                          onClick={() => {
-                            addRecentSearchTrack(bestResult.item);
-                            setSpotlightOpen(false);
-                            void playTrack(bestResult.item, searchResults.songs);
-                          }}
-                          className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                        >
-                          <img
-                            src={bestResult.item.thumbnailUrl}
-                            alt={bestResult.item.title}
-                            className="h-11 w-11 shrink-0 rounded-[8px] object-cover"
-                          />
+                        <div className="flex min-w-0 flex-1 items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              addRecentSearchTrack(bestResult.item);
+                              setSpotlightOpen(false);
+                              void playTrack(bestResult.item, searchResults.songs);
+                            }}
+                            className="shrink-0"
+                          >
+                            <img
+                              src={bestResult.item.thumbnailUrl}
+                              alt={bestResult.item.title}
+                              className="h-11 w-11 rounded-[8px] object-cover"
+                            />
+                          </button>
                           <div className="min-w-0 flex-1">
-                            <div className="truncate text-[14px] font-bold text-[#F5F5F7]">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                addRecentSearchTrack(bestResult.item);
+                                setSpotlightOpen(false);
+                                void playTrack(bestResult.item, searchResults.songs);
+                              }}
+                              className="block max-w-full truncate text-left text-[14px] font-bold pm-text-primary hover:underline"
+                            >
                               {bestResult.item.title}
-                            </div>
-                            <div className="truncate text-xs text-[#B4B4BE]">
+                            </button>
+                            <div className="truncate text-xs pm-text-secondary">
                               Canción ·{' '}
-                              {bestResult.item.artists.map((a) => a.name).join(', ')}
+                              <ArtistLinks
+                                artists={bestResult.item.artists}
+                                onBeforeNavigate={() => setSpotlightOpen(false)}
+                              />
                             </div>
                           </div>
-                        </button>
+                        </div>
                         <button
                           type="button"
                           aria-label={`Reproducir ${bestResult.item.title}`}
@@ -370,7 +394,7 @@ export const SpotlightSearchModal: React.FC = () => {
                             setSpotlightOpen(false);
                             void playTrack(bestResult.item, searchResults.songs);
                           }}
-                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-[#070709] hover:scale-105"
+                          className="pm-btn-primary flex h-9 w-9 shrink-0 items-center justify-center rounded-full hover:scale-105"
                         >
                           <Play className="h-4 w-4 translate-x-[1px] fill-current" />
                         </button>
@@ -382,7 +406,7 @@ export const SpotlightSearchModal: React.FC = () => {
 
               {searchResults.songs.length > 0 && (
                 <div>
-                  <div className="px-2.5 pb-1 text-[11px] font-semibold tracking-wide text-[#8E8E98]">
+                  <div className="px-2.5 pb-1 text-[11px] font-semibold tracking-wide pm-text-tertiary">
                     CANCIONES
                   </div>
                   <div role="list" className="space-y-0.5">
@@ -390,47 +414,57 @@ export const SpotlightSearchModal: React.FC = () => {
                       <div
                         key={t.id}
                         role="listitem"
-                        className="group flex h-14 items-center gap-2 rounded-[10px] px-2 transition-colors hover:bg-white/[0.07]"
+                        className="pm-hover group flex h-14 items-center gap-2 rounded-[10px] px-2 transition-colors"
                       >
                         <button
                           type="button"
+                          aria-label={`Reproducir ${t.title}`}
                           onClick={() => {
                             addRecentSearchTrack(t);
                             setSpotlightOpen(false);
                             void playTrack(t, searchResults.songs);
                           }}
-                          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                          className="relative h-10 w-10 shrink-0 overflow-hidden rounded-[7px]"
                         >
-                          <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-[7px] bg-[#1C1C24]">
-                            <img
-                              src={t.thumbnailUrl}
-                              alt={t.title}
-                              className="h-full w-full object-cover"
-                            />
-                            <span className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 transition-opacity group-hover:opacity-100">
-                              <Play className="h-3.5 w-3.5 translate-x-[1px] fill-current text-white" />
-                            </span>
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-[14px] font-semibold text-[#F5F5F7]">
-                              {t.title}
-                            </div>
-                            <div className="flex items-center gap-1.5 truncate text-xs text-[#8E8E98]">
-                              {t.isExplicit && (
-                                <span
-                                  aria-label="Explícita"
-                                  className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-[3px] bg-white/[0.16] px-1 text-[11px] font-bold leading-none text-[#F5F5F7]"
-                                >
-                                  E
-                                </span>
-                              )}
-                              <span className="truncate">
-                                {t.artists.map((a) => a.name).join(', ')}
-                              </span>
-                            </div>
-                          </div>
+                          <img
+                            src={t.thumbnailUrl}
+                            alt={t.title}
+                            className="h-full w-full object-cover"
+                          />
+                          <span className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 transition-opacity group-hover:opacity-100">
+                            <Play className="h-3.5 w-3.5 translate-x-[1px] fill-current text-white" />
+                          </span>
                         </button>
-                        <span className="tabular-nums hidden pr-1 text-xs text-[#8E8E98] sm:inline">
+
+                        <div className="min-w-0 flex-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              addRecentSearchTrack(t);
+                              setSpotlightOpen(false);
+                              void playTrack(t, searchResults.songs);
+                            }}
+                            className="block max-w-full truncate text-left text-[14px] font-semibold pm-text-primary hover:underline"
+                          >
+                            {t.title}
+                          </button>
+                          <div className="flex items-center gap-1.5 truncate text-xs pm-text-tertiary">
+                            {t.isExplicit && (
+                              <span
+                                aria-label="Explícita"
+                                className="pm-elevated inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-[3px] px-1 text-[11px] font-bold leading-none pm-text-primary"
+                              >
+                                E
+                              </span>
+                            )}
+                            <ArtistLinks
+                              artists={t.artists}
+                              onBeforeNavigate={() => setSpotlightOpen(false)}
+                            />
+                          </div>
+                        </div>
+
+                        <span className="tabular-nums hidden pr-1 text-xs pm-text-tertiary sm:inline">
                           {formatDurationSec(t.durationSec)}
                         </span>
                         <button
@@ -440,7 +474,7 @@ export const SpotlightSearchModal: React.FC = () => {
                             const r = e.currentTarget.getBoundingClientRect();
                             openTrackMenu(t, r.left - 210, r.bottom + 6);
                           }}
-                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#8E8E98] hover:bg-white/[0.10] hover:text-white"
+                          className="pm-text-tertiary pm-hover flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
                         >
                           <MoreVertical className="h-3.5 w-3.5" />
                         </button>
@@ -452,7 +486,7 @@ export const SpotlightSearchModal: React.FC = () => {
 
               {searchResults.artists.length > 0 && (
                 <div>
-                  <div className="px-2.5 pb-1 text-[11px] font-semibold tracking-wide text-[#8E8E98]">
+                  <div className="px-2.5 pb-1 text-[11px] font-semibold tracking-wide pm-text-tertiary">
                     ARTISTAS
                   </div>
                   <div role="list" className="space-y-0.5">
@@ -469,7 +503,7 @@ export const SpotlightSearchModal: React.FC = () => {
                           setSpotlightOpen(false);
                           void openArtistDetail(ar.id);
                         }}
-                        className="flex h-13 w-full items-center gap-3 rounded-[10px] px-2 text-left transition-colors hover:bg-white/[0.07]"
+                        className="pm-hover flex h-13 w-full items-center gap-3 rounded-[10px] px-2 text-left transition-colors"
                       >
                         <img
                           src={ar.thumbnailUrl}
@@ -477,10 +511,10 @@ export const SpotlightSearchModal: React.FC = () => {
                           className="h-9 w-9 shrink-0 rounded-full object-cover"
                         />
                         <div className="min-w-0 flex-1">
-                          <div className="truncate text-[13.5px] font-semibold text-[#F5F5F7]">
+                          <div className="truncate text-[13.5px] font-semibold pm-text-primary">
                             {ar.name}
                           </div>
-                          <div className="truncate text-xs text-[#8E8E98]">
+                          <div className="truncate text-xs pm-text-tertiary">
                             Artistas
                           </div>
                         </div>
@@ -497,7 +531,7 @@ export const SpotlightSearchModal: React.FC = () => {
                   setSpotlightOpen(false);
                   setActiveTab('Buscar');
                 }}
-                className="flex w-full items-center justify-center gap-2 rounded-[10px] border border-white/[0.08] bg-[#1A1A22] py-2.5 text-xs font-semibold text-[#F5F5F7] hover:bg-white hover:text-[#070709]"
+                className="pm-btn-secondary flex w-full items-center justify-center gap-2 rounded-[10px] py-2.5 text-xs font-semibold"
               >
                 <Disc3 className="h-3.5 w-3.5" />
                 <span>Ver todos los resultados para «{trimmedQuery}»</span>

@@ -23,6 +23,46 @@ export const DZ_PREFIX = 'dz:';
 export const toTrackId = (dzId: number | string): string => `${DZ_PREFIX}${dzId}`;
 export const isDeezerTrackId = (id: string): boolean => id.startsWith(DZ_PREFIX);
 
+/**
+ * Extracts featured artist names from song titles like
+ * "Cayó La Noche (feat. Cruzzi, Abhir Hathi, Bejo) [Remix]" or "Song ft. Artist1 & Artist2".
+ */
+export function parseFeaturedArtistsFromTitle(title: string): string[] {
+  if (!title) return [];
+  const results: string[] = [];
+  const bracketRe = /[([]\s*(?:feat\.?|ft\.?|featuring|with|con)\s+([^)\]]+)[)\]]/gi;
+  const inlineRe = /(?:^|\s)(?:feat\.?|ft\.?|featuring)\s+([^(\[]+)$/i;
+
+  const pushChunk = (raw: string) => {
+    const cleaned = raw
+      .replace(/\s*(?:remix|version|versión|en vivo|live|official.*|audio.*|video.*)$/i, '')
+      .trim();
+    if (!cleaned) return;
+    const parts = cleaned.split(/\s*(?:,|&|\/|\sy\s|\sx\s|\+)\s*/i);
+    for (const part of parts) {
+      const name = part.replace(/^["']|["']$/g, '').trim();
+      if (
+        name.length >= 2 &&
+        !/^(?:remix|edit|version|versión|prod\.?|official|video|audio)$/i.test(name) &&
+        !results.some((r) => r.toLowerCase() === name.toLowerCase())
+      ) {
+        results.push(name);
+      }
+    }
+  };
+
+  let m: RegExpExecArray | null;
+  while ((m = bracketRe.exec(title)) !== null) {
+    if (m[1]) pushChunk(m[1]);
+  }
+  const stripped = title.replace(bracketRe, '').trim();
+  const inMatch = inlineRe.exec(stripped);
+  if (inMatch?.[1]) {
+    pushChunk(inMatch[1]);
+  }
+  return results;
+}
+
 type Json = Record<string, any>;
 
 const GENRE_CHART_MAP: Record<string, number> = {
@@ -58,14 +98,47 @@ export class DeezerCatalog {
 
   public mapTrack(t: Json, albumOverride?: Json): Track {
     const album = t.album ?? albumOverride;
-    const artists = [t.artist, ...(Array.isArray(t.contributors) ? t.contributors : [])]
-      .filter((a): a is Json => Boolean(a?.name))
-      .filter((a, i, arr) => arr.findIndex((b) => b.id === a.id) === i)
-      .map((a) => ({ id: String(a.id), name: String(a.name) }));
+    const rawList: Array<{ id?: string; name: string }> = [];
+    const seenIds = new Set<string>();
+    const seenNames = new Set<string>();
+
+    const pushArtist = (idVal: unknown, nameVal: unknown) => {
+      const name = typeof nameVal === 'string' ? nameVal.trim() : '';
+      if (!name) return;
+      const id =
+        idVal !== undefined && idVal !== null && String(idVal).trim()
+          ? String(idVal).trim()
+          : undefined;
+      const lower = name
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+      const hasTokenOverlap = Array.from(seenNames).some(
+        (existing) => existing === lower || existing.startsWith(`${lower} `) || lower.startsWith(`${existing} `)
+      );
+      if ((id && seenIds.has(id)) || seenNames.has(lower) || hasTokenOverlap) return;
+      if (id) seenIds.add(id);
+      seenNames.add(lower);
+      rawList.push(id ? { id, name } : { name });
+    };
+
+    if (t.artist) pushArtist(t.artist.id, t.artist.name);
+    if (Array.isArray(t.contributors)) {
+      for (const c of t.contributors) {
+        if (c) pushArtist(c.id, c.name);
+      }
+    }
+    const extraFeatured = parseFeaturedArtistsFromTitle(
+      String(t.title ?? t.title_short ?? '')
+    );
+    for (const extraName of extraFeatured) {
+      pushArtist(undefined, extraName);
+    }
+
     return {
       id: toTrackId(t.id),
       title: String(t.title_short ?? t.title),
-      artists: artists.length ? artists : [{ name: 'Artista' }],
+      artists: rawList.length ? rawList : [{ name: 'Artista' }],
       album: album ? { id: String(album.id), name: String(album.title) } : undefined,
       durationSec: Number(t.duration) || 200,
       thumbnailUrl: album?.cover_medium ?? album?.cover ?? '',
@@ -74,6 +147,58 @@ export class DeezerCatalog {
       source: 'ytmusic',
       releaseYear: album?.release_date ? Number(String(album.release_date).slice(0, 4)) : undefined,
     };
+  }
+
+  private async enrichTracks(
+    rawTracks: Json[],
+    mappedTracks: Track[],
+    maxCount = 12,
+    signal?: AbortSignal
+  ): Promise<Track[]> {
+    const out = [...mappedTracks];
+    const indicesToEnrich: number[] = [];
+    const cap = Math.min(rawTracks.length, out.length, maxCount);
+    for (let i = 0; i < cap; i++) {
+      const raw = rawTracks[i];
+      if (raw?.id && !Array.isArray(raw.contributors)) {
+        indicesToEnrich.push(i);
+      }
+    }
+    if (indicesToEnrich.length === 0) return out;
+
+    await Promise.allSettled(
+      indicesToEnrich.map(async (idx) => {
+        const raw = rawTracks[idx];
+        const existing = out[idx];
+        if (!raw?.id || !existing) return;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 1100);
+        const onOuterAbort = () => controller.abort();
+        signal?.addEventListener('abort', onOuterAbort, { once: true });
+        try {
+          const full = await this.get(`/track/${encodeURIComponent(String(raw.id))}`, controller.signal);
+          const fullMapped = this.mapTrack(full, raw.album);
+          if (fullMapped.artists.length > 0) {
+            // Merge any parsed featured artists from original title if full contributors omitted one
+            const merged = [...fullMapped.artists];
+            const have = new Set(merged.map((a) => a.name.toLowerCase()));
+            for (const orig of existing.artists) {
+              if (!have.has(orig.name.toLowerCase())) {
+                merged.push(orig);
+                have.add(orig.name.toLowerCase());
+              }
+            }
+            out[idx] = { ...existing, artists: merged };
+          }
+        } catch {
+          // Ignore timeout / network error per track and keep original mapped artists
+        } finally {
+          clearTimeout(timer);
+          signal?.removeEventListener('abort', onOuterAbort);
+        }
+      })
+    );
+    return out;
   }
 
   private mapArtist(a: Json): ArtistSummary {
@@ -118,14 +243,17 @@ export class DeezerCatalog {
       ]);
       const rawTracks = [...(latinoTracks.data ?? []), ...(tracks.data ?? [])];
       const seenTrackIds = new Set<string>();
-      const songs: Track[] = [];
+      const rawUnique: Json[] = [];
+      const songsInit: Track[] = [];
       for (const t of rawTracks) {
         const mapped = this.mapTrack(t);
         if (!seenTrackIds.has(mapped.id)) {
           seenTrackIds.add(mapped.id);
-          songs.push(mapped);
+          rawUnique.push(t);
+          songsInit.push(mapped);
         }
       }
+      const songs = await this.enrichTracks(rawUnique, songsInit, 12, signal);
       return {
         query,
         topResult: songs[0] ? { kind: 'song', item: songs[0] } : undefined,
@@ -145,7 +273,13 @@ export class DeezerCatalog {
         this.get(`/chart/${genreId}/albums?limit=10`, signal).catch(() => ({ data: [] })),
         this.get(`/chart/${genreId}/playlists?limit=8`, signal).catch(() => ({ data: [] })),
       ]);
-      const songs = (tracks.data ?? []).map((t: Json) => this.mapTrack(t));
+      const rawGenreTracks = tracks.data ?? [];
+      const songs = await this.enrichTracks(
+        rawGenreTracks,
+        rawGenreTracks.map((t: Json) => this.mapTrack(t)),
+        12,
+        signal
+      );
       const artistList = (artists.data ?? []).map((a: Json) => this.mapArtist(a));
       return {
         query,
@@ -170,7 +304,13 @@ export class DeezerCatalog {
       want('album') ? this.get(`/search/album?q=${q}&limit=10`, signal) : null,
       want('playlist') ? this.get(`/search/playlist?q=${q}&limit=8`, signal) : null,
     ]);
-    const songList = (songs?.data ?? []).map((t: Json) => this.mapTrack(t));
+    const rawSearchSongs = songs?.data ?? [];
+    const songList = await this.enrichTracks(
+      rawSearchSongs,
+      rawSearchSongs.map((t: Json) => this.mapTrack(t)),
+      12,
+      signal
+    );
     const artistList = (artists?.data ?? []).map((a: Json) => this.mapArtist(a));
     const topArtist = artistList[0];
     const qn = query.trim().toLowerCase();
@@ -207,15 +347,35 @@ export class DeezerCatalog {
       this.get('/chart/0/albums?limit=12', signal),
       this.get('/chart/0/playlists?limit=10', signal),
     ]);
+    const rawChartTracks = chartTracks.data ?? [];
+    const enrichedChartTracks = await this.enrichTracks(
+      rawChartTracks,
+      rawChartTracks.map((t: Json) => this.mapTrack(t)),
+      10,
+      signal
+    );
     return {
       moods: ['Para ti', 'Tendencias', 'Reggaeton', 'Pop', 'Hip-Hop', 'Electrónica'],
       shelves: [
-        { title: 'Éxitos del momento', items: (chartTracks.data ?? []).map((t: Json) => this.mapTrack(t)) },
+        { title: 'Éxitos del momento', items: enrichedChartTracks },
         { title: 'Artistas del momento', items: (chartArtists.data ?? []).map((a: Json) => this.mapArtist(a)) },
         { title: 'Álbumes populares', items: (chartAlbums.data ?? []).map((a: Json) => this.mapAlbum(a)) },
         { title: 'Listas para descubrir', items: (chartPlaylists.data ?? []).map((p: Json) => this.mapPlaylist(p)) },
       ],
     } as HomeFeedResult;
+  }
+
+  public async artistByName(name: string, signal?: AbortSignal): Promise<ArtistDetail> {
+    const cleaned = name.trim();
+    const res = await this.get(`/search/artist?q=${encodeURIComponent(cleaned)}&limit=4`, signal);
+    const list = (res.data ?? []) as Json[];
+    if (list.length === 0) {
+      throw new Error(`Artista no encontrado: ${name}`);
+    }
+    const lower = cleaned.toLowerCase();
+    const best =
+      list.find((a) => String(a.name ?? '').trim().toLowerCase() === lower) ?? list[0]!;
+    return this.artist(String(best.id), signal);
   }
 
   public async artist(id: string, signal?: AbortSignal): Promise<ArtistDetail> {
@@ -226,11 +386,18 @@ export class DeezerCatalog {
       this.get(`/artist/${encodeURIComponent(id)}/related?limit=8`, signal),
     ]);
     const artist = this.mapArtist(a);
+    const rawTop = top.data ?? [];
+    const topSongs = await this.enrichTracks(
+      rawTop,
+      rawTop.map((t: Json) => this.mapTrack(t)),
+      10,
+      signal
+    );
     return {
       artist,
       bannerUrl: a.picture_xl ?? artist.thumbnailUrl,
       description: artist.subscribersText ?? '',
-      topSongs: (top.data ?? []).map((t: Json) => this.mapTrack(t)),
+      topSongs,
       albums: (albums.data ?? []).map((al: Json) => this.mapAlbum(al, a)),
       singles: [],
       relatedArtists: (related.data ?? []).map((r: Json) => this.mapArtist(r)),
@@ -239,17 +406,35 @@ export class DeezerCatalog {
 
   public async album(id: string, signal?: AbortSignal): Promise<AlbumDetail> {
     const a = await this.get(`/album/${encodeURIComponent(id)}`, signal);
+    const rawTracks = (a.tracks?.data ?? []).map((t: Json) => ({
+      ...t,
+      artist: t.artist ?? a.artist,
+      album: t.album ?? a,
+    }));
+    const tracks = await this.enrichTracks(
+      rawTracks,
+      rawTracks.map((t: Json) => this.mapTrack(t, a)),
+      12,
+      signal
+    );
     return {
       album: this.mapAlbum(a),
-      tracks: (a.tracks?.data ?? []).map((t: Json) => this.mapTrack({ ...t, artist: t.artist ?? a.artist }, a)),
+      tracks,
     } as AlbumDetail;
   }
 
   public async playlist(id: string, maxItems = 100, signal?: AbortSignal): Promise<PlaylistDetail> {
     const p = await this.get(`/playlist/${encodeURIComponent(id.replace(/^VL/, ''))}`, signal);
+    const rawTracks = (p.tracks?.data ?? []).slice(0, maxItems);
+    const tracks = await this.enrichTracks(
+      rawTracks,
+      rawTracks.map((t: Json) => this.mapTrack(t)),
+      12,
+      signal
+    );
     return {
       playlist: this.mapPlaylist(p),
-      tracks: (p.tracks?.data ?? []).slice(0, maxItems).map((t: Json) => this.mapTrack(t)),
+      tracks,
     } as PlaylistDetail;
   }
 
@@ -268,6 +453,14 @@ export class DeezerCatalog {
   public async track(trackId: string, signal?: AbortSignal): Promise<Track> {
     const t = await this.get(`/track/${encodeURIComponent(trackId.replace(DZ_PREFIX, ''))}`, signal);
     return this.mapTrack(t);
+  }
+
+  public async getTrack(trackId: string, signal?: AbortSignal): Promise<Track | null> {
+    try {
+      return await this.track(trackId, signal);
+    } catch {
+      return null;
+    }
   }
 
   /** Fragmento de 30 s (siempre disponible) usado como último recurso. */

@@ -211,9 +211,17 @@ export class YouTubeMusicProvider implements IMusicProvider {
   }
 
   public async getArtist(artistId: string, _signal?: AbortSignal): Promise<ArtistDetail> {
-    if (this.catalog && /^\d+$/.test(artistId)) {
+    if (this.catalog) {
       try {
-        return await this.catalog.artist(artistId, _signal);
+        if (/^\d+$/.test(artistId)) {
+          return await this.catalog.artist(artistId, _signal);
+        }
+        const lookupName = artistId.startsWith('UC_')
+          ? artistId.slice(3).replace(/_/g, ' ')
+          : artistId;
+        if (lookupName.trim()) {
+          return await this.catalog.artistByName(lookupName, _signal);
+        }
       } catch {
         // fallback
       }
@@ -395,6 +403,14 @@ export class HttpProxyMusicProvider implements IMusicProvider {
       return remote;
     }
     return getFallbackArtistDetail(artistId);
+  }
+
+  public async getTrack(trackId: string, signal?: AbortSignal): Promise<Track | null> {
+    const remote = await this.fetchApiJson<Track>(
+      `/api/track/${encodeURIComponent(trackId)}`,
+      signal
+    );
+    return remote && remote.id ? remote : null;
   }
 
   public async getAlbum(albumId: string, signal?: AbortSignal): Promise<AlbumDetail> {

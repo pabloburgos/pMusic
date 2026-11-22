@@ -194,6 +194,44 @@ describe('@pmusic/audio-engine', () => {
     await engine.init();
     engine.setVolume(0.05);
     expect(engine.getState().volume).toBe(0.05);
+    engine.setPlaybackRate(1.15, true);
+    engine.setBalance(-0.25);
+    engine.setMonoAudio(true);
     await engine.dispose();
+  });
+
+  it('computes 3-stem envelopes and synthesizes vocal-clash avoidance choreography', async () => {
+    const planner = new DjCuePlanner();
+    const vocalHeavyA = await planner.analyzeTrack('stem_a', null, 210);
+    const vocalHeavyB = await planner.analyzeTrack('stem_b', null, 220);
+
+    expect(vocalHeavyA.bassEnvelope?.length).toBeGreaterThan(10);
+    expect(vocalHeavyA.vocalEnvelope?.length).toBeGreaterThan(10);
+    expect(vocalHeavyA.highEnvelope?.length).toBeGreaterThan(10);
+
+    const plan = planner.planTransition(
+      {
+        ...vocalHeavyA,
+        bpm: 122,
+        camelotKey: '8A',
+        loudnessDb: -8,
+        vocalEnvelope: Array.from({ length: vocalHeavyA.rmsEnvelope.length }, () => 0.9),
+      },
+      {
+        ...vocalHeavyB,
+        bpm: 124,
+        camelotKey: '8A',
+        loudnessDb: -12,
+        vocalEnvelope: Array.from({ length: vocalHeavyB.rmsEnvelope.length }, () => 0.88),
+      },
+      'full',
+      'auto'
+    );
+
+    expect(plan.choreography).toBeDefined();
+    expect(plan.choreography?.vocalClashAvoided).toBe(true);
+    expect(plan.choreography?.vocalCarveDb).toBeLessThan(-10);
+    expect(plan.choreography?.loudnessTrimDb).toBeGreaterThan(0);
+    expect(plan.choreography?.echoFeedbackPeak).toBeLessThanOrEqual(0.78);
   });
 });

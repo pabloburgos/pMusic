@@ -2,6 +2,7 @@ import type {
   DeckTransitionPlan,
   DjFxToggles,
   DjSessionStyle,
+  DjStemChoreography,
   DjTransitionType,
   IDjPlanner,
   Track,
@@ -39,6 +40,41 @@ function sampleEnvelopeAtSec(ana: TrackAnalysis, sec: number): number {
   const ratio = Math.max(0, Math.min(0.999, sec / ana.durationSec));
   const idx = Math.floor(ratio * ana.rmsEnvelope.length);
   return ana.rmsEnvelope[idx] ?? ana.meanEnergy;
+}
+
+function sampleStemWindow(
+  stem: readonly number[] | undefined,
+  durationSec: number,
+  fromSec: number,
+  toSec: number,
+  fallback: number
+): number {
+  if (!stem || !stem.length || durationSec <= 0) return fallback;
+  const startSec = Math.max(0, Math.min(durationSec, Math.min(fromSec, toSec)));
+  const endSec = Math.max(startSec + 1, Math.min(durationSec, Math.max(fromSec, toSec)));
+  const i0 = Math.max(0, Math.floor((startSec / durationSec) * stem.length));
+  const i1 = Math.min(stem.length - 1, Math.ceil((endSec / durationSec) * stem.length));
+  let sum = 0;
+  let count = 0;
+  for (let i = i0; i <= i1; i++) {
+    sum += stem[i] ?? fallback;
+    count++;
+  }
+  return count > 0 ? sum / count : fallback;
+}
+
+function snapToDownbeatGrid(
+  sec: number,
+  phaseSec: number | undefined,
+  barSec: number,
+  minSec: number,
+  maxSec: number
+): number {
+  if (barSec <= 0.5) return Math.round(Math.max(minSec, Math.min(maxSec, sec)));
+  const phase = phaseSec ?? 0;
+  const k = Math.round((sec - phase) / barSec);
+  const snapped = Math.round(phase + k * barSec);
+  return Math.max(minSec, Math.min(maxSec, snapped));
 }
 
 function pairTransitionCost(
@@ -198,41 +234,80 @@ export class DjCuePlanner implements IDjPlanner {
     const relBpmDiff = Math.abs(safeFromBpm - safeToBpm) / safeFromBpm;
     const camelotPenalty = computeCamelotPenalty(from.camelotKey, to.camelotKey);
 
-    // Quick cueIn first so we can evaluate real energy match at exact transition points
-    const rawCueIn =
-      style === 'quick'
-        ? Math.max(4, Math.round(to.primaryDropSec - Math.min(barSec * 1.5, 6)))
-        : 0;
-    const cueInSec =
-      style === 'quick'
-        ? Math.max(1, Math.min(Math.max(1, to.durationSec - 20), rawCueIn))
-        : 0;
-
-    // Pick lowest-energy phrase exit inside valid [45, 90]s window in quick mode
+    // Pairwise stem-aware window search: jointly minimize vocal-on-vocal clash, bass collision & energy jumps
     const fromEntry = Math.max(0, Math.round(from.primaryDropSec - 4));
+    let cueInSec = 0;
     let tentativeCueOut =
       style === 'quick'
         ? fromEntry + Math.max(48, Math.min(82, from.chorusEndSec - fromEntry))
         : from.outroStartSec;
 
-    if (style === 'quick' && from.rmsEnvelope.length >= 16) {
-      const scanMin = fromEntry + 48;
-      const scanMax = Math.min(from.durationSec - 10, fromEntry + 82);
-      if (scanMax > scanMin + 2) {
-        let lowestE = Infinity;
-        let bestSec = tentativeCueOut;
-        for (let s = scanMin; s <= scanMax; s += 2) {
-          const e = sampleEnvelopeAtSec(from, s);
-          if (e < lowestE) {
-            lowestE = e;
-            bestSec = s;
+    if (style === 'quick') {
+      const scanMinOut = fromEntry + 46;
+      const scanMaxOut = Math.min(from.durationSec - 10, fromEntry + 88);
+      const outCandidates: number[] = [];
+      if (scanMaxOut > scanMinOut + 2) {
+        for (let s = scanMinOut; s <= scanMaxOut; s += Math.max(2, Math.round(barSec))) {
+          outCandidates.push(
+            snapToDownbeatGrid(s, from.beatPhaseSec, barSec, scanMinOut, scanMaxOut)
+          );
+        }
+      }
+      if (outCandidates.length === 0) outCandidates.push(tentativeCueOut);
+
+      const maxCueIn = Math.max(2, to.durationSec - 20);
+      const rawInCandidates = [
+        Math.max(2, Math.round(to.introEndSec)),
+        Math.max(2, Math.round(to.primaryDropSec - Math.min(toBarSec * 2, 8))),
+        Math.max(2, Math.round(to.primaryDropSec - Math.min(toBarSec * 1.25, 5))),
+      ];
+      const inCandidates = Array.from(
+        new Set(rawInCandidates.map((c) => Math.max(2, Math.min(maxCueIn, c))))
+      );
+
+      let bestPairCost = Infinity;
+      let bestPairOut = tentativeCueOut;
+      let bestPairIn = inCandidates[0] ?? 4;
+
+      for (const outSec of outCandidates) {
+        const vOut = sampleStemWindow(from.vocalEnvelope, from.durationSec, outSec, outSec + 8, from.meanEnergy * 0.7);
+        const bOut = sampleStemWindow(from.bassEnvelope, from.durationSec, outSec, outSec + 8, from.meanEnergy * 0.8);
+        const eOut = sampleEnvelopeAtSec(from, outSec);
+        for (const inSec of inCandidates) {
+          const vIn = sampleStemWindow(to.vocalEnvelope, to.durationSec, inSec, inSec + 8, to.meanEnergy * 0.6);
+          const bIn = sampleStemWindow(to.bassEnvelope, to.durationSec, inSec, inSec + 8, to.meanEnergy * 0.75);
+          const eIn = sampleEnvelopeAtSec(to, inSec);
+          const vocalCollision = vOut * vIn;
+          const bassStep = Math.abs(bOut - bIn);
+          const energyStep = Math.abs(eOut - eIn);
+          const totalCost = vocalCollision * 0.45 + bassStep * 0.25 + energyStep * 0.30;
+          if (totalCost < bestPairCost) {
+            bestPairCost = totalCost;
+            bestPairOut = outSec;
+            bestPairIn = inSec;
           }
         }
-        // Snap lightly to outgoing bar grid while clamping strictly inside [45, 90] window
-        const barIdx = Math.round(bestSec / Math.max(1, barSec));
-        const snapped = Math.round(barIdx * barSec);
-        tentativeCueOut = Math.max(scanMin, Math.min(scanMax, snapped));
       }
+      tentativeCueOut = bestPairOut;
+      cueInSec = bestPairIn;
+    } else {
+      // Full mode: preserve intro from 0s, scan cleanly around outro bar downbeats for lowest vocal clash
+      cueInSec = 0;
+      const tailMin = Math.max(15, Math.min(from.outroStartSec, from.chorusEndSec));
+      const tailMax = Math.max(tailMin, from.outroStartSec);
+      let bestTailCost = Infinity;
+      let bestTailOut = from.outroStartSec;
+      for (let s = tailMin; s <= tailMax; s += Math.max(2, Math.round(barSec))) {
+        const snappedOut = snapToDownbeatGrid(s, from.beatPhaseSec, barSec, tailMin, tailMax);
+        const vOut = sampleStemWindow(from.vocalEnvelope, from.durationSec, snappedOut, snappedOut + 8, 0.5);
+        const eOut = sampleEnvelopeAtSec(from, snappedOut);
+        const cost = vOut * 0.6 + eOut * 0.4;
+        if (cost < bestTailCost) {
+          bestTailCost = cost;
+          bestTailOut = snappedOut;
+        }
+      }
+      tentativeCueOut = bestTailOut;
     }
 
     const fromCueEnergy = sampleEnvelopeAtSec(from, tentativeCueOut);
@@ -287,7 +362,7 @@ export class DjCuePlanner implements IDjPlanner {
     } else {
       cueOutSec = Math.max(
         15,
-        Math.min(from.outroStartSec, from.durationSec - transitionDurationSec)
+        Math.min(tentativeCueOut, from.durationSec - transitionDurationSec)
       );
     }
 
@@ -302,6 +377,107 @@ export class DjCuePlanner implements IDjPlanner {
     const harmonicPenalty = bpmDist / 50 + camelotPenalty * 0.25 + energyClash * 0.2;
     const compatibilityScore = Number(Math.max(0.15, Math.min(1, 1 - harmonicPenalty)).toFixed(2));
 
+    // Synthesize bespoke continuous 3-stem DSP choreography tailored to exact pair metrics
+    const vOutWin = sampleStemWindow(
+      from.vocalEnvelope,
+      from.durationSec,
+      cueOutSec,
+      cueOutSec + transitionDurationSec,
+      from.meanEnergy * 0.65
+    );
+    const vInWin = sampleStemWindow(
+      to.vocalEnvelope,
+      to.durationSec,
+      cueInSec,
+      cueInSec + transitionDurationSec,
+      to.meanEnergy * 0.6
+    );
+    const bassInWin = sampleStemWindow(
+      to.bassEnvelope,
+      to.durationSec,
+      cueInSec,
+      cueInSec + transitionDurationSec,
+      to.meanEnergy * 0.75
+    );
+    const vocalOverlap = Math.min(1, vOutWin * vInWin * 1.45);
+    const vocalClashAvoided = vocalOverlap >= 0.24;
+
+    const bassSwapPoint01 = Number(
+      Math.max(
+        0.34,
+        Math.min(0.64, bpmDist <= 6 ? 0.52 - bassInWin * 0.08 : 0.44)
+      ).toFixed(2)
+    );
+    const bassSwapWidth01 = Number(
+      (bpmDist <= 7 && bassInWin >= 0.6 ? 0.16 : 0.28).toFixed(2)
+    );
+    const vocalCarveDb = Number(
+      (-7 - vocalOverlap * 11 - (transitionType === 'echo_out' ? 3 : 0)).toFixed(1)
+    );
+    const incomingVocalHoldDb = Number(
+      Math.max(-9, Math.min(-1.5, -2.0 - vocalOverlap * 6.5)).toFixed(1)
+    );
+    const outHighPassPeakHz =
+      transitionType === 'filter_sweep'
+        ? Math.round(1600 + Math.min(1400, bpmDist * 80))
+        : transitionType === 'echo_out'
+          ? Math.round(780 + Math.min(620, bpmDist * 30))
+          : Math.round(280 + camelotPenalty * 220);
+    const inLowPassStartHz =
+      transitionType === 'filter_sweep'
+        ? Math.round(240 + Math.min(360, toCueEnergy * 320))
+        : transitionType === 'eq_swap' && bpmDist <= 6
+          ? Math.round(3200 + (1 - camelotPenalty) * 2800)
+          : 12000;
+    const echoSendPeak = Number(
+      Math.min(
+        0.65,
+        Math.max(
+          0.16,
+          (transitionType === 'echo_out' ? 0.56 : 0.24) + vocalOverlap * 0.14
+        )
+      ).toFixed(2)
+    );
+    const echoFeedbackPeak = Number(
+      Math.min(0.72, transitionType === 'echo_out' ? 0.62 : 0.44).toFixed(2)
+    );
+    const highStemLead01 = Number(
+      (bpmDist <= 8 && transitionType !== 'echo_out' ? 0.22 : 0.05).toFixed(2)
+    );
+    const fromLufs = from.loudnessDb ?? -10;
+    const toLufs = to.loudnessDb ?? -10;
+    const loudnessTrimDb = Number(
+      Math.max(-5, Math.min(5, (fromLufs - toLufs) * 0.55)).toFixed(1)
+    );
+
+    const summaryParts: string[] = [];
+    if (transitionType === 'eq_swap') {
+      summaryParts.push(`Cruce armónico de stems (${transitionBars} comp.)`);
+    } else if (transitionType === 'filter_sweep') {
+      summaryParts.push(`Barrido resonante progresivo (${transitionBars} comp.)`);
+    } else {
+      summaryParts.push(`Dub Echo Out sincronizado (${Math.round(bpmDist)} BPM Δ)`);
+    }
+    if (vocalClashAvoided) {
+      summaryParts.push(`bolsillo vocal ${vocalCarveDb} dB`);
+    }
+    summaryParts.push(`swap bajos @ ${Math.round(bassSwapPoint01 * 100)}%`);
+
+    const choreography: DjStemChoreography = {
+      bassSwapPoint01,
+      bassSwapWidth01,
+      vocalCarveDb,
+      incomingVocalHoldDb,
+      outHighPassPeakHz,
+      inLowPassStartHz,
+      echoSendPeak,
+      echoFeedbackPeak,
+      highStemLead01,
+      loudnessTrimDb,
+      vocalClashAvoided,
+      summary: summaryParts.join(' · '),
+    };
+
     return {
       fromTrackId: from.trackId,
       toTrackId: to.trackId,
@@ -313,6 +489,7 @@ export class DjCuePlanner implements IDjPlanner {
       tempoNudgeRate,
       echoSubdivision,
       compatibilityScore,
+      choreography,
     };
   }
 }

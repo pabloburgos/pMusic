@@ -8,10 +8,13 @@ import {
   type AlbumDetail,
   type ArtistAffinityRecord,
   type ArtistDetail,
+  type AudioAnalyserData,
+  type AudioStreamQuality,
   type AutocompleteSuggestion,
   type DeckId,
   type DeckTransitionPlan,
   type DevicePresenceState,
+  type DiscordRpcStatus,
   type DjFxToggles,
   type DjModeConfig,
   type DjSessionStyle,
@@ -56,6 +59,13 @@ import { RecommendationEngine } from '@pmusic/recommendations';
 import { LibraryStore, SyncEngine } from '@pmusic/sync';
 import { defaultPlatformBridge } from '../platform/web-bridge.ts';
 import { applyAmbientPaletteFromCover } from '../utils/cover-color.ts';
+import {
+  applyAccentOverride,
+  applyPMusicTheme,
+  type PMusicAccentPresetId,
+  type PMusicPlayerBarStyle,
+  type PMusicThemeId,
+} from '../utils/themes.ts';
 
 export type MainNavTab = 'Inicio' | 'Explorar' | 'Buscar' | 'Biblioteca';
 export type NowPlayingSubTab = 'Portada' | 'Letras' | 'Cola';
@@ -149,7 +159,8 @@ const recommendationEngine = new RecommendationEngine({
 });
 
 async function resolveTrackStreamUrl(track: Track): Promise<string> {
-  const baseUrl = await defaultPlatformBridge.buildStreamUrl(track.id, 'high');
+  const quality = currentStreamQualityPref;
+  const baseUrl = await defaultPlatformBridge.buildStreamUrl(track.id, quality);
   if (baseUrl.startsWith('blob:') || baseUrl.startsWith('data:')) {
     return baseUrl;
   }
@@ -158,10 +169,33 @@ async function resolveTrackStreamUrl(track: Track): Promise<string> {
   return `${baseUrl}${sep}title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(artist)}&durationSec=${Math.round(track.durationSec || 200)}`;
 }
 
+let currentStreamQualityPref: AudioStreamQuality = 'high';
+
 const djPlanner = new DjCuePlanner();
 const audioEngine = new DualDeckAudioEngine({
   resolveStreamUrl: resolveTrackStreamUrl,
 });
+
+export function getLiveAnalyserData(): AudioAnalyserData {
+  return audioEngine.getAnalyserData();
+}
+
+export interface DiscordRpcConfig {
+  clientId: string;
+  showTimestamps: boolean;
+  showArtwork: boolean;
+  showWhenPaused: boolean;
+  displayMode: 'song' | 'artist' | 'app';
+}
+
+const USER_PREFS_STORAGE_KEY = 'pmusic_user_prefs_v1';
+let sleepTimerInterval: ReturnType<typeof setInterval> | null = null;
+
+function normTargetToDb(target: 'quiet' | 'normal' | 'loud'): number {
+  if (target === 'quiet') return -14;
+  if (target === 'loud') return -8;
+  return -11;
+}
 
 let importAbortController: AbortController | null = null;
 let searchTicket = 0;
@@ -200,7 +234,27 @@ export interface PMusicStoreState {
   activeDetailView: ActiveDetailView;
   isOfflineNetwork: boolean;
   graphicSaverMode: boolean;
+  reducedMotionPref: boolean;
+  themeId: PMusicThemeId;
+  playerBarStyle: PMusicPlayerBarStyle;
+  accentPreset: PMusicAccentPresetId;
+  lastTrackDirection: 'next' | 'prev' | 'none';
+  visualizerEnabled: boolean;
+  lyricsSize: 'normal' | 'large' | 'xl';
+  lyricsBlurEnabled: boolean;
   discordRpcEnabled: boolean;
+  discordRpcConfig: DiscordRpcConfig;
+  discordRpcStatus: DiscordRpcStatus;
+  playbackRate: number;
+  preservesPitch: boolean;
+  audioNormalization: boolean;
+  normalizationTarget: 'quiet' | 'normal' | 'loud';
+  stereoBalance: number;
+  monoAudio: boolean;
+  streamQuality: AudioStreamQuality;
+  sleepTimerMode: 'off' | 'minutes' | 'end_of_track';
+  sleepTimerRemainingSec: number;
+  trackInfoModalTrack: Track | null;
   trackMenu: TrackMenuState;
   toastMessage: string | null;
 
@@ -293,7 +347,12 @@ export interface PMusicStoreState {
   closeTrackMenu: () => void;
 
   // Playback Actions
-  playTrack: (track: Track, newQueue?: Track[], startSec?: number) => Promise<void>;
+  playTrack: (
+    track: Track,
+    newQueue?: Track[],
+    startSec?: number,
+    direction?: 'next' | 'prev'
+  ) => Promise<void>;
   togglePlayPause: () => Promise<void>;
   nextTrack: (isAutoAdvance?: boolean) => Promise<void>;
   prevTrack: () => Promise<void>;
@@ -372,7 +431,32 @@ export interface PMusicStoreState {
   ) => Promise<void>;
   transferPlaybackToDevice: (targetDeviceId: string) => Promise<void>;
   setGraphicSaverMode: (enabled: boolean) => void;
+  setReducedMotionPref: (enabled: boolean) => void;
+  setTheme: (themeId: PMusicThemeId) => void;
+  setPlayerBarStyle: (style: PMusicPlayerBarStyle) => void;
+  setAccentPreset: (accent: PMusicAccentPresetId) => void;
+  setVisualizerEnabled: (enabled: boolean) => void;
+  setLyricsSize: (size: 'normal' | 'large' | 'xl') => void;
+  setLyricsBlurEnabled: (enabled: boolean) => void;
+  setPlaybackRate: (rate: number) => void;
+  setPreservesPitch: (preserves: boolean) => void;
+  setAudioNormalization: (enabled: boolean) => void;
+  setNormalizationTarget: (target: 'quiet' | 'normal' | 'loud') => void;
+  setStereoBalance: (pan: number) => void;
+  setMonoAudio: (enabled: boolean) => void;
+  setStreamQuality: (quality: AudioStreamQuality) => void;
+  setDjStemSculpting: (enabled: boolean) => void;
+  setDjVocalClashProtection: (enabled: boolean) => void;
+  setDjAutoReorder: (enabled: boolean) => void;
   setDiscordRpcEnabled: (enabled: boolean) => void;
+  setDiscordRpcConfig: (patch: Partial<DiscordRpcConfig>, reconnect?: boolean) => Promise<void>;
+  reconnectDiscordRpc: () => Promise<void>;
+  refreshDiscordRpcStatus: () => Promise<void>;
+  setSleepTimer: (minutes: number | 'end_of_track') => void;
+  cancelSleepTimer: () => void;
+  setTrackInfoModalTrack: (track: Track | null) => void;
+  exportLibraryJson: () => string;
+  importLibraryJson: (rawJson: string) => Promise<number>;
 }
 
 const initialTrack = FALLBACK_TRACKS[0]!;
@@ -520,6 +604,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         is_playing: true,
         track_title: `${nextTrack.title} — ${nextTrack.artists.map((a) => a.name).join(', ')}`,
       });
+      syncDiscordPresenceState();
 
       djPreloadedKey = '';
       void analyzeTrackAudioInBackground(nextTrack);
@@ -532,6 +617,52 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     } finally {
       djAutoTransitionInFlight = false;
     }
+  }
+
+  function syncDiscordPresenceState(): void {
+    const st = get();
+    void defaultPlatformBridge.updateDiscordPresence?.({
+      track: st.currentTrack,
+      isPlaying: st.isPlaying,
+      positionSec: st.positionSec,
+      durationSec: st.durationSec,
+      enabled: st.discordRpcEnabled,
+      clientId: st.discordRpcConfig.clientId,
+      showTimestamps: st.discordRpcConfig.showTimestamps,
+      showArtwork: st.discordRpcConfig.showArtwork,
+      showWhenPaused: st.discordRpcConfig.showWhenPaused,
+      displayMode: st.discordRpcConfig.displayMode,
+    });
+  }
+
+  function persistPrefsFromStore(): void {
+    const st = get();
+    const payload = {
+      themeId: st.themeId,
+      playerBarStyle: st.playerBarStyle,
+      accentPreset: st.accentPreset,
+      graphicSaverMode: st.graphicSaverMode,
+      reducedMotionPref: st.reducedMotionPref,
+      visualizerEnabled: st.visualizerEnabled,
+      lyricsSize: st.lyricsSize,
+      lyricsBlurEnabled: st.lyricsBlurEnabled,
+      discordRpcEnabled: st.discordRpcEnabled,
+      discordRpcConfig: st.discordRpcConfig,
+      playbackRate: st.playbackRate,
+      preservesPitch: st.preservesPitch,
+      audioNormalization: st.audioNormalization,
+      normalizationTarget: st.normalizationTarget,
+      stereoBalance: st.stereoBalance,
+      monoAudio: st.monoAudio,
+      streamQuality: st.streamQuality,
+      autoplayEnabled: st.autoplayEnabled,
+      safeCrossfade: st.safeCrossfade,
+      userEq: st.userEq,
+      djMode: st.djMode,
+    };
+    void defaultPlatformBridge.preferencesStorage
+      .setItem(USER_PREFS_STORAGE_KEY, JSON.stringify(payload))
+      .catch(() => {});
   }
 
   return {
@@ -548,7 +679,37 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   activeDetailView: null,
   isOfflineNetwork: typeof navigator !== 'undefined' ? !navigator.onLine : false,
   graphicSaverMode: false,
+  reducedMotionPref: false,
+  themeId: 'obsidian',
+  playerBarStyle: 'classic-center',
+  accentPreset: 'auto',
+  lastTrackDirection: 'none',
+  visualizerEnabled: true,
+  lyricsSize: 'large',
+  lyricsBlurEnabled: true,
   discordRpcEnabled: true,
+  discordRpcConfig: {
+    clientId: '',
+    showTimestamps: true,
+    showArtwork: true,
+    showWhenPaused: true,
+    displayMode: 'song',
+  },
+  discordRpcStatus: {
+    connected: false,
+    status: 'needs_client_id',
+    clientId: '',
+  },
+  playbackRate: 1.0,
+  preservesPitch: true,
+  audioNormalization: true,
+  normalizationTarget: 'normal',
+  stereoBalance: 0,
+  monoAudio: false,
+  streamQuality: 'high',
+  sleepTimerMode: 'off',
+  sleepTimerRemainingSec: 0,
+  trackInfoModalTrack: null,
   trackMenu: null,
   toastMessage: null,
 
@@ -571,6 +732,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   djMode: {
     ...DEFAULT_DJ_MODE_CONFIG,
     enabledTransitions: { eq_swap: true, filter_sweep: true, echo_out: true },
+    stemSculpting: true,
+    vocalClashProtection: true,
   },
   safeCrossfade: { ...DEFAULT_SAFE_CROSSFADE_CONFIG },
   userEq: {
@@ -732,7 +895,67 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       // keep default
     }
 
-    set({
+    let hydratedPrefs: Record<string, any> | null = null;
+    try {
+      const rawPrefs = await defaultPlatformBridge.preferencesStorage.getItem(
+        USER_PREFS_STORAGE_KEY
+      );
+      if (rawPrefs) {
+        hydratedPrefs = JSON.parse(rawPrefs) as Record<string, any>;
+      }
+    } catch {
+      hydratedPrefs = null;
+    }
+
+    if (hydratedPrefs) {
+      const resolvedTheme =
+        typeof hydratedPrefs.themeId === 'string'
+          ? (hydratedPrefs.themeId as PMusicThemeId)
+          : get().themeId;
+      if (typeof hydratedPrefs.themeId === 'string') {
+        applyPMusicTheme(resolvedTheme);
+      }
+      if (typeof hydratedPrefs.accentPreset === 'string') {
+        applyAccentOverride(
+          hydratedPrefs.accentPreset as PMusicAccentPresetId,
+          resolvedTheme
+        );
+      }
+      if (typeof document !== 'undefined') {
+        document.documentElement.classList.toggle(
+          'pm-reduced-transparency',
+          Boolean(hydratedPrefs.graphicSaverMode)
+        );
+        document.documentElement.classList.toggle(
+          'pm-reduced-motion',
+          Boolean(hydratedPrefs.reducedMotionPref ?? hydratedPrefs.graphicSaverMode)
+        );
+      }
+      if (typeof hydratedPrefs.streamQuality === 'string') {
+        currentStreamQualityPref = hydratedPrefs.streamQuality as AudioStreamQuality;
+      }
+      if (hydratedPrefs.userEq) audioEngine.setUserEq(hydratedPrefs.userEq as UserEqConfig);
+      if (hydratedPrefs.safeCrossfade) {
+        audioEngine.setSafeCrossfade(hydratedPrefs.safeCrossfade as SafeCrossfadeConfig);
+      }
+      if (hydratedPrefs.djMode) audioEngine.setDjMode(hydratedPrefs.djMode as DjModeConfig);
+      if (typeof hydratedPrefs.playbackRate === 'number') {
+        audioEngine.setPlaybackRate(
+          hydratedPrefs.playbackRate,
+          hydratedPrefs.preservesPitch !== false
+        );
+      }
+      if (typeof hydratedPrefs.stereoBalance === 'number') {
+        audioEngine.setBalance(hydratedPrefs.stereoBalance);
+      }
+      if (typeof hydratedPrefs.monoAudio === 'boolean') {
+        audioEngine.setMonoAudio(hydratedPrefs.monoAudio);
+      }
+    }
+
+    const rpcStatus = await defaultPlatformBridge.getDiscordRpcStatus?.();
+
+    set((prev) => ({
       playlists: libraryStore.getPlaylists(),
       likedTracks: libraryStore.getLikedTracks(),
       playHistory: libraryStore.getPlayHistory(),
@@ -744,7 +967,40 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       trackAnalyses: analyses,
       homeShelves: shelves,
       onlineDevices: syncEngine.getOnlineDevices(),
-    });
+      ...(rpcStatus ? { discordRpcStatus: rpcStatus } : {}),
+      ...(hydratedPrefs
+        ? {
+            themeId: (hydratedPrefs.themeId as PMusicThemeId) ?? prev.themeId,
+            playerBarStyle:
+              (hydratedPrefs.playerBarStyle as PMusicPlayerBarStyle) ?? prev.playerBarStyle,
+            accentPreset:
+              (hydratedPrefs.accentPreset as PMusicAccentPresetId) ?? prev.accentPreset,
+            graphicSaverMode: Boolean(hydratedPrefs.graphicSaverMode ?? prev.graphicSaverMode),
+            reducedMotionPref: Boolean(hydratedPrefs.reducedMotionPref ?? prev.reducedMotionPref),
+            visualizerEnabled: Boolean(hydratedPrefs.visualizerEnabled ?? prev.visualizerEnabled),
+            lyricsSize: hydratedPrefs.lyricsSize ?? prev.lyricsSize,
+            lyricsBlurEnabled: Boolean(hydratedPrefs.lyricsBlurEnabled ?? prev.lyricsBlurEnabled),
+            discordRpcEnabled: Boolean(hydratedPrefs.discordRpcEnabled ?? prev.discordRpcEnabled),
+            discordRpcConfig: {
+              ...prev.discordRpcConfig,
+              ...(hydratedPrefs.discordRpcConfig ?? {}),
+              clientId:
+                hydratedPrefs.discordRpcConfig?.clientId || rpcStatus?.clientId || prev.discordRpcConfig.clientId,
+            },
+            playbackRate: Number(hydratedPrefs.playbackRate ?? prev.playbackRate),
+            preservesPitch: Boolean(hydratedPrefs.preservesPitch ?? prev.preservesPitch),
+            audioNormalization: Boolean(hydratedPrefs.audioNormalization ?? prev.audioNormalization),
+            normalizationTarget: hydratedPrefs.normalizationTarget ?? prev.normalizationTarget,
+            stereoBalance: Number(hydratedPrefs.stereoBalance ?? prev.stereoBalance),
+            monoAudio: Boolean(hydratedPrefs.monoAudio ?? prev.monoAudio),
+            streamQuality: hydratedPrefs.streamQuality ?? prev.streamQuality,
+            autoplayEnabled: Boolean(hydratedPrefs.autoplayEnabled ?? prev.autoplayEnabled),
+            safeCrossfade: hydratedPrefs.safeCrossfade ?? prev.safeCrossfade,
+            userEq: hydratedPrefs.userEq ?? prev.userEq,
+            djMode: hydratedPrefs.djMode ?? prev.djMode,
+          }
+        : {}),
+    }));
 
     const firstReal = shelves.flatMap((s) => s.tracks ?? [])[0];
     if (firstReal && !get().isPlaying) {
@@ -871,6 +1127,17 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
     audioEngine.onTrackEnded(() => {
       const st = get();
+      if (st.sleepTimerMode === 'end_of_track') {
+        audioEngine.pause();
+        set({
+          isPlaying: false,
+          sleepTimerMode: 'off',
+          sleepTimerRemainingSec: 0,
+        });
+        syncDiscordPresenceState();
+        st.showToast('Temporizador finalizado');
+        return;
+      }
       if (st.isTransitioning || djAutoTransitionInFlight) return;
       void recommendationEngine.recordSignal(st.currentTrack, 'complete_listen', {
         completionRatio: 1.0,
@@ -982,7 +1249,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   closeTrackMenu: () => set({ trackMenu: null }),
 
-  playTrack: async (track, newQueue, startSec) => {
+  playTrack: async (track, newQueue, startSec, direction = 'next') => {
     const st = get();
     const queue = newQueue && newQueue.length > 0 ? [...newQueue] : st.queue;
     let idx = queue.findIndex((t) => t.id === track.id);
@@ -1008,6 +1275,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
       set({
         currentTrack: track,
+        lastTrackDirection: direction,
         queue,
         unshuffledQueue: newQueue && newQueue.length > 0 ? [...newQueue] : st.unshuffledQueue,
         queueIndex: idx,
@@ -1022,14 +1290,47 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       djPreloadedKey = '';
       applyAmbientPaletteForTrack(track);
       void get().loadLyricsForTrack(track);
+      audioEngine.setPlaybackRate(get().playbackRate, get().preservesPitch);
       await audioEngine.loadAndPlay(track, effectiveStartSec);
+      audioEngine.setNormalization(
+        get().audioNormalization,
+        normTargetToDb(get().normalizationTarget),
+        analysis?.loudnessDb
+      );
       void analyzeTrackAudioInBackground(track);
+
+      // Lazy full-credits contributor hydration if playing a single-credit Deezer track
+      if (track.artists.length <= 1 && track.id.startsWith('dz:')) {
+        void musicProvider
+          .getTrack?.(track.id)
+          .then((enriched) => {
+            if (!enriched || enriched.artists.length <= 1) return;
+            set((prev) => ({
+              currentTrack:
+                prev.currentTrack.id === track.id
+                  ? { ...prev.currentTrack, artists: enriched.artists }
+                  : prev.currentTrack,
+              queue: prev.queue.map((qItem) =>
+                qItem.id === track.id ? { ...qItem, artists: enriched.artists } : qItem
+              ),
+              searchResults: {
+                ...prev.searchResults,
+                songs: prev.searchResults.songs.map((s) =>
+                  s.id === track.id ? { ...s, artists: enriched.artists } : s
+                ),
+              },
+            }));
+            syncDiscordPresenceState();
+          })
+          .catch(() => {});
+      }
 
       void syncEngine.updatePresence({
         is_active: true,
         is_playing: true,
         track_title: `${track.title} — ${track.artists.map((a) => a.name).join(', ')}`,
       });
+      syncDiscordPresenceState();
 
       const nextCandidate = queue[(idx + 1) % queue.length];
       if (nextCandidate && nextCandidate.id !== track.id) {
@@ -1052,6 +1353,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       audioEngine.pause();
       set({ isPlaying: false });
       void syncEngine.updatePresence({ is_playing: false });
+      syncDiscordPresenceState();
     } else {
       const snapshots =
         typeof document !== 'undefined'
@@ -1064,6 +1366,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         await audioEngine.play();
         set({ isPlaying: true });
         void syncEngine.updatePresence({ is_playing: true });
+        syncDiscordPresenceState();
       }
     }
   },
@@ -1102,7 +1405,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       return;
     }
 
-    await st.playTrack(next, st.queue);
+    await st.playTrack(next, st.queue, undefined, 'next');
     set({
       affinityProfile: recommendationEngine.getAffinityProfile(),
       playHistory: libraryStore.getPlayHistory(),
@@ -1117,7 +1420,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }
     const prevIdx = (st.queueIndex - 1 + st.queue.length) % Math.max(1, st.queue.length);
     const prev = st.queue[prevIdx] ?? FALLBACK_TRACKS[0]!;
-    await st.playTrack(prev, st.queue);
+    await st.playTrack(prev, st.queue, undefined, 'prev');
   },
 
   toggleShuffle: () => {
@@ -1170,6 +1473,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         ? lrcParser.findActiveLineIndex(lyrics.lines, positionSec * 1000)
         : -1;
     set({ positionSec, activeLyricIndex: activeIdx });
+    syncDiscordPresenceState();
   },
 
   setVolume: (volume01) => {
@@ -1308,7 +1612,34 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     get().showToast(`Radio de «${track.title}» iniciada`);
   },
 
-  setAutoplayEnabled: (enabled) => set({ autoplayEnabled: enabled }),
+  setAutoplayEnabled: (enabled) => {
+    set({ autoplayEnabled: enabled });
+    persistPrefsFromStore();
+  },
+
+  setDjStemSculpting: (enabled) => {
+    const st = get();
+    const nextDjMode: DjModeConfig = { ...st.djMode, stemSculpting: enabled };
+    audioEngine.setDjMode(nextDjMode);
+    set({ djMode: nextDjMode });
+    persistPrefsFromStore();
+  },
+
+  setDjVocalClashProtection: (enabled) => {
+    const st = get();
+    const nextDjMode: DjModeConfig = { ...st.djMode, vocalClashProtection: enabled };
+    audioEngine.setDjMode(nextDjMode);
+    set({ djMode: nextDjMode });
+    persistPrefsFromStore();
+  },
+
+  setDjAutoReorder: (enabled) => {
+    const st = get();
+    const nextDjMode: DjModeConfig = { ...st.djMode, autoReorderQueue: enabled };
+    audioEngine.setDjMode(nextDjMode);
+    set({ djMode: nextDjMode });
+    persistPrefsFromStore();
+  },
 
   toggleDjMode: async (enabled) => {
     const st = get();
@@ -1347,6 +1678,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         ? { ...st.safeCrossfade, enabled: false }
         : st.safeCrossfade,
     });
+    persistPrefsFromStore();
 
     if (nextEnabled) {
       void analyzeTrackAudioInBackground(st.currentTrack);
@@ -1397,6 +1729,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       queueIndex: nextIdx,
       safeCrossfade: { ...st.safeCrossfade, enabled: false },
     });
+    persistPrefsFromStore();
 
     void analyzeTrackAudioInBackground(st.currentTrack);
     const upcoming = nextQueue[(nextIdx + 1) % Math.max(1, nextQueue.length)];
@@ -1430,6 +1763,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     };
     audioEngine.setDjMode(nextDjMode);
     set({ djMode: nextDjMode });
+    persistPrefsFromStore();
     void recomputeActiveDjPlan();
   },
 
@@ -1475,6 +1809,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     };
     audioEngine.setSafeCrossfade(next);
     set({ safeCrossfade: next });
+    persistPrefsFromStore();
   },
 
   setEqPreset: (presetId) => {
@@ -1486,6 +1821,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     };
     audioEngine.setUserEq(nextEq);
     set({ userEq: nextEq });
+    persistPrefsFromStore();
   },
 
   setEqBandGain: (bandIndex, gainDb) => {
@@ -1501,6 +1837,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     };
     audioEngine.setUserEq(nextEq);
     set({ userEq: nextEq });
+    persistPrefsFromStore();
   },
 
   setEqEnabled: (enabled) => {
@@ -1511,6 +1848,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     };
     audioEngine.setUserEq(nextEq);
     set({ userEq: nextEq });
+    persistPrefsFromStore();
   },
 
   loadLyricsForTrack: async (track) => {
@@ -1990,19 +2328,251 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   setGraphicSaverMode: (enabled) => {
     if (typeof document !== 'undefined') {
       document.documentElement.classList.toggle('pm-reduced-transparency', enabled);
-      document.documentElement.classList.toggle('pm-reduced-motion', enabled);
+      document.documentElement.classList.toggle(
+        'pm-reduced-motion',
+        enabled || get().reducedMotionPref
+      );
     }
     set({ graphicSaverMode: enabled });
+    persistPrefsFromStore();
+  },
+
+  setReducedMotionPref: (enabled) => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.classList.toggle(
+        'pm-reduced-motion',
+        enabled || get().graphicSaverMode
+      );
+    }
+    set({ reducedMotionPref: enabled });
+    persistPrefsFromStore();
+  },
+
+  setTheme: (themeId) => {
+    applyPMusicTheme(themeId);
+    applyAccentOverride(get().accentPreset, themeId);
+    set({ themeId });
+    persistPrefsFromStore();
+  },
+
+  setPlayerBarStyle: (playerBarStyle) => {
+    set({ playerBarStyle });
+    persistPrefsFromStore();
+  },
+
+  setAccentPreset: (accentPreset) => {
+    applyAccentOverride(accentPreset, get().themeId);
+    set({ accentPreset });
+    persistPrefsFromStore();
+  },
+
+  setVisualizerEnabled: (enabled) => {
+    set({ visualizerEnabled: enabled });
+    persistPrefsFromStore();
+  },
+
+  setLyricsSize: (size) => {
+    set({ lyricsSize: size });
+    persistPrefsFromStore();
+  },
+
+  setLyricsBlurEnabled: (enabled) => {
+    set({ lyricsBlurEnabled: enabled });
+    persistPrefsFromStore();
+  },
+
+  setPlaybackRate: (rate) => {
+    const safeRate = Math.max(0.5, Math.min(2.0, rate));
+    audioEngine.setPlaybackRate(safeRate, get().preservesPitch);
+    set({ playbackRate: safeRate });
+    persistPrefsFromStore();
+  },
+
+  setPreservesPitch: (preserves) => {
+    audioEngine.setPlaybackRate(get().playbackRate, preserves);
+    set({ preservesPitch: preserves });
+    persistPrefsFromStore();
+  },
+
+  setAudioNormalization: (enabled) => {
+    const st = get();
+    const curAna = st.trackAnalyses[st.currentTrack.id];
+    audioEngine.setNormalization(
+      enabled,
+      normTargetToDb(st.normalizationTarget),
+      curAna?.loudnessDb
+    );
+    set({ audioNormalization: enabled });
+    persistPrefsFromStore();
+  },
+
+  setNormalizationTarget: (target) => {
+    const st = get();
+    const curAna = st.trackAnalyses[st.currentTrack.id];
+    audioEngine.setNormalization(
+      st.audioNormalization,
+      normTargetToDb(target),
+      curAna?.loudnessDb
+    );
+    set({ normalizationTarget: target });
+    persistPrefsFromStore();
+  },
+
+  setStereoBalance: (pan) => {
+    const clamped = Math.max(-1, Math.min(1, Number(pan.toFixed(2))));
+    audioEngine.setBalance(clamped);
+    set({ stereoBalance: clamped });
+    persistPrefsFromStore();
+  },
+
+  setMonoAudio: (enabled) => {
+    audioEngine.setMonoAudio(enabled);
+    set({ monoAudio: enabled });
+    persistPrefsFromStore();
+  },
+
+  setStreamQuality: (quality) => {
+    currentStreamQualityPref = quality;
+    set({ streamQuality: quality });
+    persistPrefsFromStore();
+    get().showToast(
+      `Calidad de audio: ${
+        quality === 'high' ? 'Alta' : quality === 'medium' ? 'Equilibrada' : 'Ahorro'
+      }`
+    );
   },
 
   setDiscordRpcEnabled: (enabled) => {
     set({ discordRpcEnabled: enabled });
-    void defaultPlatformBridge.updateDiscordPresence?.({
-      track: get().currentTrack,
-      isPlaying: get().isPlaying,
-      positionSec: get().positionSec,
-      enabled,
+    syncDiscordPresenceState();
+    persistPrefsFromStore();
+    void get().refreshDiscordRpcStatus();
+  },
+
+  setDiscordRpcConfig: async (patch, reconnect = false) => {
+    const nextCfg: DiscordRpcConfig = {
+      ...get().discordRpcConfig,
+      ...patch,
+    };
+    set({ discordRpcConfig: nextCfg });
+    persistPrefsFromStore();
+    if (reconnect && typeof nextCfg.clientId === 'string') {
+      const status = await defaultPlatformBridge.configureDiscordRpc?.(
+        nextCfg.clientId
+      );
+      if (status) set({ discordRpcStatus: status });
+    }
+    syncDiscordPresenceState();
+  },
+
+  reconnectDiscordRpc: async () => {
+    const cid = get().discordRpcConfig.clientId.trim();
+    const status = cid
+      ? await defaultPlatformBridge.configureDiscordRpc?.(cid)
+      : await defaultPlatformBridge.reconnectDiscordRpc?.();
+    if (status) set({ discordRpcStatus: status });
+    syncDiscordPresenceState();
+  },
+
+  refreshDiscordRpcStatus: async () => {
+    const status = await defaultPlatformBridge.getDiscordRpcStatus?.();
+    if (status) set({ discordRpcStatus: status });
+  },
+
+  setSleepTimer: (minutesOrEnd) => {
+    if (sleepTimerInterval) {
+      clearInterval(sleepTimerInterval);
+      sleepTimerInterval = null;
+    }
+    if (minutesOrEnd === 'end_of_track') {
+      set({ sleepTimerMode: 'end_of_track', sleepTimerRemainingSec: 0 });
+      get().showToast('Se pausará al terminar esta canción');
+      return;
+    }
+    const mins = Math.max(1, Math.min(180, Math.round(minutesOrEnd)));
+    set({
+      sleepTimerMode: 'minutes',
+      sleepTimerRemainingSec: mins * 60,
     });
+    sleepTimerInterval = setInterval(() => {
+      const cur = get();
+      if (cur.sleepTimerMode !== 'minutes') {
+        if (sleepTimerInterval) clearInterval(sleepTimerInterval);
+        sleepTimerInterval = null;
+        return;
+      }
+      if (cur.sleepTimerRemainingSec <= 1) {
+        if (sleepTimerInterval) clearInterval(sleepTimerInterval);
+        sleepTimerInterval = null;
+        audioEngine.pause();
+        set({
+          isPlaying: false,
+          sleepTimerMode: 'off',
+          sleepTimerRemainingSec: 0,
+        });
+        syncDiscordPresenceState();
+        cur.showToast('Temporizador de sueño finalizado');
+        return;
+      }
+      set({ sleepTimerRemainingSec: cur.sleepTimerRemainingSec - 1 });
+    }, 1000);
+    get().showToast(`Temporizador activo: ${mins} min`);
+  },
+
+  cancelSleepTimer: () => {
+    if (sleepTimerInterval) {
+      clearInterval(sleepTimerInterval);
+      sleepTimerInterval = null;
+    }
+    set({ sleepTimerMode: 'off', sleepTimerRemainingSec: 0 });
+    get().showToast('Temporizador cancelado');
+  },
+
+  setTrackInfoModalTrack: (track) => set({ trackInfoModalTrack: track }),
+
+  exportLibraryJson: () => {
+    const st = get();
+    return JSON.stringify(
+      {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        playlists: st.playlists,
+        likedTracks: st.likedTracks,
+        seedArtists: st.seedArtists,
+      },
+      null,
+      2
+    );
+  },
+
+  importLibraryJson: async (rawJson) => {
+    const parsed = JSON.parse(rawJson) as {
+      playlists?: PlaylistRecord[];
+      likedTracks?: LikedTrackRecord[];
+    };
+    let count = 0;
+    for (const pl of parsed.playlists ?? []) {
+      if (pl?.name && Array.isArray(pl.tracks)) {
+        await libraryStore.createPlaylist({
+          name: pl.name,
+          description: pl.description ?? 'Importada de copia JSON',
+          tracks: pl.tracks,
+        });
+        count++;
+      }
+    }
+    for (const lk of parsed.likedTracks ?? []) {
+      if (lk?.track && !libraryStore.isTrackLiked(lk.track.id)) {
+        await libraryStore.toggleLikeTrack(lk.track);
+        count++;
+      }
+    }
+    set({
+      playlists: libraryStore.getPlaylists(),
+      likedTracks: libraryStore.getLikedTracks(),
+    });
+    get().showToast(`Copia restaurada (${count} elementos)`);
+    return count;
   },
   };
 });

@@ -1,6 +1,7 @@
 import type {
   AudioStreamQuality,
   DiscordPresenceState,
+  DiscordRpcStatus,
   IOfflineStorageBridge,
   IPlatformBridge,
   IPreferencesStorageBridge,
@@ -27,6 +28,9 @@ interface ElectronDesktopWindowBridge {
   getApiBaseUrl?: () => Promise<string>;
   getAuthHeaders?: () => Promise<Record<string, string>>;
   updateDiscordPresence?: (state: DiscordPresenceState) => Promise<void>;
+  configureDiscordRpc?: (clientId: string) => Promise<DiscordRpcStatus>;
+  reconnectDiscordRpc?: () => Promise<DiscordRpcStatus>;
+  getDiscordRpcStatus?: () => Promise<DiscordRpcStatus>;
   setTitleBarOverlay?: (opts: {
     color?: string;
     symbolColor?: string;
@@ -207,6 +211,36 @@ export function createPlatformBridge(): IPlatformBridge {
       if (desktopBridge?.updateDiscordPresence) {
         await desktopBridge.updateDiscordPresence(state);
       }
+    },
+    async configureDiscordRpc(clientId: string): Promise<DiscordRpcStatus> {
+      if (desktopBridge?.configureDiscordRpc) {
+        return desktopBridge.configureDiscordRpc(clientId);
+      }
+      return {
+        connected: false,
+        status: 'web_only',
+        clientId,
+      };
+    },
+    async reconnectDiscordRpc(): Promise<DiscordRpcStatus> {
+      if (desktopBridge?.reconnectDiscordRpc) {
+        return desktopBridge.reconnectDiscordRpc();
+      }
+      return {
+        connected: false,
+        status: 'web_only',
+        clientId: '',
+      };
+    },
+    async getDiscordRpcStatus(): Promise<DiscordRpcStatus> {
+      if (desktopBridge?.getDiscordRpcStatus) {
+        return desktopBridge.getDiscordRpcStatus();
+      }
+      return {
+        connected: false,
+        status: 'web_only',
+        clientId: '',
+      };
     },
     async updateNativeMediaSession(_state: NativeMediaSessionState): Promise<void> {
       // Handled via MediaSession API + Android native bridge when attached

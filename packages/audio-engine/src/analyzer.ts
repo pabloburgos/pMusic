@@ -138,55 +138,80 @@ export class PcmTrackAnalyzer {
       return fallback;
     }
 
-    // 1-pole IIR lowpass @ ~180Hz to isolate kick & sub-bass pulse
-    const lpAlpha = 1 - Math.exp((-2 * Math.PI * 180) / safeRate);
-    let lpState = 0;
+    // 3-band stem crossover IIR state:
+    // low < 180Hz (kick/sub-bass), mid 300-3400Hz (vocal/melody pocket), high > 3400Hz (hi-hats/air)
+    const lp180Alpha = 1 - Math.exp((-2 * Math.PI * 180) / safeRate);
+    const lp300Alpha = 1 - Math.exp((-2 * Math.PI * 300) / safeRate);
+    const lp3400Alpha = 1 - Math.exp((-2 * Math.PI * 3400) / safeRate);
+    let lp180State = 0;
+    let lp300State = 0;
+    let lp3400State = 0;
 
     const fullRms: number[] = new Array(numFrames);
     const bassRms: number[] = new Array(numFrames);
-    const midRms: number[] = new Array(numFrames);
+    const vocalRms: number[] = new Array(numFrames);
+    const highRms: number[] = new Array(numFrames);
 
     let maxFull = 1e-6;
     let maxBass = 1e-6;
+    let maxVocal = 1e-6;
+    let maxHigh = 1e-6;
     let sumSqTotal = 0;
     let countTotal = 0;
 
     for (let f = 0; f < numFrames; f++) {
       let sqFull = 0;
       let sqBass = 0;
-      let sqMid = 0;
+      let sqVocal = 0;
+      let sqHigh = 0;
       const start = f * frameSamples;
       for (let i = 0; i < frameSamples; i++) {
         const s = monoSamples[start + i] ?? 0;
-        lpState += lpAlpha * (s - lpState);
-        const low = lpState;
-        const hi = s - low;
+        lp180State += lp180Alpha * (s - lp180State);
+        lp300State += lp300Alpha * (s - lp300State);
+        lp3400State += lp3400Alpha * (s - lp3400State);
+        const low = lp180State;
+        const vocal = lp3400State - lp300State;
+        const high = s - lp3400State;
         sqFull += s * s;
         sqBass += low * low;
-        sqMid += hi * hi;
+        sqVocal += vocal * vocal;
+        sqHigh += high * high;
       }
       sumSqTotal += sqFull;
       countTotal += frameSamples;
 
       const rFull = Math.sqrt(sqFull / frameSamples);
       const rBass = Math.sqrt(sqBass / frameSamples);
-      const rMid = Math.sqrt(sqMid / frameSamples);
+      const rVocal = Math.sqrt(sqVocal / frameSamples);
+      const rHigh = Math.sqrt(sqHigh / frameSamples);
       fullRms[f] = rFull;
       bassRms[f] = rBass;
-      midRms[f] = rMid;
+      vocalRms[f] = rVocal;
+      highRms[f] = rHigh;
       if (rFull > maxFull) maxFull = rFull;
       if (rBass > maxBass) maxBass = rBass;
+      if (rVocal > maxVocal) maxVocal = rVocal;
+      if (rHigh > maxHigh) maxHigh = rHigh;
     }
 
     const normFull = fullRms.map((v) => Math.min(1, Number((v / maxFull).toFixed(3))));
-    const normBass = bassRms.map((v) => Math.min(1, v / maxBass));
+    const normBass = bassRms.map((v) => Math.min(1, Number((v / maxBass).toFixed(3))));
+    const normVocal = vocalRms.map((v) => Math.min(1, Number((v / maxVocal).toFixed(3))));
+    const normHigh = highRms.map((v) => Math.min(1, Number((v / maxHigh).toFixed(3))));
 
-    // Downsample to ~1Hz RMS envelope (capped [16, 240]) for UI waveform & cue scanning
+    // Downsample to ~1Hz envelopes (capped [16, 240]) for UI waveform, cues & 3-stem DJ engine
     const targetBins = Math.max(16, Math.min(240, Math.round(safeDuration)));
     const rmsEnvelope: number[] = [];
+    const bassEnvelope: number[] = [];
+    const vocalEnvelope: number[] = [];
+    const highEnvelope: number[] = [];
     for (let b = 0; b < targetBins; b++) {
       const idx = Math.min(normFull.length - 1, Math.floor((b / targetBins) * normFull.length));
       rmsEnvelope.push(normFull[idx] ?? 0.5);
+      bassEnvelope.push(normBass[idx] ?? 0.45);
+      vocalEnvelope.push(normVocal[idx] ?? 0.4);
+      highEnvelope.push(normHigh[idx] ?? 0.35);
     }
 
     // Weighted onset flux (65% sub-bass kick + 35% full-band transient) at 20Hz
@@ -272,6 +297,10 @@ export class PcmTrackAnalyzer {
       meanEnergy,
       peakEnergy: 1,
       rmsEnvelope,
+      bassEnvelope,
+      vocalEnvelope,
+      highEnvelope,
+      beatPhaseSec: Number(phaseSec.toFixed(3)),
       ...structure,
       camelotKey: CAMELOT_KEYS[h % CAMELOT_KEYS.length],
       loudnessDb,
@@ -498,6 +527,7 @@ export class PcmTrackAnalyzer {
     const h = hashTrackId(trackId);
     const camelotKey = CAMELOT_KEYS[h % CAMELOT_KEYS.length];
 
+    const stemCurves = this.deriveSyntheticStemEnvelopes(rmsEnvelope, h);
     return {
       trackId,
       durationSec,
@@ -506,12 +536,40 @@ export class PcmTrackAnalyzer {
       meanEnergy,
       peakEnergy,
       rmsEnvelope,
+      ...stemCurves,
+      beatPhaseSec: 0,
       ...structure,
       camelotKey,
       loudnessDb: -1.8,
       source: 'pcm',
       analyzedAtMs: Date.now(),
     };
+  }
+
+  private deriveSyntheticStemEnvelopes(
+    rmsEnvelope: readonly number[],
+    seedHash: number
+  ): {
+    bassEnvelope: number[];
+    vocalEnvelope: number[];
+    highEnvelope: number[];
+  } {
+    const n = rmsEnvelope.length;
+    const bassEnvelope: number[] = [];
+    const vocalEnvelope: number[] = [];
+    const highEnvelope: number[] = [];
+    for (let i = 0; i < n; i++) {
+      const p = i / Math.max(1, n);
+      const e = rmsEnvelope[i] ?? 0.5;
+      // Kick/sub heavy after intro & in drops, lighter at outro tail
+      const bassFactor = p < 0.1 || p > 0.88 ? 0.62 : 0.96;
+      const vocalFactor = p < 0.14 || p > 0.85 ? 0.45 : 0.85 + 0.12 * Math.sin((i + (seedHash & 7)) * 0.45);
+      const highFactor = p > 0.15 ? 0.82 + 0.14 * Math.cos((i + (seedHash >> 3)) * 0.5) : 0.7;
+      bassEnvelope.push(Number(Math.min(1, Math.max(0.08, e * bassFactor)).toFixed(3)));
+      vocalEnvelope.push(Number(Math.min(1, Math.max(0.05, e * vocalFactor)).toFixed(3)));
+      highEnvelope.push(Number(Math.min(1, Math.max(0.08, e * highFactor)).toFixed(3)));
+    }
+    return { bassEnvelope, vocalEnvelope, highEnvelope };
   }
 
   private analyzeHeuristic(trackId: string, durationSec: number): TrackAnalysis {
@@ -542,6 +600,7 @@ export class PcmTrackAnalyzer {
 
     const structure = this.detectStructureFromEnvelope(rmsEnvelope, durationSec);
     const camelotKey = CAMELOT_KEYS[h % CAMELOT_KEYS.length];
+    const stemCurves = this.deriveSyntheticStemEnvelopes(rmsEnvelope, h);
 
     return {
       trackId,
@@ -551,6 +610,8 @@ export class PcmTrackAnalyzer {
       meanEnergy,
       peakEnergy,
       rmsEnvelope,
+      ...stemCurves,
+      beatPhaseSec: 0,
       ...structure,
       camelotKey,
       loudnessDb: -2.0,

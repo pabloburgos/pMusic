@@ -38,7 +38,10 @@ export const PMusicLogo: React.FC<PMusicLogoProps> = ({
         <rect x="25.7" y="14.5" width="3.6" height="7" rx="1.8" fill="#FFFFFF" fillOpacity="0.76" />
       </svg>
       {showWordmark && (
-        <span className="text-[15.5px] font-bold tracking-[-0.03em] text-[#F5F5F7]">
+        <span
+          className="pm-text-primary text-[16px] font-bold tracking-[-0.03em]"
+          style={{ fontFamily: 'var(--pm-font-display)' }}
+        >
           pMusic
         </span>
       )}

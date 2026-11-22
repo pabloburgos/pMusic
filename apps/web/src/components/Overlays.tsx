@@ -1,7 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Check,
-  Disc3,
   Download,
   GripVertical,
   Heart,
@@ -12,11 +11,9 @@ import {
   MoreHorizontal,
   Pause,
   Play,
-  Plus,
   Repeat,
   Repeat1,
-  RotateCcw,
-  Settings,
+  Search,
   Shuffle,
   SkipBack,
   SkipForward,
@@ -32,12 +29,16 @@ import {
   USER_EQ_FREQUENCIES_HZ,
   USER_EQ_PRESETS,
   formatDurationSec,
+  type Track,
 } from '@pmusic/core';
 import { usePMusicStore } from '../store/usePMusicStore.ts';
 import {
   isElectronDesktopRuntime,
   setDesktopTitleBarOverlay,
 } from '../platform/web-bridge.ts';
+import { getThemeDefinition } from '../utils/themes.ts';
+import { ArtistLinks } from './ArtistLinks.tsx';
+import { AudioVisualizer } from './AudioVisualizer.tsx';
 
 export const NowPlayingSheet: React.FC = () => {
   const {
@@ -45,6 +46,11 @@ export const NowPlayingSheet: React.FC = () => {
     nowPlayingTab,
     setNowPlayingOpen,
     setNowPlayingTab,
+    themeId,
+    reducedMotionPref,
+    lyricsSize,
+    lyricsBlurEnabled,
+    lastTrackDirection,
     currentTrack,
     queue,
     queueIndex,
@@ -55,7 +61,6 @@ export const NowPlayingSheet: React.FC = () => {
     durationSec,
     volume,
     isTransitioning,
-    activeTransitionType,
     transitionProgress01,
     djMode,
     activeTransitionPlan,
@@ -77,25 +82,75 @@ export const NowPlayingSheet: React.FC = () => {
     openTrackMenu,
     toggleLike,
     downloadTrackOffline,
-    toggleDjMode,
-    setDjSessionStyle,
-    toggleDjFx,
-    triggerDjMixNow,
     moveQueueItem,
     removeQueueItem,
     clearUpNextQueue,
+    addToQueue,
+    playNextInQueue,
+    searchTracksForPlaylist,
     playTrack,
-    setEqSheetOpen,
-    setDevicesSheetOpen,
-    openArtistDetail,
+    openAlbumDetail,
+    showToast,
   } = usePMusicStore();
 
   const isElectronDesktop = isElectronDesktopRuntime();
   const activeLyricRef = useRef<HTMLButtonElement | null>(null);
   const [smoothPosSec, setSmoothPosSec] = useState(positionSec);
-  const [djFxOpen, setDjFxOpen] = useState(false);
   const [dragQueueIdx, setDragQueueIdx] = useState<number | null>(null);
   const [dragOverQueueIdx, setDragOverQueueIdx] = useState<number | null>(null);
+  const [queueSearchQuery, setQueueSearchQuery] = useState('');
+  const [queueSearchResults, setQueueSearchResults] = useState<Track[]>([]);
+  const [isQueueSearching, setIsQueueSearching] = useState(false);
+  const [recentlyMovedKey, setRecentlyMovedKey] = useState<string | null>(null);
+  const [transportAnim, setTransportAnim] = useState<'prev' | 'next' | 'play' | null>(null);
+
+  const queueRowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const prevRowTopsRef = useRef<Map<string, number>>(new Map());
+  const transportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const movedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const triggerTransportAnim = (kind: 'prev' | 'next' | 'play') => {
+    setTransportAnim(null);
+    if (transportTimerRef.current) clearTimeout(transportTimerRef.current);
+    requestAnimationFrame(() => {
+      setTransportAnim(kind);
+      transportTimerRef.current = setTimeout(() => setTransportAnim(null), 260);
+    });
+  };
+
+  const moveWithFlip = (fromIdx: number, toIdx: number, movedKey: string) => {
+    const snap = new Map<string, number>();
+    queueRowRefs.current.forEach((el, k) => {
+      snap.set(k, el.getBoundingClientRect().top);
+    });
+    prevRowTopsRef.current = snap;
+    setRecentlyMovedKey(movedKey);
+    if (movedTimerRef.current) clearTimeout(movedTimerRef.current);
+    movedTimerRef.current = setTimeout(() => setRecentlyMovedKey(null), 460);
+    moveQueueItem(fromIdx, toIdx);
+  };
+
+  useLayoutEffect(() => {
+    if (reducedMotionPref || prevRowTopsRef.current.size === 0) {
+      prevRowTopsRef.current.clear();
+      return;
+    }
+    const prevTops = prevRowTopsRef.current;
+    queueRowRefs.current.forEach((el, k) => {
+      const oldTop = prevTops.get(k);
+      if (oldTop === undefined) return;
+      const newTop = el.getBoundingClientRect().top;
+      const deltaY = oldTop - newTop;
+      if (Math.abs(deltaY) < 1) return;
+      el.style.transition = 'none';
+      el.style.transform = `translateY(${deltaY}px)`;
+      void el.offsetHeight;
+      el.style.transition = 'transform 300ms cubic-bezier(0.22, 1, 0.36, 1)';
+      el.style.transform = 'translateY(0)';
+    });
+    prevRowTopsRef.current = new Map();
+  }, [queue, reducedMotionPref]);
+
   const syncClockRef = useRef({
     posSec: positionSec,
     atMs: typeof performance !== 'undefined' ? performance.now() : 0,
@@ -130,19 +185,20 @@ export const NowPlayingSheet: React.FC = () => {
 
   useEffect(() => {
     if (!isElectronDesktop) return;
+    const def = getThemeDefinition(themeId);
     void setDesktopTitleBarOverlay({
-      color: nowPlayingOpen ? '#00000000' : '#070709',
-      symbolColor: nowPlayingOpen ? '#F5F5F7' : '#B4B4BE',
+      color: nowPlayingOpen ? '#00000000' : def.titleBarColor,
+      symbolColor: nowPlayingOpen ? '#F5F5F7' : def.titleBarSymbolColor,
       height: 48,
     });
     return () => {
       void setDesktopTitleBarOverlay({
-        color: '#070709',
-        symbolColor: '#B4B4BE',
+        color: def.titleBarColor,
+        symbolColor: def.titleBarSymbolColor,
         height: 48,
       });
     };
-  }, [isElectronDesktop, nowPlayingOpen]);
+  }, [isElectronDesktop, nowPlayingOpen, themeId]);
 
   useEffect(() => {
     if (
@@ -163,12 +219,6 @@ export const NowPlayingSheet: React.FC = () => {
 
   const isLiked = likedTracks.some((l) => l.trackId === currentTrack.id);
   const dlStatus = offlineDownloads[currentTrack.id] ?? 'idle';
-  const currentAnalysis = trackAnalyses[currentTrack.id];
-  const enabledFx = djMode.enabledTransitions ?? {
-    eq_swap: true,
-    filter_sweep: true,
-    echo_out: true,
-  };
   const progressPct = Math.max(
     0,
     Math.min(100, (positionSec / Math.max(1, durationSec)) * 100)
@@ -208,10 +258,12 @@ export const NowPlayingSheet: React.FC = () => {
         compact ? 'w-full gap-5' : 'mx-auto w-full max-w-md gap-6'
       }`}
     >
-      {/* Pure Unobstructed Artwork with responsive playback scale & swap spring */}
+      {/* Pure Unobstructed Artwork with directional swap animation */}
       <div
         key={currentTrack.id}
-        className={`pm-cover-swap relative aspect-square overflow-hidden rounded-[22px] border border-white/15 bg-[#111115] shadow-[0_32px_80px_rgba(0,0,0,0.72)] transition-transform duration-300 ${
+        className={`${
+          lastTrackDirection === 'prev' ? 'pm-cover-prev' : 'pm-cover-next'
+        } relative aspect-square overflow-hidden rounded-[22px] border border-white/15 bg-[#111115] shadow-[0_32px_80px_rgba(0,0,0,0.72)] transition-transform duration-300 ${
           compact ? 'w-56 lg:w-72' : 'w-64 sm:w-80'
         } ${isPlaying ? 'scale-100' : 'scale-[0.95]'}`}
       >
@@ -228,19 +280,32 @@ export const NowPlayingSheet: React.FC = () => {
           <h1 className="truncate text-2xl font-bold tracking-tight text-[#F5F5F7]">
             {currentTrack.title}
           </h1>
-          <button
-            type="button"
-            onClick={() => {
-              setNowPlayingOpen(false);
-              void openArtistDetail(
-                currentTrack.artists[0]?.id ?? currentTrack.artists[0]?.name ?? ''
-              );
-            }}
-            className="block max-w-full truncate text-left text-[15px] text-[#C4C4CE] hover:text-white hover:underline"
-          >
-            {currentTrack.artists.map((a) => a.name).join(', ')}
-            {currentTrack.album ? ` · ${currentTrack.album.name}` : ''}
-          </button>
+          <div className="flex flex-wrap items-center gap-x-1.5 text-[15px] text-[#C4C4CE]">
+            <ArtistLinks
+              artists={currentTrack.artists}
+              singleLine={false}
+              onBeforeNavigate={() => setNowPlayingOpen(false)}
+              linkClassName="hover:text-white hover:underline"
+            />
+            {currentTrack.album && (
+              <>
+                <span aria-hidden="true" className="opacity-60">
+                  ·
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const albumId = currentTrack.album?.id;
+                    setNowPlayingOpen(false);
+                    if (albumId) void openAlbumDetail(albumId);
+                  }}
+                  className="max-w-full truncate text-left hover:text-white hover:underline"
+                >
+                  {currentTrack.album.name}
+                </button>
+              </>
+            )}
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -320,7 +385,7 @@ export const NowPlayingSheet: React.FC = () => {
         </div>
       </div>
 
-      {/* Floating Transport Row: Frameless Shuffle/Repeat + Circular Glass Prev/Next + White Play */}
+      {/* Floating Transport Row: Symmetrical Frameless Shuffle/Repeat + Circular Glass Prev/Next + White Play */}
       <div className="flex items-center justify-center gap-4 sm:gap-5">
         <button
           type="button"
@@ -331,7 +396,7 @@ export const NowPlayingSheet: React.FC = () => {
           }
           aria-pressed={shuffleEnabled}
           onClick={() => toggleShuffle()}
-          className={`relative flex h-10 w-10 items-center justify-center rounded-full bg-transparent transition-colors ${
+          className={`pm-pressable relative flex h-10 w-10 items-center justify-center rounded-full bg-transparent transition-colors ${
             shuffleEnabled
               ? 'text-white'
               : 'text-[#B4B4BE] hover:text-white'
@@ -349,17 +414,27 @@ export const NowPlayingSheet: React.FC = () => {
         <button
           type="button"
           aria-label="Canción anterior"
-          onClick={() => void prevTrack()}
-          className="pm-glass-chip flex h-12 w-12 items-center justify-center rounded-full text-[#F5F5F7] hover:scale-105"
+          onClick={() => {
+            triggerTransportAnim('prev');
+            void prevTrack();
+          }}
+          className="pm-glass-chip pm-pressable flex h-12 w-12 items-center justify-center rounded-full text-[#F5F5F7] hover:scale-105"
         >
-          <SkipBack className="h-5 w-5" />
+          <SkipBack
+            className={`h-5 w-5 ${transportAnim === 'prev' ? 'pm-nudge-prev' : ''}`}
+          />
         </button>
 
         <button
           type="button"
           aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
-          onClick={() => void togglePlayPause()}
-          className="flex h-[60px] w-[60px] items-center justify-center rounded-full bg-white text-[#070709] shadow-[0_12px_34px_rgba(255,255,255,0.28)] hover:scale-105"
+          onClick={() => {
+            triggerTransportAnim('play');
+            void togglePlayPause();
+          }}
+          className={`pm-pressable flex h-[60px] w-[60px] items-center justify-center rounded-full bg-white text-[#070709] shadow-[0_12px_34px_rgba(255,255,255,0.28)] hover:scale-105 ${
+            transportAnim === 'play' ? 'pm-play-morph' : ''
+          }`}
         >
           {isPlaying ? (
             <Pause className="h-6 w-6 fill-current" />
@@ -371,10 +446,15 @@ export const NowPlayingSheet: React.FC = () => {
         <button
           type="button"
           aria-label="Siguiente canción"
-          onClick={() => void nextTrack()}
-          className="pm-glass-chip flex h-12 w-12 items-center justify-center rounded-full text-[#F5F5F7] hover:scale-105"
+          onClick={() => {
+            triggerTransportAnim('next');
+            void nextTrack();
+          }}
+          className="pm-glass-chip pm-pressable flex h-12 w-12 items-center justify-center rounded-full text-[#F5F5F7] hover:scale-105"
         >
-          <SkipForward className="h-5 w-5" />
+          <SkipForward
+            className={`h-5 w-5 ${transportAnim === 'next' ? 'pm-nudge-next' : ''}`}
+          />
         </button>
 
         <button
@@ -382,7 +462,7 @@ export const NowPlayingSheet: React.FC = () => {
           aria-label={repeatLabel}
           aria-pressed={repeatMode !== 'off'}
           onClick={() => cycleRepeatMode()}
-          className={`relative flex h-10 w-10 items-center justify-center rounded-full bg-transparent transition-colors ${
+          className={`pm-pressable relative flex h-10 w-10 items-center justify-center rounded-full bg-transparent transition-colors ${
             repeatMode !== 'off'
               ? 'text-white'
               : 'text-[#B4B4BE] hover:text-white'
@@ -431,6 +511,8 @@ export const NowPlayingSheet: React.FC = () => {
           {volumePct}%
         </span>
       </div>
+
+      {!compact && <AudioVisualizer className="mt-1" barClassName="bg-white/75" />}
     </div>
   );
 
@@ -440,7 +522,7 @@ export const NowPlayingSheet: React.FC = () => {
       aria-modal="true"
       aria-label="Reproduciendo ahora"
       data-testid="now-playing-sheet"
-      className="pm-sheet-enter fixed inset-0 z-50 flex flex-col overflow-hidden bg-[#070709] text-[#F5F5F7]"
+      className="pm-sheet-enter pm-dark-sliders fixed inset-0 z-50 flex flex-col overflow-hidden bg-[#070709] text-[#F5F5F7]"
     >
       {/* Dynamic Cover-Art Gradient Backdrop (Exclusive to Song / Now Playing view) */}
       <div
@@ -504,32 +586,10 @@ export const NowPlayingSheet: React.FC = () => {
           })}
         </div>
 
-        <div className="pm-no-drag flex items-center gap-2">
-          <button
-            type="button"
-            aria-label="Ecualizador y Crossfade"
-            onClick={() => {
-              setNowPlayingOpen(false);
-              setEqSheetOpen(true);
-            }}
-            className="pm-glass-chip inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-semibold text-[#F5F5F7]"
-          >
-            <Sliders className="h-4 w-4 text-[#E5E5EA]" />
-            <span className="hidden sm:inline">EQ</span>
-          </button>
-          <button
-            type="button"
-            aria-label="Dispositivos conectados"
-            onClick={() => {
-              setNowPlayingOpen(false);
-              setDevicesSheetOpen(true);
-            }}
-            className="pm-glass-chip inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-semibold text-[#F5F5F7]"
-          >
-            <Wifi className="h-4 w-4 text-[#34D399]" />
-            <span className="hidden sm:inline">Dispositivos</span>
-          </button>
-        </div>
+        <div
+          aria-hidden="true"
+          className="hidden w-20 sm:block"
+        />
       </header>
 
       {/* Main Content */}
@@ -564,8 +624,12 @@ export const NowPlayingSheet: React.FC = () => {
                       {currentTrack.title}
                     </h2>
                     <p className="text-xs text-[#B4B4BE]">
-                      {currentTrack.artists.map((a) => a.name).join(', ')} ·
-                      Toca una frase para saltar
+                      <ArtistLinks
+                        artists={currentTrack.artists}
+                        onBeforeNavigate={() => setNowPlayingOpen(false)}
+                        linkClassName="hover:text-white hover:underline"
+                      />{' '}
+                      · Toca una frase para saltar
                     </p>
                   </div>
                 </div>
@@ -624,15 +688,30 @@ export const NowPlayingSheet: React.FC = () => {
                       nextLine.timeMs - line.timeMs > 6500 &&
                       smoothPosMs - line.timeMs > 3200;
 
+                    const lyricSizeClass =
+                      lyricsSize === 'normal'
+                        ? 'text-xl leading-[1.3] md:text-[26px] md:leading-[1.28]'
+                        : lyricsSize === 'xl'
+                          ? 'text-[30px] leading-[1.22] md:text-[38px] md:leading-[1.2]'
+                          : 'text-[26px] leading-[1.26] md:text-[32px] md:leading-[1.24]';
+
                     const distClass = isActive
                       ? 'pm-lyric-line-active'
-                      : `pm-lyric-line-inactive ${
-                          dist === 1
-                            ? 'pm-lyric-dist-1'
-                            : dist === 2
-                              ? 'pm-lyric-dist-2'
-                              : 'pm-lyric-dist-far'
-                        }`;
+                      : lyricsBlurEnabled
+                        ? `pm-lyric-line-inactive ${
+                            dist === 1
+                              ? 'pm-lyric-dist-1'
+                              : dist === 2
+                                ? 'pm-lyric-dist-2'
+                                : 'pm-lyric-dist-far'
+                          }`
+                        : `pm-lyric-line-inactive ${
+                            dist === 1
+                              ? 'opacity-65'
+                              : dist === 2
+                                ? 'opacity-50'
+                                : 'opacity-35'
+                          }`;
 
                     const words = line.text.trim().split(/\s+/).filter(Boolean);
                     const totalWeight = words.reduce(
@@ -651,7 +730,7 @@ export const NowPlayingSheet: React.FC = () => {
                             seekTo(line.timeMs / 1000);
                             setLyricsUserScrolled(false);
                           }}
-                          className={`group relative flex w-full items-baseline justify-between gap-4 rounded-[14px] px-4 py-2.5 text-left text-[26px] font-bold leading-[1.26] tracking-tight md:text-[32px] md:leading-[1.24] ${distClass}`}
+                          className={`group relative flex w-full items-baseline justify-between gap-4 rounded-[14px] px-4 py-2.5 text-left font-bold tracking-tight ${lyricSizeClass} ${distClass}`}
                         >
                           <span className="flex-1">
                             {isActive && words.length > 0 ? (
@@ -739,349 +818,335 @@ export const NowPlayingSheet: React.FC = () => {
               {PlayerDeckColumn(true)}
             </div>
 
-            {/* Full Liquid Glass Queue Panel with Compact Mini DJ Strip & Drag-and-Drop Reordering */}
+            {/* Free-floating Borderless Queue with Inline Quick-Add Search & Smooth FLIP Reordering */}
             <div
               data-testid="queue-view"
-              data-surface="glass"
-              className="pm-glass-liquid flex max-h-[76vh] flex-col gap-4 rounded-[24px] p-5 lg:col-span-7"
+              className="flex max-h-[78vh] flex-col gap-3.5 lg:col-span-7"
             >
-              {/* Compact Header & Mini DJ AutoMix Control */}
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.12] pb-3.5">
+              {/* Clean Borderless Header */}
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.12] pb-3">
                 <div>
-                  <h2 className="text-lg font-bold tracking-tight text-white">
+                  <h2 className="text-xl font-bold tracking-tight text-white">
                     Cola de reproducción
                   </h2>
                   <p className="text-xs text-[#D4D4E0]">
-                    {queue.length} pistas · Arrastra para reordenar
+                    {queue.length} pistas · Arrastra o usa ↑ para reordenar
                   </p>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-1.5">
+                {queue.length > 1 && (
                   <button
                     type="button"
-                    data-testid="dj-mode-toggle"
-                    aria-pressed={djMode.enabled}
-                    onClick={() => void toggleDjMode()}
-                    className={`inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-bold transition-all ${
-                      djMode.enabled
-                        ? 'bg-white text-[#070709] shadow-sm'
-                        : 'border border-white/15 bg-white/[0.08] text-[#F5F5F7] hover:bg-white/[0.16]'
-                    }`}
+                    onClick={() => clearUpNextQueue()}
+                    className="pm-pressable h-8 rounded-full border border-white/15 bg-white/[0.08] px-3.5 text-[11px] font-semibold text-[#E5E5EA] hover:bg-white/[0.18] hover:text-white"
                   >
-                    <Disc3
-                      className={`h-3.5 w-3.5 ${
-                        djMode.enabled ? 'text-[#7E22CE]' : 'text-[#E9D5FF]'
-                      }`}
-                    />
-                    <span>{djMode.enabled ? 'DJ Activo' : 'Modo DJ'}</span>
+                    Limpiar cola
                   </button>
+                )}
+              </div>
 
-                  {/* Minimalist Quick vs Full Segmented Pill */}
-                  <div className="flex items-center rounded-full border border-white/15 bg-white/[0.07] p-0.5">
-                    <button
-                      type="button"
-                      data-testid="dj-style-quick"
-                      aria-pressed={djMode.style === 'quick'}
-                      onClick={() => void setDjSessionStyle('quick')}
-                      className={`rounded-full px-2.5 py-1 text-[11px] font-bold transition-colors ${
-                        djMode.style === 'quick'
-                          ? 'bg-white text-[#070709]'
-                          : 'text-[#D4D4E0] hover:text-white'
-                      }`}
-                    >
-                      Rápida
-                    </button>
-                    <button
-                      type="button"
-                      data-testid="dj-style-full"
-                      aria-pressed={djMode.style === 'full'}
-                      onClick={() => void setDjSessionStyle('full')}
-                      className={`rounded-full px-2.5 py-1 text-[11px] font-bold transition-colors ${
-                        djMode.style === 'full'
-                          ? 'bg-white text-[#070709]'
-                          : 'text-[#D4D4E0] hover:text-white'
-                      }`}
-                    >
-                      Completa
-                    </button>
-                  </div>
-
-                  {djMode.enabled && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => void triggerDjMixNow()}
-                        className="h-8 rounded-full border border-white/20 bg-white/[0.14] px-3 text-[11px] font-bold text-white hover:bg-white hover:text-[#070709]"
-                      >
-                        {isTransitioning
-                          ? `Mezclando (${activeTransitionType ?? 'DJ'})…`
-                          : 'Mezclar ahora'}
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="Opciones de mezcla DJ"
-                        aria-expanded={djFxOpen}
-                        onClick={() => setDjFxOpen(!djFxOpen)}
-                        className={`flex h-8 w-8 items-center justify-center rounded-full border transition-colors ${
-                          djFxOpen
-                            ? 'border-white/35 bg-white/20 text-white'
-                            : 'border-white/15 bg-white/[0.07] text-[#E5E5EA] hover:bg-white/[0.15]'
-                        }`}
-                      >
-                        <Sliders className="h-3.5 w-3.5" />
-                      </button>
-                    </>
+              {/* Quick Inline Search to Add Songs Directly to Queue */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.08] px-3.5 py-2 focus-within:border-white/40 focus-within:bg-white/[0.12]">
+                  <Search className="h-3.5 w-3.5 shrink-0 text-[#D4D4E0]" />
+                  <input
+                    type="search"
+                    aria-label="Buscar canción para añadir a la cola"
+                    placeholder="Buscar canción para añadir a la cola…"
+                    value={queueSearchQuery}
+                    onChange={async (e) => {
+                      const q = e.target.value;
+                      setQueueSearchQuery(q);
+                      if (q.trim().length >= 2) {
+                        setIsQueueSearching(true);
+                        const found = await searchTracksForPlaylist(q);
+                        setQueueSearchResults(found.slice(0, 5));
+                        setIsQueueSearching(false);
+                      } else {
+                        setQueueSearchResults([]);
+                      }
+                    }}
+                    className="flex-1 bg-transparent text-xs text-white placeholder:text-[#B4B4BE] focus:outline-none"
+                  />
+                  {isQueueSearching && (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-white" />
                   )}
-
-                  {queue.length > 1 && (
+                  {queueSearchQuery && (
                     <button
                       type="button"
-                      onClick={() => clearUpNextQueue()}
-                      className="h-8 rounded-full border border-white/15 bg-white/[0.06] px-3 text-[11px] font-semibold text-[#E5E5EA] hover:bg-white/[0.15] hover:text-white"
+                      aria-label="Limpiar búsqueda rápida de cola"
+                      onClick={() => {
+                        setQueueSearchQuery('');
+                        setQueueSearchResults([]);
+                      }}
+                      className="pm-pressable rounded-full p-0.5 text-[#D4D4E0] hover:bg-white/15 hover:text-white"
                     >
-                      Limpiar
+                      <X className="h-3.5 w-3.5" />
                     </button>
                   )}
                 </div>
+
+                {queueSearchResults.length > 0 && (
+                  <div className="space-y-1 rounded-[14px] border border-white/15 bg-black/40 p-2">
+                    {queueSearchResults.map((cand) => (
+                      <div
+                        key={`qadd-${cand.id}`}
+                        className="flex items-center justify-between gap-2.5 rounded-[10px] px-2.5 py-1.5 hover:bg-white/[0.10]"
+                      >
+                        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                          <img
+                            src={cand.thumbnailUrl}
+                            alt=""
+                            className="h-8 w-8 shrink-0 rounded-[6px] object-cover"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-xs font-semibold text-white">
+                              {cand.title}
+                            </div>
+                            <div className="truncate text-[11px] text-[#D4D4E0]">
+                              <ArtistLinks
+                                artists={cand.artists}
+                                onBeforeNavigate={() => setNowPlayingOpen(false)}
+                                linkClassName="hover:text-white hover:underline"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              playNextInQueue(cand);
+                              showToast(`«${cand.title}» sonará a continuación`);
+                            }}
+                            className="pm-pressable rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-[#070709] hover:opacity-90"
+                          >
+                            + Siguiente
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              addToQueue(cand);
+                              showToast(`«${cand.title}» añadida al final`);
+                            }}
+                            className="pm-pressable rounded-full border border-white/20 bg-white/[0.10] px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-white/[0.20]"
+                          >
+                            + Cola
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
-              {/* Optional Collapsible Compact DJ FX & Live Plan Line */}
-              {djMode.enabled && (djFxOpen || activeTransitionPlan) && (
-                <div className="space-y-2 rounded-[14px] border border-white/[0.12] bg-white/[0.06] px-3.5 py-2.5">
-                  {djFxOpen && (
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {(
-                        [
-                          { id: 'eq_swap', label: 'EQ Swap 200Hz' },
-                          { id: 'filter_sweep', label: 'Filtro Resonante' },
-                          { id: 'echo_out', label: 'Echo Out BPM' },
-                        ] as const
-                      ).map((fx) => {
-                        const active = enabledFx[fx.id];
-                        return (
-                          <button
-                            key={fx.id}
-                            type="button"
-                            aria-pressed={active}
-                            onClick={() => toggleDjFx(fx.id)}
-                            className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
-                              active
-                                ? 'border-white/35 bg-white/20 text-white'
-                                : 'border-white/10 bg-black/25 text-[#C4C4CE]'
-                            }`}
-                          >
-                            {fx.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {activeTransitionPlan && (
-                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#E5E5EA]">
-                      <span className="font-semibold text-[#E9D5FF]">
-                        {activeTransitionPlan.transitionType === 'eq_swap'
-                          ? 'EQ Swap 200Hz'
-                          : activeTransitionPlan.transitionType === 'filter_sweep'
-                            ? 'Filtro Resonante'
-                            : 'Echo Out BPM'}{' '}
-                        · {activeTransitionPlan.transitionBars} compases (
-                        {activeTransitionPlan.transitionDurationSec}s) ·{' '}
-                        {Math.round(activeTransitionPlan.compatibilityScore * 100)}% fit
-                      </span>
-                      <span className="tabular-nums text-[#D4D4E0]">
-                        {formatDurationSec(activeTransitionPlan.cueOutSec)} →{' '}
-                        {formatDurationSec(activeTransitionPlan.cueInSec)} ·{' '}
-                        {currentAnalysis?.source === 'pcm' ? 'PCM real' : 'Curva'}
-                      </span>
-                      {isTransitioning && (
-                        <div className="h-1 w-full overflow-hidden rounded-full bg-white/15">
-                          <div
-                            className="h-full rounded-full bg-white transition-[width] duration-100"
-                            style={{ width: `${Math.round(transitionProgress01 * 100)}%` }}
-                          />
-                        </div>
-                      )}
+              {/* Subtle 1-line Live Choreography Telemetry when DJ Mode is active */}
+              {djMode.enabled && activeTransitionPlan && (
+                <div className="space-y-1 border-b border-white/[0.08] pb-2 text-[11px] text-[#E5E5EA]">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-semibold text-[#E9D5FF]">
+                      {activeTransitionPlan.choreography?.summary ??
+                        `AutoMix ${activeTransitionPlan.transitionBars} compases (${activeTransitionPlan.transitionDurationSec}s) · ${Math.round(activeTransitionPlan.compatibilityScore * 100)}% fit`}
+                    </span>
+                    <span className="tabular-nums text-[#D4D4E0]">
+                      {formatDurationSec(activeTransitionPlan.cueOutSec)} →{' '}
+                      {formatDurationSec(activeTransitionPlan.cueInSec)}
+                    </span>
+                  </div>
+                  {isTransitioning && (
+                    <div className="h-1 w-full overflow-hidden rounded-full bg-white/15">
+                      <div
+                        className="h-full rounded-full bg-white transition-[width] duration-100"
+                        style={{ width: `${Math.round(transitionProgress01 * 100)}%` }}
+                      />
                     </div>
                   )}
                 </div>
               )}
 
-              {/* Scrollable Glass Draggable Queue Rows */}
+              {/* Scrollable Borderless Draggable Queue Rows with Smooth FLIP Animation */}
               <div
                 role="list"
-                className="flex-1 space-y-1.5 overflow-y-auto pr-1 pm-no-scrollbar"
+                className="flex-1 space-y-1 overflow-y-auto pr-1 pm-no-scrollbar"
               >
-                {queue.map((track, idx) => {
-                  const isCurrent = idx === queueIndex;
-                  const ana = trackAnalyses[track.id];
-                  const trackLiked = likedTracks.some((l) => l.trackId === track.id);
-                  const isDragOver = dragOverQueueIdx === idx;
-                  const primaryArtistRef =
-                    track.artists[0]?.id ?? track.artists[0]?.name ?? '';
-                  return (
-                    <div
-                      key={`${track.id}-${idx}`}
-                      role="listitem"
-                      draggable
-                      onDragStart={(e) => {
-                        setDragQueueIdx(idx);
-                        e.dataTransfer.effectAllowed = 'move';
-                        e.dataTransfer.setData('text/plain', String(idx));
-                      }}
-                      onDragEnd={() => {
-                        setDragQueueIdx(null);
-                        setDragOverQueueIdx(null);
-                      }}
-                      onDragOver={(e) => {
-                        if (dragQueueIdx === null || dragQueueIdx === idx) return;
-                        e.preventDefault();
-                        e.dataTransfer.dropEffect = 'move';
-                        setDragOverQueueIdx(idx);
-                      }}
-                      onDragLeave={() => {
-                        if (dragOverQueueIdx === idx) setDragOverQueueIdx(null);
-                      }}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        const from =
-                          dragQueueIdx ??
-                          Number.parseInt(e.dataTransfer.getData('text/plain'), 10);
-                        setDragQueueIdx(null);
-                        setDragOverQueueIdx(null);
-                        if (Number.isFinite(from) && from !== idx) {
-                          moveQueueItem(from, idx);
-                        }
-                      }}
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        openTrackMenu(track, e.clientX, e.clientY);
-                      }}
-                      className={`group flex h-15 items-center justify-between gap-2.5 rounded-[12px] border px-2.5 transition-all ${
-                        isCurrent
-                          ? 'border-white/30 bg-white/[0.16]'
-                          : 'border-white/[0.08] bg-white/[0.05] hover:border-white/[0.16] hover:bg-white/[0.11]'
-                      } ${isDragOver ? 'border-t-2 border-t-white bg-white/[0.18]' : ''}`}
-                    >
-                      <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                        <span
-                          aria-hidden="true"
-                          className="cursor-grab text-[#D4D4E0]/50 opacity-50 transition-opacity group-hover:opacity-100"
-                        >
-                          <GripVertical className="h-4 w-4" />
-                        </span>
+                {(() => {
+                  const occMap = new Map<string, number>();
+                  return queue.map((track, idx) => {
+                    const occ = occMap.get(track.id) ?? 0;
+                    occMap.set(track.id, occ + 1);
+                    const rowKey = `${track.id}#${occ}`;
+                    const isCurrent = idx === queueIndex;
+                    const ana = trackAnalyses[track.id];
+                    const trackLiked = likedTracks.some((l) => l.trackId === track.id);
+                    const isDragOver = dragOverQueueIdx === idx;
+                    const isMoved = recentlyMovedKey === rowKey;
+                    return (
+                      <div
+                        key={rowKey}
+                        ref={(el) => {
+                          if (el) queueRowRefs.current.set(rowKey, el);
+                          else queueRowRefs.current.delete(rowKey);
+                        }}
+                        role="listitem"
+                        draggable
+                        onDragStart={(e) => {
+                          setDragQueueIdx(idx);
+                          e.dataTransfer.effectAllowed = 'move';
+                          e.dataTransfer.setData('text/plain', String(idx));
+                        }}
+                        onDragEnd={() => {
+                          setDragQueueIdx(null);
+                          setDragOverQueueIdx(null);
+                        }}
+                        onDragOver={(e) => {
+                          if (dragQueueIdx === null || dragQueueIdx === idx) return;
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = 'move';
+                          setDragOverQueueIdx(idx);
+                        }}
+                        onDragLeave={() => {
+                          if (dragOverQueueIdx === idx) setDragOverQueueIdx(null);
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          const from =
+                            dragQueueIdx ??
+                            Number.parseInt(e.dataTransfer.getData('text/plain'), 10);
+                          setDragQueueIdx(null);
+                          setDragOverQueueIdx(null);
+                          if (Number.isFinite(from) && from !== idx) {
+                            const movedTrack = queue[from];
+                            moveWithFlip(from, idx, movedTrack ? `${movedTrack.id}#0` : rowKey);
+                          }
+                        }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          openTrackMenu(track, e.clientX, e.clientY);
+                        }}
+                        className={`group flex h-15 items-center justify-between gap-2.5 overflow-hidden rounded-[12px] px-2.5 transition-colors ${
+                          isCurrent
+                            ? 'bg-white/[0.15]'
+                            : 'hover:bg-white/[0.09]'
+                        } ${isMoved ? 'pm-queue-moved' : ''} ${
+                          isDragOver ? 'border-t-2 border-white bg-white/[0.18]' : ''
+                        }`}
+                      >
+                        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                          <span
+                            aria-hidden="true"
+                            className="cursor-grab text-[#D4D4E0]/50 opacity-50 transition-opacity group-hover:opacity-100"
+                          >
+                            <GripVertical className="h-4 w-4" />
+                          </span>
 
-                        <button
-                          type="button"
-                          aria-label={`Reproducir ${track.title}`}
-                          onClick={() => void playTrack(track, queue)}
-                          className="relative h-10 w-10 shrink-0 overflow-hidden rounded-[8px] bg-black/40"
-                        >
-                          <img
-                            src={track.thumbnailUrl}
-                            alt={track.title}
-                            className="h-full w-full object-cover"
-                          />
-                          {isCurrent && isPlaying && (
-                            <span className="absolute inset-0 flex items-center justify-center bg-black/45">
-                              <span className="inline-flex h-3 w-3 items-end justify-center gap-[2px]">
-                                <span className="pm-eq-bar-1 h-full w-[2.5px] rounded-full bg-white" />
-                                <span className="pm-eq-bar-2 h-full w-[2.5px] rounded-full bg-white" />
-                                <span className="pm-eq-bar-3 h-full w-[2.5px] rounded-full bg-white" />
+                          <button
+                            type="button"
+                            aria-label={`Reproducir ${track.title}`}
+                            onClick={() => void playTrack(track, queue)}
+                            className="relative h-10 w-10 shrink-0 overflow-hidden rounded-[8px] bg-black/40"
+                          >
+                            <img
+                              src={track.thumbnailUrl}
+                              alt={track.title}
+                              className="h-full w-full object-cover"
+                            />
+                            {isCurrent && isPlaying && (
+                              <span className="absolute inset-0 flex items-center justify-center bg-black/45">
+                                <span className="inline-flex h-3 w-3 items-end justify-center gap-[2px]">
+                                  <span className="pm-eq-bar-1 h-full w-[2.5px] rounded-full bg-white" />
+                                  <span className="pm-eq-bar-2 h-full w-[2.5px] rounded-full bg-white" />
+                                  <span className="pm-eq-bar-3 h-full w-[2.5px] rounded-full bg-white" />
+                                </span>
                               </span>
+                            )}
+                          </button>
+
+                          <div className="min-w-0 flex-1">
+                            <button
+                              type="button"
+                              onClick={() => void playTrack(track, queue)}
+                              className="block max-w-full truncate text-left text-[14px] font-semibold text-[#F5F5F7] hover:underline"
+                            >
+                              {track.title}
+                            </button>
+                            <div className="truncate text-xs text-[#D4D4E0]">
+                              <ArtistLinks
+                                artists={track.artists}
+                                onBeforeNavigate={() => setNowPlayingOpen(false)}
+                                linkClassName="hover:text-white hover:underline"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex shrink-0 items-center gap-1">
+                          {djMode.enabled && (
+                            <span className="tabular-nums hidden rounded-full bg-white/[0.10] px-2 py-0.5 text-[11px] font-semibold text-[#E9D5FF] sm:inline">
+                              {ana?.bpm ?? 120} BPM
                             </span>
                           )}
-                        </button>
 
-                        <div className="min-w-0 flex-1">
+                          <span className="tabular-nums hidden px-1.5 text-xs font-medium text-[#D4D4E0] sm:inline">
+                            {formatDurationSec(track.durationSec)}
+                          </span>
+
                           <button
                             type="button"
-                            onClick={() => void playTrack(track, queue)}
-                            className="block max-w-full truncate text-left text-[14px] font-semibold text-[#F5F5F7] hover:underline"
+                            aria-label={
+                              trackLiked
+                                ? `Quitar ${track.title} de Me gusta`
+                                : `Añadir ${track.title} a Me gusta`
+                            }
+                            onClick={() => void toggleLike(track)}
+                            className={`pm-pressable hidden rounded-full p-1.5 transition-colors sm:inline-flex ${
+                              trackLiked
+                                ? 'text-[#FB7185]'
+                                : 'text-[#D4D4E0] hover:bg-white/[0.12] hover:text-white'
+                            }`}
                           >
-                            {track.title}
+                            <Heart
+                              className={`h-3.5 w-3.5 ${trackLiked ? 'fill-current' : ''}`}
+                            />
                           </button>
+
+                          {idx > 0 && (
+                            <button
+                              type="button"
+                              aria-label={`Subir ${track.title} en la cola`}
+                              onClick={() => moveWithFlip(idx, idx - 1, rowKey)}
+                              className="pm-pressable rounded-full px-2 py-1 text-xs font-semibold text-[#E5E5EA] opacity-75 transition-all hover:bg-white/[0.14] hover:text-white group-hover:opacity-100"
+                            >
+                              ↑
+                            </button>
+                          )}
+
                           <button
                             type="button"
-                            onClick={() => {
-                              if (primaryArtistRef) {
-                                void openArtistDetail(primaryArtistRef);
-                              }
+                            aria-label={`Más opciones para ${track.title}`}
+                            onClick={(e) => {
+                              const r = e.currentTarget.getBoundingClientRect();
+                              openTrackMenu(track, r.left - 210, r.bottom + 6);
                             }}
-                            className="block max-w-full truncate text-left text-xs text-[#D4D4E0] hover:text-white hover:underline"
+                            className="pm-pressable rounded-full p-1.5 text-[#D4D4E0] hover:bg-white/[0.12] hover:text-white"
                           >
-                            {track.artists.map((a) => a.name).join(', ')}
+                            <MoreHorizontal className="h-4 w-4" />
                           </button>
+
+                          {queue.length > 1 && (
+                            <button
+                              type="button"
+                              aria-label={`Quitar ${track.title} de la cola`}
+                              onClick={() => removeQueueItem(idx)}
+                              className="pm-pressable rounded-full p-1.5 text-[#D4D4E0] hover:bg-white/[0.12] hover:text-[#FB7185]"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          )}
                         </div>
                       </div>
-
-                      <div className="flex shrink-0 items-center gap-1">
-                        {djMode.enabled && (
-                          <span className="tabular-nums hidden rounded-full bg-white/[0.10] px-2 py-0.5 text-[11px] font-semibold text-[#E9D5FF] sm:inline">
-                            {ana?.bpm ?? 120} BPM
-                          </span>
-                        )}
-
-                        <span className="tabular-nums hidden px-1.5 text-xs font-medium text-[#D4D4E0] sm:inline">
-                          {formatDurationSec(track.durationSec)}
-                        </span>
-
-                        <button
-                          type="button"
-                          aria-label={
-                            trackLiked
-                              ? `Quitar ${track.title} de Me gusta`
-                              : `Añadir ${track.title} a Me gusta`
-                          }
-                          onClick={() => void toggleLike(track)}
-                          className={`hidden rounded-full p-1.5 transition-colors sm:inline-flex ${
-                            trackLiked
-                              ? 'text-[#FB7185]'
-                              : 'text-[#D4D4E0] hover:bg-white/[0.12] hover:text-white'
-                          }`}
-                        >
-                          <Heart
-                            className={`h-3.5 w-3.5 ${trackLiked ? 'fill-current' : ''}`}
-                          />
-                        </button>
-
-                        {idx > 0 && (
-                          <button
-                            type="button"
-                            aria-label={`Subir ${track.title} en la cola`}
-                            onClick={() => moveQueueItem(idx, idx - 1)}
-                            className="rounded-full px-2 py-1 text-xs font-semibold text-[#E5E5EA] opacity-70 transition-opacity hover:bg-white/[0.12] hover:text-white group-hover:opacity-100"
-                          >
-                            ↑
-                          </button>
-                        )}
-
-                        <button
-                          type="button"
-                          aria-label={`Más opciones para ${track.title}`}
-                          onClick={(e) => {
-                            const r = e.currentTarget.getBoundingClientRect();
-                            openTrackMenu(track, r.left - 210, r.bottom + 6);
-                          }}
-                          className="rounded-full p-1.5 text-[#D4D4E0] hover:bg-white/[0.12] hover:text-white"
-                        >
-                          <MoreHorizontal className="h-4 w-4" />
-                        </button>
-
-                        {queue.length > 1 && (
-                          <button
-                            type="button"
-                            aria-label={`Quitar ${track.title} de la cola`}
-                            onClick={() => removeQueueItem(idx)}
-                            className="rounded-full p-1.5 text-[#D4D4E0] hover:bg-white/[0.12] hover:text-[#FB7185]"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  });
+                })()}
               </div>
             </div>
           </div>
@@ -1113,19 +1178,19 @@ export const EqAndCrossfadeSheet: React.FC = () => {
       <div
         aria-hidden="true"
         onClick={() => setEqSheetOpen(false)}
-        className="absolute inset-0 bg-black/70"
+        className="pm-spotlight-backdrop absolute inset-0 bg-black/65"
       />
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Ecualizador y Crossfade"
         data-testid="eq-sheet"
-        className="pm-glass-regular pm-sheet-enter relative z-10 flex max-h-[88dvh] w-full max-w-2xl flex-col overflow-y-auto rounded-[22px] p-6 text-[#F5F5F7]"
+        className="pm-glass-regular pm-modal-pop relative z-10 flex max-h-[88dvh] w-full max-w-2xl flex-col overflow-y-auto rounded-[22px] p-6 pm-text-primary"
       >
-        <div className="flex items-center justify-between border-b border-white/[0.08] pb-4">
+        <div className="flex items-center justify-between border-b pm-border pb-4">
           <div className="flex items-center gap-2.5">
-            <Sliders className="h-5 w-5 text-[#F5F5F7]" />
-            <h2 className="text-lg font-bold text-[#F5F5F7]">
+            <Sliders className="h-5 w-5 pm-text-primary" />
+            <h2 className="text-lg font-bold pm-text-primary">
               Ecualizador y Crossfade
             </h2>
           </div>
@@ -1133,7 +1198,7 @@ export const EqAndCrossfadeSheet: React.FC = () => {
             type="button"
             aria-label="Cerrar ecualizador"
             onClick={() => setEqSheetOpen(false)}
-            className="rounded-full border border-white/[0.08] bg-[#141419] px-3.5 py-1.5 text-xs font-semibold text-[#F5F5F7] hover:bg-[#1E1E26]"
+            className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-semibold"
           >
             Cerrar
           </button>
@@ -1146,10 +1211,10 @@ export const EqAndCrossfadeSheet: React.FC = () => {
           >
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-bold text-[#F5F5F7]">
+                <h3 className="text-sm font-bold pm-text-primary">
                   Crossfade seguro (0–12 s)
                 </h3>
-                <p className="text-xs text-[#B4B4BE]">
+                <p className="text-xs pm-text-secondary">
                   {djMode.enabled
                     ? 'Pausado automáticamente mientras el Modo Sesión DJ está activo'
                     : 'Transición suave de potencia constante entre canciones'}
@@ -1166,8 +1231,8 @@ export const EqAndCrossfadeSheet: React.FC = () => {
                 }
                 className={`rounded-full px-4 py-1.5 text-xs font-bold ${
                   safeCrossfade.enabled && !djMode.enabled
-                    ? 'bg-white text-[#070709]'
-                    : 'bg-[#0B0B0E] text-[#B4B4BE]'
+                    ? 'pm-btn-primary'
+                    : 'pm-btn-secondary'
                 }`}
               >
                 {safeCrossfade.enabled && !djMode.enabled
@@ -1191,7 +1256,7 @@ export const EqAndCrossfadeSheet: React.FC = () => {
                 style={{ '--pm-fill': `${crossfadePct}%` } as React.CSSProperties}
                 className="flex-1"
               />
-              <span className="tabular-nums text-sm font-bold text-[#F5F5F7]">
+              <span className="tabular-nums text-sm font-bold pm-text-primary">
                 {safeCrossfade.durationSec} s
               </span>
             </div>
@@ -1202,7 +1267,7 @@ export const EqAndCrossfadeSheet: React.FC = () => {
             className="pm-surface-card rounded-[16px] p-4"
           >
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-[#F5F5F7]">
+              <h3 className="text-sm font-bold pm-text-primary">
                 Ecualizador de 5 bandas
               </h3>
               <button
@@ -1212,9 +1277,7 @@ export const EqAndCrossfadeSheet: React.FC = () => {
                 aria-label="Activar ecualizador"
                 onClick={() => setEqEnabled(!userEq.enabled)}
                 className={`rounded-full px-4 py-1.5 text-xs font-bold ${
-                  userEq.enabled
-                    ? 'bg-white text-[#070709]'
-                    : 'bg-[#0B0B0E] text-[#B4B4BE]'
+                  userEq.enabled ? 'pm-btn-primary' : 'pm-btn-secondary'
                 }`}
               >
                 {userEq.enabled ? 'EQ Activo' : 'EQ Inactivo'}
@@ -1231,9 +1294,7 @@ export const EqAndCrossfadeSheet: React.FC = () => {
                     aria-pressed={active}
                     onClick={() => setEqPreset(preset.id)}
                     className={`rounded-full px-3.5 py-1.5 text-xs font-bold ${
-                      active
-                        ? 'bg-white text-[#070709]'
-                        : 'border border-white/[0.08] bg-[#0B0B0E] text-[#B4B4BE] hover:text-white'
+                      active ? 'pm-btn-primary' : 'pm-btn-secondary'
                     }`}
                   >
                     {preset.label}
@@ -1251,9 +1312,9 @@ export const EqAndCrossfadeSheet: React.FC = () => {
                 return (
                   <div
                     key={freq}
-                    className="flex flex-col items-center gap-2 rounded-[12px] border border-white/[0.06] bg-[#0B0B0E] p-3"
+                    className="flex flex-col items-center gap-2 rounded-[12px] border pm-border pm-elevated p-3"
                   >
-                    <span className="tabular-nums text-xs font-bold text-[#F5F5F7]">
+                    <span className="tabular-nums text-xs font-bold pm-text-primary">
                       {val > 0 ? `+${val}` : val} dB
                     </span>
                     <input
@@ -1270,7 +1331,7 @@ export const EqAndCrossfadeSheet: React.FC = () => {
                       style={{ '--pm-fill': `${pct}%` } as React.CSSProperties}
                       className="w-full"
                     />
-                    <span className="tabular-nums text-xs font-medium text-[#8E8E98]">
+                    <span className="tabular-nums text-xs font-medium pm-text-tertiary">
                       {label}
                     </span>
                   </div>
@@ -1305,23 +1366,23 @@ export const DevicesConnectSheet: React.FC = () => {
       <div
         aria-hidden="true"
         onClick={() => setDevicesSheetOpen(false)}
-        className="absolute inset-0 bg-black/70"
+        className="pm-spotlight-backdrop absolute inset-0 bg-black/65"
       />
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Dispositivos conectados"
         data-testid="devices-sheet"
-        className="pm-glass-regular pm-sheet-enter relative z-10 flex max-h-[86dvh] w-full max-w-xl flex-col overflow-y-auto rounded-[22px] p-6 text-[#F5F5F7]"
+        className="pm-glass-regular pm-modal-pop relative z-10 flex max-h-[86dvh] w-full max-w-xl flex-col overflow-y-auto rounded-[22px] p-6 pm-text-primary"
       >
-        <div className="flex items-center justify-between border-b border-white/[0.08] pb-4">
+        <div className="flex items-center justify-between border-b pm-border pb-4">
           <div className="flex items-center gap-2.5">
-            <Wifi className="h-5 w-5 text-[#34D399]" />
+            <Wifi className="h-5 w-5 text-emerald-500" />
             <div>
-              <h2 className="text-lg font-bold text-[#F5F5F7]">
+              <h2 className="text-lg font-bold pm-text-primary">
                 Dispositivos (pMusic Connect)
               </h2>
-              <p className="text-xs text-[#B4B4BE]">
+              <p className="text-xs pm-text-secondary">
                 Controla tu PC o móvil en vivo y transfiere la canción en el segundo exacto
               </p>
             </div>
@@ -1330,14 +1391,14 @@ export const DevicesConnectSheet: React.FC = () => {
             type="button"
             aria-label="Cerrar dispositivos"
             onClick={() => setDevicesSheetOpen(false)}
-            className="rounded-full border border-white/[0.08] bg-[#141419] px-3.5 py-1.5 text-xs font-semibold text-[#F5F5F7]"
+            className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-semibold"
           >
             Cerrar
           </button>
         </div>
 
         {lastTransferBanner && (
-          <div className="mt-4 rounded-xl border border-[#34D399]/40 bg-[#0A261D] px-4 py-2.5 text-xs font-semibold text-[#F5F5F7]">
+          <div className="mt-4 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2.5 text-xs font-semibold pm-text-primary">
             {lastTransferBanner}
           </div>
         )}
@@ -1354,25 +1415,25 @@ export const DevicesConnectSheet: React.FC = () => {
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
                     {dev.platform === 'android' ? (
-                      <Smartphone className="h-5 w-5 text-[#34D399]" />
+                      <Smartphone className="h-5 w-5 text-emerald-500" />
                     ) : (
-                      <Laptop className="h-5 w-5 text-[#F5F5F7]" />
+                      <Laptop className="h-5 w-5 pm-text-primary" />
                     )}
                     <div>
-                      <div className="flex items-center gap-2 text-sm font-bold text-[#F5F5F7]">
+                      <div className="flex items-center gap-2 text-sm font-bold pm-text-primary">
                         <span>{dev.device_name}</span>
                         {isSelf && (
-                          <span className="rounded-full bg-white/[0.09] px-2.5 py-0.5 text-[11px] font-medium text-[#B4B4BE]">
+                          <span className="pm-elevated rounded-full border pm-border px-2.5 py-0.5 text-[11px] font-medium pm-text-secondary">
                             Este dispositivo
                           </span>
                         )}
                         {dev.is_active && (
-                          <span className="rounded-full bg-[#0A261D] px-2.5 py-0.5 text-[11px] font-semibold text-[#34D399]">
+                          <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-500">
                             Activo
                           </span>
                         )}
                       </div>
-                      <div className="text-xs text-[#B4B4BE]">
+                      <div className="text-xs pm-text-secondary">
                         {dev.track_title}
                       </div>
                     </div>
@@ -1384,7 +1445,7 @@ export const DevicesConnectSheet: React.FC = () => {
                       onClick={() =>
                         void transferPlaybackToDevice(dev.device_id)
                       }
-                      className="rounded-full bg-white px-4 py-2 text-xs font-bold text-[#070709] hover:bg-white/90"
+                      className="pm-btn-primary rounded-full px-4 py-2 text-xs font-bold"
                     >
                       Transferir aquí
                     </button>
@@ -1392,8 +1453,8 @@ export const DevicesConnectSheet: React.FC = () => {
                 </div>
 
                 {!isSelf && (
-                  <div className="flex items-center justify-between border-t border-white/[0.07] pt-2">
-                    <span className="text-xs font-medium text-[#8E8E98]">
+                  <div className="flex items-center justify-between border-t pm-border pt-2">
+                    <span className="text-xs font-medium pm-text-tertiary">
                       Control remoto en vivo:
                     </span>
                     <div className="flex items-center gap-2">
@@ -1403,7 +1464,7 @@ export const DevicesConnectSheet: React.FC = () => {
                         onClick={() =>
                           void sendRemoteDeviceCommand(dev.device_id, 'prev')
                         }
-                        className="rounded-full bg-[#0B0B0E] px-3 py-1.5 text-xs font-semibold text-[#F5F5F7]"
+                        className="pm-btn-secondary rounded-full px-3 py-1.5 text-xs font-semibold"
                       >
                         Anterior
                       </button>
@@ -1413,7 +1474,7 @@ export const DevicesConnectSheet: React.FC = () => {
                         onClick={() =>
                           void sendRemoteDeviceCommand(dev.device_id, 'toggle')
                         }
-                        className="rounded-full bg-white px-3.5 py-1.5 text-xs font-bold text-[#070709]"
+                        className="pm-btn-primary rounded-full px-3.5 py-1.5 text-xs font-bold"
                       >
                         Play / Pausa
                       </button>
@@ -1423,7 +1484,7 @@ export const DevicesConnectSheet: React.FC = () => {
                         onClick={() =>
                           void sendRemoteDeviceCommand(dev.device_id, 'next')
                         }
-                        className="rounded-full bg-[#0B0B0E] px-3 py-1.5 text-xs font-semibold text-[#F5F5F7]"
+                        className="pm-btn-secondary rounded-full px-3 py-1.5 text-xs font-semibold"
                       >
                         Siguiente
                       </button>
@@ -1439,9 +1500,9 @@ export const DevicesConnectSheet: React.FC = () => {
           data-surface="content"
           className="pm-surface-card mt-5 flex flex-wrap items-center justify-between gap-3 rounded-[16px] p-4"
         >
-          <div className="text-xs text-[#B4B4BE]">
+          <div className="text-xs pm-text-secondary">
             Estado:{' '}
-            <strong className="text-[#F5F5F7]">
+            <strong className="pm-text-primary">
               {syncMode === 'supabase'
                 ? 'Supabase Realtime Conectado'
                 : 'Sincronización Local Activa'}
@@ -1451,7 +1512,7 @@ export const DevicesConnectSheet: React.FC = () => {
             <button
               type="button"
               onClick={() => pairDemoCompanionDevice()}
-              className="rounded-full border border-white/[0.08] bg-[#0B0B0E] px-3.5 py-1.5 text-xs font-semibold text-[#B4B4BE] hover:text-white"
+              className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-semibold"
             >
               Vincular dispositivo local
             </button>
@@ -1461,7 +1522,7 @@ export const DevicesConnectSheet: React.FC = () => {
                 setDevicesSheetOpen(false);
                 setSettingsOpen(true);
               }}
-              className="rounded-full bg-white px-4 py-1.5 text-xs font-bold text-[#070709]"
+              className="pm-btn-primary rounded-full px-4 py-1.5 text-xs font-bold"
             >
               Ajustes de cuenta
             </button>
@@ -1493,19 +1554,19 @@ export const ImportPlaylistModal: React.FC = () => {
       <div
         aria-hidden="true"
         onClick={() => setImportModalOpen(false)}
-        className="absolute inset-0 bg-black/70"
+        className="pm-spotlight-backdrop absolute inset-0 bg-black/65"
       />
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Importar playlist de Spotify o YouTube"
         data-testid="import-modal"
-        className="pm-glass-regular pm-sheet-enter relative z-10 flex max-h-[86dvh] w-full max-w-xl flex-col overflow-y-auto rounded-[22px] p-6 text-[#F5F5F7]"
+        className="pm-glass-regular pm-modal-pop relative z-10 flex max-h-[86dvh] w-full max-w-xl flex-col overflow-y-auto rounded-[22px] p-6 pm-text-primary"
       >
-        <div className="flex items-center justify-between border-b border-white/[0.08] pb-4">
+        <div className="flex items-center justify-between border-b pm-border pb-4">
           <div className="flex items-center gap-2">
-            <ListMusic className="h-5 w-5 text-[#F5F5F7]" />
-            <h2 className="text-lg font-bold text-[#F5F5F7]">
+            <ListMusic className="h-5 w-5 pm-text-primary" />
+            <h2 className="text-lg font-bold pm-text-primary">
               Importar playlist (Spotify / YouTube)
             </h2>
           </div>
@@ -1513,14 +1574,14 @@ export const ImportPlaylistModal: React.FC = () => {
             type="button"
             aria-label="Cerrar importador"
             onClick={() => setImportModalOpen(false)}
-            className="rounded-full border border-white/[0.08] bg-[#141419] px-3.5 py-1.5 text-xs font-semibold text-[#F5F5F7]"
+            className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-semibold"
           >
             Cerrar
           </button>
         </div>
 
         <div className="mt-4 space-y-4">
-          <p className="text-xs font-medium text-[#B4B4BE]">
+          <p className="text-xs font-medium pm-text-secondary">
             Pega el enlace público de cualquier playlist o álbum de Spotify o YouTube Music:
           </p>
 
@@ -1531,12 +1592,12 @@ export const ImportPlaylistModal: React.FC = () => {
               placeholder="https://open.spotify.com/playlist/... o https://music.youtube.com/playlist?list=..."
               value={importUrlInput}
               onChange={(e) => setImportUrlInput(e.target.value)}
-              className="flex-1 rounded-full border border-white/15 bg-[#0B0B0E] px-4 py-2.5 text-sm text-[#F5F5F7] placeholder:text-[#8E8E98]"
+              className="pm-input flex-1 rounded-full px-4 py-2.5 text-sm"
             />
             <button
               type="button"
               onClick={() => void startPlaylistImport()}
-              className="rounded-full bg-white px-5 py-2.5 text-sm font-bold text-[#070709] hover:bg-white/90"
+              className="pm-btn-primary rounded-full px-5 py-2.5 text-sm font-bold"
             >
               Importar
             </button>
@@ -1550,7 +1611,7 @@ export const ImportPlaylistModal: React.FC = () => {
                   'https://open.spotify.com/playlist/37i9dQZF1DX123456'
                 )
               }
-              className="rounded-full border border-white/[0.08] bg-[#121217] px-3.5 py-1.5 text-xs font-medium text-[#B4B4BE] hover:text-white"
+              className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-medium"
             >
               Probar ejemplo Spotify Urbano ES
             </button>
@@ -1561,7 +1622,7 @@ export const ImportPlaylistModal: React.FC = () => {
                   'https://music.youtube.com/playlist?list=PL_URBANO_ES_2026'
                 )
               }
-              className="rounded-full border border-white/[0.08] bg-[#121217] px-3.5 py-1.5 text-xs font-medium text-[#B4B4BE] hover:text-white"
+              className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-medium"
             >
               Probar ejemplo YouTube Music
             </button>
@@ -1572,7 +1633,7 @@ export const ImportPlaylistModal: React.FC = () => {
               data-surface="content"
               className="pm-surface-card space-y-2 rounded-[14px] p-4"
             >
-              <div className="flex items-center justify-between text-xs font-semibold">
+              <div className="flex items-center justify-between text-xs font-semibold pm-text-primary">
                 <span>
                   Fase: {importProgress.phase}{' '}
                   {importProgress.currentTrackTitle
@@ -1586,7 +1647,7 @@ export const ImportPlaylistModal: React.FC = () => {
               <button
                 type="button"
                 onClick={() => cancelPlaylistImport()}
-                className="rounded-full bg-[#281219] px-3.5 py-1.5 text-xs font-semibold text-[#F87171]"
+                className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-semibold text-rose-500"
               >
                 Cancelar importación
               </button>
@@ -1596,7 +1657,7 @@ export const ImportPlaylistModal: React.FC = () => {
           {importError && (
             <div
               role="status"
-              className="rounded-xl border border-[#F87171]/40 bg-[#281219] p-3 text-xs font-semibold text-[#F5F5F7]"
+              className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-xs font-semibold pm-text-primary"
             >
               {importError}
             </div>
@@ -1609,24 +1670,24 @@ export const ImportPlaylistModal: React.FC = () => {
             >
               <div className="flex items-center justify-between gap-2">
                 <div>
-                  <h3 className="text-base font-bold text-[#F5F5F7]">
+                  <h3 className="text-base font-bold pm-text-primary">
                     {importResult.name}
                   </h3>
-                  <p className="text-xs text-[#B4B4BE]">
+                  <p className="text-xs pm-text-secondary">
                     {importResult.items.length} canciones encontradas
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => void saveImportedPlaylistToLibrary()}
-                  className="rounded-full bg-white px-4 py-2 text-xs font-bold text-[#070709]"
+                  className="pm-btn-primary rounded-full px-4 py-2 text-xs font-bold"
                 >
                   Guardar en Biblioteca
                 </button>
               </div>
 
               {importResult.truncated && importResult.warning && (
-                <div className="rounded-xl border border-[#FBBF24]/40 bg-[#27200B] p-2.5 text-xs font-medium text-[#F5F5F7]">
+                <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-2.5 text-xs font-medium pm-text-primary">
                   {importResult.warning}
                 </div>
               )}
@@ -1635,12 +1696,12 @@ export const ImportPlaylistModal: React.FC = () => {
                 {importResult.items.map((item, i) => (
                   <div
                     key={`${item.source.title}-${i}`}
-                    className="flex items-center justify-between rounded-lg bg-[#0B0B0E] px-3 py-2 text-xs"
+                    className="flex items-center justify-between rounded-lg border pm-border pm-elevated px-3 py-2 text-xs"
                   >
-                    <span className="truncate font-semibold text-[#F5F5F7]">
+                    <span className="truncate font-semibold pm-text-primary">
                       {item.source.title} — {item.source.artists.join(', ')}
                     </span>
-                    <span className="ml-2 rounded-full bg-[#0A261D] px-2.5 py-0.5 text-[11px] font-semibold text-[#34D399]">
+                    <span className="ml-2 rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-500">
                       {Math.round(item.confidence * 100)}%
                     </span>
                   </div>
@@ -1648,365 +1709,6 @@ export const ImportPlaylistModal: React.FC = () => {
               </div>
             </div>
           )}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-export const SettingsModal: React.FC = () => {
-  const {
-    settingsOpen,
-    setSettingsOpen,
-    supabaseUrlInput,
-    supabaseAnonKeyInput,
-    deviceName,
-    authState,
-    seedArtists,
-    affinityProfile,
-    offlineEntries,
-    graphicSaverMode,
-    discordRpcEnabled,
-    configureSupabase,
-    signInSupabase,
-    signUpSupabase,
-    signOutSupabase,
-    addSeedArtist,
-    removeSeedArtist,
-    resetTasteProfile,
-    clearOfflineCache,
-    setGraphicSaverMode,
-    setDiscordRpcEnabled,
-  } = usePMusicStore();
-
-  const [urlVal, setUrlVal] = useState(supabaseUrlInput);
-  const [keyVal, setKeyVal] = useState(supabaseAnonKeyInput);
-  const [devNameVal, setDevNameVal] = useState(deviceName);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [newSeedName, setNewSeedName] = useState('');
-  const [authNotice, setAuthNotice] = useState<string | null>(null);
-
-  if (!settingsOpen) return null;
-
-  const totalOfflineBytes = offlineEntries.reduce(
-    (sum, e) => sum + e.sizeBytes,
-    0
-  );
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div
-        aria-hidden="true"
-        onClick={() => setSettingsOpen(false)}
-        className="absolute inset-0 bg-black/70"
-      />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Ajustes de pMusic"
-        data-testid="settings-view"
-        className="pm-glass-regular pm-sheet-enter relative z-10 flex max-h-[88dvh] w-full max-w-2xl flex-col overflow-y-auto rounded-[22px] p-6 text-[#F5F5F7]"
-      >
-        <div className="flex items-center justify-between border-b border-white/[0.08] pb-4">
-          <div className="flex items-center gap-2.5">
-            <Settings className="h-5 w-5 text-[#F5F5F7]" />
-            <h2 className="text-lg font-bold text-[#F5F5F7]">
-              Ajustes y Sincronización
-            </h2>
-          </div>
-          <button
-            type="button"
-            aria-label="Cerrar ajustes"
-            onClick={() => setSettingsOpen(false)}
-            className="rounded-full border border-white/[0.08] bg-[#141419] px-3.5 py-1.5 text-xs font-semibold text-[#F5F5F7]"
-          >
-            Cerrar
-          </button>
-        </div>
-
-        <div className="mt-5 space-y-5">
-          <section
-            data-surface="content"
-            className="pm-surface-card space-y-3 rounded-[16px] p-4"
-          >
-            <h3 className="text-sm font-bold text-[#F5F5F7]">
-              Interconexión PC ↔ Móvil (Supabase Free Tier)
-            </h3>
-            <p className="text-xs text-[#B4B4BE]">
-              Tu proyecto Supabase (
-              <code className="text-[#F5F5F7]">zlaxnxkfwngmwqnqnqtu</code>) ya
-              está preconfigurado. Inicia sesión con el mismo correo en tu móvil
-              y en tu PC.
-            </p>
-
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-              <input
-                type="text"
-                aria-label="Nombre de este dispositivo"
-                placeholder="Nombre del dispositivo"
-                value={devNameVal}
-                onChange={(e) => setDevNameVal(e.target.value)}
-                className="rounded-full border border-white/15 bg-[#0B0B0E] px-4 py-2 text-xs text-[#F5F5F7]"
-              />
-              <input
-                type="text"
-                aria-label="Supabase Project URL"
-                placeholder="https://xyz.supabase.co"
-                value={urlVal}
-                onChange={(e) => setUrlVal(e.target.value)}
-                className="rounded-full border border-white/15 bg-[#0B0B0E] px-4 py-2 text-xs text-[#F5F5F7]"
-              />
-            </div>
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <input
-                type="password"
-                aria-label="Supabase Anon Key"
-                placeholder="sb_publishable_..."
-                value={keyVal}
-                onChange={(e) => setKeyVal(e.target.value)}
-                className="flex-1 rounded-full border border-white/15 bg-[#0B0B0E] px-4 py-2 text-xs text-[#F5F5F7]"
-              />
-              <button
-                type="button"
-                onClick={async () => {
-                  await configureSupabase(urlVal, keyVal, devNameVal);
-                  setAuthNotice('Configuración guardada correctamente.');
-                }}
-                className="rounded-full bg-white px-4 py-2 text-xs font-bold text-[#070709]"
-              >
-                Guardar conexión
-              </button>
-            </div>
-
-            <div className="border-t border-white/[0.07] pt-3">
-              {authState.connected ? (
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-[#34D399]">
-                    Sesión iniciada como {authState.email}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => void signOutSupabase()}
-                    className="rounded-full bg-[#0B0B0E] px-3.5 py-1.5 text-xs font-semibold text-[#F87171]"
-                  >
-                    Cerrar sesión
-                  </button>
-                </div>
-              ) : (
-                <div className="flex flex-wrap items-center gap-2">
-                  <input
-                    type="email"
-                    aria-label="Correo electrónico"
-                    placeholder="tu@email.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="flex-1 rounded-full border border-white/15 bg-[#0B0B0E] px-4 py-2 text-xs text-[#F5F5F7]"
-                  />
-                  <input
-                    type="password"
-                    aria-label="Contraseña"
-                    placeholder="Contraseña"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="flex-1 rounded-full border border-white/15 bg-[#0B0B0E] px-4 py-2 text-xs text-[#F5F5F7]"
-                  />
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        await signInSupabase(
-                          email || 'pablo@pmusic.es',
-                          password || 'pmusic123'
-                        );
-                        setAuthNotice('Sesión iniciada.');
-                      } catch (err) {
-                        setAuthNotice(
-                          err instanceof Error ? err.message : 'Error de acceso'
-                        );
-                      }
-                    }}
-                    className="rounded-full bg-white px-4 py-2 text-xs font-bold text-[#070709]"
-                  >
-                    Iniciar sesión
-                  </button>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        await signUpSupabase(
-                          email || 'pablo@pmusic.es',
-                          password || 'pmusic123'
-                        );
-                        setAuthNotice('Cuenta creada.');
-                      } catch (err) {
-                        setAuthNotice(
-                          err instanceof Error
-                            ? err.message
-                            : 'Error al registrar'
-                        );
-                      }
-                    }}
-                    className="rounded-full border border-white/10 bg-[#0B0B0E] px-4 py-2 text-xs font-semibold text-[#F5F5F7]"
-                  >
-                    Crear cuenta
-                  </button>
-                </div>
-              )}
-              {authNotice && (
-                <p className="mt-2 text-xs font-medium text-[#34D399]">
-                  {authNotice}
-                </p>
-              )}
-            </div>
-          </section>
-
-          <section
-            data-surface="content"
-            className="pm-surface-card space-y-3 rounded-[16px] p-4"
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-[#F5F5F7]">
-                  Algoritmo de Gustos y Artistas Semilla
-                </h3>
-                <p className="text-xs text-[#B4B4BE]">
-                  Tus artistas favoritos tienen prioridad en búsquedas, autocompletado y Mixes
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => void resetTasteProfile()}
-                className="flex items-center gap-1 rounded-full bg-[#0B0B0E] px-3.5 py-1.5 text-xs font-semibold text-[#B4B4BE] hover:text-white"
-              >
-                <RotateCcw className="h-3.5 w-3.5" />
-                <span>Restablecer gustos</span>
-              </button>
-            </div>
-
-            <div className="flex gap-2">
-              <input
-                type="text"
-                aria-label="Añadir artista favorito"
-                placeholder="Ej. Cruz Cafuné, La Pantera, Bad Bunny..."
-                value={newSeedName}
-                onChange={(e) => setNewSeedName(e.target.value)}
-                className="flex-1 rounded-full border border-white/15 bg-[#0B0B0E] px-4 py-2 text-xs text-[#F5F5F7]"
-              />
-              <button
-                type="button"
-                onClick={async () => {
-                  await addSeedArtist(newSeedName);
-                  setNewSeedName('');
-                }}
-                className="flex items-center gap-1 rounded-full bg-white px-4 py-2 text-xs font-bold text-[#070709]"
-              >
-                <Plus className="h-4 w-4" />
-                <span>Añadir</span>
-              </button>
-            </div>
-
-            <div className="flex flex-wrap gap-1.5">
-              {seedArtists.slice(0, 10).map((seed) => (
-                <span
-                  key={seed.artistKey}
-                  className="flex items-center gap-1.5 rounded-full border border-white/[0.07] bg-[#0B0B0E] px-3 py-1 text-xs font-semibold text-[#F5F5F7]"
-                >
-                  <span>{seed.displayName}</span>
-                  <button
-                    type="button"
-                    aria-label={`Eliminar semilla ${seed.displayName}`}
-                    onClick={() => void removeSeedArtist(seed.artistKey)}
-                    className="text-[#8E8E98] hover:text-[#F87171]"
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-            </div>
-
-            <div className="text-xs text-[#B4B4BE]">
-              Top afinidad actual:{' '}
-              {affinityProfile
-                .slice(0, 4)
-                .map((a) => `${a.artistName} (+${a.score.toFixed(1)})`)
-                .join(' · ')}
-            </div>
-          </section>
-
-          <section
-            data-surface="content"
-            className="pm-surface-card space-y-3 rounded-[16px] p-4"
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm font-bold text-[#F5F5F7]">
-                  Discord Rich Presence (Windows PC)
-                </div>
-                <div className="text-xs text-[#B4B4BE]">
-                  Muestra la canción actual y el artista en tu perfil de Discord
-                </div>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={discordRpcEnabled}
-                aria-label="Activar Discord Rich Presence"
-                onClick={() => setDiscordRpcEnabled(!discordRpcEnabled)}
-                className={`rounded-full px-4 py-1.5 text-xs font-bold ${
-                  discordRpcEnabled
-                    ? 'bg-white text-[#070709]'
-                    : 'bg-[#0B0B0E] text-[#B4B4BE]'
-                }`}
-              >
-                {discordRpcEnabled ? 'Activado' : 'Desactivado'}
-              </button>
-            </div>
-
-            <div className="flex items-center justify-between border-t border-white/[0.07] pt-3">
-              <div>
-                <div className="text-sm font-bold text-[#F5F5F7]">
-                  Modo ahorro gráfico (Reducir transparencias)
-                </div>
-                <div className="text-xs text-[#B4B4BE]">
-                  Sustituye el desenfoque Liquid Glass por superficies OLED opacas
-                </div>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={graphicSaverMode}
-                aria-label="Activar Modo ahorro gráfico"
-                onClick={() => setGraphicSaverMode(!graphicSaverMode)}
-                className={`rounded-full px-4 py-1.5 text-xs font-bold ${
-                  graphicSaverMode
-                    ? 'bg-white text-[#070709]'
-                    : 'bg-[#0B0B0E] text-[#B4B4BE]'
-                }`}
-              >
-                {graphicSaverMode ? 'Activado' : 'Desactivado'}
-              </button>
-            </div>
-
-            <div className="flex items-center justify-between border-t border-white/[0.07] pt-3">
-              <div>
-                <div className="text-sm font-bold text-[#F5F5F7]">
-                  Caché offline ({offlineEntries.length} canciones ·{' '}
-                  {(totalOfflineBytes / 1024).toFixed(0)} KB)
-                </div>
-                <div className="text-xs text-[#B4B4BE]">
-                  Canciones guardadas para escuchar sin datos
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => void clearOfflineCache()}
-                className="rounded-full bg-[#0B0B0E] px-4 py-1.5 text-xs font-semibold text-[#F87171]"
-              >
-                Vaciar caché offline
-              </button>
-            </div>
-          </section>
         </div>
       </div>
     </div>

@@ -28,8 +28,10 @@ interface DeckChannelNodes {
   midEqNode?: BiquadFilterNode;
   highEqNode?: BiquadFilterNode;
   sweepFilterNode?: BiquadFilterNode;
+  trimGainNode?: GainNode;
   gainNode?: GainNode;
   delaySendNode?: GainNode;
+  delayBandpassNode?: BiquadFilterNode;
   delayNode?: DelayNode;
   delayFeedbackNode?: GainNode;
 }
@@ -124,6 +126,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
   private audioCtx: AudioContext | null = null;
   private userEqNodes: BiquadFilterNode[] = [];
   private masterGainNode: GainNode | null = null;
+  private stereoPannerNode: StereoPannerNode | null = null;
   private limiterNode: DynamicsCompressorNode | null = null;
   private analyserNode: AnalyserNode | null = null;
 
@@ -135,6 +138,12 @@ export class DualDeckAudioEngine implements IAudioEngine {
   private positionSec = 0;
   private durationSec = 0;
   private volume = 0.85;
+  private playbackRate = 1.0;
+  private preservesPitch = true;
+  private stereoBalance = 0;
+  private monoAudio = false;
+  private normalizationEnabled = true;
+  private normalizationTargetDb = -11;
   private isTransitioning = false;
   private activeTransitionType?: DjTransitionType;
   private transitionProgress01 = 0;
@@ -208,6 +217,19 @@ export class DualDeckAudioEngine implements IAudioEngine {
 
         this.masterGainNode = ctx.createGain();
         this.masterGainNode.gain.value = volumeToPerceptualGain(this.volume);
+        if (this.monoAudio) {
+          try {
+            this.masterGainNode.channelCountMode = 'explicit';
+            this.masterGainNode.channelCount = 1;
+          } catch {
+            // ignore in limited AudioContext implementations
+          }
+        }
+
+        if (typeof ctx.createStereoPanner === 'function') {
+          this.stereoPannerNode = ctx.createStereoPanner();
+          this.stereoPannerNode.pan.value = this.stereoBalance;
+        }
 
         this.analyserNode = ctx.createAnalyser();
         this.analyserNode.fftSize = 256;
@@ -220,7 +242,12 @@ export class DualDeckAudioEngine implements IAudioEngine {
         const lastEq = this.userEqNodes[this.userEqNodes.length - 1]!;
         lastEq.connect(this.limiterNode);
         this.limiterNode.connect(this.masterGainNode);
-        this.masterGainNode.connect(this.analyserNode);
+        if (this.stereoPannerNode) {
+          this.masterGainNode.connect(this.stereoPannerNode);
+          this.stereoPannerNode.connect(this.analyserNode);
+        } else {
+          this.masterGainNode.connect(this.analyserNode);
+        }
         this.analyserNode.connect(ctx.destination);
 
         this.wireDeckWebAudioNodes(ctx, this.deckA, firstEq);
@@ -326,11 +353,19 @@ export class DualDeckAudioEngine implements IAudioEngine {
       sweepFilter.frequency.value = 20000;
       sweepFilter.Q.value = 0.707;
 
+      const trimGain = ctx.createGain();
+      trimGain.gain.value = 1.0;
+
       const deckGain = ctx.createGain();
       deckGain.gain.value = 1.0;
 
       const delaySend = ctx.createGain();
       delaySend.gain.value = 0;
+
+      const delayBandpass = ctx.createBiquadFilter();
+      delayBandpass.type = 'bandpass';
+      delayBandpass.frequency.value = 1400;
+      delayBandpass.Q.value = 0.85;
 
       const delayNode = ctx.createDelay(4.0);
       delayNode.delayTime.value = 0.375;
@@ -342,14 +377,16 @@ export class DualDeckAudioEngine implements IAudioEngine {
       lowEq.connect(midEq);
       midEq.connect(highEq);
       highEq.connect(sweepFilter);
-      sweepFilter.connect(deckGain);
+      sweepFilter.connect(trimGain);
+      trimGain.connect(deckGain);
       deckGain.connect(destination);
 
-      // Pre-fader echo send loop so echo tail rings out even as deckGain fades down
+      // Pre-fader bandpass echo loop keeps dub tails warm without muddying sub-bass
       sweepFilter.connect(delaySend);
-      delaySend.connect(delayNode);
+      delaySend.connect(delayBandpass);
+      delayBandpass.connect(delayNode);
       delayNode.connect(delayFeedback);
-      delayFeedback.connect(delayNode);
+      delayFeedback.connect(delayBandpass);
       delayNode.connect(destination);
 
       deck.sourceNode = source;
@@ -357,8 +394,10 @@ export class DualDeckAudioEngine implements IAudioEngine {
       deck.midEqNode = midEq;
       deck.highEqNode = highEq;
       deck.sweepFilterNode = sweepFilter;
+      deck.trimGainNode = trimGain;
       deck.gainNode = deckGain;
       deck.delaySendNode = delaySend;
+      deck.delayBandpassNode = delayBandpass;
       deck.delayNode = delayNode;
       deck.delayFeedbackNode = delayFeedback;
     } catch {
@@ -379,7 +418,17 @@ export class DualDeckAudioEngine implements IAudioEngine {
   }
 
   private resetDeckDsp(deck: DeckChannelNodes, gainValue = 1.0): void {
-    deck.audio.playbackRate = 1.0;
+    deck.audio.playbackRate = this.playbackRate;
+    try {
+      const pitchAudio = deck.audio as HTMLAudioElement & {
+        preservesPitch?: boolean;
+        webkitPreservesPitch?: boolean;
+      };
+      pitchAudio.preservesPitch = this.preservesPitch;
+      pitchAudio.webkitPreservesPitch = this.preservesPitch;
+    } catch {
+      // ignore on unsupported engines
+    }
     deck.audio.volume =
       this.audioCtx && deck.sourceNode
         ? 1.0
@@ -392,6 +441,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
       deck.sweepFilterNode.frequency.value = 20000;
       deck.sweepFilterNode.Q.value = 0.707;
     }
+    if (deck.trimGainNode) deck.trimGainNode.gain.value = 1.0;
     if (deck.gainNode) deck.gainNode.gain.value = gainValue;
     if (deck.delaySendNode) deck.delaySendNode.gain.value = 0;
     if (deck.delayFeedbackNode) deck.delayFeedbackNode.gain.value = 0;
@@ -536,6 +586,63 @@ export class DualDeckAudioEngine implements IAudioEngine {
     this.emitState();
   }
 
+  public setBalance(pan: number): void {
+    const clamped = Math.max(-1, Math.min(1, Number.isFinite(pan) ? pan : 0));
+    this.stereoBalance = clamped;
+    setAudioParamSmooth(this.stereoPannerNode?.pan, this.audioCtx, clamped, 0.02);
+  }
+
+  public setMonoAudio(enabled: boolean): void {
+    this.monoAudio = Boolean(enabled);
+    if (this.masterGainNode) {
+      try {
+        if (this.monoAudio) {
+          this.masterGainNode.channelCountMode = 'explicit';
+          this.masterGainNode.channelCount = 1;
+        } else {
+          this.masterGainNode.channelCountMode = 'max';
+          this.masterGainNode.channelCount = 2;
+        }
+      } catch {
+        // ignore in mock DOM
+      }
+    }
+  }
+
+  public setPlaybackRate(rate: number, preservesPitch = this.preservesPitch): void {
+    const clamped = Math.max(0.5, Math.min(2.0, Number.isFinite(rate) ? rate : 1.0));
+    this.playbackRate = clamped;
+    this.preservesPitch = preservesPitch;
+    for (const deck of [this.deckA, this.deckB]) {
+      if (!deck) continue;
+      deck.audio.playbackRate = clamped;
+      try {
+        const pitchAudio = deck.audio as HTMLAudioElement & {
+          preservesPitch?: boolean;
+          webkitPreservesPitch?: boolean;
+        };
+        pitchAudio.preservesPitch = preservesPitch;
+        pitchAudio.webkitPreservesPitch = preservesPitch;
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  public setNormalization(enabled: boolean, targetDb = -11, trackLoudnessDb?: number): void {
+    this.normalizationEnabled = Boolean(enabled);
+    this.normalizationTargetDb = Math.max(-18, Math.min(-6, targetDb));
+    if (!this.deckA || !this.deckB) return;
+    const active = this.getDeck(this.activeDeck);
+    if (!this.normalizationEnabled || typeof trackLoudnessDb !== 'number') {
+      setAudioParamSmooth(active.trimGainNode?.gain, this.audioCtx, 1.0, 0.08);
+      return;
+    }
+    const deltaDb = Math.max(-6, Math.min(6, this.normalizationTargetDb - trackLoudnessDb));
+    const linear = Math.pow(10, deltaDb / 20);
+    setAudioParamSmooth(active.trimGainNode?.gain, this.audioCtx, linear, 0.08);
+  }
+
   public setUserEq(config: UserEqConfig): void {
     this.userEqConfig = {
       enabled: config.enabled,
@@ -598,10 +705,24 @@ export class DualDeckAudioEngine implements IAudioEngine {
       : 1.0;
     incoming.audio.playbackRate = startRate;
 
+    const ch = plan.choreography;
+    const incomingTrimLinear = ch
+      ? Math.pow(10, Math.max(-5, Math.min(5, ch.loudnessTrimDb)) / 20)
+      : 1.0;
+
     // Reset incoming DSP cleanly before fading in
     this.resetDeckDsp(incoming, 0);
     incoming.audio.playbackRate = startRate;
-    if (plan.transitionType === 'eq_swap') {
+    setAudioParamSmooth(incoming.trimGainNode?.gain, this.audioCtx, incomingTrimLinear, 0.01);
+    if (ch) {
+      setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -24, 0.01);
+      setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, ch.incomingVocalHoldDb, 0.01);
+      if (incoming.sweepFilterNode && ch.inLowPassStartHz < 11000) {
+        incoming.sweepFilterNode.type = 'lowpass';
+        incoming.sweepFilterNode.Q.value = 1.2;
+        setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, ch.inLowPassStartHz, 0.01);
+      }
+    } else if (plan.transitionType === 'eq_swap') {
       setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -24, 0.01);
       setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, -3, 0.01);
     } else if (plan.transitionType === 'filter_sweep' && incoming.sweepFilterNode) {
@@ -639,7 +760,73 @@ export class DualDeckAudioEngine implements IAudioEngine {
       let outGain = Math.cos(p * 0.5 * Math.PI);
       let inGain = Math.sin(p * 0.5 * Math.PI);
 
-      if (plan.transitionType === 'eq_swap') {
+      if (ch) {
+        // Continuous adaptive 3-stem DJ sculpting tailored specifically for this song pair
+        const swapStart = Math.max(0.15, ch.bassSwapPoint01 - ch.bassSwapWidth01 * 0.5);
+        const swapEnd = Math.min(0.88, ch.bassSwapPoint01 + ch.bassSwapWidth01 * 0.5);
+        const swapU =
+          p <= swapStart
+            ? 0
+            : p >= swapEnd
+              ? 1
+              : (p - swapStart) / Math.max(0.05, swapEnd - swapStart);
+
+        // Low-stem swap (sub-bass / kick clean handover with zero phase mud)
+        setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -24 * swapU);
+        setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -24 * (1 - swapU));
+
+        // High-stem percussion / hi-hat entry
+        const hiLeadU = Math.min(1, p / Math.max(0.2, 0.65 - ch.highStemLead01 * 0.5));
+        setAudioParamSmooth(incoming.highEqNode?.gain, this.audioCtx, -6 * (1 - hiLeadU));
+        setAudioParamSmooth(outgoing.highEqNode?.gain, this.audioCtx, -8 * Math.pow(p, 1.4));
+
+        // Mid vocal-pocket sculpting (carves outgoing vocal presence while lifting incoming lead after bass swap)
+        const midCarveFactor = Math.sin(Math.min(1, p / 0.85) * Math.PI * 0.7);
+        setAudioParamSmooth(
+          outgoing.midEqNode?.gain,
+          this.audioCtx,
+          ch.vocalCarveDb * midCarveFactor
+        );
+        const inVocalOpen = p < swapStart ? 0 : Math.min(1, (p - swapStart) / (1 - swapStart));
+        setAudioParamSmooth(
+          incoming.midEqNode?.gain,
+          this.audioCtx,
+          ch.incomingVocalHoldDb * (1 - inVocalOpen)
+        );
+
+        // Filter choreography
+        if (outgoing.sweepFilterNode && ch.outHighPassPeakHz > 80) {
+          outgoing.sweepFilterNode.type = 'highpass';
+          outgoing.sweepFilterNode.Q.value = plan.transitionType === 'filter_sweep' ? 1.45 : 0.9;
+          const hpFreq = 32 * Math.pow(ch.outHighPassPeakHz / 32, Math.pow(p, 1.25));
+          setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, hpFreq);
+        }
+        if (incoming.sweepFilterNode && ch.inLowPassStartHz < 11000) {
+          incoming.sweepFilterNode.type = 'lowpass';
+          incoming.sweepFilterNode.Q.value = 1.2;
+          const lpRatio = Math.min(1, p / 0.78);
+          const lpFreq =
+            ch.inLowPassStartHz * Math.pow(20000 / Math.max(120, ch.inLowPassStartHz), lpRatio);
+          setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, lpFreq);
+        }
+
+        // Bandpassed BPM dub echo send (strictly <= 0.78 feedback)
+        if (plan.transitionType === 'echo_out' || ch.vocalClashAvoided) {
+          const sendCurve = p < 0.45 ? (p / 0.45) * ch.echoSendPeak : Math.max(0, ch.echoSendPeak * (1 - (p - 0.45) / 0.35));
+          const fbCurve = Math.min(0.75, ch.echoFeedbackPeak * (1 - Math.max(0, p - 0.5) / 0.5));
+          setAudioParamSmooth(outgoing.delaySendNode?.gain, this.audioCtx, sendCurve, 0.025);
+          setAudioParamSmooth(outgoing.delayFeedbackNode?.gain, this.audioCtx, fbCurve, 0.025);
+        }
+
+        // Gain curve adapts smoothly between harmonic club blend vs crisp echo-out cut
+        if (plan.transitionType === 'echo_out') {
+          outGain = p < 0.62 ? Math.cos((p / 0.62) * 0.5 * Math.PI) : 0;
+          inGain = p < 0.2 ? 0 : Math.min(1, Math.sin(Math.min(1, (p - 0.2) / 0.52) * 0.5 * Math.PI));
+        } else {
+          outGain = p < 0.55 ? 1 - 0.18 * (p / 0.55) : 0.82 * Math.cos(((p - 0.55) / 0.45) * 0.5 * Math.PI);
+          inGain = p < 0.55 ? Math.sin((p / 0.55) * 0.5 * Math.PI) * 0.92 : 0.92 + 0.08 * ((p - 0.55) / 0.45);
+        }
+      } else if (plan.transitionType === 'eq_swap') {
         // Phase-locked club blend: gradual bring-in -> punchy midpoint bass swap -> clean exit
         if (p < 0.44) {
           const u = p / 0.44;

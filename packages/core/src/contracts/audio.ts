@@ -28,6 +28,12 @@ export interface TrackAnalysis {
   peakEnergy: number;
   /** Downsampled ~1Hz energy envelope (0..1) for waveform/structure UI */
   rmsEnvelope: number[];
+  /** Optional 3-stem energy envelopes (~1Hz, 0..1) for stem-aware DJ transitions */
+  bassEnvelope?: number[];
+  vocalEnvelope?: number[];
+  highEnvelope?: number[];
+  /** First detected downbeat phase offset in seconds */
+  beatPhaseSec?: number;
   introEndSec: number;
   primaryDropSec: number;
   chorusStartSec: number;
@@ -38,6 +44,37 @@ export interface TrackAnalysis {
   loudnessDb?: number;
   source: TrackAnalysisSource;
   analyzedAtMs: number;
+}
+
+/**
+ * Bespoke per-pair DSP stem choreography computed from real audio analysis
+ * (bass, vocal mid pocket, high percussion, sweep filter, echo send & loudness trim).
+ */
+export interface DjStemChoreography {
+  /** Normalized progress point [0.25..0.75] where sub-bass swaps decks */
+  bassSwapPoint01: number;
+  /** Normalized width of the sub-bass cross-fade */
+  bassSwapWidth01: number;
+  /** Outgoing vocal presence cut in dB (e.g. -16 dB) to prevent vocal clash */
+  vocalCarveDb: number;
+  /** Initial incoming mid hold in dB before full vocal takeover */
+  incomingVocalHoldDb: number;
+  /** Outgoing high-pass sweep ceiling in Hz during exit */
+  outHighPassPeakHz: number;
+  /** Incoming low-pass reveal starting frequency in Hz */
+  inLowPassStartHz: number;
+  /** Peak pre-fader bandpass echo send [0..0.7] */
+  echoSendPeak: number;
+  /** Peak feedback capped strictly <= 0.78 */
+  echoFeedbackPeak: number;
+  /** Early high-frequency stem entry lead [0..0.45] */
+  highStemLead01: number;
+  /** Gain trim in dB applied to incoming deck to match perceived loudness */
+  loudnessTrimDb: number;
+  /** True when vocal pocket carving is active because both tracks sing in the window */
+  vocalClashAvoided: boolean;
+  /** Concise Spanish human-readable description of what the DJ is sculpting */
+  summary: string;
 }
 
 export interface DeckTransitionPlan {
@@ -57,6 +94,8 @@ export interface DeckTransitionPlan {
   echoSubdivision: 0.5 | 0.75;
   /** Pair transition compatibility in [0, 1] */
   compatibilityScore: number;
+  /** Adaptive pairwise stem choreography */
+  choreography?: DjStemChoreography;
 }
 
 export interface DjModeConfig {
@@ -69,6 +108,10 @@ export interface DjModeConfig {
   enabledTransitions?: DjFxToggles;
   /** Gentle ±4% playbackRate nudge */
   tempoMatching: boolean;
+  /** Adaptive 3-stem crossover & vocal-pocket sculpting */
+  stemSculpting?: boolean;
+  /** Avoid overlapping vocal stems during transition window */
+  vocalClashProtection?: boolean;
 }
 
 export interface SafeCrossfadeConfig {

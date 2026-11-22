@@ -4,6 +4,7 @@ import {
   LrclibLyricsProvider,
   PlaylistImporter,
   YouTubeMusicProvider,
+  parseFeaturedArtistsFromTitle,
   parseSpotifyEmbedHtml,
   splitSpotifySubtitleArtists,
   synthesizeDeterministicWavBuffer,
@@ -148,5 +149,15 @@ describe('@pmusic/providers', () => {
     expect(wav.byteLength).toBeGreaterThan(44);
     const header = String.fromCharCode(wav[0]!, wav[1]!, wav[2]!, wav[3]!);
     expect(header).toBe('RIFF');
+  });
+
+  it('extracts and deduplicates multi-artist collaborations from track titles and contributors', () => {
+    expect(
+      parseFeaturedArtistsFromTitle('Cayó La Noche (feat. Cruzzi, Abhir Hathi & Bejo) [Remix]')
+    ).toEqual(['Cruzzi', 'Abhir Hathi', 'Bejo']);
+    expect(parseFeaturedArtistsFromTitle('LUNA ft. Feid x ATL Jacob')).toEqual([
+      'Feid',
+      'ATL Jacob',
+    ]);
   });
 });

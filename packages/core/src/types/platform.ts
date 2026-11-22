@@ -23,7 +23,21 @@ export interface DiscordPresenceState {
   track: Track | null;
   isPlaying: boolean;
   positionSec: number;
+  durationSec?: number;
   enabled: boolean;
+  clientId?: string;
+  showTimestamps?: boolean;
+  showArtwork?: boolean;
+  showWhenPaused?: boolean;
+  displayMode?: 'song' | 'artist' | 'app';
+}
+
+export interface DiscordRpcStatus {
+  connected: boolean;
+  status: 'connected' | 'connecting' | 'disconnected' | 'needs_client_id' | 'disabled' | 'web_only';
+  username?: string;
+  clientId: string;
+  lastError?: string;
 }
 
 export type NativeMediaActionType =
@@ -86,6 +100,9 @@ export interface IPlatformBridge {
   buildStreamUrl(videoId: string, quality?: AudioStreamQuality): Promise<string>;
   nativeFetch(url: string, init?: NativeFetchRequest): Promise<NativeFetchResponse>;
   updateDiscordPresence?(state: DiscordPresenceState): Promise<void>;
+  configureDiscordRpc?(clientId: string): Promise<DiscordRpcStatus>;
+  reconnectDiscordRpc?(): Promise<DiscordRpcStatus>;
+  getDiscordRpcStatus?(): Promise<DiscordRpcStatus>;
   updateNativeMediaSession?(state: NativeMediaSessionState): Promise<void>;
   onNativeMediaAction?(cb: (action: NativeMediaAction) => void): Unsubscribe;
   offlineStorage: IOfflineStorageBridge;

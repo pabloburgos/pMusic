@@ -1,5 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { DiscordPresenceState, NativeMediaAction } from '@pmusic/core';
+import type {
+  DiscordPresenceState,
+  DiscordRpcStatus,
+  NativeMediaAction,
+} from '@pmusic/core';
 
 contextBridge.exposeInMainWorld('pmusicDesktop', {
   runtime: 'electron' as const,
@@ -8,6 +12,12 @@ contextBridge.exposeInMainWorld('pmusicDesktop', {
     ipcRenderer.invoke('pmusic:get-auth-headers'),
   updateDiscordPresence: (state: DiscordPresenceState): Promise<void> =>
     ipcRenderer.invoke('pmusic:update-discord', state),
+  configureDiscordRpc: (clientId: string): Promise<DiscordRpcStatus> =>
+    ipcRenderer.invoke('pmusic:configure-discord', clientId),
+  reconnectDiscordRpc: (): Promise<DiscordRpcStatus> =>
+    ipcRenderer.invoke('pmusic:reconnect-discord'),
+  getDiscordRpcStatus: (): Promise<DiscordRpcStatus> =>
+    ipcRenderer.invoke('pmusic:get-discord-status'),
   setTitleBarOverlay: (opts: {
     color?: string;
     symbolColor?: string;

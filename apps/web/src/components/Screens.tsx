@@ -29,6 +29,7 @@ import {
   readTrackFromDropEvent,
   setDraggedTrack,
 } from '../utils/track-dnd.ts';
+import { ArtistLinks } from './ArtistLinks.tsx';
 
 function getSpanishGreeting(): string {
   const hour = new Date().getHours();
@@ -42,9 +43,18 @@ const PlayingEqBars: React.FC = () => (
     aria-hidden="true"
     className="inline-flex h-3.5 w-3.5 items-end justify-center gap-[2px]"
   >
-    <span className="pm-eq-bar-1 h-full w-[2.5px] rounded-full bg-white" />
-    <span className="pm-eq-bar-2 h-full w-[2.5px] rounded-full bg-white" />
-    <span className="pm-eq-bar-3 h-full w-[2.5px] rounded-full bg-white" />
+    <span
+      className="pm-eq-bar-1 h-full w-[2.5px] rounded-full"
+      style={{ backgroundColor: 'var(--pm-accent-primary)' }}
+    />
+    <span
+      className="pm-eq-bar-2 h-full w-[2.5px] rounded-full"
+      style={{ backgroundColor: 'var(--pm-accent-primary)' }}
+    />
+    <span
+      className="pm-eq-bar-3 h-full w-[2.5px] rounded-full"
+      style={{ backgroundColor: 'var(--pm-accent-primary)' }}
+    />
   </span>
 );
 
@@ -66,7 +76,6 @@ export const TrackListRow: React.FC<{
     downloadTrackOffline,
     addToQueue,
     removeTrackFromPlaylist,
-    openArtistDetail,
     openTrackMenu,
   } = usePMusicStore();
 
@@ -127,20 +136,20 @@ export const TrackListRow: React.FC<{
         e.preventDefault();
         openTrackMenu(track, e.clientX, e.clientY, playlistId);
       }}
-      className={`group flex h-16 items-center justify-between gap-3 rounded-[10px] px-2.5 transition-colors hover:bg-white/[0.06] ${
-        isCurrent ? 'bg-white/[0.09]' : ''
-      } ${dragOver ? 'border-t-2 border-white/80 bg-white/[0.08]' : ''}`}
+      className={`pm-hover group flex h-16 items-center justify-between gap-3 overflow-hidden rounded-[10px] px-2.5 transition-colors ${
+        isCurrent ? 'pm-active-row' : ''
+      } ${dragOver ? 'border-t-2 border-[var(--pm-accent-primary)] pm-active-row' : ''}`}
     >
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <span
           aria-hidden="true"
-          className="hidden cursor-grab text-[#8E8E98]/60 opacity-0 transition-opacity group-hover:opacity-100 md:inline-flex"
+          className="hidden cursor-grab pm-text-tertiary opacity-0 transition-opacity group-hover:opacity-100 md:inline-flex"
         >
           <GripVertical className="h-3.5 w-3.5" />
         </span>
 
         {typeof index === 'number' && (
-          <span className="tabular-nums hidden w-5 shrink-0 text-center text-xs font-medium text-[#8E8E98] sm:inline-flex sm:items-center sm:justify-center">
+          <span className="tabular-nums hidden w-5 shrink-0 text-center text-xs font-medium pm-text-tertiary sm:inline-flex sm:items-center sm:justify-center">
             {isCurrent && isPlaying ? (
               <PlayingEqBars />
             ) : isCurrent ? (
@@ -155,7 +164,7 @@ export const TrackListRow: React.FC<{
           type="button"
           aria-label={`Reproducir ${track.title}`}
           onClick={handleRowPlay}
-          className="relative h-11 w-11 shrink-0 overflow-hidden rounded-[8px] bg-[#141419]"
+          className="pm-elevated relative h-11 w-11 shrink-0 overflow-hidden rounded-[8px]"
         >
           <img
             src={track.thumbnailUrl}
@@ -181,40 +190,25 @@ export const TrackListRow: React.FC<{
             <button
               type="button"
               onClick={handleRowPlay}
-              className={`truncate text-left text-[14px] font-medium hover:underline ${
-                isCurrent ? 'text-white' : 'text-[#F5F5F7]'
+              className={`truncate text-left text-[14px] hover:underline pm-text-primary ${
+                isCurrent ? 'font-bold' : 'font-medium'
               }`}
             >
               {track.title}
             </button>
             {track.isExplicit && (
-              <span className="shrink-0 rounded bg-white/[0.12] px-1.5 py-0.5 text-[11px] font-bold leading-none text-[#B4B4BE]">
+              <span className="shrink-0 rounded border pm-border pm-elevated px-1.5 py-0.5 text-[11px] font-bold leading-none pm-text-secondary">
                 E
               </span>
             )}
           </div>
-          <div className="flex items-center gap-1.5 truncate text-[12.5px] text-[#B4B4BE]">
-            <span
-              role="link"
-              tabIndex={0}
-              onClick={() =>
-                void openArtistDetail(
-                  track.artists[0]?.id ?? track.artists[0]?.name ?? ''
-                )
-              }
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  void openArtistDetail(
-                    track.artists[0]?.id ?? track.artists[0]?.name ?? ''
-                  );
-                }
-              }}
-              className="cursor-pointer truncate hover:text-white hover:underline"
-            >
-              {track.artists.map((a) => a.name).join(', ')}
-            </span>
+          <div className="flex min-w-0 items-center gap-1.5 overflow-hidden text-[12.5px] pm-text-secondary">
+            <ArtistLinks
+              artists={track.artists}
+              linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
+            />
             {track.album && (
-              <span className="hidden truncate text-[#8E8E98] lg:inline">
+              <span className="hidden shrink-0 truncate pm-text-tertiary lg:inline">
                 · {track.album.name}
               </span>
             )}
@@ -227,7 +221,7 @@ export const TrackListRow: React.FC<{
           type="button"
           aria-label={`Añadir ${track.title} a la cola`}
           onClick={() => addToQueue(track)}
-          className="hidden items-center justify-center rounded-full p-2 text-[#8E8E98] opacity-0 transition-opacity hover:bg-white/[0.08] hover:text-white group-hover:opacity-100 focus-visible:opacity-100 sm:flex"
+          className="hidden items-center justify-center rounded-full p-2 pm-text-tertiary opacity-0 transition-opacity hover:bg-[var(--pm-hover-tint)] hover:text-[var(--pm-text-primary)] group-hover:opacity-100 focus-visible:opacity-100 sm:flex"
         >
           <ListPlus className="h-4 w-4" />
         </button>
@@ -243,8 +237,8 @@ export const TrackListRow: React.FC<{
           onClick={() => void toggleLike(track)}
           className={`flex items-center justify-center rounded-full p-2 ${
             isLiked
-              ? 'text-[#F43F5E]'
-              : 'text-[#8E8E98] hover:bg-white/[0.08] hover:text-[#F5F5F7]'
+              ? 'text-rose-500'
+              : 'pm-text-tertiary hover:bg-[var(--pm-hover-tint)] hover:text-[var(--pm-text-primary)]'
           }`}
         >
           <Heart className={`h-4 w-4 ${isLiked ? 'fill-current' : ''}`} />
@@ -258,12 +252,12 @@ export const TrackListRow: React.FC<{
               : `Descargar ${track.title} offline`
           }
           onClick={() => void downloadTrackOffline(track)}
-          className="hidden items-center justify-center rounded-full p-2 text-[#8E8E98] hover:bg-white/[0.08] hover:text-[#F5F5F7] md:flex"
+          className="hidden items-center justify-center rounded-full p-2 pm-text-tertiary hover:bg-[var(--pm-hover-tint)] hover:text-[var(--pm-text-primary)] md:flex"
         >
           {dlStatus === 'downloading' ? (
-            <Loader2 className="h-4 w-4 animate-spin text-white" />
+            <Loader2 className="h-4 w-4 animate-spin pm-text-primary" />
           ) : dlStatus === 'downloaded' ? (
-            <Check className="h-4 w-4 text-[#34D399]" />
+            <Check className="h-4 w-4 text-emerald-500" />
           ) : (
             <Download className="h-4 w-4" />
           )}
@@ -274,7 +268,7 @@ export const TrackListRow: React.FC<{
             type="button"
             aria-label={`Quitar ${track.title} de esta playlist`}
             onClick={() => void removeTrackFromPlaylist(playlistId, track.id)}
-            className="hidden items-center justify-center rounded-full p-2 text-[#8E8E98] opacity-0 transition-opacity hover:bg-[#2A1418] hover:text-[#F87171] group-hover:opacity-100 focus-visible:opacity-100 sm:flex"
+            className="hidden items-center justify-center rounded-full p-2 pm-text-tertiary opacity-0 transition-opacity hover:bg-rose-500/15 hover:text-rose-500 group-hover:opacity-100 focus-visible:opacity-100 sm:flex"
           >
             <Trash2 className="h-4 w-4" />
           </button>
@@ -287,12 +281,12 @@ export const TrackListRow: React.FC<{
             const rect = e.currentTarget.getBoundingClientRect();
             openTrackMenu(track, rect.left - 180, rect.bottom + 6, playlistId);
           }}
-          className="flex items-center justify-center rounded-full p-2 text-[#8E8E98] opacity-100 transition-opacity hover:bg-white/[0.08] hover:text-white sm:opacity-70 sm:group-hover:opacity-100"
+          className="flex items-center justify-center rounded-full p-2 pm-text-tertiary opacity-100 transition-opacity hover:bg-[var(--pm-hover-tint)] hover:text-[var(--pm-text-primary)] sm:opacity-70 sm:group-hover:opacity-100"
         >
           <MoreHorizontal className="h-4 w-4" />
         </button>
 
-        <span className="tabular-nums w-11 text-right text-[12px] font-medium text-[#8E8E98]">
+        <span className="tabular-nums w-11 text-right text-[12px] font-medium pm-text-tertiary">
           {formatDurationSec(track.durationSec)}
         </span>
       </div>
@@ -304,12 +298,23 @@ const CoverCard: React.FC<{
   image: string;
   title: string;
   subtitle?: string;
+  subtitleNode?: React.ReactNode;
   badge?: string;
   round?: boolean;
   dragTrack?: Track;
   onOpen: () => void;
   onPlay?: () => void;
-}> = ({ image, title, subtitle, badge, round, dragTrack, onOpen, onPlay }) => {
+}> = ({
+  image,
+  title,
+  subtitle,
+  subtitleNode,
+  badge,
+  round,
+  dragTrack,
+  onOpen,
+  onPlay,
+}) => {
   const openTrackMenu = usePMusicStore((s) => s.openTrackMenu);
 
   return (
@@ -327,7 +332,7 @@ const CoverCard: React.FC<{
         e.preventDefault();
         openTrackMenu(dragTrack, e.clientX, e.clientY);
       }}
-      className="pm-cover-card group w-[152px] shrink-0 snap-start rounded-[12px] bg-[#111115] p-2.5 transition-colors hover:bg-[#18181E] md:w-[178px]"
+      className="pm-cover-card pm-card-lift pm-surface-card group w-[152px] shrink-0 snap-start rounded-[12px] p-2.5 md:w-[178px]"
     >
       <div className="relative">
         <button
@@ -342,42 +347,46 @@ const CoverCard: React.FC<{
             src={image}
             alt={title}
             loading="lazy"
-            className={`aspect-square w-full bg-[#16161C] object-cover shadow-[0_8px_24px_rgba(0,0,0,0.5)] transition-transform duration-300 ease-out group-hover:scale-[1.04] ${
+            className={`pm-elevated aspect-square w-full object-cover shadow-[0_8px_24px_rgba(0,0,0,0.45)] transition-transform duration-300 ease-out group-hover:scale-[1.04] ${
               round ? 'rounded-full' : 'rounded-[8px]'
             }`}
           />
         </button>
         {badge && (
-          <span className="pointer-events-none absolute top-2 left-2 rounded bg-[#070709]/90 px-2 py-0.5 text-[11px] font-bold tracking-wider text-[#F5F5F7]">
+          <span className="pointer-events-none absolute top-2 left-2 rounded bg-[#070709]/85 px-2 py-0.5 text-[11px] font-bold tracking-wider text-white">
             {badge}
           </span>
         )}
-      {onPlay && (
+        {onPlay && (
+          <button
+            type="button"
+            aria-label={`Reproducir ${title}`}
+            onClick={onPlay}
+            className="pm-cover-play pm-btn-primary absolute right-2 bottom-2 flex h-11 w-11 items-center justify-center rounded-full shadow-xl hover:scale-105"
+          >
+            <Play className="h-5 w-5 translate-x-[1px] fill-current" />
+          </button>
+        )}
+      </div>
+      <div className={`mt-2.5 ${round ? 'text-center' : ''}`}>
         <button
           type="button"
-          aria-label={`Reproducir ${title}`}
-          onClick={onPlay}
-          className="pm-cover-play absolute right-2 bottom-2 flex h-11 w-11 items-center justify-center rounded-full bg-white text-[#070709] shadow-xl hover:scale-105"
+          onClick={onOpen}
+          className="block w-full truncate text-left text-[14px] font-semibold pm-text-primary hover:underline"
         >
-          <Play className="h-5 w-5 translate-x-[1px] fill-current" />
+          <span className={round ? 'block text-center' : ''}>{title}</span>
         </button>
-      )}
-    </div>
-    <div className={`mt-2.5 ${round ? 'text-center' : ''}`}>
-      <button
-        type="button"
-        onClick={onOpen}
-        className="block w-full truncate text-left text-[14px] font-semibold text-[#F5F5F7] hover:underline"
-      >
-        <span className={round ? 'block text-center' : ''}>{title}</span>
-      </button>
-      {subtitle && (
-        <div className="mt-0.5 line-clamp-2 text-[12px] text-[#8E8E98]">
-          {subtitle}
-        </div>
-      )}
-    </div>
-  </article>
+        {subtitleNode ? (
+          <div className="mt-0.5 truncate text-[12px] pm-text-secondary">
+            {subtitleNode}
+          </div>
+        ) : subtitle ? (
+          <div className="mt-0.5 line-clamp-2 text-[12px] pm-text-tertiary">
+            {subtitle}
+          </div>
+        ) : null}
+      </div>
+    </article>
   );
 };
 
@@ -398,11 +407,11 @@ const CarouselSection: React.FC<{
     <section className="space-y-3">
       <div className="flex items-end justify-between gap-3">
         <div>
-          <h2 className="text-[20px] font-bold tracking-tight text-[#F5F5F7] md:text-[22px]">
+          <h2 className="text-[20px] font-bold tracking-tight pm-text-primary md:text-[22px]">
             {title}
           </h2>
           {subtitle && (
-            <p className="text-[12.5px] text-[#8E8E98]">{subtitle}</p>
+            <p className="text-[12.5px] pm-text-tertiary">{subtitle}</p>
           )}
         </div>
         <div className="hidden items-center gap-1.5 md:flex">
@@ -410,7 +419,7 @@ const CarouselSection: React.FC<{
             type="button"
             aria-label={`Desplazar ${title} a la izquierda`}
             onClick={() => scrollByDir(-1)}
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-[#141419] text-[#B4B4BE] hover:bg-[#1E1E26] hover:text-white"
+            className="pm-btn-secondary flex h-8 w-8 items-center justify-center rounded-full"
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
@@ -418,7 +427,7 @@ const CarouselSection: React.FC<{
             type="button"
             aria-label={`Desplazar ${title} a la derecha`}
             onClick={() => scrollByDir(1)}
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-[#141419] text-[#B4B4BE] hover:bg-[#1E1E26] hover:text-white"
+            className="pm-btn-secondary flex h-8 w-8 items-center justify-center rounded-full"
           >
             <ChevronRight className="h-4 w-4" />
           </button>
@@ -475,14 +484,14 @@ export const DetailViewPanel: React.FC = () => {
             className="h-36 w-36 shrink-0 rounded-full object-cover shadow-[0_18px_48px_rgba(0,0,0,0.65)] sm:h-44 sm:w-44"
           />
           <div className="min-w-0 flex-1 space-y-2">
-            <span className="inline-block rounded-md bg-white/[0.08] px-2.5 py-1 text-[11px] font-semibold tracking-wide text-[#B4B4BE]">
+            <span className="pm-elevated inline-block rounded-md border pm-border px-2.5 py-1 text-[11px] font-semibold tracking-wide pm-text-secondary">
               ARTISTA
             </span>
-            <h1 className="truncate text-3xl font-bold tracking-tight text-[#F5F5F7] md:text-5xl">
+            <h1 className="truncate text-3xl font-bold tracking-tight pm-text-primary md:text-5xl">
               {artist.name}
             </h1>
             {(artist.subscribersText || description) && (
-              <p className="text-sm text-[#B4B4BE]">
+              <p className="text-sm pm-text-secondary">
                 {artist.subscribersText ?? description}
               </p>
             )}
@@ -492,7 +501,7 @@ export const DetailViewPanel: React.FC = () => {
                 onClick={() => {
                   if (popularSongs[0]) void playTrack(popularSongs[0], popularSongs);
                 }}
-                className="inline-flex items-center gap-2 rounded-full bg-white px-6 py-2.5 text-xs font-bold text-[#070709] hover:bg-white/90"
+                className="pm-btn-primary inline-flex items-center gap-2 rounded-full px-6 py-2.5 text-xs font-bold"
               >
                 <Play className="h-4 w-4 fill-current" />
                 <span>Reproducir</span>
@@ -503,9 +512,9 @@ export const DetailViewPanel: React.FC = () => {
                   await toggleDjMode(true);
                   if (popularSongs[0]) await playTrack(popularSongs[0], popularSongs);
                 }}
-                className="inline-flex items-center gap-2 rounded-full border border-white/[0.12] bg-[#16161C] px-5 py-2.5 text-xs font-semibold text-[#F5F5F7] hover:bg-[#1E1E26]"
+                className="pm-btn-secondary inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-xs font-semibold"
               >
-                <Disc3 className="h-4 w-4 text-[#C084FC]" />
+                <Disc3 className="h-4 w-4 text-purple-500" />
                 <span>Sesión DJ {artist.name}</span>
               </button>
             </div>
@@ -513,7 +522,7 @@ export const DetailViewPanel: React.FC = () => {
         </section>
 
         <section className="space-y-2">
-          <h2 className="text-[20px] font-bold text-[#F5F5F7]">Populares</h2>
+          <h2 className="text-[20px] font-bold pm-text-primary">Populares</h2>
           <div className="space-y-0.5">
             {popularSongs.map((track, idx) => (
               <TrackListRow
@@ -569,26 +578,30 @@ export const DetailViewPanel: React.FC = () => {
           <img
             src={album.thumbnailUrl}
             alt={album.title}
-            className="h-40 w-40 shrink-0 rounded-[12px] object-cover shadow-[0_18px_48px_rgba(0,0,0,0.65)] sm:h-44 sm:w-44"
+            className="h-40 w-40 shrink-0 rounded-[12px] object-cover shadow-[0_18px_48px_rgba(0,0,0,0.45)] sm:h-44 sm:w-44"
           />
           <div className="min-w-0 flex-1 space-y-2">
-            <span className="inline-block rounded-md bg-white/[0.08] px-2.5 py-1 text-[11px] font-semibold text-[#B4B4BE]">
+            <span className="pm-elevated inline-block rounded-md border pm-border px-2.5 py-1 text-[11px] font-semibold pm-text-secondary">
               ÁLBUM {album.year ? `· ${album.year}` : ''} · {tracks.length}{' '}
               CANCIONES
             </span>
-            <h1 className="truncate text-3xl font-bold tracking-tight text-[#F5F5F7] md:text-4xl">
+            <h1 className="truncate text-3xl font-bold tracking-tight pm-text-primary md:text-4xl">
               {album.title}
             </h1>
-            <p className="text-sm text-[#B4B4BE]">
-              {album.artists.map((a) => a.name).join(', ')}
-            </p>
+            <div className="text-sm pm-text-secondary">
+              <ArtistLinks
+                artists={album.artists}
+                singleLine={false}
+                linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
+              />
+            </div>
             <div className="flex flex-wrap gap-2.5 pt-2">
               <button
                 type="button"
                 onClick={() => {
                   if (tracks[0]) void playTrack(tracks[0], tracks);
                 }}
-                className="inline-flex items-center gap-2 rounded-full bg-white px-6 py-2.5 text-xs font-bold text-[#070709] hover:bg-white/90"
+                className="pm-btn-primary inline-flex items-center gap-2 rounded-full px-6 py-2.5 text-xs font-bold"
               >
                 <Play className="h-4 w-4 fill-current" />
                 <span>Reproducir álbum</span>
@@ -599,9 +612,9 @@ export const DetailViewPanel: React.FC = () => {
                   await toggleDjMode(true);
                   if (tracks[0]) await playTrack(tracks[0], tracks);
                 }}
-                className="inline-flex items-center gap-2 rounded-full border border-white/[0.12] bg-[#16161C] px-5 py-2.5 text-xs font-semibold text-[#F5F5F7] hover:bg-[#1E1E26]"
+                className="pm-btn-secondary inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-xs font-semibold"
               >
-                <Disc3 className="h-4 w-4 text-[#C084FC]" />
+                <Disc3 className="h-4 w-4 text-purple-500" />
                 <span>Sesión DJ</span>
               </button>
             </div>
@@ -633,16 +646,16 @@ export const DetailViewPanel: React.FC = () => {
           <img
             src={playlist.thumbnailUrl}
             alt={playlist.title}
-            className="h-40 w-40 shrink-0 rounded-[12px] object-cover shadow-[0_18px_48px_rgba(0,0,0,0.65)] sm:h-44 sm:w-44"
+            className="h-40 w-40 shrink-0 rounded-[12px] object-cover shadow-[0_18px_48px_rgba(0,0,0,0.45)] sm:h-44 sm:w-44"
           />
           <div className="min-w-0 flex-1 space-y-2">
-            <span className="inline-block rounded-md bg-white/[0.08] px-2.5 py-1 text-[11px] font-semibold text-[#B4B4BE]">
+            <span className="pm-elevated inline-block rounded-md border pm-border px-2.5 py-1 text-[11px] font-semibold pm-text-secondary">
               PLAYLIST · {tracks.length} CANCIONES
             </span>
-            <h1 className="truncate text-3xl font-bold tracking-tight text-[#F5F5F7] md:text-4xl">
+            <h1 className="truncate text-3xl font-bold tracking-tight pm-text-primary md:text-4xl">
               {playlist.title}
             </h1>
-            <p className="text-sm text-[#B4B4BE]">
+            <p className="text-sm pm-text-secondary">
               {playlist.author ?? 'pMusic'}
             </p>
             <div className="flex flex-wrap gap-2.5 pt-2">
@@ -651,7 +664,7 @@ export const DetailViewPanel: React.FC = () => {
                 onClick={() => {
                   if (tracks[0]) void playTrack(tracks[0], tracks);
                 }}
-                className="inline-flex items-center gap-2 rounded-full bg-white px-6 py-2.5 text-xs font-bold text-[#070709] hover:bg-white/90"
+                className="pm-btn-primary inline-flex items-center gap-2 rounded-full px-6 py-2.5 text-xs font-bold"
               >
                 <Play className="h-4 w-4 fill-current" />
                 <span>Reproducir</span>
@@ -662,9 +675,9 @@ export const DetailViewPanel: React.FC = () => {
                   await toggleDjMode(true);
                   if (tracks[0]) await playTrack(tracks[0], tracks);
                 }}
-                className="inline-flex items-center gap-2 rounded-full border border-white/[0.12] bg-[#16161C] px-5 py-2.5 text-xs font-semibold text-[#F5F5F7] hover:bg-[#1E1E26]"
+                className="pm-btn-secondary inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-xs font-semibold"
               >
-                <Disc3 className="h-4 w-4 text-[#C084FC]" />
+                <Disc3 className="h-4 w-4 text-purple-500" />
                 <span>Sesión DJ AutoMix</span>
               </button>
             </div>
@@ -707,18 +720,18 @@ export const DetailViewPanel: React.FC = () => {
                 className="h-28 w-28 rounded-[12px] object-cover shadow-xl sm:h-36 sm:w-36"
               />
             ) : (
-              <div className="flex h-28 w-28 items-center justify-center rounded-[12px] bg-[#181820] text-3xl font-bold text-[#B4B4BE] sm:h-36 sm:w-36">
+              <div className="pm-elevated flex h-28 w-28 items-center justify-center rounded-[12px] border pm-border text-3xl font-bold pm-text-secondary sm:h-36 sm:w-36">
                 {localPl.name.slice(0, 1).toUpperCase()}
               </div>
             )}
             <div className="space-y-1.5">
-              <span className="inline-block rounded-md bg-white/[0.08] px-2.5 py-1 text-[11px] font-semibold text-[#B4B4BE]">
+              <span className="pm-elevated inline-block rounded-md border pm-border px-2.5 py-1 text-[11px] font-semibold pm-text-secondary">
                 TU PLAYLIST · {localPl.tracks.length} PISTAS
               </span>
-              <h1 className="text-3xl font-bold tracking-tight text-[#F5F5F7]">
+              <h1 className="text-3xl font-bold tracking-tight pm-text-primary">
                 {localPl.name}
               </h1>
-              <p className="text-xs text-[#B4B4BE]">
+              <p className="text-xs pm-text-secondary">
                 {localPl.description || 'Playlist personal sincronizada'}
               </p>
             </div>
@@ -732,7 +745,7 @@ export const DetailViewPanel: React.FC = () => {
                   void playTrack(localPl.tracks[0], localPl.tracks);
                 }
               }}
-              className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-xs font-bold text-[#070709] hover:bg-white/90"
+              className="pm-btn-primary inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-xs font-bold"
             >
               <Play className="h-4 w-4 fill-current" />
               <span>Reproducir</span>
@@ -745,16 +758,16 @@ export const DetailViewPanel: React.FC = () => {
                   await playTrack(localPl.tracks[0], localPl.tracks);
                 }
               }}
-              className="inline-flex items-center gap-2 rounded-full border border-white/[0.12] bg-[#16161C] px-4 py-2.5 text-xs font-semibold text-[#F5F5F7]"
+              className="pm-btn-secondary inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold"
             >
-              <Disc3 className="h-4 w-4 text-[#C084FC]" />
+              <Disc3 className="h-4 w-4 text-purple-500" />
               <span>Sesión DJ</span>
             </button>
             <button
               type="button"
               aria-label="Eliminar playlist"
               onClick={() => void deletePlaylist(localPl.id)}
-              className="rounded-full border border-white/[0.08] bg-[#1E1215] px-4 py-2.5 text-xs font-semibold text-[#F87171]"
+              className="pm-btn-secondary rounded-full px-4 py-2.5 text-xs font-semibold text-rose-500"
             >
               Eliminar
             </button>
@@ -768,7 +781,7 @@ export const DetailViewPanel: React.FC = () => {
             placeholder="Renombrar playlist..."
             value={editingName}
             onChange={(e) => setEditingName(e.target.value)}
-            className="rounded-full border border-white/10 bg-[#0B0B0E] px-4 py-2 text-xs text-[#F5F5F7]"
+            className="pm-input rounded-full px-4 py-2 text-xs"
           />
           <button
             type="button"
@@ -778,7 +791,7 @@ export const DetailViewPanel: React.FC = () => {
                 setEditingName('');
               }
             }}
-            className="rounded-full border border-white/10 bg-[#181820] px-4 py-2 text-xs font-semibold text-[#F5F5F7]"
+            className="pm-btn-secondary rounded-full px-4 py-2 text-xs font-semibold"
           >
             Renombrar
           </button>
@@ -806,7 +819,9 @@ export const DetailViewPanel: React.FC = () => {
           }
         }}
         className={`space-y-0.5 rounded-[14px] transition-colors ${
-          playlistDropActive ? 'bg-white/[0.06] ring-2 ring-white/60 p-2' : ''
+          playlistDropActive
+            ? 'pm-active-row p-2 ring-2 ring-[var(--pm-accent-primary)]'
+            : ''
         }`}
       >
         {localPl.tracks.length > 0 ? (
@@ -823,7 +838,7 @@ export const DetailViewPanel: React.FC = () => {
             />
           ))
         ) : (
-          <div className="rounded-[14px] border border-dashed border-white/[0.14] bg-[#101016] p-8 text-center text-xs text-[#B4B4BE]">
+          <div className="pm-surface-card rounded-[14px] border-dashed p-8 text-center text-xs pm-text-secondary">
             Esta playlist está vacía. Arrastra canciones aquí o usa el buscador de abajo para añadir temas.
           </div>
         )}
@@ -836,10 +851,10 @@ export const DetailViewPanel: React.FC = () => {
       >
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-[17px] font-bold text-[#F5F5F7]">
+            <h2 className="text-[17px] font-bold pm-text-primary">
               Añadir canciones a «{localPl.name}»
             </h2>
-            <p className="text-xs text-[#8E8E98]">
+            <p className="text-xs pm-text-tertiary">
               Busca temas o pulsa el menú ••• en cualquier canción de la app
             </p>
           </div>
@@ -853,9 +868,9 @@ export const DetailViewPanel: React.FC = () => {
             setAddSearchResults(found);
             setIsSearchingAdd(false);
           }}
-          className="flex items-center gap-2.5 rounded-full border border-white/[0.10] bg-[#0B0B0E] px-4 py-2"
+          className="pm-input flex items-center gap-2.5 rounded-full px-4 py-2"
         >
-          <Search className="h-4 w-4 text-[#B4B4BE]" />
+          <Search className="h-4 w-4 pm-text-secondary" />
           <input
             type="search"
             aria-label="Buscar canciones para añadir a esta playlist"
@@ -873,10 +888,10 @@ export const DetailViewPanel: React.FC = () => {
                 setAddSearchResults([]);
               }
             }}
-            className="flex-1 bg-transparent text-xs text-[#F5F5F7] placeholder:text-[#8E8E98] focus:outline-none"
+            className="flex-1 bg-transparent text-xs pm-text-primary placeholder:pm-text-tertiary focus:outline-none"
           />
           {isSearchingAdd && (
-            <Loader2 className="h-4 w-4 animate-spin text-[#B4B4BE]" />
+            <Loader2 className="h-4 w-4 animate-spin pm-text-secondary" />
           )}
         </form>
 
@@ -884,7 +899,7 @@ export const DetailViewPanel: React.FC = () => {
           {suggestedAdds.slice(0, 6).map((t) => (
             <div
               key={`add-${t.id}`}
-              className="flex items-center justify-between gap-3 rounded-[10px] px-2.5 py-2 hover:bg-white/[0.06]"
+              className="pm-hover flex items-center justify-between gap-3 rounded-[10px] px-2.5 py-2"
             >
               <div className="flex min-w-0 flex-1 items-center gap-3">
                 <img
@@ -893,18 +908,21 @@ export const DetailViewPanel: React.FC = () => {
                   className="h-10 w-10 shrink-0 rounded-[7px] object-cover"
                 />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[13.5px] font-medium text-[#F5F5F7]">
+                  <div className="truncate text-[13.5px] font-medium pm-text-primary">
                     {t.title}
                   </div>
-                  <div className="truncate text-xs text-[#8E8E98]">
-                    {t.artists.map((a) => a.name).join(', ')}
+                  <div className="truncate text-xs pm-text-tertiary">
+                    <ArtistLinks
+                      artists={t.artists}
+                      linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
+                    />
                   </div>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => void addTrackToPlaylist(localPl.id, t)}
-                className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-[#181822] px-3.5 py-1.5 text-xs font-semibold text-[#F5F5F7] hover:bg-white hover:text-[#070709]"
+                className="pm-btn-secondary inline-flex items-center gap-1 rounded-full px-3.5 py-1.5 text-xs font-semibold"
               >
                 <Plus className="h-3.5 w-3.5" />
                 <span>Añadir</span>
@@ -953,7 +971,7 @@ export const HomeScreen: React.FC = () => {
   return (
     <div className="pm-page-enter space-y-8">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-[28px] font-bold tracking-tight text-[#F5F5F7] md:text-[32px]">
+        <h1 className="text-[28px] font-bold tracking-tight pm-text-primary md:text-[32px]">
           {getSpanishGreeting()}
         </h1>
       </div>
@@ -967,10 +985,8 @@ export const HomeScreen: React.FC = () => {
             role="tab"
             aria-selected={chip === c}
             onClick={() => setChip(c)}
-            className={`rounded-full px-4 py-1.5 text-[13px] font-semibold ${
-              chip === c
-                ? 'bg-white text-[#070709]'
-                : 'bg-[#16161C] text-[#F5F5F7] hover:bg-[#1F1F28]'
+            className={`rounded-full px-4 py-1.5 text-[13px] font-semibold transition-colors ${
+              chip === c ? 'pm-btn-primary' : 'pm-btn-secondary'
             }`}
           >
             {c}
@@ -981,13 +997,13 @@ export const HomeScreen: React.FC = () => {
       {isOfflineNetwork && (
         <div
           role="status"
-          className="rounded-xl border border-[#FBBF24]/30 bg-[#1B160B] px-4 py-3 text-[13px] font-medium text-[#F5F5F7]"
+          className="rounded-xl border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-[13px] font-medium pm-text-primary"
         >
           Sin conexión. Mostrando tu caché offline y catálogo guardado.
         </div>
       )}
 
-      {/* 2x3 Quick-Access Grid (Spotify signature) */}
+      {/* 2x3 Quick-Access Grid */}
       {chip === 'Todo' && quick.length > 0 && (
         <section aria-label="Escuchar de nuevo">
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
@@ -1002,28 +1018,38 @@ export const HomeScreen: React.FC = () => {
                   e.preventDefault();
                   openTrackMenu(t, e.clientX, e.clientY);
                 }}
-                className="group flex items-center gap-3 overflow-hidden rounded-[8px] border border-white/[0.05] bg-[#121217] pr-2 transition-colors hover:bg-[#1A1A22]"
+                className="pm-surface-card pm-card-lift group flex items-center gap-3 overflow-hidden rounded-[8px] pr-2"
               >
-                <button
-                  type="button"
-                  aria-label={`Reproducir ${t.title}`}
-                  onClick={() => void playTrack(t, listen?.tracks)}
-                  className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                >
-                  <img
-                    src={t.thumbnailUrl}
-                    alt={t.title}
-                    className="h-14 w-14 shrink-0 object-cover"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[14px] font-semibold text-[#F5F5F7]">
+                <div className="flex min-w-0 flex-1 items-center gap-3">
+                  <button
+                    type="button"
+                    aria-label={`Reproducir ${t.title}`}
+                    onClick={() => void playTrack(t, listen?.tracks)}
+                    className="h-14 w-14 shrink-0 overflow-hidden"
+                  >
+                    <img
+                      src={t.thumbnailUrl}
+                      alt={t.title}
+                      className="h-full w-full object-cover"
+                    />
+                  </button>
+                  <div className="min-w-0 flex-1 py-1">
+                    <button
+                      type="button"
+                      onClick={() => void playTrack(t, listen?.tracks)}
+                      className="block max-w-full truncate text-left text-[14px] font-semibold pm-text-primary hover:underline"
+                    >
                       {t.title}
-                    </div>
-                    <div className="truncate text-[12px] text-[#8E8E98]">
-                      {t.artists.map((a) => a.name).join(', ')}
+                    </button>
+                    <div className="truncate text-[12px] pm-text-tertiary">
+                      <ArtistLinks
+                        artists={t.artists}
+                        className="!flex-nowrap whitespace-nowrap"
+                        linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
+                      />
                     </div>
                   </div>
-                </button>
+                </div>
                 <button
                   type="button"
                   aria-label={`Más opciones para ${t.title}`}
@@ -1031,7 +1057,7 @@ export const HomeScreen: React.FC = () => {
                     const r = e.currentTarget.getBoundingClientRect();
                     openTrackMenu(t, r.left - 180, r.bottom + 6);
                   }}
-                  className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#8E8E98] opacity-0 transition-opacity hover:bg-white/[0.10] hover:text-white group-hover:opacity-100 sm:flex"
+                  className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-full pm-text-tertiary opacity-0 transition-opacity hover:bg-[var(--pm-hover-tint)] hover:text-[var(--pm-text-primary)] group-hover:opacity-100 sm:flex"
                 >
                   <MoreHorizontal className="h-4 w-4" />
                 </button>
@@ -1039,7 +1065,7 @@ export const HomeScreen: React.FC = () => {
                   type="button"
                   aria-label={`Play ${t.title}`}
                   onClick={() => void playTrack(t, listen?.tracks)}
-                  className="pm-cover-play flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-[#070709] shadow-md"
+                  className="pm-cover-play pm-btn-primary flex h-9 w-9 shrink-0 items-center justify-center rounded-full shadow-md"
                 >
                   <Play className="h-4 w-4 translate-x-[1px] fill-current" />
                 </button>
@@ -1082,7 +1108,12 @@ export const HomeScreen: React.FC = () => {
               key={t.id}
               image={t.thumbnailHighUrl ?? t.thumbnailUrl}
               title={t.title}
-              subtitle={t.artists.map((a) => a.name).join(', ')}
+              subtitleNode={
+                <ArtistLinks
+                  artists={t.artists}
+                  linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
+                />
+              }
               dragTrack={t}
               onOpen={() => void playTrack(t, because.tracks)}
               onPlay={() => void playTrack(t, because.tracks)}
@@ -1094,7 +1125,7 @@ export const HomeScreen: React.FC = () => {
       {/* Éxitos del momento (Clean flat rows) */}
       {show('Música') && listen?.tracks && listen.tracks.length > 0 && (
         <section className="space-y-3">
-          <h2 className="text-[20px] font-bold tracking-tight text-[#F5F5F7] md:text-[22px]">
+          <h2 className="text-[20px] font-bold tracking-tight pm-text-primary md:text-[22px]">
             Escuchar de nuevo
           </h2>
           <div className="grid grid-cols-1 gap-x-6 md:grid-cols-2">
@@ -1118,9 +1149,15 @@ export const HomeScreen: React.FC = () => {
               key={al.id}
               image={al.thumbnailUrl}
               title={al.title}
-              subtitle={[al.year, al.artists.map((a) => a.name).join(', ')]
-                .filter(Boolean)
-                .join(' · ')}
+              subtitleNode={
+                <span>
+                  {al.year ? `${al.year} · ` : ''}
+                  <ArtistLinks
+                    artists={al.artists}
+                    linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
+                  />
+                </span>
+              }
               onOpen={() => void openAlbumDetail(al.id)}
             />
           ))}
@@ -1184,17 +1221,17 @@ export const ExploreScreen: React.FC = () => {
   return (
     <div className="pm-page-enter space-y-8">
       <div>
-        <h1 className="text-[28px] font-bold tracking-tight text-[#F5F5F7] md:text-[32px]">
+        <h1 className="text-[28px] font-bold tracking-tight pm-text-primary md:text-[32px]">
           Explorar
         </h1>
-        <p className="text-[13px] text-[#8E8E98]">
+        <p className="text-[13px] pm-text-tertiary">
           Géneros, tendencias del momento y novedades seleccionadas
         </p>
       </div>
 
       {/* Genres Grid */}
       <section className="space-y-3">
-        <h2 className="text-[20px] font-bold tracking-tight text-[#F5F5F7]">
+        <h2 className="text-[20px] font-bold tracking-tight pm-text-primary">
           Explorar géneros
         </h2>
         <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
@@ -1206,14 +1243,14 @@ export const ExploreScreen: React.FC = () => {
                 setActiveTab('Buscar');
                 void submitSearch(g.query);
               }}
-              className="group flex items-center gap-3 rounded-[12px] border border-white/[0.06] bg-[#111115] px-4 py-3.5 text-left transition-all hover:border-white/[0.14] hover:bg-[#191922]"
+              className="pm-surface-card pm-card-lift group flex items-center gap-3 rounded-[12px] px-4 py-3.5 text-left"
             >
               <span
                 aria-hidden="true"
                 className="h-5 w-1.5 shrink-0 rounded-full transition-transform group-hover:scale-y-110"
                 style={{ backgroundColor: g.accent }}
               />
-              <span className="truncate text-[13.5px] font-semibold text-[#F5F5F7]">
+              <span className="truncate text-[13.5px] font-semibold pm-text-primary">
                 {g.label}
               </span>
             </button>
@@ -1224,7 +1261,7 @@ export const ExploreScreen: React.FC = () => {
       {/* Trending Songs */}
       {trendingSongs.length > 0 && (
         <section className="space-y-3">
-          <h2 className="text-[20px] font-bold tracking-tight text-[#F5F5F7]">
+          <h2 className="text-[20px] font-bold tracking-tight pm-text-primary">
             Tendencias ahora
           </h2>
           <div className="grid grid-cols-1 gap-x-6 md:grid-cols-2">
@@ -1251,9 +1288,15 @@ export const ExploreScreen: React.FC = () => {
               key={`explore-album-${al.id}`}
               image={al.thumbnailUrl}
               title={al.title}
-              subtitle={[al.year, al.artists.map((a) => a.name).join(', ')]
-                .filter(Boolean)
-                .join(' · ')}
+              subtitleNode={
+                <span>
+                  {al.year ? `${al.year} · ` : ''}
+                  <ArtistLinks
+                    artists={al.artists}
+                    linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
+                  />
+                </span>
+              }
               onOpen={() => void openAlbumDetail(al.id)}
             />
           ))}
@@ -1322,21 +1365,21 @@ export const SearchScreen: React.FC = () => {
     <div className="pm-page-enter space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-[28px] font-bold tracking-tight text-[#F5F5F7]">
+          <h1 className="text-[28px] font-bold tracking-tight pm-text-primary">
             Buscar
           </h1>
-          <p className="text-[13px] text-[#8E8E98]">
+          <p className="text-[13px] pm-text-tertiary">
             Canciones, artistas, álbumes y listas completas
           </p>
         </div>
         <button
           type="button"
           onClick={() => setSpotlightOpen(true)}
-          className="hidden items-center gap-2 rounded-full border border-white/[0.10] bg-[#14141A] px-3.5 py-1.5 text-xs font-medium text-[#B4B4BE] hover:bg-[#1C1C24] hover:text-white md:inline-flex"
+          className="pm-btn-secondary hidden items-center gap-2 rounded-full px-3.5 py-1.5 text-xs font-medium md:inline-flex"
         >
           <Search className="h-3.5 w-3.5" />
           <span>Búsqueda rápida</span>
-          <kbd className="rounded bg-white/[0.09] px-1.5 py-0.5 text-[11px] font-semibold text-[#F5F5F7]">
+          <kbd className="pm-elevated rounded border pm-border px-1.5 py-0.5 text-[11px] font-semibold pm-text-primary">
             Ctrl K
           </kbd>
         </button>
@@ -1347,9 +1390,9 @@ export const SearchScreen: React.FC = () => {
         <button
           type="button"
           onClick={() => setSpotlightOpen(true)}
-          className="flex w-full items-center gap-3 rounded-full border border-white/[0.09] bg-[#131318] px-4 py-2.5 text-left text-[14px] text-[#8E8E98]"
+          className="pm-input flex w-full items-center gap-3 rounded-full px-4 py-2.5 text-left text-[14px] pm-text-tertiary"
         >
-          <Search className="h-4 w-4 shrink-0 text-[#B4B4BE]" />
+          <Search className="h-4 w-4 shrink-0 pm-text-secondary" />
           <span>{searchQuery || '¿Qué te apetece escuchar hoy?'}</span>
         </button>
       ) : (
@@ -1359,9 +1402,9 @@ export const SearchScreen: React.FC = () => {
             e.preventDefault();
             void submitSearch();
           }}
-          className="flex items-center gap-3 rounded-full border border-white/[0.09] bg-[#131318] px-4 py-2 focus-within:border-white/30"
+          className="pm-input flex items-center gap-3 rounded-full px-4 py-2 focus-within:border-[var(--pm-accent-primary)]"
         >
-          <Search className="h-4 w-4 shrink-0 text-[#B4B4BE]" />
+          <Search className="h-4 w-4 shrink-0 pm-text-secondary" />
           <input
             type="search"
             role="searchbox"
@@ -1369,17 +1412,17 @@ export const SearchScreen: React.FC = () => {
             placeholder="¿Qué te apetece escuchar hoy?"
             value={searchQuery}
             onChange={(e) => void setSearchQuery(e.target.value)}
-            className="pm-input-frameless flex-1 bg-transparent text-[14px] font-medium text-[#F5F5F7] placeholder:text-[#8E8E98] focus:outline-none"
+            className="pm-input-frameless flex-1 bg-transparent text-[14px] font-medium pm-text-primary placeholder:pm-text-tertiary focus:outline-none"
           />
           {isSearching && (
-            <Loader2 className="h-4 w-4 animate-spin text-[#B4B4BE]" />
+            <Loader2 className="h-4 w-4 animate-spin pm-text-secondary" />
           )}
           {searchQuery && (
             <button
               type="button"
               aria-label="Limpiar búsqueda"
               onClick={() => void setSearchQuery('', true)}
-              className="rounded-full bg-white/[0.09] px-3 py-1 text-xs font-semibold text-[#F5F5F7] hover:bg-white/[0.16]"
+              className="pm-btn-secondary rounded-full px-3 py-1 text-xs font-semibold"
             >
               Limpiar
             </button>
@@ -1395,7 +1438,7 @@ export const SearchScreen: React.FC = () => {
               key={sug.text}
               type="button"
               onClick={() => void submitSearch(sug.text)}
-              className="rounded-full border border-white/[0.06] bg-[#121217] px-3.5 py-1.5 text-xs font-medium text-[#F5F5F7] hover:bg-[#1B1B22]"
+              className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-medium"
             >
               {sug.text}
             </button>
@@ -1404,13 +1447,13 @@ export const SearchScreen: React.FC = () => {
 
         {recentSearches.length > 0 && (
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-[#8E8E98]">Recientes:</span>
+            <span className="text-xs pm-text-tertiary">Recientes:</span>
             {recentSearches.slice(0, 3).map((rec) => (
               <button
                 key={rec}
                 type="button"
                 onClick={() => void submitSearch(rec)}
-                className="rounded-full bg-[#131318] px-3 py-1 text-xs text-[#B4B4BE] hover:text-white"
+                className="pm-elevated rounded-full border pm-border px-3 py-1 text-xs pm-text-secondary hover:text-[var(--pm-text-primary)]"
               >
                 {rec}
               </button>
@@ -1418,7 +1461,7 @@ export const SearchScreen: React.FC = () => {
             <button
               type="button"
               onClick={() => clearRecentSearches()}
-              className="text-xs font-medium text-[#B4B4BE] hover:text-white hover:underline"
+              className="text-xs font-medium pm-text-secondary hover:text-[var(--pm-text-primary)] hover:underline"
             >
               Borrar
             </button>
@@ -1441,10 +1484,8 @@ export const SearchScreen: React.FC = () => {
               role="tab"
               aria-selected={active}
               onClick={() => setSearchScope(scope)}
-              className={`rounded-full px-4 py-1.5 text-xs font-bold ${
-                active
-                  ? 'bg-white text-[#070709]'
-                  : 'bg-[#16161C] text-[#B4B4BE] hover:bg-[#1F1F28] hover:text-white'
+              className={`rounded-full px-4 py-1.5 text-xs font-bold transition-colors ${
+                active ? 'pm-btn-primary' : 'pm-btn-secondary'
               }`}
             >
               {scope}
@@ -1457,7 +1498,7 @@ export const SearchScreen: React.FC = () => {
       {searchScope === 'Todo' && bestResult ? (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
           <section className="space-y-2.5 lg:col-span-5">
-            <h2 className="text-[18px] font-bold text-[#F5F5F7]">
+            <h2 className="text-[18px] font-bold pm-text-primary">
               Mejor resultado
             </h2>
             <div
@@ -1474,13 +1515,13 @@ export const SearchScreen: React.FC = () => {
                       className="h-24 w-24 shrink-0 rounded-full object-cover shadow-xl"
                     />
                     <div className="min-w-0">
-                      <span className="inline-block rounded-md bg-white/[0.08] px-2.5 py-0.5 text-[11px] font-semibold text-[#B4B4BE]">
+                      <span className="pm-elevated inline-block rounded-md border pm-border px-2.5 py-0.5 text-[11px] font-semibold pm-text-secondary">
                         ARTISTA
                       </span>
-                      <h3 className="mt-1.5 truncate text-2xl font-bold text-[#F5F5F7]">
+                      <h3 className="mt-1.5 truncate text-2xl font-bold pm-text-primary">
                         {bestResult.item.name}
                       </h3>
-                      <p className="text-xs text-[#8E8E98]">
+                      <p className="text-xs pm-text-tertiary">
                         {bestResult.item.subscribersText ?? 'Artista'}
                       </p>
                     </div>
@@ -1498,7 +1539,7 @@ export const SearchScreen: React.FC = () => {
                           ) ?? searchResults.songs[0];
                         if (song) void playTrack(song, searchResults.songs);
                       }}
-                      className="inline-flex items-center gap-1.5 rounded-full bg-white px-5 py-2 text-xs font-bold text-[#070709] hover:bg-white/90"
+                      className="pm-btn-primary inline-flex items-center gap-1.5 rounded-full px-5 py-2 text-xs font-bold"
                     >
                       <Play className="h-4 w-4 fill-current" />
                       <span>Reproducir</span>
@@ -1506,7 +1547,7 @@ export const SearchScreen: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => void openArtistDetail(bestResult.item.id)}
-                      className="rounded-full border border-white/[0.12] bg-[#16161C] px-4 py-2 text-xs font-semibold text-[#F5F5F7] hover:bg-[#1E1E26]"
+                      className="pm-btn-secondary rounded-full px-4 py-2 text-xs font-semibold"
                     >
                       Ver perfil
                     </button>
@@ -1526,15 +1567,18 @@ export const SearchScreen: React.FC = () => {
                       className="h-24 w-24 shrink-0 rounded-[12px] object-cover shadow-xl"
                     />
                     <div className="min-w-0">
-                      <span className="inline-block rounded-md bg-white/[0.08] px-2.5 py-0.5 text-[11px] font-semibold text-[#B4B4BE]">
+                      <span className="pm-elevated inline-block rounded-md border pm-border px-2.5 py-0.5 text-[11px] font-semibold pm-text-secondary">
                         CANCIÓN
                       </span>
-                      <h3 className="mt-1.5 truncate text-2xl font-bold text-[#F5F5F7]">
+                      <h3 className="mt-1.5 truncate text-2xl font-bold pm-text-primary">
                         {bestResult.item.title}
                       </h3>
-                      <p className="truncate text-xs text-[#B4B4BE]">
-                        {bestResult.item.artists.map((a) => a.name).join(', ')}
-                      </p>
+                      <div className="truncate text-xs pm-text-secondary">
+                        <ArtistLinks
+                          artists={bestResult.item.artists}
+                          linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
+                        />
+                      </div>
                     </div>
                   </div>
                   <div>
@@ -1544,7 +1588,7 @@ export const SearchScreen: React.FC = () => {
                       onClick={() =>
                         void playTrack(bestResult.item, searchResults.songs)
                       }
-                      className="inline-flex items-center gap-1.5 rounded-full bg-white px-5 py-2 text-xs font-bold text-[#070709] hover:bg-white/90"
+                      className="pm-btn-primary inline-flex items-center gap-1.5 rounded-full px-5 py-2 text-xs font-bold"
                     >
                       <Play className="h-4 w-4 fill-current" />
                       <span>Reproducir</span>
@@ -1556,7 +1600,7 @@ export const SearchScreen: React.FC = () => {
           </section>
 
           <section className="space-y-2 lg:col-span-7">
-            <h2 className="text-[18px] font-bold text-[#F5F5F7]">Canciones</h2>
+            <h2 className="text-[18px] font-bold pm-text-primary">Canciones</h2>
             <div className="space-y-0.5">
               {searchResults.songs.slice(0, 4).map((track, idx) => (
                 <TrackListRow
@@ -1573,7 +1617,7 @@ export const SearchScreen: React.FC = () => {
         (searchScope === 'Artistas' || searchScope === 'Canciones') &&
         bestResult && (
           <section className="space-y-2.5">
-            <h2 className="text-[18px] font-bold text-[#F5F5F7]">
+            <h2 className="text-[18px] font-bold pm-text-primary">
               Mejor resultado
             </h2>
             <div
@@ -1590,10 +1634,10 @@ export const SearchScreen: React.FC = () => {
                       className="h-20 w-20 rounded-full object-cover"
                     />
                     <div>
-                      <span className="inline-block rounded-md bg-white/[0.08] px-2.5 py-0.5 text-[11px] font-semibold text-[#B4B4BE]">
+                      <span className="pm-elevated inline-block rounded-md border pm-border px-2.5 py-0.5 text-[11px] font-semibold pm-text-secondary">
                         ARTISTA
                       </span>
-                      <h3 className="mt-1 text-xl font-bold text-[#F5F5F7]">
+                      <h3 className="mt-1 text-xl font-bold pm-text-primary">
                         {bestResult.item.name}
                       </h3>
                     </div>
@@ -1601,7 +1645,7 @@ export const SearchScreen: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => void openArtistDetail(bestResult.item.id)}
-                    className="rounded-full bg-white px-5 py-2 text-xs font-bold text-[#070709]"
+                    className="pm-btn-primary rounded-full px-5 py-2 text-xs font-bold"
                   >
                     Ver perfil
                   </button>
@@ -1616,12 +1660,18 @@ export const SearchScreen: React.FC = () => {
                         className="h-20 w-20 rounded-[10px] object-cover"
                       />
                       <div>
-                        <span className="inline-block rounded-md bg-white/[0.08] px-2.5 py-0.5 text-[11px] font-semibold text-[#B4B4BE]">
+                        <span className="pm-elevated inline-block rounded-md border pm-border px-2.5 py-0.5 text-[11px] font-semibold pm-text-secondary">
                           CANCIÓN
                         </span>
-                        <h3 className="mt-1 text-xl font-bold text-[#F5F5F7]">
+                        <h3 className="mt-1 text-xl font-bold pm-text-primary">
                           {bestResult.item.title}
                         </h3>
+                        <div className="truncate text-xs pm-text-secondary">
+                          <ArtistLinks
+                            artists={bestResult.item.artists}
+                            linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
+                          />
+                        </div>
                       </div>
                     </div>
                     <button
@@ -1629,7 +1679,7 @@ export const SearchScreen: React.FC = () => {
                       onClick={() =>
                         void playTrack(bestResult.item, searchResults.songs)
                       }
-                      className="rounded-full bg-white px-5 py-2 text-xs font-bold text-[#070709]"
+                      className="pm-btn-primary rounded-full px-5 py-2 text-xs font-bold"
                     >
                       Reproducir
                     </button>
@@ -1644,7 +1694,7 @@ export const SearchScreen: React.FC = () => {
       {/* Full Songs List in Canciones tab OR remaining songs in Todo */}
       {searchScope === 'Canciones' && (
         <section className="space-y-2">
-          <h2 className="text-[18px] font-bold text-[#F5F5F7]">
+          <h2 className="text-[18px] font-bold pm-text-primary">
             Todas las canciones
           </h2>
           <div className="space-y-0.5">
@@ -1662,7 +1712,7 @@ export const SearchScreen: React.FC = () => {
 
       {searchScope === 'Todo' && searchResults.songs.length > 4 && (
         <section className="space-y-2">
-          <h2 className="text-[18px] font-bold text-[#F5F5F7]">
+          <h2 className="text-[18px] font-bold pm-text-primary">
             Más resultados
           </h2>
           <div className="grid grid-cols-1 gap-x-6 md:grid-cols-2">
@@ -1704,9 +1754,15 @@ export const SearchScreen: React.FC = () => {
                 key={album.id}
                 image={album.thumbnailUrl}
                 title={album.title}
-                subtitle={[album.year, album.artists.map((a) => a.name).join(', ')]
-                  .filter(Boolean)
-                  .join(' · ')}
+                subtitleNode={
+                  <span>
+                    {album.year ? `${album.year} · ` : ''}
+                    <ArtistLinks
+                      artists={album.artists}
+                      linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
+                    />
+                  </span>
+                }
                 onOpen={() => void openAlbumDetail(album.id)}
               />
             ))}
@@ -1780,10 +1836,10 @@ export const LibraryScreen: React.FC = () => {
     <div className="pm-page-enter space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-[28px] font-bold tracking-tight text-[#F5F5F7]">
+          <h1 className="text-[28px] font-bold tracking-tight pm-text-primary">
             Biblioteca
           </h1>
-          <p className="text-[13px] text-[#8E8E98]">
+          <p className="text-[13px] pm-text-tertiary">
             Colección sincronizada entre tu móvil Android y tu PC Windows
           </p>
         </div>
@@ -1791,7 +1847,7 @@ export const LibraryScreen: React.FC = () => {
         <button
           type="button"
           onClick={() => setImportModalOpen(true)}
-          className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-2 text-xs font-bold text-[#070709] hover:bg-white/90"
+          className="pm-btn-primary inline-flex items-center gap-2 rounded-full px-5 py-2 text-xs font-bold"
         >
           <ListMusic className="h-4 w-4" />
           <span>Importar playlist</span>
@@ -1814,10 +1870,8 @@ export const LibraryScreen: React.FC = () => {
                 role="tab"
                 aria-selected={active}
                 onClick={() => setLibraryCategory(cat)}
-                className={`rounded-full px-4 py-1.5 text-xs font-bold ${
-                  active
-                    ? 'bg-white text-[#070709]'
-                    : 'bg-[#16161C] text-[#B4B4BE] hover:bg-[#1F1F28] hover:text-white'
+                className={`rounded-full px-4 py-1.5 text-xs font-bold transition-colors ${
+                  active ? 'pm-btn-primary' : 'pm-btn-secondary'
                 }`}
               >
                 {cat}
@@ -1832,7 +1886,7 @@ export const LibraryScreen: React.FC = () => {
           placeholder="Filtrar en tu biblioteca..."
           value={libraryFilterQuery}
           onChange={(e) => setLibraryFilterQuery(e.target.value)}
-          className="rounded-full border border-white/10 bg-[#131318] px-4 py-2 text-xs text-[#F5F5F7] placeholder:text-[#8E8E98]"
+          className="pm-input rounded-full px-4 py-2 text-xs"
         />
       </div>
 
@@ -1848,7 +1902,7 @@ export const LibraryScreen: React.FC = () => {
             placeholder="Nueva playlist (ej. Sesión Canarias)..."
             value={newPlaylistName}
             onChange={(e) => setNewPlaylistName(e.target.value)}
-            className="flex-1 rounded-full border border-white/10 bg-[#0B0B0E] px-4 py-2 text-xs text-[#F5F5F7] placeholder:text-[#8E8E98]"
+            className="pm-input flex-1 rounded-full px-4 py-2 text-xs"
           />
           <button
             type="button"
@@ -1858,7 +1912,7 @@ export const LibraryScreen: React.FC = () => {
               setNewPlaylistName('');
               showToast(`Playlist «${created.name}» creada`);
             }}
-            className="inline-flex items-center gap-1.5 rounded-full bg-white px-4 py-2 text-xs font-bold text-[#070709]"
+            className="pm-btn-primary inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-bold"
           >
             <Plus className="h-4 w-4" />
             <span>Crear playlist</span>
@@ -1869,7 +1923,7 @@ export const LibraryScreen: React.FC = () => {
       {/* Playlists Section */}
       {(libraryCategory === 'Todo' || libraryCategory === 'Playlists') && (
         <section className="space-y-3">
-          <h2 className="text-[18px] font-bold text-[#F5F5F7]">
+          <h2 className="text-[18px] font-bold pm-text-primary">
             Tus Playlists ({filteredPlaylists.length})
           </h2>
           {filteredPlaylists.length > 0 ? (
@@ -1897,9 +1951,9 @@ export const LibraryScreen: React.FC = () => {
                         void addTrackToPlaylist(pl.id, dropped);
                       }
                     }}
-                    className={`pm-surface-card flex items-center justify-between gap-3 rounded-[12px] p-3.5 transition-all ${
+                    className={`pm-surface-card pm-card-lift flex items-center justify-between gap-3 rounded-[12px] p-3.5 transition-all ${
                       isDropTarget
-                        ? 'bg-white/[0.12] ring-2 ring-white/75'
+                        ? 'pm-active-row ring-2 ring-[var(--pm-accent-primary)]'
                         : ''
                     }`}
                   >
@@ -1911,15 +1965,15 @@ export const LibraryScreen: React.FC = () => {
                           className="h-12 w-12 shrink-0 rounded-[8px] object-cover"
                         />
                       ) : (
-                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[8px] bg-[#181820] text-sm font-bold text-[#B4B4BE]">
+                        <div className="pm-elevated flex h-12 w-12 shrink-0 items-center justify-center rounded-[8px] border pm-border text-sm font-bold pm-text-secondary">
                           {pl.name.slice(0, 1).toUpperCase()}
                         </div>
                       )}
                       <div className="min-w-0">
-                        <h3 className="truncate text-[15px] font-bold text-[#F5F5F7]">
+                        <h3 className="truncate text-[15px] font-bold pm-text-primary">
                           {pl.name}
                         </h3>
-                        <p className="text-xs text-[#8E8E98]">
+                        <p className="text-xs pm-text-tertiary">
                           {pl.tracks.length} canciones · {pl.source}
                         </p>
                       </div>
@@ -1928,7 +1982,7 @@ export const LibraryScreen: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => openLocalPlaylistDetail(pl.id)}
-                        className="rounded-full bg-white px-3.5 py-1.5 text-xs font-bold text-[#070709]"
+                        className="pm-btn-primary rounded-full px-3.5 py-1.5 text-xs font-bold"
                       >
                         Ver
                       </button>
@@ -1936,7 +1990,7 @@ export const LibraryScreen: React.FC = () => {
                         type="button"
                         aria-label={`Eliminar ${pl.name}`}
                         onClick={() => void deletePlaylist(pl.id)}
-                        className="rounded-full bg-[#16161C] p-2 text-[#8E8E98] hover:text-[#F87171]"
+                        className="pm-btn-secondary rounded-full p-2 pm-text-tertiary hover:text-rose-500"
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
@@ -1946,7 +2000,7 @@ export const LibraryScreen: React.FC = () => {
               })}
             </div>
           ) : (
-            <p className="text-xs text-[#8E8E98]">
+            <p className="text-xs pm-text-tertiary">
               Aún no has creado playlists personalizadas. Usa el campo superior o importa desde Spotify/YouTube.
             </p>
           )}
@@ -1956,7 +2010,7 @@ export const LibraryScreen: React.FC = () => {
       {/* Liked Tracks Section */}
       {(libraryCategory === 'Todo' || libraryCategory === 'Me gusta') && (
         <section className="space-y-2.5">
-          <h2 className="text-[18px] font-bold text-[#F5F5F7]">
+          <h2 className="text-[18px] font-bold pm-text-primary">
             Canciones que te gustan ({filteredLikes.length})
           </h2>
           {filteredLikes.length > 0 ? (
@@ -1971,7 +2025,7 @@ export const LibraryScreen: React.FC = () => {
               ))}
             </div>
           ) : (
-            <p className="text-xs text-[#8E8E98]">
+            <p className="text-xs pm-text-tertiary">
               Pulsa el icono del corazón en cualquier canción para guardarla aquí.
             </p>
           )}
@@ -1981,7 +2035,7 @@ export const LibraryScreen: React.FC = () => {
       {/* Offline Downloads Section */}
       {(libraryCategory === 'Todo' || libraryCategory === 'Descargas') && (
         <section className="space-y-2.5">
-          <h2 className="text-[18px] font-bold text-[#F5F5F7]">
+          <h2 className="text-[18px] font-bold pm-text-primary">
             En este dispositivo · Offline ({offlineEntries.length})
           </h2>
           {offlineEntries.length > 0 ? (
@@ -2004,10 +2058,10 @@ export const LibraryScreen: React.FC = () => {
                       }}
                       className="min-w-0 flex-1 text-left"
                     >
-                      <div className="truncate text-sm font-semibold text-[#F5F5F7]">
+                      <div className="truncate text-sm font-semibold pm-text-primary">
                         {track?.title ?? entry.trackId}
                       </div>
-                      <div className="text-xs text-[#8E8E98]">
+                      <div className="text-xs pm-text-tertiary">
                         Disponible sin conexión ·{' '}
                         {entry.sizeBytes > 1024 * 1024
                           ? `${(entry.sizeBytes / (1024 * 1024)).toFixed(1)} MB`
@@ -2017,7 +2071,7 @@ export const LibraryScreen: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => void removeOfflineTrack(entry.trackId)}
-                      className="rounded-full bg-[#16161C] px-3.5 py-1.5 text-xs font-semibold text-[#F87171] hover:bg-[#241418]"
+                      className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-semibold text-rose-500"
                     >
                       Borrar
                     </button>
@@ -2026,7 +2080,7 @@ export const LibraryScreen: React.FC = () => {
               })}
             </div>
           ) : (
-            <p className="text-xs text-[#8E8E98]">
+            <p className="text-xs pm-text-tertiary">
               Descarga canciones con el icono de flecha para escucharlas sin conexión.
             </p>
           )}
@@ -2036,7 +2090,7 @@ export const LibraryScreen: React.FC = () => {
       {/* Listening History Section */}
       {(libraryCategory === 'Todo' || libraryCategory === 'Historial') && (
         <section className="space-y-2.5">
-          <h2 className="text-[18px] font-bold text-[#F5F5F7]">
+          <h2 className="text-[18px] font-bold pm-text-primary">
             Historial reciente ({playHistory.length})
           </h2>
           {playHistory.length > 0 ? (
@@ -2046,7 +2100,7 @@ export const LibraryScreen: React.FC = () => {
               ))}
             </div>
           ) : (
-            <p className="text-xs text-[#8E8E98]">
+            <p className="text-xs pm-text-tertiary">
               Tu historial alimenta automáticamente las recomendaciones.
             </p>
           )}

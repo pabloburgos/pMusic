@@ -45,7 +45,8 @@ function sendJson(res: ServerResponse, status: number, payload: unknown): void {
 
 export function createPMusicApiHandler(options: PMusicApiHandlerOptions = {}) {
   const provider = options.musicProvider ?? new YouTubeMusicProvider({ enableLiveNetwork: true });
-  const streamResolver = new AudioStreamResolver(new DeezerCatalog());
+  const deezerCatalog = new DeezerCatalog();
+  const streamResolver = new AudioStreamResolver(deezerCatalog);
   const importer = new PlaylistImporter({ musicProvider: provider });
   const fetchFn = options.fetchFn ?? globalThis.fetch.bind(globalThis);
 
@@ -126,6 +127,22 @@ export function createPMusicApiHandler(options: PMusicApiHandlerOptions = {}) {
         const artistId = decodeURIComponent(pathname.slice('/api/artist/'.length));
         const detail = await provider.getArtist(artistId);
         sendJson(res, 200, detail);
+        return true;
+      }
+
+      if (pathname.startsWith('/api/track/')) {
+        const trackId = decodeURIComponent(pathname.slice('/api/track/'.length));
+        const track = await deezerCatalog.getTrack(trackId);
+        if (!track) {
+          const fallback = FALLBACK_TRACKS.find((t) => t.id === trackId) ?? null;
+          if (!fallback) {
+            sendJson(res, 404, { error: `Pista no encontrada: ${trackId}` });
+            return true;
+          }
+          sendJson(res, 200, fallback);
+          return true;
+        }
+        sendJson(res, 200, track);
         return true;
       }
 
