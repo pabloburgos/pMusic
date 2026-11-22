@@ -1,0 +1,37 @@
+{
+  "name": "pmusic",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "pMusic — Reproductor de música cross-device (Android + Windows) con Liquid Glass, Sesión DJ AutoMix, recomendaciones ES y sincronización gratuita con Supabase",
+  "engines": {
+    "node": ">=22.12.0",
+    "npm": ">=10.0.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit && npm run typecheck --workspaces --if-present",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build:web": "npm run build -w @pmusic/web",
+    "test:e2e": "playwright test",
+    "build:desktop": "npm run build:web && npm run build -w @pmusic/desktop",
+    "dist:win:unpacked": "npm run build:desktop && npm run dist:win:unpacked -w @pmusic/desktop",
+    "dist:win": "npm run build:desktop && npm run dist:win -w @pmusic/desktop",
+    "build:mobile": "npm run build:web && npm run sync:android -w @pmusic/mobile",
+    "build:apk": "npm run build:mobile && npm run apk:debug -w @pmusic/mobile"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^22.20.5",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.8",
+    "vitest": "^4.1.12"
+  }
+}

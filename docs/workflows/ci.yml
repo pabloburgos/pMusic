@@ -1,0 +1,41 @@
+name: pMusic CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck all workspaces
+        run: npm run typecheck
+
+      - name: Run unit and component tests
+        run: npm run test
+
+      - name: Build shared Web UI, Desktop bundle, and Android APK
+        run: |
+          npm run build:web
+          npm run build:desktop
+          npm run build:apk
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E and Apple HIG Audit Suite
+        run: npm run test:e2e

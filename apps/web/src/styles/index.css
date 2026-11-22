@@ -1,0 +1,225 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+  --pm-bg-canvas: #06060A;
+  --pm-bg-elevated: #111116;
+  --pm-bg-grouped: #181820;
+  --pm-bg-card: #16161D;
+  --pm-bg-card-hover: #1E1E28;
+
+  --pm-glass-regular-bg: rgba(22, 22, 30, 0.72);
+  --pm-glass-regular-blur: 24px;
+  --pm-glass-clear-bg: rgba(16, 16, 22, 0.56);
+  --pm-glass-clear-blur: 18px;
+  --pm-glass-border: rgba(255, 255, 255, 0.14);
+  --pm-glass-highlight: rgba(255, 255, 255, 0.18);
+  --pm-bright-media-scrim: rgba(6, 6, 10, 0.38);
+
+  --pm-text-primary: #F5F5F7;
+  --pm-text-secondary: #AEAEB2;
+  --pm-text-tertiary: #8E8E93;
+
+  --pm-accent-primary: #0A84FF;
+  --pm-accent-dj: #BF5AF2;
+  --pm-accent-connect: #30D158;
+  --pm-accent-warning: #FF9F0A;
+  --pm-accent-danger: #FF453A;
+  --pm-separator: rgba(255, 255, 255, 0.10);
+
+  --pm-ambient-1: #5E2B97;
+  --pm-ambient-2: #0F4C81;
+  --pm-ambient-3: #141428;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  min-height: 100dvh;
+  background-color: var(--pm-bg-canvas);
+  color: var(--pm-text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI Variable", "Roboto", system-ui, sans-serif;
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 1.4;
+  overflow-x: hidden;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Functional Chrome Liquid Glass Surfaces (strictly non-nested, never on content cards/rows) */
+.pm-glass-regular {
+  background-color: rgba(22, 22, 30, 0.72);
+  backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.pm-glass-clear {
+  background-color: rgba(16, 16, 22, 0.56);
+  backdrop-filter: blur(18px) saturate(165%);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+/* Solid Elevated Content Surfaces (Zero backdrop-filter per Apple HIG Liquid Glass Rule #2) */
+.pm-surface-card {
+  background-color: var(--pm-bg-card);
+  border: 1px solid var(--pm-separator);
+  backdrop-filter: none !important;
+}
+
+.pm-surface-card:hover {
+  background-color: var(--pm-bg-card-hover);
+}
+
+/* Synced Lyrics Active & Inactive lines */
+.pm-lyric-line-active {
+  color: #FFFFFF;
+  opacity: 1;
+  filter: none;
+  transform: scale(1.02);
+  transform-origin: left center;
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.22s ease, filter 0.22s ease;
+}
+
+.pm-lyric-line-inactive {
+  color: #AEAEB2;
+  opacity: 1;
+  filter: blur(1.5px);
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.22s ease, filter 0.22s ease;
+}
+
+/* Dynamic Ambient Mesh Animation */
+@keyframes pmAmbientDrift {
+  0% {
+    transform: translate3d(0%, 0%, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(3%, -2%, 0) scale(1.05);
+  }
+  100% {
+    transform: translate3d(0%, 0%, 0) scale(1);
+  }
+}
+
+.pm-ambient-mesh {
+  animation: pmAmbientDrift 24s ease-in-out infinite;
+  will-change: transform;
+}
+
+/* Apple HIG Hit-Target Enforcement: 44x44px mobile (<768px), 28x28px desktop (>=768px) */
+button,
+[role="button"],
+[role="tab"],
+[role="switch"],
+input[type="range"],
+input[type="search"],
+input[type="text"],
+input[type="email"],
+input[type="password"] {
+  min-width: 28px;
+  min-height: 28px;
+}
+
+@media (max-width: 767px) {
+  button,
+  [role="button"],
+  [role="tab"],
+  [role="switch"],
+  input[type="range"],
+  input[type="search"],
+  input[type="text"],
+  input[type="email"],
+  input[type="password"] {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* Focus Ring for Keyboard Navigation */
+button:focus-visible,
+[role="button"]:focus-visible,
+[role="tab"]:focus-visible,
+[role="switch"]:focus-visible,
+[role="slider"]:focus-visible,
+input:focus-visible {
+  outline: 2px solid #FFFFFF;
+  outline-offset: 2px;
+}
+
+/* Accessibility Media Query 1: Reduced Transparency & Android Graphic Saver Mode */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --pm-glass-regular-bg: #18181E;
+    --pm-glass-clear-bg: #1E1E26;
+    --pm-glass-regular-blur: 0px;
+    --pm-glass-clear-blur: 0px;
+    --pm-glass-border: rgba(255, 255, 255, 0.24);
+  }
+  .pm-glass-regular,
+  .pm-glass-clear {
+    background-color: #18181E !important;
+    backdrop-filter: none !important;
+  }
+}
+
+html.pm-reduced-transparency .pm-glass-regular,
+html.pm-reduced-transparency .pm-glass-clear {
+  background-color: #18181E !important;
+  backdrop-filter: none !important;
+}
+
+/* Accessibility Media Query 2: Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+  .pm-ambient-mesh {
+    animation: none !important;
+  }
+  .pm-lyric-line-inactive {
+    filter: none !important;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+html.pm-reduced-motion .pm-ambient-mesh {
+  animation: none !important;
+}
+html.pm-reduced-motion .pm-lyric-line-inactive {
+  filter: none !important;
+}
+
+/* Accessibility Media Query 3: Increased Contrast / Forced Colors */
+@media (prefers-contrast: more), (forced-colors: active) {
+  :root {
+    --pm-text-primary: #FFFFFF;
+    --pm-text-secondary: #E5E5EA;
+    --pm-text-tertiary: #C7C7D1;
+    --pm-glass-regular-bg: rgba(20, 20, 26, 0.94);
+    --pm-glass-clear-bg: rgba(20, 20, 26, 0.94);
+    --pm-glass-border: rgba(255, 255, 255, 0.42);
+    --pm-separator: rgba(255, 255, 255, 0.32);
+  }
+  .pm-glass-regular,
+  .pm-glass-clear {
+    background-color: rgba(20, 20, 26, 0.94) !important;
+    border-color: rgba(255, 255, 255, 0.42) !important;
+  }
+  .pm-surface-card {
+    border-color: rgba(255, 255, 255, 0.34) !important;
+  }
+}

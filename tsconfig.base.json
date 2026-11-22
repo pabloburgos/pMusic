@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "paths": {
+      "@pmusic/core": ["./packages/core/src/index.ts"],
+      "@pmusic/providers": ["./packages/providers/src/index.ts"],
+      "@pmusic/audio-engine": ["./packages/audio-engine/src/index.ts"],
+      "@pmusic/recommendations": ["./packages/recommendations/src/index.ts"],
+      "@pmusic/sync": ["./packages/sync/src/index.ts"]
+    }
+  }
+}

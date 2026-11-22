@@ -1,0 +1,15 @@
+{
+  "appId": "es.pmusic.app",
+  "appName": "pMusic",
+  "webDir": "dist",
+  "backgroundColor": "#06060A",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "StatusBar": {
+      "style": "DARK",
+      "backgroundColor": "#06060A"
+    }
+  }
+}

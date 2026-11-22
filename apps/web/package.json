@@ -1,0 +1,32 @@
+{
+  "name": "@pmusic/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@pmusic/audio-engine": "*",
+    "@pmusic/core": "*",
+    "@pmusic/providers": "*",
+    "@pmusic/recommendations": "*",
+    "@pmusic/sync": "*",
+    "framer-motion": "^14.14.0",
+    "idb": "^8.0.4",
+    "lucide-react": "^1.77.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "zustand": "^5.1.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "tailwindcss": "^4.3.5"
+  }
+}
