@@ -2,30 +2,30 @@
 
 :root {
   color-scheme: dark;
-  --pm-bg-canvas: #06060A;
-  --pm-bg-elevated: #111116;
-  --pm-bg-grouped: #181820;
-  --pm-bg-card: #16161D;
-  --pm-bg-card-hover: #1E1E28;
+  --pm-bg-canvas: #08080C;
+  --pm-bg-elevated: #101016;
+  --pm-bg-grouped: #14141C;
+  --pm-bg-card: #121219;
+  --pm-bg-card-hover: #1A1A24;
 
-  --pm-glass-regular-bg: rgba(22, 22, 30, 0.72);
-  --pm-glass-regular-blur: 24px;
-  --pm-glass-clear-bg: rgba(16, 16, 22, 0.56);
-  --pm-glass-clear-blur: 18px;
-  --pm-glass-border: rgba(255, 255, 255, 0.14);
-  --pm-glass-highlight: rgba(255, 255, 255, 0.18);
-  --pm-bright-media-scrim: rgba(6, 6, 10, 0.38);
+  --pm-glass-regular-bg: rgba(14, 14, 20, 0.74);
+  --pm-glass-regular-blur: 28px;
+  --pm-glass-clear-bg: rgba(12, 12, 18, 0.58);
+  --pm-glass-clear-blur: 20px;
+  --pm-glass-border: rgba(255, 255, 255, 0.08);
+  --pm-glass-highlight: rgba(255, 255, 255, 0.12);
+  --pm-bright-media-scrim: rgba(8, 8, 12, 0.44);
 
   --pm-text-primary: #F5F5F7;
-  --pm-text-secondary: #AEAEB2;
-  --pm-text-tertiary: #8E8E93;
+  --pm-text-secondary: #B4B4BE;
+  --pm-text-tertiary: #8E8E98;
 
-  --pm-accent-primary: #0A84FF;
-  --pm-accent-dj: #BF5AF2;
-  --pm-accent-connect: #30D158;
-  --pm-accent-warning: #FF9F0A;
-  --pm-accent-danger: #FF453A;
-  --pm-separator: rgba(255, 255, 255, 0.10);
+  --pm-accent-primary: #FFFFFF;
+  --pm-accent-dj: #C084FC;
+  --pm-accent-connect: #34D399;
+  --pm-accent-warning: #FBBF24;
+  --pm-accent-danger: #F87171;
+  --pm-separator: rgba(255, 255, 255, 0.07);
 
   --pm-ambient-1: #5E2B97;
   --pm-ambient-2: #0F4C81;
@@ -45,11 +45,28 @@ body,
   min-height: 100dvh;
   background-color: var(--pm-bg-canvas);
   color: var(--pm-text-primary);
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI Variable", "Roboto", system-ui, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "Segoe UI Variable", system-ui, sans-serif;
   font-weight: 400;
   font-size: 14px;
-  line-height: 1.4;
+  line-height: 1.45;
+  letter-spacing: -0.01em;
   overflow-x: hidden;
+}
+
+/* Subtle custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.26);
 }
 
 .tabular-nums {
@@ -58,28 +75,65 @@ body,
 
 /* Functional Chrome Liquid Glass Surfaces (strictly non-nested, never on content cards/rows) */
 .pm-glass-regular {
-  background-color: rgba(22, 22, 30, 0.72);
-  backdrop-filter: blur(24px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  background-color: rgba(14, 14, 20, 0.76);
+  backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.10);
 }
 
 .pm-glass-clear {
-  background-color: rgba(16, 16, 22, 0.56);
-  backdrop-filter: blur(18px) saturate(165%);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  background-color: rgba(12, 12, 18, 0.60);
+  backdrop-filter: blur(20px) saturate(165%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.09);
 }
 
-/* Solid Elevated Content Surfaces (Zero backdrop-filter per Apple HIG Liquid Glass Rule #2) */
+/* Quiet Fill Content Surfaces (Liner / Apple Music dark surface hierarchy, zero backdrop-filter) */
 .pm-surface-card {
-  background-color: var(--pm-bg-card);
-  border: 1px solid var(--pm-separator);
+  background-color: #121219;
+  border: 1px solid rgba(255, 255, 255, 0.06);
   backdrop-filter: none !important;
+  transition: background-color 0.16s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.16s ease, transform 0.16s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .pm-surface-card:hover {
-  background-color: var(--pm-bg-card-hover);
+  background-color: #181822;
+  border-color: rgba(255, 255, 255, 0.11);
+}
+
+/* Sleek Custom Range Sliders (Scrubber, Volume, EQ) */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 5px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.18);
+  transition: background-color 0.15s ease, height 0.15s ease;
+}
+
+input[type="range"]:hover::-webkit-slider-runnable-track {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 9999px;
+  background: #FFFFFF;
+  margin-top: -4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
+  transition: transform 0.15s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+input[type="range"]:hover::-webkit-slider-thumb {
+  transform: scale(1.18);
 }
 
 /* Synced Lyrics Active & Inactive lines */
@@ -87,16 +141,22 @@ body,
   color: #FFFFFF;
   opacity: 1;
   filter: none;
-  transform: scale(1.02);
+  transform: scale(1.015);
   transform-origin: left center;
+  text-shadow: 0 4px 24px rgba(255, 255, 255, 0.18);
   transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.22s ease, filter 0.22s ease;
 }
 
 .pm-lyric-line-inactive {
   color: #AEAEB2;
   opacity: 1;
-  filter: blur(1.5px);
+  filter: blur(1.4px);
   transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.22s ease, filter 0.22s ease;
+}
+
+.pm-lyric-line-inactive:hover {
+  color: #E5E5EA;
+  filter: blur(0.4px);
 }
 
 /* Dynamic Ambient Mesh Animation */
@@ -105,7 +165,7 @@ body,
     transform: translate3d(0%, 0%, 0) scale(1);
   }
   50% {
-    transform: translate3d(3%, -2%, 0) scale(1.05);
+    transform: translate3d(2.5%, -1.5%, 0) scale(1.04);
   }
   100% {
     transform: translate3d(0%, 0%, 0) scale(1);
@@ -160,22 +220,22 @@ input:focus-visible {
 /* Accessibility Media Query 1: Reduced Transparency & Android Graphic Saver Mode */
 @media (prefers-reduced-transparency: reduce) {
   :root {
-    --pm-glass-regular-bg: #18181E;
-    --pm-glass-clear-bg: #1E1E26;
+    --pm-glass-regular-bg: #14141B;
+    --pm-glass-clear-bg: #181820;
     --pm-glass-regular-blur: 0px;
     --pm-glass-clear-blur: 0px;
-    --pm-glass-border: rgba(255, 255, 255, 0.24);
+    --pm-glass-border: rgba(255, 255, 255, 0.22);
   }
   .pm-glass-regular,
   .pm-glass-clear {
-    background-color: #18181E !important;
+    background-color: #14141B !important;
     backdrop-filter: none !important;
   }
 }
 
 html.pm-reduced-transparency .pm-glass-regular,
 html.pm-reduced-transparency .pm-glass-clear {
-  background-color: #18181E !important;
+  background-color: #14141B !important;
   backdrop-filter: none !important;
 }
 
@@ -209,14 +269,14 @@ html.pm-reduced-motion .pm-lyric-line-inactive {
     --pm-text-primary: #FFFFFF;
     --pm-text-secondary: #E5E5EA;
     --pm-text-tertiary: #C7C7D1;
-    --pm-glass-regular-bg: rgba(20, 20, 26, 0.94);
-    --pm-glass-clear-bg: rgba(20, 20, 26, 0.94);
+    --pm-glass-regular-bg: rgba(18, 18, 24, 0.95);
+    --pm-glass-clear-bg: rgba(18, 18, 24, 0.95);
     --pm-glass-border: rgba(255, 255, 255, 0.42);
     --pm-separator: rgba(255, 255, 255, 0.32);
   }
   .pm-glass-regular,
   .pm-glass-clear {
-    background-color: rgba(20, 20, 26, 0.94) !important;
+    background-color: rgba(18, 18, 24, 0.95) !important;
     border-color: rgba(255, 255, 255, 0.42) !important;
   }
   .pm-surface-card {

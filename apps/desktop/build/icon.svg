@@ -1,12 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
   <defs>
     <linearGradient id="pmGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0A84FF" />
-      <stop offset="100%" stop-color="#BF5AF2" />
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="100%" stop-color="#C084FC" />
     </linearGradient>
   </defs>
-  <rect width="256" height="256" rx="56" fill="#06060A" />
-  <rect x="16" y="16" width="224" height="224" rx="44" fill="url(#pmGrad)" opacity="0.22" />
+  <rect width="256" height="256" rx="56" fill="#08080C" />
+  <rect x="16" y="16" width="224" height="224" rx="44" fill="url(#pmGrad)" opacity="0.16" />
   <circle cx="128" cy="128" r="76" fill="none" stroke="url(#pmGrad)" stroke-width="18" />
   <polygon points="108,92 168,128 108,164" fill="#F5F5F7" />
 </svg>

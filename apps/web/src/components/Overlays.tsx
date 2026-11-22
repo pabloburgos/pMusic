@@ -11,7 +11,6 @@ import {
   Pause,
   Play,
   Plus,
-  Radio,
   RotateCcw,
   Settings,
   SkipBack,
@@ -20,7 +19,6 @@ import {
   Smartphone,
   Sparkles,
   Trash2,
-  Volume2,
   Wifi,
   X,
 } from 'lucide-react';
@@ -89,32 +87,32 @@ export const NowPlayingSheet: React.FC = () => {
       data-testid="now-playing-sheet"
       className="pm-glass-regular fixed inset-0 z-50 flex flex-col overflow-hidden text-[#F5F5F7]"
     >
-      {/* Dynamic album-art ambient mesh background */}
+      {/* Reactive Cover-Driven Fullscreen Backdrop (Liner / Kawarp style) */}
       <div
         aria-hidden="true"
-        className="pm-ambient-mesh pointer-events-none absolute inset-0 opacity-65"
+        className="pm-ambient-mesh pointer-events-none absolute inset-0 opacity-60"
         style={{
           background:
-            'radial-gradient(circle at 22% 24%, var(--pm-ambient-1), transparent 55%), radial-gradient(circle at 78% 72%, var(--pm-ambient-2), transparent 58%), linear-gradient(180deg, var(--pm-ambient-3) 0%, #06060A 100%)',
+            'radial-gradient(circle at 20% 25%, var(--pm-ambient-1), transparent 55%), radial-gradient(circle at 80% 75%, var(--pm-ambient-2), transparent 58%), linear-gradient(180deg, var(--pm-ambient-3) 0%, #08080C 100%)',
         }}
       />
 
-      {/* Apple HIG 38% Bright Media Scrim (>= 0.35 constant) */}
+      {/* Apple HIG 44% Bright Media Scrim (>= 0.35 constant) */}
       <div
         data-testid="bright-media-scrim"
         data-scrim="true"
-        data-scrim-alpha="0.38"
+        data-scrim-alpha="0.44"
         className="pointer-events-none absolute inset-0"
-        style={{ backgroundColor: 'rgba(6, 6, 10, 0.42)' }}
+        style={{ backgroundColor: 'rgba(8, 8, 12, 0.44)' }}
       />
 
-      {/* Top Header & Segmented Switcher */}
-      <header className="relative z-10 flex items-center justify-between border-b border-white/10 px-4 py-3 md:px-8">
+      {/* Minimal Top Bar */}
+      <header className="relative z-10 flex items-center justify-between border-b border-white/[0.07] px-4 py-3.5 md:px-10">
         <button
           type="button"
           aria-label="Cerrar reproductor"
           onClick={() => setNowPlayingOpen(false)}
-          className="flex items-center gap-2 rounded-full bg-[#16161D] px-3.5 py-2 text-sm font-medium text-[#F5F5F7] hover:bg-[#1E1E28]"
+          className="inline-flex items-center gap-2 rounded-[10px] border border-white/[0.08] bg-[#121219] px-3.5 py-2 text-xs font-semibold text-[#F5F5F7] hover:bg-[#1A1A24]"
         >
           <X className="h-4 w-4" />
           <span>Cerrar</span>
@@ -123,7 +121,7 @@ export const NowPlayingSheet: React.FC = () => {
         <div
           role="tablist"
           aria-label="Vistas del reproductor"
-          className="flex items-center gap-1 rounded-full bg-[#111116] p-1"
+          className="flex items-center gap-1 rounded-[12px] border border-white/[0.07] bg-[#0D0D13] p-1"
         >
           {(['Portada', 'Letras', 'Cola'] as const).map((tab) => {
             const active = nowPlayingTab === tab;
@@ -134,10 +132,10 @@ export const NowPlayingSheet: React.FC = () => {
                 role="tab"
                 aria-selected={active}
                 onClick={() => setNowPlayingTab(tab)}
-                className={`rounded-full px-4 py-1.5 text-sm font-semibold transition-colors ${
+                className={`rounded-[9px] px-4 py-1.5 text-xs font-bold transition-colors ${
                   active
-                    ? 'bg-[#0051D5] text-white'
-                    : 'text-[#AEAEB2] hover:text-[#F5F5F7]'
+                    ? 'bg-white text-[#08080C]'
+                    : 'text-[#B4B4BE] hover:text-[#F5F5F7]'
                 }`}
               >
                 {tab}
@@ -154,9 +152,9 @@ export const NowPlayingSheet: React.FC = () => {
               setNowPlayingOpen(false);
               setEqSheetOpen(true);
             }}
-            className="flex items-center gap-1.5 rounded-full bg-[#16161D] px-3 py-2 text-xs font-semibold text-[#F5F5F7] hover:bg-[#1E1E28]"
+            className="inline-flex items-center gap-1.5 rounded-[10px] border border-white/[0.08] bg-[#121219] px-3 py-2 text-xs font-semibold text-[#F5F5F7] hover:bg-[#1A1A24]"
           >
-            <Sliders className="h-4 w-4 text-[#0A84FF]" />
+            <Sliders className="h-4 w-4 text-[#B4B4BE]" />
             <span>EQ</span>
           </button>
           <button
@@ -166,30 +164,30 @@ export const NowPlayingSheet: React.FC = () => {
               setNowPlayingOpen(false);
               setDevicesSheetOpen(true);
             }}
-            className="flex items-center gap-1.5 rounded-full bg-[#16161D] px-3 py-2 text-xs font-semibold text-[#F5F5F7] hover:bg-[#1E1E28]"
+            className="inline-flex items-center gap-1.5 rounded-[10px] border border-white/[0.08] bg-[#121219] px-3 py-2 text-xs font-semibold text-[#F5F5F7] hover:bg-[#1A1A24]"
           >
-            <Wifi className="h-4 w-4 text-[#30D158]" />
+            <Wifi className="h-4 w-4 text-[#34D399]" />
             <span>Dispositivos</span>
           </button>
         </div>
       </header>
 
       {/* Main Content Area */}
-      <div className="relative z-10 flex-1 overflow-y-auto px-4 py-6 md:px-10">
+      <div className="relative z-10 flex-1 overflow-y-auto px-4 py-6 md:px-12 md:py-10">
         {nowPlayingTab === 'Portada' && (
-          <div className="mx-auto flex max-w-2xl flex-col items-center gap-6">
-            {/* Large Artwork with Soft Shadow */}
-            <div className="relative aspect-square w-64 overflow-hidden rounded-[18px] border border-white/15 bg-[#16161D] shadow-2xl md:w-80">
+          <div className="mx-auto flex max-w-xl flex-col items-center gap-7">
+            {/* Floating Big Artwork with Deep Ambient Shadow */}
+            <div className="relative aspect-square w-64 overflow-hidden rounded-[18px] border border-white/10 bg-[#121219] shadow-[0_32px_80px_rgba(0,0,0,0.78)] md:w-84">
               <img
                 src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
                 alt={currentTrack.title}
                 className="h-full w-full object-cover"
               />
               {djMode.enabled && (
-                <div className="absolute top-3 left-3 flex items-center gap-1.5 rounded-full bg-[#111116]/95 px-3 py-1 text-xs font-semibold text-[#BF5AF2]">
-                  <Sparkles className="h-3.5 w-3.5" />
+                <div className="absolute top-3 left-3 flex items-center gap-1.5 rounded-lg border border-white/10 bg-[#0D0D13]/90 px-3 py-1 text-xs font-semibold text-[#E9D5FF]">
+                  <Sparkles className="h-3.5 w-3.5 text-[#C084FC]" />
                   <span>
-                    Deck {activeDeck} • {currentAnalysis?.bpm ?? 120} BPM
+                    Deck {activeDeck} · {currentAnalysis?.bpm ?? 120} BPM
                   </span>
                 </div>
               )}
@@ -198,12 +196,12 @@ export const NowPlayingSheet: React.FC = () => {
             {/* Title, Artist & Quick Actions */}
             <div className="flex w-full items-center justify-between gap-4">
               <div className="min-w-0 flex-1">
-                <h1 className="truncate text-2xl font-bold text-[#F5F5F7]">
+                <h1 className="truncate text-2xl font-bold tracking-tight text-[#F5F5F7]">
                   {currentTrack.title}
                 </h1>
-                <p className="truncate text-base font-medium text-[#AEAEB2]">
+                <p className="truncate text-[15px] text-[#B4B4BE]">
                   {currentTrack.artists.map((a) => a.name).join(', ')}
-                  {currentTrack.album ? ` • ${currentTrack.album.name}` : ''}
+                  {currentTrack.album ? ` · ${currentTrack.album.name}` : ''}
                 </p>
               </div>
 
@@ -213,10 +211,10 @@ export const NowPlayingSheet: React.FC = () => {
                   aria-label={isLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
                   aria-pressed={isLiked}
                   onClick={() => void toggleLike(currentTrack)}
-                  className={`flex items-center justify-center rounded-full p-2.5 ${
+                  className={`flex items-center justify-center rounded-[10px] border border-white/[0.08] p-2.5 ${
                     isLiked
-                      ? 'bg-[#FF375F]/20 text-[#FF375F]'
-                      : 'bg-[#16161D] text-[#AEAEB2] hover:text-white'
+                      ? 'bg-[#281219] text-[#F43F5E]'
+                      : 'bg-[#121219] text-[#B4B4BE] hover:text-white'
                   }`}
                 >
                   <Heart className={`h-5 w-5 ${isLiked ? 'fill-current' : ''}`} />
@@ -230,12 +228,12 @@ export const NowPlayingSheet: React.FC = () => {
                       : 'Descargar para escuchar offline'
                   }
                   onClick={() => void downloadTrackOffline(currentTrack)}
-                  className="flex items-center justify-center rounded-full bg-[#16161D] p-2.5 text-[#AEAEB2] hover:text-white"
+                  className="flex items-center justify-center rounded-[10px] border border-white/[0.08] bg-[#121219] p-2.5 text-[#B4B4BE] hover:text-white"
                 >
                   {dlStatus === 'downloading' ? (
-                    <Loader2 className="h-5 w-5 animate-spin text-[#0A84FF]" />
+                    <Loader2 className="h-5 w-5 animate-spin text-white" />
                   ) : dlStatus === 'downloaded' ? (
-                    <Check className="h-5 w-5 text-[#30D158]" />
+                    <Check className="h-5 w-5 text-[#34D399]" />
                   ) : (
                     <Download className="h-5 w-5" />
                   )}
@@ -253,41 +251,45 @@ export const NowPlayingSheet: React.FC = () => {
                 max={Math.max(1, Math.round(durationSec))}
                 value={Math.min(Math.round(durationSec), Math.round(positionSec))}
                 onChange={(e) => seekTo(Number(e.target.value))}
-                className="w-full accent-[#0A84FF]"
+                className="w-full"
               />
-              <div className="tabular-nums flex justify-between text-xs font-medium text-[#AEAEB2]">
+              <div className="tabular-nums flex justify-between text-xs font-medium text-[#B4B4BE]">
                 <span>{formatDurationSec(positionSec)}</span>
                 <span>-{formatDurationSec(Math.max(0, durationSec - positionSec))}</span>
               </div>
             </div>
 
-            {/* Transport Controls */}
+            {/* Sleek High-Contrast Transport Controls */}
             <div className="flex items-center justify-center gap-6">
               <button
                 type="button"
                 aria-label="Canción anterior"
                 onClick={() => void prevTrack()}
-                className="flex items-center justify-center rounded-full bg-[#16161D] p-3.5 text-[#F5F5F7] hover:bg-[#1E1E28]"
+                className="flex items-center justify-center rounded-full border border-white/[0.08] bg-[#121219] p-3.5 text-[#F5F5F7] hover:bg-[#1A1A24]"
               >
-                <SkipBack className="h-6 w-6" />
+                <SkipBack className="h-5 w-5" />
               </button>
 
               <button
                 type="button"
                 aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
                 onClick={() => void togglePlayPause()}
-                className="flex h-16 w-16 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-lg hover:bg-[#0A84FF]/90"
+                className="flex h-15 w-15 items-center justify-center rounded-full bg-white text-[#08080C] shadow-[0_8px_28px_rgba(255,255,255,0.22)] transition-transform hover:scale-105 active:scale-95"
               >
-                {isPlaying ? <Pause className="h-7 w-7" /> : <Play className="h-7 w-7" />}
+                {isPlaying ? (
+                  <Pause className="h-6 w-6 fill-current" />
+                ) : (
+                  <Play className="h-6 w-6 fill-current" />
+                )}
               </button>
 
               <button
                 type="button"
                 aria-label="Siguiente canción"
                 onClick={() => void nextTrack()}
-                className="flex items-center justify-center rounded-full bg-[#16161D] p-3.5 text-[#F5F5F7] hover:bg-[#1E1E28]"
+                className="flex items-center justify-center rounded-full border border-white/[0.08] bg-[#121219] p-3.5 text-[#F5F5F7] hover:bg-[#1A1A24]"
               >
-                <SkipForward className="h-6 w-6" />
+                <SkipForward className="h-5 w-5" />
               </button>
             </div>
           </div>
@@ -298,22 +300,29 @@ export const NowPlayingSheet: React.FC = () => {
             data-testid="synced-lyrics-view"
             onWheel={() => setLyricsUserScrolled(true)}
             onTouchMove={() => setLyricsUserScrolled(true)}
-            className="mx-auto max-w-2xl space-y-5 py-4"
+            className="mx-auto max-w-3xl space-y-6 py-2"
           >
             <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-bold text-[#F5F5F7]">
-                  Letras sincronizadas
-                </h2>
-                <p className="text-xs font-medium text-[#AEAEB2]">
-                  Toca cualquier verso para saltar a ese segundo exacto
-                </p>
+              <div className="flex items-center gap-3.5">
+                <img
+                  src={currentTrack.thumbnailUrl}
+                  alt={currentTrack.title}
+                  className="h-12 w-12 rounded-[10px] object-cover shadow-md"
+                />
+                <div>
+                  <h2 className="text-base font-bold text-[#F5F5F7]">
+                    {currentTrack.title}
+                  </h2>
+                  <p className="text-xs text-[#B4B4BE]">
+                    {currentTrack.artists.map((a) => a.name).join(', ')} · Toca una frase para saltar
+                  </p>
+                </div>
               </div>
               {lyricsUserScrolled && (
                 <button
                   type="button"
                   onClick={() => setLyricsUserScrolled(false)}
-                  className="rounded-full bg-[#0A84FF] px-3.5 py-1.5 text-xs font-semibold text-white"
+                  className="rounded-[10px] bg-white px-3.5 py-1.5 text-xs font-bold text-[#08080C]"
                 >
                   Volver a la línea actual
                 </button>
@@ -321,9 +330,10 @@ export const NowPlayingSheet: React.FC = () => {
             </div>
 
             {currentLyrics && currentLyrics.lines.length > 0 ? (
-              <div className="space-y-4">
+              <div className="space-y-3.5">
                 {currentLyrics.lines.map((line, idx) => {
-                  const isActive = idx === activeLyricIndex || (activeLyricIndex === -1 && idx === 0);
+                  const isActive =
+                    idx === activeLyricIndex || (activeLyricIndex === -1 && idx === 0);
                   return (
                     <button
                       key={`${line.index}-${line.timeMs}`}
@@ -333,12 +343,14 @@ export const NowPlayingSheet: React.FC = () => {
                         seekTo(line.timeMs / 1000);
                         setLyricsUserScrolled(false);
                       }}
-                      className={`block w-full rounded-xl px-3 py-2 text-left text-2xl font-bold md:text-3xl ${
-                        isActive ? 'pm-lyric-line-active bg-white/10' : 'pm-lyric-line-inactive'
+                      className={`block w-full rounded-[14px] px-4 py-3 text-left text-2xl font-bold tracking-tight md:text-[32px] md:leading-[1.25] ${
+                        isActive
+                          ? 'pm-lyric-line-active bg-[#161620]'
+                          : 'pm-lyric-line-inactive'
                       }`}
                     >
                       <span>{line.text}</span>
-                      <span className="tabular-nums ml-3 text-xs font-medium text-[#AEAEB2]">
+                      <span className="tabular-nums ml-3 align-middle text-xs font-medium text-[#B4B4BE]">
                         {formatDurationSec(line.timeMs / 1000)}
                       </span>
                     </button>
@@ -346,8 +358,8 @@ export const NowPlayingSheet: React.FC = () => {
                 })}
               </div>
             ) : (
-              <div className="pm-surface-card rounded-2xl p-6 text-center">
-                <Mic2 className="mx-auto mb-2 h-8 w-8 text-[#AEAEB2]" />
+              <div className="pm-surface-card rounded-[18px] p-8 text-center">
+                <Mic2 className="mx-auto mb-2 h-8 w-8 text-[#B4B4BE]" />
                 <p className="text-base font-semibold text-[#F5F5F7]">
                   Letras no disponibles para esta pista
                 </p>
@@ -364,17 +376,17 @@ export const NowPlayingSheet: React.FC = () => {
             {/* Modo Sesión DJ AutoMix Panel */}
             <section
               aria-label="Modo Sesión DJ AutoMix"
-              className="pm-surface-card rounded-2xl p-5"
+              className="pm-surface-card rounded-[18px] p-5"
             >
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <div className="flex items-center gap-2">
-                    <Disc3 className="h-5 w-5 text-[#BF5AF2]" />
-                    <h2 className="text-lg font-bold text-[#F5F5F7]">
+                    <Disc3 className="h-5 w-5 text-[#C084FC]" />
+                    <h2 className="text-[17px] font-bold text-[#F5F5F7]">
                       Modo Sesión DJ (AutoMix)
                     </h2>
                   </div>
-                  <p className="text-xs font-medium text-[#AEAEB2]">
+                  <p className="text-xs text-[#B4B4BE]">
                     Ordena la cola por BPM/energía y mezcla en los drops con EQ swap, filtros y eco
                   </p>
                 </div>
@@ -384,10 +396,10 @@ export const NowPlayingSheet: React.FC = () => {
                   data-testid="dj-mode-toggle"
                   aria-pressed={djMode.enabled}
                   onClick={() => void toggleDjMode()}
-                  className={`rounded-full px-4 py-2 text-sm font-bold transition-colors ${
+                  className={`rounded-[10px] px-4 py-2 text-xs font-bold transition-colors ${
                     djMode.enabled
-                      ? 'bg-[#7D2AE8] text-white'
-                      : 'bg-[#111116] text-[#AEAEB2] hover:text-white'
+                      ? 'bg-white text-[#08080C]'
+                      : 'border border-white/10 bg-[#0D0D13] text-[#B4B4BE] hover:text-white'
                   }`}
                 >
                   {djMode.enabled ? 'Sesión DJ activa' : 'Activar Sesión DJ'}
@@ -401,16 +413,16 @@ export const NowPlayingSheet: React.FC = () => {
                   data-testid="dj-style-quick"
                   aria-pressed={djMode.style === 'quick'}
                   onClick={() => void setDjSessionStyle('quick')}
-                  className={`rounded-xl border p-3 text-left transition-colors ${
+                  className={`rounded-[12px] border p-3.5 text-left transition-colors ${
                     djMode.style === 'quick'
-                      ? 'border-[#BF5AF2] bg-[#1E1430] text-white'
-                      : 'border-white/10 bg-[#111116] text-[#AEAEB2]'
+                      ? 'border-white/30 bg-[#1B162A] text-white'
+                      : 'border-white/[0.07] bg-[#0D0D13] text-[#B4B4BE]'
                   }`}
                 >
                   <div className="text-sm font-bold text-[#F5F5F7]">
                     Sesión rápida (45–90s)
                   </div>
-                  <div className="text-xs text-[#AEAEB2]">
+                  <div className="mt-0.5 text-xs text-[#B4B4BE]">
                     Entra directo al drop/estribillo y mezcla rápido como un set de club
                   </div>
                 </button>
@@ -420,16 +432,16 @@ export const NowPlayingSheet: React.FC = () => {
                   data-testid="dj-style-full"
                   aria-pressed={djMode.style === 'full'}
                   onClick={() => void setDjSessionStyle('full')}
-                  className={`rounded-xl border p-3 text-left transition-colors ${
+                  className={`rounded-[12px] border p-3.5 text-left transition-colors ${
                     djMode.style === 'full'
-                      ? 'border-[#BF5AF2] bg-[#1E1430] text-white'
-                      : 'border-white/10 bg-[#111116] text-[#AEAEB2]'
+                      ? 'border-white/30 bg-[#1B162A] text-white'
+                      : 'border-white/[0.07] bg-[#0D0D13] text-[#B4B4BE]'
                   }`}
                 >
                   <div className="text-sm font-bold text-[#F5F5F7]">
                     Sesión completa
                   </div>
-                  <div className="text-xs text-[#AEAEB2]">
+                  <div className="mt-0.5 text-xs text-[#B4B4BE]">
                     Respeta la canción entera y mezcla con efectos en el tramo final
                   </div>
                 </button>
@@ -452,10 +464,10 @@ export const NowPlayingSheet: React.FC = () => {
                         type="button"
                         aria-pressed={active}
                         onClick={() => toggleDjFx(fx.id)}
-                        className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                        className={`rounded-[9px] border px-3 py-1.5 text-xs font-semibold ${
                           active
-                            ? 'bg-[#1E1430] text-[#F5F5F7] border border-[#BF5AF2]'
-                            : 'bg-[#111116] text-[#AEAEB2] border border-white/10'
+                            ? 'border-white/25 bg-[#1B162A] text-[#F5F5F7]'
+                            : 'border-white/[0.07] bg-[#0D0D13] text-[#B4B4BE]'
                         }`}
                       >
                         {fx.label}
@@ -467,7 +479,7 @@ export const NowPlayingSheet: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => void triggerDjMixNow()}
-                  className="rounded-full bg-[#0051D5] px-4 py-1.5 text-xs font-bold text-white hover:bg-[#0051D5]/90"
+                  className="rounded-[10px] bg-white px-4 py-1.5 text-xs font-bold text-[#08080C] hover:bg-white/90"
                 >
                   {isTransitioning
                     ? `Mezclando (${activeTransitionType ?? 'DJ'})...`
@@ -477,11 +489,11 @@ export const NowPlayingSheet: React.FC = () => {
             </section>
 
             {/* Reorderable Queue List */}
-            <section className="space-y-3">
+            <section className="space-y-2.5">
               <h3 className="text-base font-bold text-[#F5F5F7]">
                 Cola de reproducción ({queue.length} pistas)
               </h3>
-              <div role="list" className="space-y-2">
+              <div role="list" className="space-y-1.5">
                 {queue.map((track, idx) => {
                   const isCurrent = idx === queueIndex;
                   const ana = trackAnalyses[track.id];
@@ -490,28 +502,28 @@ export const NowPlayingSheet: React.FC = () => {
                       key={`${track.id}-${idx}`}
                       role="listitem"
                       data-surface="content"
-                      className={`pm-surface-card flex items-center justify-between gap-3 rounded-xl p-3 ${
-                        isCurrent ? 'border-[#0A84FF]' : ''
+                      className={`pm-surface-card flex h-15 items-center justify-between gap-3 rounded-[12px] px-3.5 ${
+                        isCurrent ? 'border-white/25 bg-[#1A1A26]' : ''
                       }`}
                     >
                       <div className="flex min-w-0 flex-1 items-center gap-3">
                         <img
                           src={track.thumbnailUrl}
                           alt={track.title}
-                          className="h-11 w-11 rounded-lg object-cover"
+                          className="h-10 w-10 rounded-[8px] object-cover"
                         />
                         <div className="min-w-0 flex-1">
-                          <div className="truncate text-sm font-semibold text-[#F5F5F7]">
+                          <div className="truncate text-[14px] font-medium text-[#F5F5F7]">
                             {track.title}
                           </div>
-                          <div className="truncate text-xs text-[#AEAEB2]">
+                          <div className="truncate text-xs text-[#B4B4BE]">
                             {track.artists.map((a) => a.name).join(', ')}
                           </div>
                         </div>
                       </div>
 
                       <div className="flex items-center gap-2">
-                        <span className="tabular-nums rounded-md bg-[#111116] px-2 py-1 text-xs font-semibold text-[#BF5AF2]">
+                        <span className="tabular-nums rounded-md border border-white/[0.08] bg-[#0D0D13] px-2 py-1 text-xs font-semibold text-[#E9D5FF]">
                           {ana?.bpm ?? 120} BPM
                         </span>
 
@@ -520,7 +532,7 @@ export const NowPlayingSheet: React.FC = () => {
                             type="button"
                             aria-label={`Subir ${track.title} en la cola`}
                             onClick={() => moveQueueItem(idx, idx - 1)}
-                            className="rounded-lg bg-[#111116] px-2.5 py-1.5 text-xs font-semibold text-[#AEAEB2] hover:text-white"
+                            className="rounded-lg bg-[#0D0D13] px-2.5 py-1.5 text-xs font-semibold text-[#B4B4BE] hover:text-white"
                           >
                             ↑
                           </button>
@@ -530,7 +542,7 @@ export const NowPlayingSheet: React.FC = () => {
                             type="button"
                             aria-label={`Quitar ${track.title} de la cola`}
                             onClick={() => removeQueueItem(idx)}
-                            className="rounded-lg bg-[#111116] p-1.5 text-[#AEAEB2] hover:text-[#FF453A]"
+                            className="rounded-lg bg-[#0D0D13] p-1.5 text-[#B4B4BE] hover:text-[#F87171]"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
@@ -569,11 +581,11 @@ export const EqAndCrossfadeSheet: React.FC = () => {
       aria-modal="true"
       aria-label="Ecualizador y Crossfade"
       data-testid="eq-sheet"
-      className="pm-glass-regular fixed inset-x-4 bottom-4 top-16 z-50 mx-auto flex max-w-2xl flex-col overflow-y-auto rounded-[24px] p-6 text-[#F5F5F7] md:inset-y-12"
+      className="pm-glass-regular fixed inset-x-4 bottom-4 top-16 z-50 mx-auto flex max-w-2xl flex-col overflow-y-auto rounded-[20px] p-6 text-[#F5F5F7] md:inset-y-14"
     >
-      <div className="flex items-center justify-between border-b border-white/10 pb-4">
+      <div className="flex items-center justify-between border-b border-white/[0.08] pb-4">
         <div className="flex items-center gap-2.5">
-          <Sliders className="h-5 w-5 text-[#0A84FF]" />
+          <Sliders className="h-5 w-5 text-[#F5F5F7]" />
           <h2 className="text-lg font-bold text-[#F5F5F7]">
             Ecualizador y Crossfade
           </h2>
@@ -582,21 +594,20 @@ export const EqAndCrossfadeSheet: React.FC = () => {
           type="button"
           aria-label="Cerrar ecualizador"
           onClick={() => setEqSheetOpen(false)}
-          className="rounded-full bg-[#16161D] px-3 py-1.5 text-xs font-semibold text-[#F5F5F7]"
+          className="rounded-[9px] border border-white/[0.08] bg-[#121219] px-3 py-1.5 text-xs font-semibold text-[#F5F5F7]"
         >
           Cerrar
         </button>
       </div>
 
-      <div className="mt-5 space-y-6">
-        {/* Safe Crossfade Section */}
-        <section className="pm-surface-card rounded-2xl p-4">
+      <div className="mt-5 space-y-5">
+        <section className="pm-surface-card rounded-[16px] p-4">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-bold text-[#F5F5F7]">
                 Crossfade seguro (0–12 s)
               </h3>
-              <p className="text-xs text-[#AEAEB2]">
+              <p className="text-xs text-[#B4B4BE]">
                 {djMode.enabled
                   ? 'Pausado automáticamente mientras el Modo Sesión DJ está activo'
                   : 'Transición suave de potencia constante entre canciones'}
@@ -609,10 +620,10 @@ export const EqAndCrossfadeSheet: React.FC = () => {
               aria-label="Activar Crossfade seguro"
               disabled={djMode.enabled}
               onClick={() => setSafeCrossfade({ enabled: !safeCrossfade.enabled })}
-              className={`rounded-full px-3.5 py-1.5 text-xs font-bold ${
+              className={`rounded-[9px] px-3.5 py-1.5 text-xs font-bold ${
                 safeCrossfade.enabled && !djMode.enabled
-                  ? 'bg-[#0A84FF] text-white'
-                  : 'bg-[#111116] text-[#AEAEB2]'
+                  ? 'bg-white text-[#08080C]'
+                  : 'bg-[#0D0D13] text-[#B4B4BE]'
               }`}
             >
               {safeCrossfade.enabled && !djMode.enabled ? 'Activo' : 'Inactivo'}
@@ -629,7 +640,7 @@ export const EqAndCrossfadeSheet: React.FC = () => {
               step={1}
               value={safeCrossfade.durationSec}
               onChange={(e) => setSafeCrossfade({ durationSec: Number(e.target.value) })}
-              className="flex-1 accent-[#0A84FF]"
+              className="flex-1"
             />
             <span className="tabular-nums text-sm font-bold text-[#F5F5F7]">
               {safeCrossfade.durationSec} s
@@ -637,8 +648,7 @@ export const EqAndCrossfadeSheet: React.FC = () => {
           </div>
         </section>
 
-        {/* 5-Band Graphic EQ Section */}
-        <section className="pm-surface-card rounded-2xl p-4">
+        <section className="pm-surface-card rounded-[16px] p-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-[#F5F5F7]">
               Ecualizador de 5 bandas
@@ -649,16 +659,15 @@ export const EqAndCrossfadeSheet: React.FC = () => {
               aria-checked={userEq.enabled}
               aria-label="Activar ecualizador"
               onClick={() => setEqEnabled(!userEq.enabled)}
-              className={`rounded-full px-3.5 py-1.5 text-xs font-bold ${
-                userEq.enabled ? 'bg-[#0A84FF] text-white' : 'bg-[#111116] text-[#AEAEB2]'
+              className={`rounded-[9px] px-3.5 py-1.5 text-xs font-bold ${
+                userEq.enabled ? 'bg-white text-[#08080C]' : 'bg-[#0D0D13] text-[#B4B4BE]'
               }`}
             >
               {userEq.enabled ? 'EQ Activo' : 'EQ Inactivo'}
             </button>
           </div>
 
-          {/* 6 Spanish Presets */}
-          <div className="mt-3 flex flex-wrap gap-2">
+          <div className="mt-3 flex flex-wrap gap-1.5">
             {USER_EQ_PRESETS.map((preset) => {
               const active = userEq.preset === preset.id;
               return (
@@ -667,10 +676,10 @@ export const EqAndCrossfadeSheet: React.FC = () => {
                   type="button"
                   aria-pressed={active}
                   onClick={() => setEqPreset(preset.id)}
-                  className={`rounded-full px-3.5 py-1.5 text-xs font-semibold ${
+                  className={`rounded-[9px] px-3.5 py-1.5 text-xs font-bold ${
                     active
-                      ? 'bg-[#0A84FF] text-white'
-                      : 'bg-[#111116] text-[#AEAEB2] hover:text-white'
+                      ? 'bg-white text-[#08080C]'
+                      : 'border border-white/[0.07] bg-[#0D0D13] text-[#B4B4BE] hover:text-white'
                   }`}
                 >
                   {preset.label}
@@ -679,7 +688,6 @@ export const EqAndCrossfadeSheet: React.FC = () => {
             })}
           </div>
 
-          {/* 5 Band Sliders */}
           <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-5">
             {USER_EQ_FREQUENCIES_HZ.map((freq, idx) => {
               const label = freq >= 1000 ? `${freq / 1000} kHz` : `${freq} Hz`;
@@ -687,9 +695,9 @@ export const EqAndCrossfadeSheet: React.FC = () => {
               return (
                 <div
                   key={freq}
-                  className="flex flex-col items-center gap-2 rounded-xl bg-[#111116] p-3"
+                  className="flex flex-col items-center gap-2 rounded-[12px] border border-white/[0.06] bg-[#0D0D13] p-3"
                 >
-                  <span className="tabular-nums text-xs font-bold text-[#0A84FF]">
+                  <span className="tabular-nums text-xs font-bold text-[#F5F5F7]">
                     {val > 0 ? `+${val}` : val} dB
                   </span>
                   <input
@@ -701,9 +709,9 @@ export const EqAndCrossfadeSheet: React.FC = () => {
                     step={0.5}
                     value={val}
                     onChange={(e) => setEqBandGain(idx, Number(e.target.value))}
-                    className="w-full accent-[#0A84FF]"
+                    className="w-full"
                   />
-                  <span className="tabular-nums text-xs font-medium text-[#AEAEB2]">
+                  <span className="tabular-nums text-xs font-medium text-[#8E8E98]">
                     {label}
                   </span>
                 </div>
@@ -738,16 +746,16 @@ export const DevicesConnectSheet: React.FC = () => {
       aria-modal="true"
       aria-label="Dispositivos conectados"
       data-testid="devices-sheet"
-      className="pm-glass-regular fixed inset-x-4 bottom-4 top-20 z-50 mx-auto flex max-w-xl flex-col overflow-y-auto rounded-[24px] p-6 text-[#F5F5F7] md:inset-y-16"
+      className="pm-glass-regular fixed inset-x-4 bottom-4 top-20 z-50 mx-auto flex max-w-xl flex-col overflow-y-auto rounded-[20px] p-6 text-[#F5F5F7] md:inset-y-16"
     >
-      <div className="flex items-center justify-between border-b border-white/10 pb-4">
+      <div className="flex items-center justify-between border-b border-white/[0.08] pb-4">
         <div className="flex items-center gap-2.5">
-          <Wifi className="h-5 w-5 text-[#30D158]" />
+          <Wifi className="h-5 w-5 text-[#34D399]" />
           <div>
             <h2 className="text-lg font-bold text-[#F5F5F7]">
               Dispositivos (pMusic Connect)
             </h2>
-            <p className="text-xs text-[#AEAEB2]">
+            <p className="text-xs text-[#B4B4BE]">
               Controla tu PC o móvil en vivo y transfiere la canción en el segundo exacto
             </p>
           </div>
@@ -756,14 +764,14 @@ export const DevicesConnectSheet: React.FC = () => {
           type="button"
           aria-label="Cerrar dispositivos"
           onClick={() => setDevicesSheetOpen(false)}
-          className="rounded-full bg-[#16161D] px-3 py-1.5 text-xs font-semibold text-[#F5F5F7]"
+          className="rounded-[9px] border border-white/[0.08] bg-[#121219] px-3 py-1.5 text-xs font-semibold text-[#F5F5F7]"
         >
           Cerrar
         </button>
       </div>
 
       {lastTransferBanner && (
-        <div className="mt-4 rounded-xl border border-[#30D158]/40 bg-[#30D158]/15 px-4 py-2.5 text-xs font-semibold text-[#F5F5F7]">
+        <div className="mt-4 rounded-xl border border-[#34D399]/40 bg-[#0A261D] px-4 py-2.5 text-xs font-semibold text-[#F5F5F7]">
           {lastTransferBanner}
         </div>
       )}
@@ -774,30 +782,30 @@ export const DevicesConnectSheet: React.FC = () => {
           return (
             <div
               key={dev.device_id}
-              className="pm-surface-card flex flex-col gap-3 rounded-2xl p-4"
+              className="pm-surface-card flex flex-col gap-3 rounded-[16px] p-4"
             >
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                   {dev.platform === 'android' ? (
-                    <Smartphone className="h-5 w-5 text-[#30D158]" />
+                    <Smartphone className="h-5 w-5 text-[#34D399]" />
                   ) : (
-                    <Laptop className="h-5 w-5 text-[#0A84FF]" />
+                    <Laptop className="h-5 w-5 text-[#F5F5F7]" />
                   )}
                   <div>
                     <div className="flex items-center gap-2 text-sm font-bold text-[#F5F5F7]">
                       <span>{dev.device_name}</span>
                       {isSelf && (
-                        <span className="rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-medium text-[#AEAEB2]">
+                        <span className="rounded-md bg-white/[0.08] px-2 py-0.5 text-[11px] font-medium text-[#B4B4BE]">
                           Este dispositivo
                         </span>
                       )}
                       {dev.is_active && (
-                        <span className="rounded-full bg-[#30D158]/20 px-2 py-0.5 text-[11px] font-semibold text-[#30D158]">
+                        <span className="rounded-md bg-[#0A261D] px-2 py-0.5 text-[11px] font-semibold text-[#34D399]">
                           Activo
                         </span>
                       )}
                     </div>
-                    <div className="text-xs text-[#AEAEB2]">{dev.track_title}</div>
+                    <div className="text-xs text-[#B4B4BE]">{dev.track_title}</div>
                   </div>
                 </div>
 
@@ -805,7 +813,7 @@ export const DevicesConnectSheet: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => void transferPlaybackToDevice(dev.device_id)}
-                    className="rounded-full bg-[#30D158] px-3.5 py-2 text-xs font-bold text-[#06060A] hover:bg-[#30D158]/90"
+                    className="rounded-[10px] bg-white px-3.5 py-2 text-xs font-bold text-[#08080C] hover:bg-white/90"
                   >
                     Transferir aquí
                   </button>
@@ -813,8 +821,8 @@ export const DevicesConnectSheet: React.FC = () => {
               </div>
 
               {!isSelf && (
-                <div className="flex items-center justify-between border-t border-white/10 pt-2">
-                  <span className="text-xs font-medium text-[#AEAEB2]">
+                <div className="flex items-center justify-between border-t border-white/[0.07] pt-2">
+                  <span className="text-xs font-medium text-[#8E8E98]">
                     Control remoto en vivo:
                   </span>
                   <div className="flex items-center gap-2">
@@ -822,7 +830,7 @@ export const DevicesConnectSheet: React.FC = () => {
                       type="button"
                       aria-label={`Anterior en ${dev.device_name}`}
                       onClick={() => void sendRemoteDeviceCommand(dev.device_id, 'prev')}
-                      className="rounded-lg bg-[#111116] px-2.5 py-1.5 text-xs font-semibold text-[#F5F5F7]"
+                      className="rounded-lg bg-[#0D0D13] px-2.5 py-1.5 text-xs font-semibold text-[#F5F5F7]"
                     >
                       Anterior
                     </button>
@@ -830,7 +838,7 @@ export const DevicesConnectSheet: React.FC = () => {
                       type="button"
                       aria-label={`Play/Pausa en ${dev.device_name}`}
                       onClick={() => void sendRemoteDeviceCommand(dev.device_id, 'toggle')}
-                      className="rounded-lg bg-[#0A84FF] px-3 py-1.5 text-xs font-semibold text-white"
+                      className="rounded-lg bg-white px-3 py-1.5 text-xs font-bold text-[#08080C]"
                     >
                       Play / Pausa
                     </button>
@@ -838,7 +846,7 @@ export const DevicesConnectSheet: React.FC = () => {
                       type="button"
                       aria-label={`Siguiente en ${dev.device_name}`}
                       onClick={() => void sendRemoteDeviceCommand(dev.device_id, 'next')}
-                      className="rounded-lg bg-[#111116] px-2.5 py-1.5 text-xs font-semibold text-[#F5F5F7]"
+                      className="rounded-lg bg-[#0D0D13] px-2.5 py-1.5 text-xs font-semibold text-[#F5F5F7]"
                     >
                       Siguiente
                     </button>
@@ -850,20 +858,20 @@ export const DevicesConnectSheet: React.FC = () => {
         })}
       </div>
 
-      <div className="pm-surface-card mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl p-4">
-        <div className="text-xs text-[#AEAEB2]">
-          Modo actual:{' '}
+      <div className="pm-surface-card mt-5 flex flex-wrap items-center justify-between gap-3 rounded-[16px] p-4">
+        <div className="text-xs text-[#B4B4BE]">
+          Estado:{' '}
           <strong className="text-[#F5F5F7]">
             {syncMode === 'supabase'
               ? 'Supabase Realtime Conectado'
-              : 'Sincronización Local / Sin cuenta'}
+              : 'Sincronización Local Activa'}
           </strong>
         </div>
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => pairDemoCompanionDevice()}
-            className="rounded-full bg-[#111116] px-3 py-1.5 text-xs font-semibold text-[#AEAEB2] hover:text-white"
+            className="rounded-[9px] border border-white/[0.08] bg-[#0D0D13] px-3 py-1.5 text-xs font-semibold text-[#B4B4BE] hover:text-white"
           >
             Vincular dispositivo local
           </button>
@@ -873,9 +881,9 @@ export const DevicesConnectSheet: React.FC = () => {
               setDevicesSheetOpen(false);
               setSettingsOpen(true);
             }}
-            className="rounded-full bg-[#0A84FF] px-3.5 py-1.5 text-xs font-semibold text-white"
+            className="rounded-[9px] bg-white px-3.5 py-1.5 text-xs font-bold text-[#08080C]"
           >
-            Configurar Supabase gratis
+            Ajustes de cuenta
           </button>
         </div>
       </div>
@@ -905,11 +913,11 @@ export const ImportPlaylistModal: React.FC = () => {
       aria-modal="true"
       aria-label="Importar playlist de Spotify o YouTube"
       data-testid="import-modal"
-      className="pm-glass-regular fixed inset-x-4 bottom-6 top-16 z-50 mx-auto flex max-w-xl flex-col overflow-y-auto rounded-[24px] p-6 text-[#F5F5F7] md:inset-y-16"
+      className="pm-glass-regular fixed inset-x-4 bottom-6 top-16 z-50 mx-auto flex max-w-xl flex-col overflow-y-auto rounded-[20px] p-6 text-[#F5F5F7] md:inset-y-16"
     >
-      <div className="flex items-center justify-between border-b border-white/10 pb-4">
+      <div className="flex items-center justify-between border-b border-white/[0.08] pb-4">
         <div className="flex items-center gap-2">
-          <ListMusic className="h-5 w-5 text-[#0A84FF]" />
+          <ListMusic className="h-5 w-5 text-[#F5F5F7]" />
           <h2 className="text-lg font-bold text-[#F5F5F7]">
             Importar playlist (Spotify / YouTube)
           </h2>
@@ -918,14 +926,14 @@ export const ImportPlaylistModal: React.FC = () => {
           type="button"
           aria-label="Cerrar importador"
           onClick={() => setImportModalOpen(false)}
-          className="rounded-full bg-[#16161D] px-3 py-1.5 text-xs font-semibold text-[#F5F5F7]"
+          className="rounded-[9px] border border-white/[0.08] bg-[#121219] px-3 py-1.5 text-xs font-semibold text-[#F5F5F7]"
         >
           Cerrar
         </button>
       </div>
 
       <div className="mt-4 space-y-4">
-        <p className="text-xs font-medium text-[#AEAEB2]">
+        <p className="text-xs font-medium text-[#B4B4BE]">
           Pega el enlace público de cualquier playlist o álbum de Spotify o YouTube Music:
         </p>
 
@@ -936,12 +944,12 @@ export const ImportPlaylistModal: React.FC = () => {
             placeholder="https://open.spotify.com/playlist/... o https://music.youtube.com/playlist?list=..."
             value={importUrlInput}
             onChange={(e) => setImportUrlInput(e.target.value)}
-            className="flex-1 rounded-xl border border-white/15 bg-[#111116] px-3.5 py-2.5 text-sm text-[#F5F5F7] placeholder:text-[#8E8E93]"
+            className="flex-1 rounded-[10px] border border-white/15 bg-[#0D0D13] px-3.5 py-2.5 text-sm text-[#F5F5F7] placeholder:text-[#8E8E98]"
           />
           <button
             type="button"
             onClick={() => void startPlaylistImport()}
-            className="rounded-xl bg-[#0A84FF] px-5 py-2.5 text-sm font-bold text-white hover:bg-[#0A84FF]/90"
+            className="rounded-[10px] bg-white px-5 py-2.5 text-sm font-bold text-[#08080C] hover:bg-white/90"
           >
             Importar
           </button>
@@ -953,7 +961,7 @@ export const ImportPlaylistModal: React.FC = () => {
             onClick={() =>
               void startPlaylistImport('https://open.spotify.com/playlist/37i9dQZF1DX123456')
             }
-            className="rounded-full bg-[#16161D] px-3 py-1.5 text-xs font-medium text-[#AEAEB2] hover:text-white"
+            className="rounded-[9px] border border-white/[0.08] bg-[#121219] px-3 py-1.5 text-xs font-medium text-[#B4B4BE] hover:text-white"
           >
             Probar ejemplo Spotify Urbano ES
           </button>
@@ -964,14 +972,14 @@ export const ImportPlaylistModal: React.FC = () => {
                 'https://music.youtube.com/playlist?list=PL_URBANO_ES_2026'
               )
             }
-            className="rounded-full bg-[#16161D] px-3 py-1.5 text-xs font-medium text-[#AEAEB2] hover:text-white"
+            className="rounded-[9px] border border-white/[0.08] bg-[#121219] px-3 py-1.5 text-xs font-medium text-[#B4B4BE] hover:text-white"
           >
             Probar ejemplo YouTube Music
           </button>
         </div>
 
         {importProgress && importProgress.phase !== 'done' && (
-          <div className="pm-surface-card space-y-2 rounded-2xl p-4">
+          <div className="pm-surface-card space-y-2 rounded-[14px] p-4">
             <div className="flex items-center justify-between text-xs font-semibold">
               <span>
                 Fase: {importProgress.phase}{' '}
@@ -986,7 +994,7 @@ export const ImportPlaylistModal: React.FC = () => {
             <button
               type="button"
               onClick={() => cancelPlaylistImport()}
-              className="rounded-lg bg-[#FF453A]/20 px-3 py-1.5 text-xs font-semibold text-[#FF453A]"
+              className="rounded-lg bg-[#281219] px-3 py-1.5 text-xs font-semibold text-[#F87171]"
             >
               Cancelar importación
             </button>
@@ -996,34 +1004,34 @@ export const ImportPlaylistModal: React.FC = () => {
         {importError && (
           <div
             role="status"
-            className="rounded-xl border border-[#FF453A]/40 bg-[#FF453A]/15 p-3 text-xs font-semibold text-[#F5F5F7]"
+            className="rounded-xl border border-[#F87171]/40 bg-[#281219] p-3 text-xs font-semibold text-[#F5F5F7]"
           >
             {importError}
           </div>
         )}
 
         {importResult && (
-          <div className="pm-surface-card space-y-3 rounded-2xl p-4">
+          <div className="pm-surface-card space-y-3 rounded-[16px] p-4">
             <div className="flex items-center justify-between gap-2">
               <div>
                 <h3 className="text-base font-bold text-[#F5F5F7]">
                   {importResult.name}
                 </h3>
-                <p className="text-xs text-[#AEAEB2]">
+                <p className="text-xs text-[#B4B4BE]">
                   {importResult.items.length} canciones encontradas
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => void saveImportedPlaylistToLibrary()}
-                className="rounded-full bg-[#30D158] px-4 py-2 text-xs font-bold text-[#06060A]"
+                className="rounded-[10px] bg-white px-4 py-2 text-xs font-bold text-[#08080C]"
               >
                 Guardar en Biblioteca
               </button>
             </div>
 
             {importResult.truncated && importResult.warning && (
-              <div className="rounded-xl border border-[#FF9F0A]/40 bg-[#FF9F0A]/15 p-2.5 text-xs font-medium text-[#F5F5F7]">
+              <div className="rounded-xl border border-[#FBBF24]/40 bg-[#27200B] p-2.5 text-xs font-medium text-[#F5F5F7]">
                 {importResult.warning}
               </div>
             )}
@@ -1032,12 +1040,12 @@ export const ImportPlaylistModal: React.FC = () => {
               {importResult.items.map((item, i) => (
                 <div
                   key={`${item.source.title}-${i}`}
-                  className="flex items-center justify-between rounded-lg bg-[#111116] px-3 py-2 text-xs"
+                  className="flex items-center justify-between rounded-lg bg-[#0D0D13] px-3 py-2 text-xs"
                 >
                   <span className="truncate font-semibold text-[#F5F5F7]">
                     {item.source.title} — {item.source.artists.join(', ')}
                   </span>
-                  <span className="ml-2 rounded-full bg-[#30D158]/20 px-2 py-0.5 text-[11px] font-semibold text-[#30D158]">
+                  <span className="ml-2 rounded-md bg-[#0A261D] px-2 py-0.5 text-[11px] font-semibold text-[#34D399]">
                     {Math.round(item.confidence * 100)}%
                   </span>
                 </div>
@@ -1093,11 +1101,11 @@ export const SettingsModal: React.FC = () => {
       aria-modal="true"
       aria-label="Ajustes de pMusic"
       data-testid="settings-view"
-      className="pm-glass-regular fixed inset-x-4 bottom-4 top-12 z-50 mx-auto flex max-w-2xl flex-col overflow-y-auto rounded-[24px] p-6 text-[#F5F5F7] md:inset-y-10"
+      className="pm-glass-regular fixed inset-x-4 bottom-4 top-12 z-50 mx-auto flex max-w-2xl flex-col overflow-y-auto rounded-[20px] p-6 text-[#F5F5F7] md:inset-y-10"
     >
-      <div className="flex items-center justify-between border-b border-white/10 pb-4">
+      <div className="flex items-center justify-between border-b border-white/[0.08] pb-4">
         <div className="flex items-center gap-2.5">
-          <Settings className="h-5 w-5 text-[#0A84FF]" />
+          <Settings className="h-5 w-5 text-[#F5F5F7]" />
           <h2 className="text-lg font-bold text-[#F5F5F7]">
             Ajustes y Sincronización
           </h2>
@@ -1106,20 +1114,19 @@ export const SettingsModal: React.FC = () => {
           type="button"
           aria-label="Cerrar ajustes"
           onClick={() => setSettingsOpen(false)}
-          className="rounded-full bg-[#16161D] px-3 py-1.5 text-xs font-semibold text-[#F5F5F7]"
+          className="rounded-[9px] border border-white/[0.08] bg-[#121219] px-3 py-1.5 text-xs font-semibold text-[#F5F5F7]"
         >
           Cerrar
         </button>
       </div>
 
-      <div className="mt-5 space-y-6">
-        {/* 1. Supabase Cloud & Auth */}
-        <section className="pm-surface-card space-y-3 rounded-2xl p-4">
+      <div className="mt-5 space-y-5">
+        <section className="pm-surface-card space-y-3 rounded-[16px] p-4">
           <h3 className="text-sm font-bold text-[#F5F5F7]">
             Interconexión PC ↔ Móvil (Supabase Free Tier)
           </h3>
-          <p className="text-xs text-[#AEAEB2]">
-            Opcional: introduce tu SUPABASE_URL y SUPABASE_ANON_KEY para sincronizar playlists, gustos y control remoto en la nube gratis.
+          <p className="text-xs text-[#B4B4BE]">
+            Tu proyecto Supabase (<code className="text-[#F5F5F7]">zlaxnxkfwngmwqnqnqtu</code>) ya está preconfigurado. Inicia sesión con el mismo correo en tu móvil y en tu PC.
           </p>
 
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
@@ -1129,7 +1136,7 @@ export const SettingsModal: React.FC = () => {
               placeholder="Nombre del dispositivo"
               value={devNameVal}
               onChange={(e) => setDevNameVal(e.target.value)}
-              className="rounded-xl border border-white/15 bg-[#111116] px-3 py-2 text-xs text-[#F5F5F7]"
+              className="rounded-[10px] border border-white/15 bg-[#0D0D13] px-3 py-2 text-xs text-[#F5F5F7]"
             />
             <input
               type="text"
@@ -1137,17 +1144,17 @@ export const SettingsModal: React.FC = () => {
               placeholder="https://xyz.supabase.co"
               value={urlVal}
               onChange={(e) => setUrlVal(e.target.value)}
-              className="rounded-xl border border-white/15 bg-[#111116] px-3 py-2 text-xs text-[#F5F5F7]"
+              className="rounded-[10px] border border-white/15 bg-[#0D0D13] px-3 py-2 text-xs text-[#F5F5F7]"
             />
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
             <input
               type="password"
               aria-label="Supabase Anon Key"
-              placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI..."
+              placeholder="sb_publishable_..."
               value={keyVal}
               onChange={(e) => setKeyVal(e.target.value)}
-              className="flex-1 rounded-xl border border-white/15 bg-[#111116] px-3 py-2 text-xs text-[#F5F5F7]"
+              className="flex-1 rounded-[10px] border border-white/15 bg-[#0D0D13] px-3 py-2 text-xs text-[#F5F5F7]"
             />
             <button
               type="button"
@@ -1155,23 +1162,22 @@ export const SettingsModal: React.FC = () => {
                 await configureSupabase(urlVal, keyVal, devNameVal);
                 setAuthNotice('Configuración guardada correctamente.');
               }}
-              className="rounded-xl bg-[#0A84FF] px-4 py-2 text-xs font-bold text-white"
+              className="rounded-[10px] bg-white px-4 py-2 text-xs font-bold text-[#08080C]"
             >
               Guardar conexión
             </button>
           </div>
 
-          {/* Account Sign In / Sign Up */}
-          <div className="border-t border-white/10 pt-3">
+          <div className="border-t border-white/[0.07] pt-3">
             {authState.connected ? (
               <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-[#30D158]">
+                <span className="text-xs font-semibold text-[#34D399]">
                   Sesión iniciada como {authState.email}
                 </span>
                 <button
                   type="button"
                   onClick={() => void signOutSupabase()}
-                  className="rounded-full bg-[#111116] px-3 py-1.5 text-xs font-semibold text-[#FF453A]"
+                  className="rounded-[9px] bg-[#0D0D13] px-3 py-1.5 text-xs font-semibold text-[#F87171]"
                 >
                   Cerrar sesión
                 </button>
@@ -1184,7 +1190,7 @@ export const SettingsModal: React.FC = () => {
                   placeholder="tu@email.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="flex-1 rounded-xl border border-white/15 bg-[#111116] px-3 py-2 text-xs text-[#F5F5F7]"
+                  className="flex-1 rounded-[10px] border border-white/15 bg-[#0D0D13] px-3 py-2 text-xs text-[#F5F5F7]"
                 />
                 <input
                   type="password"
@@ -1192,7 +1198,7 @@ export const SettingsModal: React.FC = () => {
                   placeholder="Contraseña"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="flex-1 rounded-xl border border-white/15 bg-[#111116] px-3 py-2 text-xs text-[#F5F5F7]"
+                  className="flex-1 rounded-[10px] border border-white/15 bg-[#0D0D13] px-3 py-2 text-xs text-[#F5F5F7]"
                 />
                 <button
                   type="button"
@@ -1204,7 +1210,7 @@ export const SettingsModal: React.FC = () => {
                       setAuthNotice(err instanceof Error ? err.message : 'Error de acceso');
                     }
                   }}
-                  className="rounded-xl bg-[#30D158] px-3.5 py-2 text-xs font-bold text-[#06060A]"
+                  className="rounded-[10px] bg-white px-3.5 py-2 text-xs font-bold text-[#08080C]"
                 >
                   Iniciar sesión
                 </button>
@@ -1218,33 +1224,32 @@ export const SettingsModal: React.FC = () => {
                       setAuthNotice(err instanceof Error ? err.message : 'Error al registrar');
                     }
                   }}
-                  className="rounded-xl bg-[#111116] px-3.5 py-2 text-xs font-semibold text-[#F5F5F7]"
+                  className="rounded-[10px] border border-white/10 bg-[#0D0D13] px-3.5 py-2 text-xs font-semibold text-[#F5F5F7]"
                 >
                   Crear cuenta
                 </button>
               </div>
             )}
             {authNotice && (
-              <p className="mt-2 text-xs font-medium text-[#30D158]">{authNotice}</p>
+              <p className="mt-2 text-xs font-medium text-[#34D399]">{authNotice}</p>
             )}
           </div>
         </section>
 
-        {/* 2. Algoritmo de Recomendaciones y Artistas Semilla */}
-        <section className="pm-surface-card space-y-3 rounded-2xl p-4">
+        <section className="pm-surface-card space-y-3 rounded-[16px] p-4">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-bold text-[#F5F5F7]">
                 Algoritmo de Gustos y Artistas Semilla (Escena Española)
               </h3>
-              <p className="text-xs text-[#AEAEB2]">
+              <p className="text-xs text-[#B4B4BE]">
                 Tus artistas favoritos tienen prioridad en búsquedas, autocompletado y Mixes
               </p>
             </div>
             <button
               type="button"
               onClick={() => void resetTasteProfile()}
-              className="flex items-center gap-1 rounded-full bg-[#111116] px-3 py-1.5 text-xs font-semibold text-[#AEAEB2] hover:text-white"
+              className="flex items-center gap-1 rounded-[9px] bg-[#0D0D13] px-3 py-1.5 text-xs font-semibold text-[#B4B4BE] hover:text-white"
             >
               <RotateCcw className="h-3.5 w-3.5" />
               <span>Restablecer gustos</span>
@@ -1258,7 +1263,7 @@ export const SettingsModal: React.FC = () => {
               placeholder="Ej. Cruz Cafuné, La Pantera, Bad Bunny..."
               value={newSeedName}
               onChange={(e) => setNewSeedName(e.target.value)}
-              className="flex-1 rounded-xl border border-white/15 bg-[#111116] px-3 py-2 text-xs text-[#F5F5F7]"
+              className="flex-1 rounded-[10px] border border-white/15 bg-[#0D0D13] px-3 py-2 text-xs text-[#F5F5F7]"
             />
             <button
               type="button"
@@ -1266,25 +1271,25 @@ export const SettingsModal: React.FC = () => {
                 await addSeedArtist(newSeedName);
                 setNewSeedName('');
               }}
-              className="flex items-center gap-1 rounded-xl bg-[#0A84FF] px-4 py-2 text-xs font-bold text-white"
+              className="flex items-center gap-1 rounded-[10px] bg-white px-4 py-2 text-xs font-bold text-[#08080C]"
             >
               <Plus className="h-4 w-4" />
               <span>Añadir</span>
             </button>
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-1.5">
             {seedArtists.slice(0, 10).map((seed) => (
               <span
                 key={seed.artistKey}
-                className="flex items-center gap-1.5 rounded-full bg-[#111116] px-3 py-1 text-xs font-semibold text-[#F5F5F7]"
+                className="flex items-center gap-1.5 rounded-lg border border-white/[0.07] bg-[#0D0D13] px-3 py-1 text-xs font-semibold text-[#F5F5F7]"
               >
                 <span>{seed.displayName}</span>
                 <button
                   type="button"
                   aria-label={`Eliminar semilla ${seed.displayName}`}
                   onClick={() => void removeSeedArtist(seed.artistKey)}
-                  className="text-[#8E8E93] hover:text-[#FF453A]"
+                  className="text-[#8E8E98] hover:text-[#F87171]"
                 >
                   ×
                 </button>
@@ -1292,23 +1297,22 @@ export const SettingsModal: React.FC = () => {
             ))}
           </div>
 
-          <div className="text-xs text-[#AEAEB2]">
+          <div className="text-xs text-[#B4B4BE]">
             Top afinidad actual:{' '}
             {affinityProfile
               .slice(0, 4)
               .map((a) => `${a.artistName} (+${a.score.toFixed(1)})`)
-              .join(' • ')}
+              .join(' · ')}
           </div>
         </section>
 
-        {/* 3. Extras: Discord RPC, Caché Offline y Modo Ahorro Gráfico */}
-        <section className="pm-surface-card space-y-3 rounded-2xl p-4">
+        <section className="pm-surface-card space-y-3 rounded-[16px] p-4">
           <div className="flex items-center justify-between">
             <div>
               <div className="text-sm font-bold text-[#F5F5F7]">
                 Discord Rich Presence (Windows PC)
               </div>
-              <div className="text-xs text-[#AEAEB2]">
+              <div className="text-xs text-[#B4B4BE]">
                 Muestra la canción actual y el artista en tu perfil de Discord
               </div>
             </div>
@@ -1318,21 +1322,21 @@ export const SettingsModal: React.FC = () => {
               aria-checked={discordRpcEnabled}
               aria-label="Activar Discord Rich Presence"
               onClick={() => setDiscordRpcEnabled(!discordRpcEnabled)}
-              className={`rounded-full px-3.5 py-1.5 text-xs font-bold ${
-                discordRpcEnabled ? 'bg-[#0A84FF] text-white' : 'bg-[#111116] text-[#AEAEB2]'
+              className={`rounded-[9px] px-3.5 py-1.5 text-xs font-bold ${
+                discordRpcEnabled ? 'bg-white text-[#08080C]' : 'bg-[#0D0D13] text-[#B4B4BE]'
               }`}
             >
               {discordRpcEnabled ? 'Activado' : 'Desactivado'}
             </button>
           </div>
 
-          <div className="flex items-center justify-between border-t border-white/10 pt-3">
+          <div className="flex items-center justify-between border-t border-white/[0.07] pt-3">
             <div>
               <div className="text-sm font-bold text-[#F5F5F7]">
                 Modo ahorro gráfico (Reducir transparencias)
               </div>
-              <div className="text-xs text-[#AEAEB2]">
-                Sustituye el desenfoque Liquid Glass por superficies OLED opacas de alto rendimiento
+              <div className="text-xs text-[#B4B4BE]">
+                Sustituye el desenfoque Liquid Glass por superficies OLED opacas
               </div>
             </div>
             <button
@@ -1341,28 +1345,28 @@ export const SettingsModal: React.FC = () => {
               aria-checked={graphicSaverMode}
               aria-label="Activar Modo ahorro gráfico"
               onClick={() => setGraphicSaverMode(!graphicSaverMode)}
-              className={`rounded-full px-3.5 py-1.5 text-xs font-bold ${
-                graphicSaverMode ? 'bg-[#0A84FF] text-white' : 'bg-[#111116] text-[#AEAEB2]'
+              className={`rounded-[9px] px-3.5 py-1.5 text-xs font-bold ${
+                graphicSaverMode ? 'bg-white text-[#08080C]' : 'bg-[#0D0D13] text-[#B4B4BE]'
               }`}
             >
               {graphicSaverMode ? 'Activado' : 'Desactivado'}
             </button>
           </div>
 
-          <div className="flex items-center justify-between border-t border-white/10 pt-3">
+          <div className="flex items-center justify-between border-t border-white/[0.07] pt-3">
             <div>
               <div className="text-sm font-bold text-[#F5F5F7]">
-                Caché offline ({offlineEntries.length} canciones •{' '}
+                Caché offline ({offlineEntries.length} canciones ·{' '}
                 {(totalOfflineBytes / 1024).toFixed(0)} KB)
               </div>
-              <div className="text-xs text-[#AEAEB2]">
+              <div className="text-xs text-[#B4B4BE]">
                 Canciones guardadas para escuchar sin datos en el móvil
               </div>
             </div>
             <button
               type="button"
               onClick={() => void clearOfflineCache()}
-              className="rounded-full bg-[#111116] px-3.5 py-1.5 text-xs font-semibold text-[#FF453A]"
+              className="rounded-[9px] bg-[#0D0D13] px-3.5 py-1.5 text-xs font-semibold text-[#F87171]"
             >
               Vaciar caché offline
             </button>

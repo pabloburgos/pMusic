@@ -2,13 +2,16 @@ appId: es.pmusic.desktop
 productName: pMusic
 executableName: pmusic
 electronVersion: "45.4.1"
+asar: false
 directories:
   output: release
   buildResources: build
 files:
   - dist/**/*
-  - dist-electron/**/*
+  - dist-electron/main.cjs
+  - dist-electron/preload.cjs
   - package.json
+  - "!**/node_modules/**"
   - "!**/design/apple-design-skill/**"
 win:
   icon: build/icon.png
@@ -16,11 +19,19 @@ win:
     - target: nsis
       arch:
         - x64
+    - target: portable
+      arch:
+        - x64
+    - target: zip
+      arch:
+        - x64
 nsis:
   artifactName: pMusic-Setup-${version}.${ext}
   oneClick: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
+portable:
+  artifactName: pMusic-Portable-${version}.${ext}
 linux:
   icon: build/icon.png
   category: Audio

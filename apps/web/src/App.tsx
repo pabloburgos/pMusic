@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Compass,
   Disc3,
+  Download,
   Heart,
   Home,
   Library,
@@ -49,6 +49,8 @@ export const App: React.FC = () => {
     volume,
     djMode,
     likedTracks,
+    offlineEntries,
+    playlists,
     nowPlayingOpen,
     eqSheetOpen,
     devicesSheetOpen,
@@ -62,6 +64,8 @@ export const App: React.FC = () => {
     setDevicesSheetOpen,
     setImportModalOpen,
     setSettingsOpen,
+    setLibraryCategory,
+    openLocalPlaylistDetail,
     togglePlayPause,
     nextTrack,
     prevTrack,
@@ -178,9 +182,9 @@ export const App: React.FC = () => {
   const isLiked = likedTracks.some((l) => l.trackId === currentTrack.id);
 
   const navTabs: Array<{ id: MainNavTab; label: string; icon: React.ReactNode }> = [
-    { id: 'Inicio', label: 'Inicio', icon: <Home className="h-5 w-5" /> },
-    { id: 'Buscar', label: 'Buscar', icon: <Search className="h-5 w-5" /> },
-    { id: 'Biblioteca', label: 'Biblioteca', icon: <Library className="h-5 w-5" /> },
+    { id: 'Inicio', label: 'Inicio', icon: <Home className="h-4 w-4" /> },
+    { id: 'Buscar', label: 'Buscar', icon: <Search className="h-4 w-4" /> },
+    { id: 'Biblioteca', label: 'Biblioteca', icon: <Library className="h-4 w-4" /> },
   ];
 
   const handleMiniPlayerSwipeStart = (clientX: number) => {
@@ -199,8 +203,18 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="relative flex min-h-dvh w-full flex-col bg-[#06060A] text-[#F5F5F7]">
-      <div className="flex flex-1">
+    <div className="relative flex min-h-dvh w-full flex-col bg-[#08080C] text-[#F5F5F7]">
+      {/* Subtle Cover-Art Reactive Window Backdrop ("Content is the colour") */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 z-0 opacity-30"
+        style={{
+          background:
+            'radial-gradient(circle at 18% 12%, var(--pm-ambient-1), transparent 52%), radial-gradient(circle at 82% 85%, var(--pm-ambient-2), transparent 55%)',
+        }}
+      />
+
+      <div className="relative z-10 flex flex-1">
         {/* Desktop Collapsible Liquid Glass Sidebar (>= 768px only) */}
         {!isMobileViewport && (
           <aside
@@ -209,15 +223,15 @@ export const App: React.FC = () => {
             style={{ width: sidebarCollapsed ? 72 : 248 }}
             className="pm-glass-regular sticky top-0 z-30 flex h-[calc(100dvh-80px)] shrink-0 flex-col justify-between p-3 transition-[width] duration-200"
           >
-            <div className="space-y-6">
+            <div className="space-y-5 overflow-y-auto">
               {/* Brand Header & Collapse Button */}
               <div className="flex items-center justify-between px-2 pt-1">
                 {!sidebarCollapsed && (
                   <div className="flex items-center gap-2.5">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-[#0A84FF] to-[#BF5AF2] font-bold text-white">
+                    <div className="flex h-7 w-7 items-center justify-center rounded-[8px] bg-white text-sm font-black text-[#08080C] shadow-sm">
                       p
                     </div>
-                    <span className="text-lg font-bold tracking-tight text-[#F5F5F7]">
+                    <span className="text-[16px] font-bold tracking-tight text-[#F5F5F7]">
                       pMusic
                     </span>
                   </div>
@@ -230,7 +244,7 @@ export const App: React.FC = () => {
                       : 'Colapsar barra lateral'
                   }
                   onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-                  className="flex items-center justify-center rounded-xl bg-[#16161D] p-2 text-[#AEAEB2] hover:text-white"
+                  className="flex items-center justify-center rounded-[9px] border border-white/[0.07] bg-[#121219] p-2 text-[#B4B4BE] hover:text-white"
                 >
                   {sidebarCollapsed ? (
                     <PanelLeftOpen className="h-4 w-4" />
@@ -241,7 +255,7 @@ export const App: React.FC = () => {
               </div>
 
               {/* Primary Navigation Tabs */}
-              <nav role="tablist" aria-label="Secciones principales" className="space-y-1.5">
+              <nav role="tablist" aria-label="Secciones principales" className="space-y-1">
                 {navTabs.map((item) => {
                   const active = activeTab === item.id;
                   return (
@@ -252,10 +266,10 @@ export const App: React.FC = () => {
                       aria-selected={active}
                       aria-label={item.label}
                       onClick={() => setActiveTab(item.id)}
-                      className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors ${
+                      className={`flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-[13.5px] font-semibold transition-colors ${
                         active
-                          ? 'bg-[#0A84FF] text-white'
-                          : 'text-[#AEAEB2] hover:bg-[#16161D] hover:text-[#F5F5F7]'
+                          ? 'bg-white text-[#08080C]'
+                          : 'text-[#B4B4BE] hover:bg-[#14141D] hover:text-[#F5F5F7]'
                       }`}
                     >
                       {item.icon}
@@ -264,17 +278,84 @@ export const App: React.FC = () => {
                   );
                 })}
               </nav>
+
+              {/* Liner-style Virtual Collections in Sidebar */}
+              {!sidebarCollapsed && (
+                <div className="space-y-1.5 border-t border-white/[0.07] pt-4">
+                  <div className="px-2 text-[11px] font-semibold tracking-wider text-[#8E8E98]">
+                    TU COLECCIÓN
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('Biblioteca');
+                      setLibraryCategory('Me gusta');
+                    }}
+                    className="flex w-full items-center gap-3 rounded-[10px] px-2.5 py-2 text-left hover:bg-[#14141D]"
+                  >
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-gradient-to-br from-[#7E22CE] to-[#3B0764] text-white shadow-sm">
+                      <Heart className="h-4 w-4 fill-current" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[13px] font-medium text-[#F5F5F7]">
+                        Canciones que te gustan
+                      </div>
+                      <div className="text-[11px] text-[#8E8E98]">
+                        {likedTracks.length} pistas
+                      </div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('Biblioteca');
+                      setLibraryCategory('Descargas');
+                    }}
+                    className="flex w-full items-center gap-3 rounded-[10px] px-2.5 py-2 text-left hover:bg-[#14141D]"
+                  >
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-gradient-to-br from-[#0D9488] to-[#115E59] text-white shadow-sm">
+                      <Download className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[13px] font-medium text-[#F5F5F7]">
+                        En este dispositivo
+                      </div>
+                      <div className="text-[11px] text-[#8E8E98]">
+                        {offlineEntries.length} descargadas
+                      </div>
+                    </div>
+                  </button>
+
+                  {playlists.slice(0, 4).map((pl) => (
+                    <button
+                      key={pl.id}
+                      type="button"
+                      onClick={() => openLocalPlaylistDetail(pl.id)}
+                      className="flex w-full items-center gap-3 rounded-[10px] px-2.5 py-1.5 text-left hover:bg-[#14141D]"
+                    >
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[7px] bg-[#161620] text-xs font-bold text-[#B4B4BE]">
+                        {pl.name.slice(0, 1).toUpperCase()}
+                      </div>
+                      <div className="min-w-0 flex-1 truncate text-[13px] text-[#B4B4BE] hover:text-white">
+                        {pl.name}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Bottom Utility Controls in Sidebar */}
-            <div className="space-y-1.5 border-t border-white/10 pt-3">
+            <div className="space-y-1 border-t border-white/[0.07] pt-2.5">
               <button
                 type="button"
                 aria-label="Importar playlist"
                 onClick={() => setImportModalOpen(true)}
-                className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-xs font-semibold text-[#AEAEB2] hover:bg-[#16161D] hover:text-white"
+                className="flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-xs font-medium text-[#B4B4BE] hover:bg-[#14141D] hover:text-white"
               >
-                <ListMusic className="h-4 w-4 text-[#0A84FF]" />
+                <ListMusic className="h-4 w-4 text-[#B4B4BE]" />
                 {!sidebarCollapsed && <span>Importar playlist</span>}
               </button>
 
@@ -282,9 +363,9 @@ export const App: React.FC = () => {
                 type="button"
                 aria-label="Dispositivos"
                 onClick={() => setDevicesSheetOpen(true)}
-                className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-xs font-semibold text-[#AEAEB2] hover:bg-[#16161D] hover:text-white"
+                className="flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-xs font-medium text-[#B4B4BE] hover:bg-[#14141D] hover:text-white"
               >
-                <Wifi className="h-4 w-4 text-[#30D158]" />
+                <Wifi className="h-4 w-4 text-[#34D399]" />
                 {!sidebarCollapsed && <span>Dispositivos</span>}
               </button>
 
@@ -292,9 +373,9 @@ export const App: React.FC = () => {
                 type="button"
                 aria-label="Ajustes"
                 onClick={() => setSettingsOpen(true)}
-                className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-xs font-semibold text-[#AEAEB2] hover:bg-[#16161D] hover:text-white"
+                className="flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-xs font-medium text-[#B4B4BE] hover:bg-[#14141D] hover:text-white"
               >
-                <Settings className="h-4 w-4 text-[#AEAEB2]" />
+                <Settings className="h-4 w-4 text-[#B4B4BE]" />
                 {!sidebarCollapsed && <span>Ajustes</span>}
               </button>
             </div>
@@ -304,7 +385,7 @@ export const App: React.FC = () => {
         {/* Main Scrollable Content Region */}
         <main
           data-surface="content"
-          className="flex-1 overflow-y-auto px-4 pb-40 pt-5 md:px-7 md:pb-28"
+          className="flex-1 overflow-y-auto px-4 pb-40 pt-6 md:px-9 md:pb-28"
         >
           {activeDetailView ? (
             <DetailViewPanel />
@@ -331,18 +412,18 @@ export const App: React.FC = () => {
               type="button"
               aria-label="Abrir reproductor a pantalla completa"
               onClick={() => setNowPlayingOpen(true)}
-              className="flex min-w-0 items-center gap-3 text-left"
+              className="group flex min-w-0 items-center gap-3 text-left"
             >
               <img
                 src={currentTrack.thumbnailUrl}
                 alt={currentTrack.title}
-                className="h-13 w-13 rounded-[10px] object-cover"
+                className="h-12 w-12 rounded-[9px] object-cover shadow-md transition-transform group-hover:scale-105"
               />
               <div className="min-w-0">
-                <div className="truncate text-sm font-bold text-[#F5F5F7]">
+                <div className="truncate text-[14px] font-semibold text-[#F5F5F7]">
                   {currentTrack.title}
                 </div>
-                <div className="truncate text-xs text-[#AEAEB2]">
+                <div className="truncate text-[12.5px] text-[#B4B4BE]">
                   {currentTrack.artists.map((a) => a.name).join(', ')}
                 </div>
               </div>
@@ -353,22 +434,22 @@ export const App: React.FC = () => {
               aria-label={isLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
               aria-pressed={isLiked}
               onClick={() => void toggleLike(currentTrack)}
-              className={`rounded-full p-2 ${
-                isLiked ? 'text-[#FF375F]' : 'text-[#AEAEB2] hover:text-white'
+              className={`rounded-lg p-2 ${
+                isLiked ? 'text-[#F43F5E]' : 'text-[#8E8E98] hover:text-white'
               }`}
             >
               <Heart className={`h-4 w-4 ${isLiked ? 'fill-current' : ''}`} />
             </button>
           </div>
 
-          {/* Center: Transport & Timeline Scrubber */}
+          {/* Center: Sleek White Play Pill & Timeline Scrubber */}
           <div className="flex max-w-xl flex-1 flex-col items-center gap-1.5">
             <div className="flex items-center gap-4">
               <button
                 type="button"
                 aria-label="Anterior"
                 onClick={() => void prevTrack()}
-                className="rounded-full p-2 text-[#F5F5F7] hover:bg-white/10"
+                className="rounded-full p-2 text-[#B4B4BE] hover:text-white"
               >
                 <SkipBack className="h-4 w-4" />
               </button>
@@ -377,12 +458,12 @@ export const App: React.FC = () => {
                 type="button"
                 aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
                 onClick={() => void togglePlayPause()}
-                className="flex h-10 w-10 items-center justify-center rounded-full bg-[#0A84FF] text-white hover:bg-[#0A84FF]/90"
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-[#08080C] shadow-sm transition-transform hover:scale-105 active:scale-95"
               >
                 {isPlaying ? (
-                  <Pause className="h-5 w-5" />
+                  <Pause className="h-4 w-4 fill-current" />
                 ) : (
-                  <Play className="h-5 w-5" />
+                  <Play className="h-4 w-4 fill-current" />
                 )}
               </button>
 
@@ -390,14 +471,14 @@ export const App: React.FC = () => {
                 type="button"
                 aria-label="Siguiente"
                 onClick={() => void nextTrack()}
-                className="rounded-full p-2 text-[#F5F5F7] hover:bg-white/10"
+                className="rounded-full p-2 text-[#B4B4BE] hover:text-white"
               >
                 <SkipForward className="h-4 w-4" />
               </button>
             </div>
 
             <div className="flex w-full items-center gap-2.5">
-              <span className="tabular-nums text-[11px] font-medium text-[#AEAEB2]">
+              <span className="tabular-nums text-[11px] font-medium text-[#8E8E98]">
                 {formatDurationSec(positionSec)}
               </span>
               <input
@@ -408,16 +489,16 @@ export const App: React.FC = () => {
                 max={Math.max(1, Math.round(durationSec))}
                 value={Math.min(Math.round(durationSec), Math.round(positionSec))}
                 onChange={(e) => seekTo(Number(e.target.value))}
-                className="flex-1 accent-[#0A84FF]"
+                className="flex-1"
               />
-              <span className="tabular-nums text-[11px] font-medium text-[#AEAEB2]">
+              <span className="tabular-nums text-[11px] font-medium text-[#8E8E98]">
                 {formatDurationSec(durationSec)}
               </span>
             </div>
           </div>
 
-          {/* Right: DJ Toggle, Lyrics, EQ, Devices & Volume */}
-          <div className="flex flex-1 items-center justify-end gap-2">
+          {/* Right: Quiet Glass Utility Controls */}
+          <div className="flex flex-1 items-center justify-end gap-1.5">
             <button
               type="button"
               aria-label="Modo Sesión DJ"
@@ -426,13 +507,13 @@ export const App: React.FC = () => {
                 setNowPlayingOpen(true);
                 setNowPlayingTab('Cola');
               }}
-              className={`flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-bold ${
+              className={`flex items-center gap-1 rounded-[9px] border px-3 py-1.5 text-xs font-bold ${
                 djMode.enabled
-                  ? 'bg-[#BF5AF2] text-white'
-                  : 'bg-[#16161D] text-[#AEAEB2] hover:text-white'
+                  ? 'border-[#C084FC]/50 bg-[#231738] text-[#F5F5F7]'
+                  : 'border-white/[0.07] bg-[#121219] text-[#B4B4BE] hover:text-white'
               }`}
             >
-              <Disc3 className="h-3.5 w-3.5" />
+              <Disc3 className="h-3.5 w-3.5 text-[#C084FC]" />
               <span>DJ</span>
             </button>
 
@@ -443,7 +524,7 @@ export const App: React.FC = () => {
                 setNowPlayingOpen(true);
                 setNowPlayingTab('Letras');
               }}
-              className="rounded-full bg-[#16161D] p-2 text-[#AEAEB2] hover:text-white"
+              className="rounded-[9px] border border-white/[0.07] bg-[#121219] p-2 text-[#B4B4BE] hover:text-white"
             >
               <Mic2 className="h-4 w-4" />
             </button>
@@ -452,7 +533,7 @@ export const App: React.FC = () => {
               type="button"
               aria-label="Ecualizador"
               onClick={() => setEqSheetOpen(true)}
-              className="rounded-full bg-[#16161D] p-2 text-[#AEAEB2] hover:text-white"
+              className="rounded-[9px] border border-white/[0.07] bg-[#121219] p-2 text-[#B4B4BE] hover:text-white"
             >
               <Sliders className="h-4 w-4" />
             </button>
@@ -461,7 +542,7 @@ export const App: React.FC = () => {
               type="button"
               aria-label="Dispositivos"
               onClick={() => setDevicesSheetOpen(true)}
-              className="rounded-full bg-[#16161D] p-2 text-[#30D158] hover:text-white"
+              className="rounded-[9px] border border-white/[0.07] bg-[#121219] p-2 text-[#34D399] hover:text-white"
             >
               <Wifi className="h-4 w-4" />
             </button>
@@ -470,7 +551,7 @@ export const App: React.FC = () => {
               type="button"
               aria-label={volume === 0 ? 'Activar sonido' : 'Silenciar'}
               onClick={() => toggleMute()}
-              className="rounded-full p-2 text-[#AEAEB2] hover:text-white"
+              className="rounded-[9px] p-2 text-[#B4B4BE] hover:text-white"
             >
               {volume === 0 ? (
                 <VolumeX className="h-4 w-4" />
@@ -487,7 +568,7 @@ export const App: React.FC = () => {
               max={100}
               value={Math.round(volume * 100)}
               onChange={(e) => setVolume(Number(e.target.value) / 100)}
-              className="w-20 accent-[#0A84FF]"
+              className="w-20"
             />
           </div>
         </footer>
@@ -508,7 +589,7 @@ export const App: React.FC = () => {
             }}
             onPointerDown={(e) => handleMiniPlayerSwipeStart(e.clientX)}
             onPointerUp={(e) => handleMiniPlayerSwipeEnd(e.clientX)}
-            className="pm-glass-regular fixed inset-x-3 bottom-22 z-40 flex items-center justify-between gap-2 rounded-[20px] px-3 py-2"
+            className="pm-glass-regular fixed inset-x-3 bottom-21 z-40 flex items-center justify-between gap-2 rounded-[18px] px-3 py-2"
           >
             <button
               type="button"
@@ -519,13 +600,13 @@ export const App: React.FC = () => {
               <img
                 src={currentTrack.thumbnailUrl}
                 alt={currentTrack.title}
-                className="h-11 w-11 rounded-[10px] object-cover"
+                className="h-11 w-11 rounded-[9px] object-cover shadow-sm"
               />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-bold text-[#F5F5F7]">
+                <div className="truncate text-[14px] font-semibold text-[#F5F5F7]">
                   {currentTrack.title}
                 </div>
-                <div className="truncate text-xs text-[#AEAEB2]">
+                <div className="truncate text-xs text-[#B4B4BE]">
                   {currentTrack.artists.map((a) => a.name).join(', ')}
                 </div>
               </div>
@@ -536,12 +617,12 @@ export const App: React.FC = () => {
                 type="button"
                 aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
                 onClick={() => void togglePlayPause()}
-                className="flex h-12 w-12 items-center justify-center rounded-full bg-[#0A84FF] text-white"
+                className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-[#08080C]"
               >
                 {isPlaying ? (
-                  <Pause className="h-5 w-5" />
+                  <Pause className="h-5 w-5 fill-current" />
                 ) : (
-                  <Play className="h-5 w-5" />
+                  <Play className="h-5 w-5 fill-current" />
                 )}
               </button>
 
@@ -560,7 +641,7 @@ export const App: React.FC = () => {
             role="tablist"
             aria-label="Navegación móvil"
             data-testid="mobile-tab-bar"
-            className="pm-glass-regular fixed inset-x-3 bottom-3 z-40 grid grid-cols-3 gap-1 rounded-full p-1.5"
+            className="pm-glass-regular fixed inset-x-3 bottom-3 z-40 grid grid-cols-3 gap-1 rounded-[20px] p-1.5"
           >
             {navTabs.map((item) => {
               const active = activeTab === item.id;
@@ -571,10 +652,10 @@ export const App: React.FC = () => {
                   role="tab"
                   aria-selected={active}
                   onClick={() => setActiveTab(item.id)}
-                  className={`flex flex-col items-center justify-center rounded-full py-1.5 text-xs font-bold transition-colors ${
+                  className={`flex flex-col items-center justify-center rounded-[14px] py-1.5 text-xs font-bold transition-colors ${
                     active
-                      ? 'bg-[#0A84FF] text-white'
-                      : 'text-[#AEAEB2] hover:text-white'
+                      ? 'bg-white text-[#08080C]'
+                      : 'text-[#B4B4BE] hover:text-white'
                   }`}
                 >
                   {item.icon}

@@ -2,6 +2,7 @@ import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
+import * as esbuild from 'esbuild';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(__dirname, '..');
@@ -22,12 +23,12 @@ if (existsSync(webDist)) {
 const brandSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
   <defs>
     <linearGradient id="pmGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0A84FF" />
-      <stop offset="100%" stop-color="#BF5AF2" />
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="100%" stop-color="#C084FC" />
     </linearGradient>
   </defs>
-  <rect width="256" height="256" rx="56" fill="#06060A" />
-  <rect x="16" y="16" width="224" height="224" rx="44" fill="url(#pmGrad)" opacity="0.22" />
+  <rect width="256" height="256" rx="56" fill="#08080C" />
+  <rect x="16" y="16" width="224" height="224" rx="44" fill="url(#pmGrad)" opacity="0.16" />
   <circle cx="128" cy="128" r="76" fill="none" stroke="url(#pmGrad)" stroke-width="18" />
   <polygon points="108,92 168,128 108,164" fill="#F5F5F7" />
 </svg>`;
@@ -75,14 +76,14 @@ function generateBrandPng(width = 256, height = 256) {
       const dy = y - height / 2;
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist < 90 && dist > 62) {
-        rawRows[px] = 10 + Math.round((x / width) * 180);
-        rawRows[px + 1] = 90;
-        rawRows[px + 2] = 242;
+        rawRows[px] = 200;
+        rawRows[px + 1] = 160;
+        rawRows[px + 2] = 255;
         rawRows[px + 3] = 255;
       } else {
-        rawRows[px] = 6;
-        rawRows[px + 1] = 6;
-        rawRows[px + 2] = 10;
+        rawRows[px] = 8;
+        rawRows[px + 1] = 8;
+        rawRows[px + 2] = 12;
         rawRows[px + 3] = 255;
       }
     }
@@ -99,83 +100,165 @@ function generateBrandPng(width = 256, height = 256) {
 
 writeFileSync(resolve(buildDir, 'icon.png'), generateBrandPng(256, 256));
 
-// Compile Electron main.ts and preload.ts into dist-electron/main.cjs & preload.cjs
-const mainCjs = `'use strict';
-const { createServer } = require('node:http');
-const { randomBytes } = require('node:crypto');
-const { join } = require('node:path');
-const { app, BrowserWindow, globalShortcut, ipcMain, Menu } = require('electron');
+// Update src/main.ts to serve both static dist/ files AND /api/* over http://127.0.0.1:<port>
+const mainEntrySource = `import { createServer, type Server } from 'node:http';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { extname, join, normalize } from 'node:path';
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu } from 'electron';
+import { createPMusicApiHandler } from '@pmusic/providers';
 
-let mainWindow = null;
-let loopbackServer = null;
+let mainWindow: BrowserWindow | null = null;
+let loopbackServer: Server | null = null;
 let loopbackPort = 0;
-const loopbackAuthToken = randomBytes(24).toString('hex');
 
-function startLoopbackServer() {
-  return new Promise((resolve) => {
-    const srv = createServer((req, res) => {
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      if (req.url && req.url.startsWith('/api/health')) {
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ ok: true, status: 'ok', region: 'ES', lang: 'es' }));
+const MIME_MAP: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.mjs': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.wav': 'audio/wav',
+};
+
+async function startLoopbackServer(): Promise<number> {
+  if (loopbackServer && loopbackPort > 0) return loopbackPort;
+  const apiHandler = createPMusicApiHandler();
+  const distRoot = join(__dirname, '../dist');
+
+  return new Promise<number>((resolvePort, reject) => {
+    const srv = createServer(async (req, res) => {
+      const rawUrl = req.url ?? '/';
+      if (rawUrl.startsWith('/api/')) {
+        await apiHandler(req, res);
         return;
       }
-      res.statusCode = 404;
-      res.end();
+
+      const urlObj = new URL(rawUrl, 'http://127.0.0.1');
+      let relPath = decodeURIComponent(urlObj.pathname);
+      if (relPath === '/' || relPath === '') relPath = '/index.html';
+      const safeRel = normalize(relPath).replace(/^(\\.\\.[\\/\\\\])+/, '');
+      let filePath = join(distRoot, safeRel);
+
+      if (!existsSync(filePath) || statSync(filePath).isDirectory()) {
+        filePath = join(distRoot, 'index.html');
+      }
+
+      try {
+        const data = readFileSync(filePath);
+        const ext = extname(filePath).toLowerCase();
+        res.statusCode = 200;
+        res.setHeader('Content-Type', MIME_MAP[ext] ?? 'application/octet-stream');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.end(data);
+      } catch {
+        res.statusCode = 404;
+        res.end('Not found');
+      }
     });
+    srv.on('error', reject);
     srv.listen(0, '127.0.0.1', () => {
       const addr = srv.address();
-      loopbackPort = addr && typeof addr === 'object' ? addr.port : 0;
+      loopbackPort = typeof addr === 'object' && addr ? addr.port : 0;
       loopbackServer = srv;
-      resolve(loopbackPort);
+      resolvePort(loopbackPort);
     });
   });
 }
 
-ipcMain.handle('pmusic:get-api-base-url', () => '');
-ipcMain.handle('pmusic:get-auth-headers', () => ({ 'X-PMusic-Token': loopbackAuthToken }));
+function sendMediaAction(type: string): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('pmusic:media-action', { type });
+  }
+}
+
+ipcMain.handle('pmusic:get-api-base-url', () => \`http://127.0.0.1:\${loopbackPort}\`);
+ipcMain.handle('pmusic:get-auth-headers', () => ({}));
 ipcMain.handle('pmusic:update-discord', () => undefined);
 
-app.whenReady().then(async () => {
-  await startLoopbackServer();
+async function createMainWindow(): Promise<void> {
+  const port = await startLoopbackServer();
+
   mainWindow = new BrowserWindow({
     width: 1380,
     height: 860,
-    backgroundColor: '#06060A',
+    minWidth: 420,
+    minHeight: 640,
+    backgroundColor: '#08080C',
     title: 'pMusic',
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: false,
     },
   });
-  await mainWindow.loadFile(join(__dirname, '../dist/index.html'));
+
+  const menu = Menu.buildFromTemplate([
+    {
+      label: 'pMusic',
+      submenu: [
+        { label: 'Reproducir / Pausar', click: () => sendMediaAction('play') },
+        { label: 'Siguiente pista', click: () => sendMediaAction('nexttrack') },
+        { label: 'Pista anterior', click: () => sendMediaAction('previoustrack') },
+        { type: 'separator' },
+        { role: 'toggleDevTools', label: 'Herramientas de desarrollo' },
+        { role: 'quit', label: 'Salir de pMusic' },
+      ],
+    },
+  ]);
+  Menu.setApplicationMenu(menu);
+
+  const targetUrl = process.env.PMUSIC_DEV_URL || \`http://127.0.0.1:\${port}\`;
+  await mainWindow.loadURL(targetUrl);
+}
+
+void app.whenReady().then(async () => {
+  await createMainWindow();
+  try {
+    globalShortcut.register('MediaPlayPause', () => sendMediaAction('play'));
+    globalShortcut.register('MediaNextTrack', () => sendMediaAction('nexttrack'));
+    globalShortcut.register('MediaPreviousTrack', () => sendMediaAction('previoustrack'));
+  } catch {
+    // ignore
+  }
 });
 
 app.on('window-all-closed', () => {
   globalShortcut.unregisterAll();
-  if (loopbackServer) loopbackServer.close();
-  if (process.platform !== 'darwin') app.quit();
+  loopbackServer?.close();
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
 });
 `;
 
-const preloadCjs = `'use strict';
-const { contextBridge, ipcRenderer } = require('electron');
+const tmpMainPath = resolve(distElectron, '_entry_main.ts');
+writeFileSync(tmpMainPath, mainEntrySource, 'utf-8');
 
-contextBridge.exposeInMainWorld('pmusicDesktop', {
-  runtime: 'electron',
-  getApiBaseUrl: () => ipcRenderer.invoke('pmusic:get-api-base-url'),
-  getAuthHeaders: () => ipcRenderer.invoke('pmusic:get-auth-headers'),
-  updateDiscordPresence: (state) => ipcRenderer.invoke('pmusic:update-discord', state),
-  onMediaShortcut: (cb) => {
-    const handler = (_ev, action) => cb(action);
-    ipcRenderer.on('pmusic:media-action', handler);
-    return () => ipcRenderer.removeListener('pmusic:media-action', handler);
-  },
+await esbuild.build({
+  entryPoints: [tmpMainPath],
+  bundle: true,
+  platform: 'node',
+  target: 'node22',
+  format: 'cjs',
+  outfile: resolve(distElectron, 'main.cjs'),
+  external: ['electron', 'youtubei.js', 'googlevideo'],
 });
-`;
 
-writeFileSync(resolve(distElectron, 'main.cjs'), mainCjs, 'utf-8');
-writeFileSync(resolve(distElectron, 'preload.cjs'), preloadCjs, 'utf-8');
-console.log('pMusic desktop bundle built in apps/desktop/dist-electron and apps/desktop/dist');
+await esbuild.build({
+  entryPoints: [resolve(desktopRoot, 'src/preload.ts')],
+  bundle: true,
+  platform: 'node',
+  target: 'node22',
+  format: 'cjs',
+  outfile: resolve(distElectron, 'preload.cjs'),
+  external: ['electron'],
+});
+
+console.log('pMusic desktop bundle built with esbuild in apps/desktop/dist-electron and apps/desktop/dist');

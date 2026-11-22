@@ -6,26 +6,26 @@
 
 **Reproductor de música multiplataforma (Windows PC `.exe` + Móvil Android `.apk`) con estética OLED Liquid Glass, Modo Sesión DJ (AutoMix en Web Audio API), algoritmo de recomendaciones enfocado en la escena urbana española y sincronización gratuita en tiempo real (`pMusic Connect`).**
 
-[![Release v0.1.0](https://img.shields.io/badge/Release-v0.1.0-0A84FF?style=for-the-badge)](https://github.com/pabloburgos/pMusic/releases/tag/v0.1.0)
-[![Windows PC](https://img.shields.io/badge/Windows_PC-x64_.exe-0051D5?style=for-the-badge&logo=windows)](https://github.com/pabloburgos/pMusic/releases/tag/v0.1.0)
-[![Android Mobile](https://img.shields.io/badge/Android-APK_Nativo-30D158?style=for-the-badge&logo=android)](https://github.com/pabloburgos/pMusic/releases/tag/v0.1.0)
+[![Release v0.2.0](https://img.shields.io/badge/Release-v0.2.0-0A84FF?style=for-the-badge)](https://github.com/pabloburgos/pMusic/releases/tag/v0.2.0)
+[![Windows PC](https://img.shields.io/badge/Windows_PC-x64_.exe-0051D5?style=for-the-badge&logo=windows)](https://github.com/pabloburgos/pMusic/releases/tag/v0.2.0)
+[![Android Mobile](https://img.shields.io/badge/Android-APK_Nativo-30D158?style=for-the-badge&logo=android)](https://github.com/pabloburgos/pMusic/releases/tag/v0.2.0)
 [![Modo Sesión DJ](https://img.shields.io/badge/Web_Audio-Dual--Deck_DJ_AutoMix-BF5AF2?style=for-the-badge)](#modo-sesión-dj-automix-inteligente)
 [![Supabase Connect](https://img.shields.io/badge/Supabase-Realtime_Sync_$0-3ECF8E?style=for-the-badge&logo=supabase)](docs/GUIA_SUPABASE.md)
 
-[**Descargar para Windows PC & Android (Releases)**](https://github.com/pabloburgos/pMusic/releases/tag/v0.1.0) • [**Guía Supabase Gratis**](docs/GUIA_SUPABASE.md) • [**Guía Windows**](docs/GUIA_WINDOWS.md) • [**Guía Android**](docs/GUIA_ANDROID.md)
+[**Descargar para Windows PC & Android (Releases)**](https://github.com/pabloburgos/pMusic/releases/tag/v0.2.0) • [**Guía Supabase Gratis**](docs/GUIA_SUPABASE.md) • [**Guía Windows**](docs/GUIA_WINDOWS.md) • [**Guía Android**](docs/GUIA_ANDROID.md)
 
 </div>
 
 ---
 
-## Descarga Directa (Release `v0.1.0`)
+## Descarga Directa (Release `v0.2.0`)
 
-En la sección [**Releases de GitHub (`v0.1.0`)**](https://github.com/pabloburgos/pMusic/releases/tag/v0.1.0) tienes listos para descargar a tu carpeta `Downloads`:
+En la sección [**Releases de GitHub (`v0.2.0`)**](https://github.com/pabloburgos/pMusic/releases/tag/v0.2.0) tienes listos para descargar a tu carpeta `Downloads`:
 
 | Plataforma | Archivo en la Release | Cómo usarlo |
 | :--- | :--- | :--- |
-| **Windows PC (64-bit)** | **`pMusic-0.1.0-Windows-x64.zip`** *(151 MB, portable completo con `pmusic.exe`)* y **`pMusic-Setup-0.1.0.exe`** | Descomprime el `.zip` y haz doble clic en **`pmusic.exe`** (o ejecuta el instalador). Ya incluye tu proyecto de Supabase conectado. |
-| **Android (Móvil)** | **`pMusic-Android-0.1.0.apk`** | Descárgalo en tu móvil Android, ábrelo e instálalo. Incluye reproducción en segundo plano y caché offline. |
+| **Windows PC (64-bit)** | **`pMusic-0.2.0-Windows-x64.zip`** *(151 MB, portable completo con `pmusic.exe`)* y **`pMusic-Setup-0.2.0.exe`** | Descomprime el `.zip` y haz doble clic en **`pmusic.exe`** (o ejecuta el instalador). Ya incluye tu proyecto de Supabase conectado. |
+| **Android (Móvil)** | **`pMusic-Android-0.2.0.apk`** | Descárgalo en tu móvil Android, ábrelo e instálalo. Incluye reproducción en segundo plano y caché offline. |
 | **Base de Datos SQL** | **`supabase-schema.sql`** | Script SQL idempotente con las 6 tablas, políticas RLS y publicación en tiempo real para el SQL Editor de Supabase. |
 
 ---
