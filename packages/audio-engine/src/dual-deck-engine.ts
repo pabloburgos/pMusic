@@ -48,6 +48,16 @@ function setAudioParamSmooth(
   }
 }
 
+/**
+ * Converts a linear [0..1] UI volume slider value to a perceptual gain multiplier
+ * (~-56 dB at 10%, ~-73 dB at 5%, whisper-quiet minimum) matching human hearing.
+ */
+export function volumeToPerceptualGain(volume01: number): number {
+  const clamped = Math.max(0, Math.min(1, Number.isFinite(volume01) ? volume01 : 0.85));
+  if (clamped <= 0) return 0;
+  return Math.pow(clamped, 2.8);
+}
+
 export async function waitForAudioReady(
   audio: HTMLAudioElement,
   targetSec: number,
@@ -197,7 +207,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
         this.limiterNode.release.value = 0.15;
 
         this.masterGainNode = ctx.createGain();
-        this.masterGainNode.gain.value = this.volume;
+        this.masterGainNode.gain.value = volumeToPerceptualGain(this.volume);
 
         this.analyserNode = ctx.createAnalyser();
         this.analyserNode.fftSize = 256;
@@ -219,6 +229,11 @@ export class DualDeckAudioEngine implements IAudioEngine {
         // Fallback to pure HTMLAudioElement playback when Web Audio is unavailable in test runners
       }
     }
+    if (!this.audioCtx) {
+      const initGain = volumeToPerceptualGain(this.volume);
+      this.deckA.audio.volume = initGain;
+      this.deckB.audio.volume = initGain;
+    }
   }
 
   private createDeckElement(id: DeckId): DeckChannelNodes {
@@ -238,7 +253,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
         src: '',
         currentTime: 0,
         duration: 180,
-        volume: this.volume,
+        volume: volumeToPerceptualGain(this.volume),
         playbackRate: 1,
         paused: true,
         dataset: { deck: id },
@@ -365,7 +380,10 @@ export class DualDeckAudioEngine implements IAudioEngine {
 
   private resetDeckDsp(deck: DeckChannelNodes, gainValue = 1.0): void {
     deck.audio.playbackRate = 1.0;
-    deck.audio.volume = this.audioCtx ? 1.0 : this.volume * gainValue;
+    deck.audio.volume =
+      this.audioCtx && deck.sourceNode
+        ? 1.0
+        : volumeToPerceptualGain(this.volume) * gainValue;
     if (deck.lowEqNode) deck.lowEqNode.gain.value = 0;
     if (deck.midEqNode) deck.midEqNode.gain.value = 0;
     if (deck.highEqNode) deck.highEqNode.gain.value = 0;
@@ -501,14 +519,19 @@ export class DualDeckAudioEngine implements IAudioEngine {
   public setVolume(volume01: number): void {
     const clamped = Math.max(0, Math.min(1, Number.isFinite(volume01) ? volume01 : 0.85));
     this.volume = clamped;
+    const gain = volumeToPerceptualGain(clamped);
     if (this.masterGainNode) {
-      this.masterGainNode.gain.value = clamped;
+      if (this.audioCtx && typeof this.masterGainNode.gain.setTargetAtTime === 'function') {
+        this.masterGainNode.gain.setTargetAtTime(gain, this.audioCtx.currentTime, 0.015);
+      } else {
+        this.masterGainNode.gain.value = gain;
+      }
     }
-    if (this.deckA && !this.audioCtx) {
-      this.deckA.audio.volume = clamped;
+    if (this.deckA && (!this.audioCtx || !this.deckA.sourceNode)) {
+      this.deckA.audio.volume = gain;
     }
-    if (this.deckB && !this.audioCtx) {
-      this.deckB.audio.volume = clamped;
+    if (this.deckB && (!this.audioCtx || !this.deckB.sourceNode)) {
+      this.deckB.audio.volume = gain;
     }
     this.emitState();
   }
@@ -685,8 +708,9 @@ export class DualDeckAudioEngine implements IAudioEngine {
       setAudioParamSmooth(outgoing.gainNode?.gain, this.audioCtx, outGain);
       setAudioParamSmooth(incoming.gainNode?.gain, this.audioCtx, inGain);
       if (!this.audioCtx) {
-        outgoing.audio.volume = this.volume * outGain;
-        incoming.audio.volume = this.volume * inGain;
+        const masterGain = volumeToPerceptualGain(this.volume);
+        outgoing.audio.volume = masterGain * outGain;
+        incoming.audio.volume = masterGain * inGain;
       }
 
       if (this.djModeConfig.tempoMatching && Math.abs(startRate - 1.0) > 0.001) {

@@ -90,7 +90,7 @@ export const TrackContextMenu: React.FC = () => {
       aria-label={`Opciones para ${track.title}`}
       data-testid="track-context-menu"
       style={{ left, top }}
-      className="fixed z-[70] w-66 max-h-[78vh] overflow-y-auto rounded-[16px] border border-white/[0.14] bg-[#16161D] p-1.5 text-[#F5F5F7] shadow-[0_24px_64px_rgba(0,0,0,0.82)] pm-no-scrollbar"
+      className="pm-menu-pop fixed z-[70] w-66 max-h-[78vh] overflow-y-auto rounded-[16px] border border-white/[0.14] bg-[#16161D] p-1.5 text-[#F5F5F7] shadow-[0_24px_64px_rgba(0,0,0,0.82)] pm-no-scrollbar"
     >
       {/* Mini Track Header */}
       <div className="mb-1 flex items-center gap-2.5 border-b border-white/[0.08] px-2.5 py-2">
@@ -339,8 +339,8 @@ export const AppToast: React.FC = () => {
       role="status"
       aria-live="polite"
       data-testid="app-toast"
-      className={`pointer-events-none fixed left-1/2 z-[80] -translate-x-1/2 rounded-full border border-white/20 bg-white px-4 py-2 text-xs font-bold text-[#070709] shadow-[0_14px_36px_rgba(0,0,0,0.65)] ${
-        nowPlayingOpen ? 'bottom-6' : 'bottom-[114px]'
+      className={`pm-toast-enter pointer-events-none fixed left-1/2 z-[80] rounded-full border border-white/20 bg-white px-4 py-2 text-xs font-bold text-[#070709] shadow-[0_14px_36px_rgba(0,0,0,0.65)] ${
+        nowPlayingOpen ? 'top-16' : 'bottom-[156px] md:bottom-[98px]'
       }`}
     >
       {toastMessage}

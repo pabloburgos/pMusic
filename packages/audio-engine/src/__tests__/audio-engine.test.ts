@@ -5,6 +5,7 @@ import {
   DjQueueReorderer,
   DualDeckAudioEngine,
   PcmTrackAnalyzer,
+  volumeToPerceptualGain,
 } from '../index.ts';
 
 const SAMPLE_TRACKS: Track[] = [
@@ -181,5 +182,18 @@ describe('@pmusic/audio-engine', () => {
     expect(wideGap.transitionType).toBe('echo_out');
     expect(wideGap.transitionBars).toBe(4);
     expect(wideGap.transitionDurationSec).toBeLessThanOrEqual(6.8);
+  });
+
+  it('applies a perceptual logarithmic volume curve for quiet low-volume playback', async () => {
+    expect(volumeToPerceptualGain(0)).toBe(0);
+    expect(volumeToPerceptualGain(1)).toBe(1);
+    expect(volumeToPerceptualGain(0.1)).toBeLessThan(0.005);
+    expect(volumeToPerceptualGain(0.05)).toBeLessThan(0.001);
+
+    const engine = new DualDeckAudioEngine();
+    await engine.init();
+    engine.setVolume(0.05);
+    expect(engine.getState().volume).toBe(0.05);
+    await engine.dispose();
   });
 });

@@ -57,11 +57,52 @@ import { LibraryStore, SyncEngine } from '@pmusic/sync';
 import { defaultPlatformBridge } from '../platform/web-bridge.ts';
 import { applyAmbientPaletteFromCover } from '../utils/cover-color.ts';
 
-export type MainNavTab = 'Inicio' | 'Buscar' | 'Biblioteca';
+export type MainNavTab = 'Inicio' | 'Explorar' | 'Buscar' | 'Biblioteca';
 export type NowPlayingSubTab = 'Portada' | 'Letras' | 'Cola';
 export type SearchScopeTab = 'Todo' | 'Canciones' | 'Artistas' | 'Álbumes' | 'Playlists';
 export type LibraryCategoryTab = 'Todo' | 'Playlists' | 'Me gusta' | 'Descargas' | 'Historial';
 export type OfflineDownloadStatus = 'idle' | 'downloading' | 'downloaded' | 'error';
+
+export type RecentSearchItem =
+  | { kind: 'track'; id: string; track: Track; addedAtMs: number }
+  | {
+      kind: 'artist';
+      id: string;
+      artistId: string;
+      name: string;
+      thumbnailUrl: string;
+      addedAtMs: number;
+    };
+
+const RECENT_SEARCH_ITEMS_STORAGE_KEY = 'pmusic_recent_search_items_v1';
+
+function buildDefaultRecentSearchItems(): RecentSearchItem[] {
+  const now = Date.now();
+  const trackItems: RecentSearchItem[] = FALLBACK_TRACKS.slice(0, 4).map((track, idx) => ({
+    kind: 'track',
+    id: `track:${track.id}`,
+    track,
+    addedAtMs: now - idx * 60_000,
+  }));
+  const firstArtist = FALLBACK_ARTISTS[0];
+  if (firstArtist) {
+    trackItems.splice(1, 0, {
+      kind: 'artist',
+      id: `artist:${firstArtist.id}`,
+      artistId: firstArtist.id,
+      name: firstArtist.name,
+      thumbnailUrl: firstArtist.thumbnailUrl,
+      addedAtMs: now - 30_000,
+    });
+  }
+  return trackItems;
+}
+
+function persistRecentSearchItems(items: RecentSearchItem[]): void {
+  void defaultPlatformBridge.preferencesStorage
+    .setItem(RECENT_SEARCH_ITEMS_STORAGE_KEY, JSON.stringify(items))
+    .catch(() => {});
+}
 
 export type ActiveDetailView =
   | { kind: 'artist'; data: ArtistDetail }
@@ -155,6 +196,7 @@ export interface PMusicStoreState {
   devicesSheetOpen: boolean;
   importModalOpen: boolean;
   settingsOpen: boolean;
+  spotlightOpen: boolean;
   activeDetailView: ActiveDetailView;
   isOfflineNetwork: boolean;
   graphicSaverMode: boolean;
@@ -200,6 +242,7 @@ export interface PMusicStoreState {
   bestResult?: TopResultMatch;
   autocompleteSuggestions: AutocompleteSuggestion[];
   recentSearches: string[];
+  recentSearchItems: RecentSearchItem[];
   seedArtists: SeedArtistConfig[];
   affinityProfile: ArtistAffinityRecord[];
 
@@ -239,6 +282,7 @@ export interface PMusicStoreState {
   setDevicesSheetOpen: (open: boolean) => void;
   setImportModalOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
+  setSpotlightOpen: (open: boolean) => void;
   openArtistDetail: (artistId: string) => Promise<void>;
   openAlbumDetail: (albumId: string) => Promise<void>;
   openPlaylistDetail: (playlistId: string) => Promise<void>;
@@ -260,6 +304,7 @@ export interface PMusicStoreState {
   toggleMute: () => void;
   moveQueueItem: (fromIndex: number, toIndex: number) => void;
   removeQueueItem: (index: number) => void;
+  clearUpNextQueue: () => void;
   addToQueue: (track: Track) => void;
   playNextInQueue: (track: Track) => void;
   startTrackRadio: (track: Track, withDj?: boolean) => Promise<void>;
@@ -284,6 +329,10 @@ export interface PMusicStoreState {
   submitSearch: (query?: string) => Promise<void>;
   setSearchScope: (scope: SearchScopeTab) => void;
   clearRecentSearches: () => void;
+  addRecentSearchTrack: (track: Track) => void;
+  addRecentSearchArtist: (artist: { id: string; name: string; thumbnailUrl: string }) => void;
+  removeRecentSearchItem: (id: string) => void;
+  clearRecentSearchItems: () => void;
   addSeedArtist: (name: string) => Promise<void>;
   removeSeedArtist: (artistKey: string) => Promise<void>;
   resetTasteProfile: () => Promise<void>;
@@ -495,6 +544,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   devicesSheetOpen: false,
   importModalOpen: false,
   settingsOpen: false,
+  spotlightOpen: false,
   activeDetailView: null,
   isOfflineNetwork: typeof navigator !== 'undefined' ? !navigator.onLine : false,
   graphicSaverMode: false,
@@ -598,6 +648,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   bestResult: initialBundle.topResult,
   autocompleteSuggestions: recommendationEngine.rankAutocomplete('', []),
   recentSearches: ['Cruz Cafuné', 'La Pantera', 'Bad Bunny'],
+  recentSearchItems: buildDefaultRecentSearchItems(),
   seedArtists: [...DEFAULT_SPANISH_URBAN_SEEDS],
   affinityProfile: recommendationEngine.getAffinityProfile(),
 
@@ -666,12 +717,28 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       }
     }
 
+    let hydratedRecentItems = get().recentSearchItems;
+    try {
+      const rawRecent = await defaultPlatformBridge.preferencesStorage.getItem(
+        RECENT_SEARCH_ITEMS_STORAGE_KEY
+      );
+      if (rawRecent !== null && rawRecent !== undefined) {
+        const parsed = JSON.parse(rawRecent) as unknown;
+        if (Array.isArray(parsed)) {
+          hydratedRecentItems = parsed as RecentSearchItem[];
+        }
+      }
+    } catch {
+      // keep default
+    }
+
     set({
       playlists: libraryStore.getPlaylists(),
       likedTracks: libraryStore.getLikedTracks(),
       playHistory: libraryStore.getPlayHistory(),
       seedArtists: recommendationEngine.getSeedArtists(),
       affinityProfile: recommendationEngine.getAffinityProfile(),
+      recentSearchItems: hydratedRecentItems,
       offlineEntries,
       offlineDownloads,
       trackAnalyses: analyses,
@@ -853,7 +920,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }
   },
 
-  setActiveTab: (tab) => set({ activeTab: tab, activeDetailView: null }),
+  setActiveTab: (tab) => set({ activeTab: tab, activeDetailView: null, spotlightOpen: false }),
   setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
   setRightPanelOpen: (open) => set({ rightPanelOpen: open }),
   setNowPlayingOpen: (open) => set({ nowPlayingOpen: open }),
@@ -862,21 +929,38 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   setDevicesSheetOpen: (open) => set({ devicesSheetOpen: open }),
   setImportModalOpen: (open) => set({ importModalOpen: open, importError: null }),
   setSettingsOpen: (open) => set({ settingsOpen: open }),
+  setSpotlightOpen: (open) => set({ spotlightOpen: open }),
 
   openArtistDetail: async (artistId) => {
     const data = await musicProvider.getArtist(artistId);
-    set({ activeDetailView: { kind: 'artist', data } });
+    set({
+      activeDetailView: { kind: 'artist', data },
+      spotlightOpen: false,
+      nowPlayingOpen: false,
+    });
   },
   openAlbumDetail: async (albumId) => {
     const data = await musicProvider.getAlbum(albumId);
-    set({ activeDetailView: { kind: 'album', data } });
+    set({
+      activeDetailView: { kind: 'album', data },
+      spotlightOpen: false,
+      nowPlayingOpen: false,
+    });
   },
   openPlaylistDetail: async (playlistId) => {
     const data = await musicProvider.getPlaylist(playlistId);
-    set({ activeDetailView: { kind: 'playlist', data } });
+    set({
+      activeDetailView: { kind: 'playlist', data },
+      spotlightOpen: false,
+      nowPlayingOpen: false,
+    });
   },
   openLocalPlaylistDetail: (playlistId) => {
-    set({ activeDetailView: { kind: 'local_playlist', playlistId } });
+    set({
+      activeDetailView: { kind: 'local_playlist', playlistId },
+      spotlightOpen: false,
+      nowPlayingOpen: false,
+    });
   },
   closeDetailView: () => set({ activeDetailView: null }),
 
@@ -1141,6 +1225,19 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       queueIndex: newCurrentIdx,
     });
     void recomputeActiveDjPlan();
+  },
+
+  clearUpNextQueue: () => {
+    const st = get();
+    const kept = st.currentTrack;
+    djPreloadedKey = '';
+    set({
+      queue: [kept],
+      unshuffledQueue: st.shuffleEnabled ? [kept] : st.unshuffledQueue,
+      queueIndex: 0,
+      activeTransitionPlan: null,
+    });
+    st.showToast('Cola limpiada');
   },
 
   addToQueue: (track) => {
@@ -1501,6 +1598,50 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   clearRecentSearches: () => {
     recommendationEngine.clearRecentSearchQueries();
     set({ recentSearches: [] });
+  },
+
+  addRecentSearchTrack: (track) => {
+    const entry: RecentSearchItem = {
+      kind: 'track',
+      id: `track:${track.id}`,
+      track,
+      addedAtMs: Date.now(),
+    };
+    const next = [
+      entry,
+      ...get().recentSearchItems.filter((item) => item.id !== entry.id),
+    ].slice(0, 10);
+    set({ recentSearchItems: next });
+    persistRecentSearchItems(next);
+  },
+
+  addRecentSearchArtist: (artist) => {
+    const entry: RecentSearchItem = {
+      kind: 'artist',
+      id: `artist:${artist.id}`,
+      artistId: artist.id,
+      name: artist.name,
+      thumbnailUrl: artist.thumbnailUrl,
+      addedAtMs: Date.now(),
+    };
+    const next = [
+      entry,
+      ...get().recentSearchItems.filter((item) => item.id !== entry.id),
+    ].slice(0, 10);
+    set({ recentSearchItems: next });
+    persistRecentSearchItems(next);
+  },
+
+  removeRecentSearchItem: (id) => {
+    const next = get().recentSearchItems.filter((item) => item.id !== id);
+    set({ recentSearchItems: next });
+    persistRecentSearchItems(next);
+  },
+
+  clearRecentSearchItems: () => {
+    recommendationEngine.clearRecentSearchQueries();
+    set({ recentSearches: [], recentSearchItems: [] });
+    persistRecentSearchItems([]);
   },
 
   addSeedArtist: async (name) => {

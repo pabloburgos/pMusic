@@ -188,7 +188,7 @@ export const TrackListRow: React.FC<{
               {track.title}
             </button>
             {track.isExplicit && (
-              <span className="shrink-0 rounded bg-white/[0.12] px-1.5 py-0.5 text-[10px] font-bold leading-none text-[#B4B4BE]">
+              <span className="shrink-0 rounded bg-white/[0.12] px-1.5 py-0.5 text-[11px] font-bold leading-none text-[#B4B4BE]">
                 E
               </span>
             )}
@@ -329,27 +329,29 @@ const CoverCard: React.FC<{
       }}
       className="pm-cover-card group w-[152px] shrink-0 snap-start rounded-[12px] bg-[#111115] p-2.5 transition-colors hover:bg-[#18181E] md:w-[178px]"
     >
-    <div className="relative">
-      <button
-        type="button"
-        aria-label={`Abrir ${title}`}
-        onClick={onOpen}
-        className="block w-full text-left"
-      >
-        <img
-          src={image}
-          alt={title}
-          loading="lazy"
-          className={`aspect-square w-full bg-[#16161C] object-cover shadow-[0_8px_24px_rgba(0,0,0,0.5)] ${
+      <div className="relative">
+        <button
+          type="button"
+          aria-label={`Abrir ${title}`}
+          onClick={onOpen}
+          className={`block w-full overflow-hidden text-left ${
             round ? 'rounded-full' : 'rounded-[8px]'
           }`}
-        />
-      </button>
-      {badge && (
-        <span className="pointer-events-none absolute top-2 left-2 rounded bg-[#070709]/90 px-2 py-0.5 text-[10px] font-bold tracking-wider text-[#F5F5F7]">
-          {badge}
-        </span>
-      )}
+        >
+          <img
+            src={image}
+            alt={title}
+            loading="lazy"
+            className={`aspect-square w-full bg-[#16161C] object-cover shadow-[0_8px_24px_rgba(0,0,0,0.5)] transition-transform duration-300 ease-out group-hover:scale-[1.04] ${
+              round ? 'rounded-full' : 'rounded-[8px]'
+            }`}
+          />
+        </button>
+        {badge && (
+          <span className="pointer-events-none absolute top-2 left-2 rounded bg-[#070709]/90 px-2 py-0.5 text-[11px] font-bold tracking-wider text-[#F5F5F7]">
+            {badge}
+          </span>
+        )}
       {onPlay && (
         <button
           type="button"
@@ -462,7 +464,7 @@ export const DetailViewPanel: React.FC = () => {
       activeDetailView.data;
     const popularSongs = topSongs.slice(0, 10);
     return (
-      <div className="space-y-8">
+      <div className="pm-page-enter space-y-8">
         <section
           data-surface="content"
           className="pm-surface-card flex flex-col gap-6 rounded-[18px] p-6 sm:flex-row sm:items-end"
@@ -559,7 +561,7 @@ export const DetailViewPanel: React.FC = () => {
   if (activeDetailView.kind === 'album') {
     const { album, tracks } = activeDetailView.data;
     return (
-      <div className="space-y-7">
+      <div className="pm-page-enter space-y-7">
         <section
           data-surface="content"
           className="pm-surface-card flex flex-col gap-6 rounded-[18px] p-6 sm:flex-row sm:items-end"
@@ -623,7 +625,7 @@ export const DetailViewPanel: React.FC = () => {
   if (activeDetailView.kind === 'playlist') {
     const { playlist, tracks } = activeDetailView.data;
     return (
-      <div className="space-y-7">
+      <div className="pm-page-enter space-y-7">
         <section
           data-surface="content"
           className="pm-surface-card flex flex-col gap-6 rounded-[18px] p-6 sm:flex-row sm:items-end"
@@ -691,7 +693,7 @@ export const DetailViewPanel: React.FC = () => {
   ).filter((t) => !localPl.tracks.some((ex) => ex.id === t.id));
 
   return (
-    <div className="space-y-7">
+    <div className="pm-page-enter space-y-7">
       <div
         data-surface="content"
         className="pm-surface-card space-y-5 rounded-[18px] p-6"
@@ -949,7 +951,7 @@ export const HomeScreen: React.FC = () => {
   );
 
   return (
-    <div className="space-y-8">
+    <div className="pm-page-enter space-y-8">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-[28px] font-bold tracking-tight text-[#F5F5F7] md:text-[32px]">
           {getSpanishGreeting()}
@@ -1155,8 +1157,142 @@ const GENRE_CARDS = [
   { label: 'Rock', query: 'Género: Rock', accent: '#F97316' },
 ] as const;
 
+export const ExploreScreen: React.FC = () => {
+  const {
+    homeShelves,
+    searchResults,
+    submitSearch,
+    setActiveTab,
+    playTrack,
+    openAlbumDetail,
+    openArtistDetail,
+  } = usePMusicStore();
+
+  const listen = homeShelves.find((s) => s.kind === 'listen_again');
+  const releases = homeShelves.find((s) => s.kind === 'favorite_new_releases');
+  const trendingSongs = (
+    searchResults.songs.length > 0
+      ? searchResults.songs
+      : listen?.tracks ?? []
+  ).slice(0, 6);
+  const albums =
+    searchResults.albums.length > 0
+      ? searchResults.albums
+      : releases?.albums ?? [];
+  const artists = searchResults.artists;
+
+  return (
+    <div className="pm-page-enter space-y-8">
+      <div>
+        <h1 className="text-[28px] font-bold tracking-tight text-[#F5F5F7] md:text-[32px]">
+          Explorar
+        </h1>
+        <p className="text-[13px] text-[#8E8E98]">
+          Géneros, tendencias del momento y novedades seleccionadas
+        </p>
+      </div>
+
+      {/* Genres Grid */}
+      <section className="space-y-3">
+        <h2 className="text-[20px] font-bold tracking-tight text-[#F5F5F7]">
+          Explorar géneros
+        </h2>
+        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+          {GENRE_CARDS.map((g) => (
+            <button
+              key={g.query}
+              type="button"
+              onClick={() => {
+                setActiveTab('Buscar');
+                void submitSearch(g.query);
+              }}
+              className="group flex items-center gap-3 rounded-[12px] border border-white/[0.06] bg-[#111115] px-4 py-3.5 text-left transition-all hover:border-white/[0.14] hover:bg-[#191922]"
+            >
+              <span
+                aria-hidden="true"
+                className="h-5 w-1.5 shrink-0 rounded-full transition-transform group-hover:scale-y-110"
+                style={{ backgroundColor: g.accent }}
+              />
+              <span className="truncate text-[13.5px] font-semibold text-[#F5F5F7]">
+                {g.label}
+              </span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {/* Trending Songs */}
+      {trendingSongs.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="text-[20px] font-bold tracking-tight text-[#F5F5F7]">
+            Tendencias ahora
+          </h2>
+          <div className="grid grid-cols-1 gap-x-6 md:grid-cols-2">
+            {trendingSongs.map((t, i) => (
+              <TrackListRow
+                key={`explore-trend-${t.id}`}
+                track={t}
+                index={i}
+                queueContext={trendingSongs}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Featured Albums */}
+      {albums.length > 0 && (
+        <CarouselSection
+          title="Álbumes destacados"
+          subtitle="Lanzamientos populares en tu escena"
+        >
+          {albums.map((al) => (
+            <CoverCard
+              key={`explore-album-${al.id}`}
+              image={al.thumbnailUrl}
+              title={al.title}
+              subtitle={[al.year, al.artists.map((a) => a.name).join(', ')]
+                .filter(Boolean)
+                .join(' · ')}
+              onOpen={() => void openAlbumDetail(al.id)}
+            />
+          ))}
+        </CarouselSection>
+      )}
+
+      {/* Artists to Discover */}
+      {artists.length > 0 && (
+        <CarouselSection
+          title="Artistas para descubrir"
+          subtitle="Perfiles esenciales de la escena actual"
+        >
+          {artists.map((ar) => (
+            <CoverCard
+              key={`explore-artist-${ar.id}`}
+              image={ar.thumbnailUrl}
+              title={ar.name}
+              subtitle={ar.subscribersText ?? 'Artista'}
+              round
+              onOpen={() => void openArtistDetail(ar.id)}
+              onPlay={() => {
+                const match =
+                  trendingSongs.find((t) =>
+                    t.artists.some((a) => a.name === ar.name)
+                  ) ?? trendingSongs[0];
+                if (match) void playTrack(match, trendingSongs);
+              }}
+            />
+          ))}
+        </CarouselSection>
+      )}
+    </div>
+  );
+};
+
 export const SearchScreen: React.FC = () => {
   const {
+    spotlightOpen,
+    setSpotlightOpen,
     searchQuery,
     isSearching,
     searchScope,
@@ -1183,49 +1319,73 @@ export const SearchScreen: React.FC = () => {
   ];
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-[28px] font-bold tracking-tight text-[#F5F5F7]">
-          Buscar
-        </h1>
-        <p className="text-[13px] text-[#8E8E98]">
-          Millones de canciones, artistas, álbumes y listas completas
-        </p>
+    <div className="pm-page-enter space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-[28px] font-bold tracking-tight text-[#F5F5F7]">
+            Buscar
+          </h1>
+          <p className="text-[13px] text-[#8E8E98]">
+            Canciones, artistas, álbumes y listas completas
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setSpotlightOpen(true)}
+          className="hidden items-center gap-2 rounded-full border border-white/[0.10] bg-[#14141A] px-3.5 py-1.5 text-xs font-medium text-[#B4B4BE] hover:bg-[#1C1C24] hover:text-white md:inline-flex"
+        >
+          <Search className="h-3.5 w-3.5" />
+          <span>Búsqueda rápida</span>
+          <kbd className="rounded bg-white/[0.09] px-1.5 py-0.5 text-[11px] font-semibold text-[#F5F5F7]">
+            Ctrl K
+          </kbd>
+        </button>
       </div>
 
-      {/* Sleek Solid Search Field */}
-      <form
-        role="search"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void submitSearch();
-        }}
-        className="flex items-center gap-3 rounded-full border border-white/[0.09] bg-[#131318] px-4 py-2 focus-within:border-white/30"
-      >
-        <Search className="h-4 w-4 shrink-0 text-[#B4B4BE]" />
-        <input
-          type="search"
-          role="searchbox"
-          aria-label="Buscar canciones, artistas o álbumes"
-          placeholder="¿Qué te apetece escuchar hoy?"
-          value={searchQuery}
-          onChange={(e) => void setSearchQuery(e.target.value)}
-          className="flex-1 bg-transparent text-[14px] font-medium text-[#F5F5F7] placeholder:text-[#8E8E98] focus:outline-none"
-        />
-        {isSearching && (
-          <Loader2 className="h-4 w-4 animate-spin text-[#B4B4BE]" />
-        )}
-        {searchQuery && (
-          <button
-            type="button"
-            aria-label="Limpiar búsqueda"
-            onClick={() => void setSearchQuery('', true)}
-            className="rounded-full bg-white/[0.09] px-3 py-1 text-xs font-semibold text-[#F5F5F7] hover:bg-white/[0.16]"
-          >
-            Limpiar
-          </button>
-        )}
-      </form>
+      {/* Sleek Solid Search Field (hides native searchbox role when Spotlight modal is open to avoid duplicates) */}
+      {spotlightOpen ? (
+        <button
+          type="button"
+          onClick={() => setSpotlightOpen(true)}
+          className="flex w-full items-center gap-3 rounded-full border border-white/[0.09] bg-[#131318] px-4 py-2.5 text-left text-[14px] text-[#8E8E98]"
+        >
+          <Search className="h-4 w-4 shrink-0 text-[#B4B4BE]" />
+          <span>{searchQuery || '¿Qué te apetece escuchar hoy?'}</span>
+        </button>
+      ) : (
+        <form
+          role="search"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void submitSearch();
+          }}
+          className="flex items-center gap-3 rounded-full border border-white/[0.09] bg-[#131318] px-4 py-2 focus-within:border-white/30"
+        >
+          <Search className="h-4 w-4 shrink-0 text-[#B4B4BE]" />
+          <input
+            type="search"
+            role="searchbox"
+            aria-label="Buscar canciones, artistas o álbumes"
+            placeholder="¿Qué te apetece escuchar hoy?"
+            value={searchQuery}
+            onChange={(e) => void setSearchQuery(e.target.value)}
+            className="pm-input-frameless flex-1 bg-transparent text-[14px] font-medium text-[#F5F5F7] placeholder:text-[#8E8E98] focus:outline-none"
+          />
+          {isSearching && (
+            <Loader2 className="h-4 w-4 animate-spin text-[#B4B4BE]" />
+          )}
+          {searchQuery && (
+            <button
+              type="button"
+              aria-label="Limpiar búsqueda"
+              onClick={() => void setSearchQuery('', true)}
+              className="rounded-full bg-white/[0.09] px-3 py-1 text-xs font-semibold text-[#F5F5F7] hover:bg-white/[0.16]"
+            >
+              Limpiar
+            </button>
+          )}
+        </form>
+      )}
 
       {/* Autocomplete & Recent Searches */}
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1265,34 +1425,6 @@ export const SearchScreen: React.FC = () => {
           </div>
         )}
       </div>
-
-      {/* Browse Genres (shown when search box is empty on Todo) */}
-      {!searchQuery.trim() && searchScope === 'Todo' && (
-        <section className="space-y-3">
-          <h2 className="text-[18px] font-bold text-[#F5F5F7]">
-            Explorar géneros
-          </h2>
-          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-            {GENRE_CARDS.map((g) => (
-              <button
-                key={g.query}
-                type="button"
-                onClick={() => void submitSearch(g.query)}
-                className="flex items-center gap-3 rounded-[10px] border border-white/[0.06] bg-[#111115] px-4 py-3.5 text-left hover:bg-[#181820]"
-              >
-                <span
-                  aria-hidden="true"
-                  className="h-5 w-1.5 shrink-0 rounded-full"
-                  style={{ backgroundColor: g.accent }}
-                />
-                <span className="truncate text-[13.5px] font-semibold text-[#F5F5F7]">
-                  {g.label}
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
 
       {/* 5 Scope Filter Tabs */}
       <div
@@ -1645,7 +1777,7 @@ export const LibraryScreen: React.FC = () => {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="pm-page-enter space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-[28px] font-bold tracking-tight text-[#F5F5F7]">

@@ -310,7 +310,7 @@ input[type="range"]::-webkit-slider-thumb {
   color: #FFFFFF;
   opacity: 1;
   filter: none;
-  transform: scale(1.028) translateX(6px);
+  transform: scale(1.02) translateX(4px);
   transform-origin: left center;
   text-shadow: 0 4px 28px rgba(255, 255, 255, 0.22);
   transition:
@@ -318,6 +318,27 @@ input[type="range"]::-webkit-slider-thumb {
     color 240ms ease,
     opacity 260ms ease,
     filter 280ms ease;
+}
+
+/* Apple Music Sing progressive word illumination */
+.pm-sing-word {
+  display: inline-block;
+  color: #FFFFFF;
+  background-image: linear-gradient(
+    90deg,
+    #FFFFFF 0%,
+    #FFFFFF var(--word-p, 0%),
+    rgba(255, 255, 255, 0.34) calc(var(--word-p, 0%) + 12%),
+    rgba(255, 255, 255, 0.34) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  transform: translateY(var(--word-y, 0px));
+  filter: drop-shadow(0 0 var(--word-glow, 0px) rgba(255, 255, 255, 0.42));
+  transition:
+    transform 180ms var(--ease-out),
+    filter 180ms ease;
 }
 
 .pm-lyric-line-inactive {
@@ -406,6 +427,104 @@ input[type="range"]::-webkit-slider-thumb {
   animation: pmSheetEnter 220ms var(--ease-drawer) both;
 }
 
+@keyframes pmPageEnter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.pm-page-enter {
+  animation: pmPageEnter 220ms var(--ease-out) both;
+}
+
+@keyframes pmTabEnter {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.pm-tab-enter {
+  animation: pmTabEnter 210ms var(--ease-out) both;
+}
+
+@keyframes pmModalPop {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.pm-modal-pop {
+  animation: pmModalPop 190ms var(--ease-out) both;
+}
+
+@keyframes pmMenuPop {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.pm-menu-pop {
+  animation: pmMenuPop 150ms var(--ease-out) both;
+  transform-origin: top center;
+}
+
+@keyframes pmToastEnter {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+.pm-toast-enter {
+  transform: translate(-50%, 0);
+  animation: pmToastEnter 180ms var(--ease-out) both;
+}
+
+@keyframes pmHeartPop {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.28);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.pm-heart-pop {
+  animation: pmHeartPop 280ms var(--ease-out);
+}
+
+.pm-spotlight-backdrop {
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
 /* Apple HIG Hit-Target Enforcement: 44x44px mobile (<768px), 28x28px desktop (>=768px) */
 button,
 [role="button"],
@@ -435,6 +554,13 @@ input[type="password"] {
   }
 }
 
+/* Hide duplicate native WebKit search clear button inside styled search bars */
+input[type="search"]::-webkit-search-cancel-button,
+input[type="search"]::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
 /* Focus Ring for Keyboard Navigation */
 button:focus-visible,
 [role="button"]:focus-visible,
@@ -444,6 +570,10 @@ button:focus-visible,
 input:focus-visible {
   outline: 2px solid #FFFFFF;
   outline-offset: 2px;
+}
+
+input.pm-input-frameless:focus-visible {
+  outline: none !important;
 }
 
 /* Accessibility Media Query 1: Reduced Transparency & Android Graphic Saver Mode */
@@ -464,6 +594,11 @@ input:focus-visible {
     -webkit-backdrop-filter: none !important;
     backdrop-filter: none !important;
   }
+  .pm-spotlight-backdrop {
+    background-color: rgba(7, 7, 10, 0.88) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
 }
 
 html.pm-reduced-transparency .pm-glass-regular,
@@ -472,6 +607,11 @@ html.pm-reduced-transparency .pm-glass-chip,
 html.pm-reduced-transparency .pm-glass-clear {
   background: #14141B !important;
   background-color: #14141B !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+html.pm-reduced-transparency .pm-spotlight-backdrop {
+  background-color: rgba(7, 7, 10, 0.88) !important;
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
@@ -484,8 +624,18 @@ html.pm-reduced-transparency .pm-glass-clear {
   .pm-eq-bar-3,
   .pm-lyric-dot,
   .pm-cover-swap,
-  .pm-sheet-enter {
+  .pm-sheet-enter,
+  .pm-page-enter,
+  .pm-tab-enter,
+  .pm-modal-pop,
+  .pm-menu-pop,
+  .pm-toast-enter,
+  .pm-heart-pop {
     animation: none !important;
+  }
+  .pm-sing-word {
+    transform: none !important;
+    transition: none !important;
   }
   .pm-lyric-line-inactive {
     filter: none !important;
@@ -505,8 +655,18 @@ html.pm-reduced-motion .pm-eq-bar-2,
 html.pm-reduced-motion .pm-eq-bar-3,
 html.pm-reduced-motion .pm-lyric-dot,
 html.pm-reduced-motion .pm-cover-swap,
-html.pm-reduced-motion .pm-sheet-enter {
+html.pm-reduced-motion .pm-sheet-enter,
+html.pm-reduced-motion .pm-page-enter,
+html.pm-reduced-motion .pm-tab-enter,
+html.pm-reduced-motion .pm-modal-pop,
+html.pm-reduced-motion .pm-menu-pop,
+html.pm-reduced-motion .pm-toast-enter,
+html.pm-reduced-motion .pm-heart-pop {
   animation: none !important;
+}
+html.pm-reduced-motion .pm-sing-word {
+  transform: none !important;
+  transition: none !important;
 }
 html.pm-reduced-motion .pm-lyric-line-inactive {
   filter: none !important;
@@ -532,5 +692,11 @@ html.pm-reduced-motion .pm-lyric-line-inactive {
   }
   .pm-surface-card {
     border-color: rgba(255, 255, 255, 0.34) !important;
+  }
+  .pm-sing-word {
+    color: #FFFFFF !important;
+    -webkit-text-fill-color: #FFFFFF !important;
+    background: none !important;
+    filter: none !important;
   }
 }

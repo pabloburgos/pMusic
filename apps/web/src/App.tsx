@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Check,
+  Compass,
   Disc3,
   Download,
   Heart,
@@ -36,10 +37,12 @@ import { formatDurationSec } from '@pmusic/core';
 import { usePMusicStore, type MainNavTab } from './store/usePMusicStore.ts';
 import { isElectronDesktopRuntime } from './platform/web-bridge.ts';
 import { PMusicLogo } from './components/PMusicLogo.tsx';
+import { SpotlightSearchModal } from './components/SpotlightSearchModal.tsx';
 import { AppToast, TrackContextMenu } from './components/TrackMenu.tsx';
 import { readTrackFromDropEvent } from './utils/track-dnd.ts';
 import {
   DetailViewPanel,
+  ExploreScreen,
   HomeScreen,
   LibraryScreen,
   SearchScreen,
@@ -83,6 +86,7 @@ export const App: React.FC = () => {
     devicesSheetOpen,
     importModalOpen,
     settingsOpen,
+    spotlightOpen,
     setActiveTab,
     setSidebarCollapsed,
     setRightPanelOpen,
@@ -92,6 +96,7 @@ export const App: React.FC = () => {
     setDevicesSheetOpen,
     setImportModalOpen,
     setSettingsOpen,
+    setSpotlightOpen,
     setLibraryCategory,
     openLocalPlaylistDetail,
     openArtistDetail,
@@ -119,9 +124,21 @@ export const App: React.FC = () => {
     typeof window !== 'undefined' ? window.innerWidth < 768 : false
   );
   const [sidebarDropTargetId, setSidebarDropTargetId] = useState<string | null>(null);
+  const [dockHoverPct, setDockHoverPct] = useState<number | null>(null);
+  const [heartBurst, setHeartBurst] = useState(false);
   const isElectronDesktop = isElectronDesktopRuntime();
 
   const swipeStartXRef = useRef<number | null>(null);
+  const heartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const triggerHeartBurst = () => {
+    setHeartBurst(false);
+    if (heartTimerRef.current) clearTimeout(heartTimerRef.current);
+    requestAnimationFrame(() => {
+      setHeartBurst(true);
+      heartTimerRef.current = setTimeout(() => setHeartBurst(false), 320);
+    });
+  };
 
   useEffect(() => {
     void initApp();
@@ -149,8 +166,15 @@ export const App: React.FC = () => {
         tag === 'select' ||
         Boolean(target?.isContentEditable);
 
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setSpotlightOpen(!spotlightOpen);
+        return;
+      }
+
       if (e.key === 'Escape') {
-        if (nowPlayingOpen) setNowPlayingOpen(false);
+        if (spotlightOpen) setSpotlightOpen(false);
+        else if (nowPlayingOpen) setNowPlayingOpen(false);
         else if (eqSheetOpen) setEqSheetOpen(false);
         else if (devicesSheetOpen) setDevicesSheetOpen(false);
         else if (importModalOpen) setImportModalOpen(false);
@@ -171,10 +195,10 @@ export const App: React.FC = () => {
         seekTo(Math.max(0, positionSec - 5));
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
-        setVolume(Math.min(1, volume + 0.05));
+        setVolume(Math.min(1, Number((volume + 0.03).toFixed(2))));
       } else if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setVolume(Math.max(0, volume - 0.05));
+        setVolume(Math.max(0, Number((volume - 0.03).toFixed(2))));
       } else if (e.key.toLowerCase() === 'm') {
         e.preventDefault();
         toggleMute();
@@ -197,13 +221,14 @@ export const App: React.FC = () => {
         cycleRepeatMode();
       } else if (e.key === '/') {
         e.preventDefault();
-        setActiveTab('Buscar');
+        setSpotlightOpen(true);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
+    spotlightOpen,
     nowPlayingOpen,
     eqSheetOpen,
     devicesSheetOpen,
@@ -212,6 +237,7 @@ export const App: React.FC = () => {
     durationSec,
     positionSec,
     volume,
+    setSpotlightOpen,
     setNowPlayingOpen,
     setNowPlayingTab,
     setEqSheetOpen,
@@ -264,9 +290,15 @@ export const App: React.FC = () => {
 
   const navTabs: Array<{ id: MainNavTab; label: string; icon: React.ReactNode }> = [
     { id: 'Inicio', label: 'Inicio', icon: <Home className="h-[18px] w-[18px]" /> },
+    { id: 'Explorar', label: 'Explorar', icon: <Compass className="h-[18px] w-[18px]" /> },
     { id: 'Buscar', label: 'Buscar', icon: <Search className="h-[18px] w-[18px]" /> },
     { id: 'Biblioteca', label: 'Biblioteca', icon: <Library className="h-[18px] w-[18px]" /> },
   ];
+  const primaryArtistRef =
+    currentTrack.artists[0]?.id ?? currentTrack.artists[0]?.name ?? '';
+  const primaryArtistNames = currentTrack.artists.map((a) => a.name).join(', ');
+  const dockHoverSec =
+    dockHoverPct !== null ? (dockHoverPct / 100) * Math.max(1, durationSec) : null;
 
   const handleMiniPlayerSwipeStart = (clientX: number) => {
     swipeStartXRef.current = clientX;
@@ -331,21 +363,19 @@ export const App: React.FC = () => {
           </div>
 
           <div className="flex flex-1 items-center justify-center">
-            {activeTab !== 'Buscar' && (
-              <button
-                type="button"
-                onClick={() => setActiveTab('Buscar')}
-                className="pm-no-drag flex w-72 items-center justify-between gap-2 rounded-full bg-[#131318] px-3.5 py-1.5 text-xs text-[#8E8E98] ring-1 ring-white/[0.07] hover:bg-[#1A1A22] hover:text-[#F5F5F7] lg:w-96"
-              >
-                <span className="flex items-center gap-2">
-                  <Search className="h-3.5 w-3.5 text-[#B4B4BE]" />
-                  <span>Buscar canciones, artistas o álbumes…</span>
-                </span>
-                <kbd className="rounded bg-white/[0.08] px-1.5 py-0.5 text-[10px] font-semibold text-[#B4B4BE]">
-                  /
-                </kbd>
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => setSpotlightOpen(true)}
+              className="pm-no-drag flex w-72 items-center justify-between gap-2 rounded-full bg-[#131318] px-3.5 py-1.5 text-xs text-[#8E8E98] ring-1 ring-white/[0.07] transition-colors hover:bg-[#1A1A22] hover:text-[#F5F5F7] lg:w-96"
+            >
+              <span className="flex items-center gap-2">
+                <Search className="h-3.5 w-3.5 text-[#B4B4BE]" />
+                <span>Buscar canciones, artistas o álbumes…</span>
+              </span>
+              <kbd className="rounded bg-white/[0.08] px-1.5 py-0.5 text-[11px] font-semibold text-[#B4B4BE]">
+                Ctrl K
+              </kbd>
+            </button>
           </div>
 
           <div
@@ -415,7 +445,7 @@ export const App: React.FC = () => {
 
       <div
         className={`relative z-10 flex min-h-0 flex-1 ${
-          !isMobileViewport ? 'gap-3 px-3 pt-3 pb-[112px]' : ''
+          !isMobileViewport ? 'gap-3 px-3 pt-3 pb-[96px]' : ''
         }`}
       >
         {/* Desktop Floating Collapsible Liquid Glass Sidebar (>= 768px) */}
@@ -423,27 +453,51 @@ export const App: React.FC = () => {
           <aside
             aria-label="Navegación principal"
             data-testid="desktop-sidebar"
-            style={{ width: sidebarCollapsed ? 72 : 244 }}
-            className="pm-glass-regular z-30 flex h-full shrink-0 flex-col justify-between rounded-[20px] p-3 transition-[width] duration-200"
+            style={{ width: sidebarCollapsed ? 68 : 244 }}
+            className={`pm-glass-regular z-30 flex h-full shrink-0 flex-col justify-between rounded-[20px] transition-[width] duration-200 ${
+              sidebarCollapsed ? 'items-center px-2 py-3' : 'p-3'
+            }`}
           >
-            <div className="space-y-4 overflow-y-auto pm-no-scrollbar">
+            <div className="flex w-full min-h-0 flex-1 flex-col gap-3 overflow-y-auto pm-no-scrollbar">
               {/* Primary Navigation */}
-              <nav role="tablist" aria-label="Secciones principales" className="space-y-1">
+              <nav
+                role="tablist"
+                aria-label="Secciones principales"
+                className={`flex flex-col ${sidebarCollapsed ? 'items-center gap-1.5' : 'gap-1'}`}
+              >
                 {navTabs.map((item) => {
-                  const active = activeTab === item.id && !activeDetailView;
+                  const active =
+                    item.id === 'Buscar'
+                      ? spotlightOpen || (activeTab === 'Buscar' && !activeDetailView)
+                      : !spotlightOpen && activeTab === item.id && !activeDetailView;
                   return (
                     <button
                       key={item.id}
                       type="button"
                       role="tab"
+                      title={item.label}
                       aria-selected={active}
                       aria-label={item.label}
-                      onClick={() => setActiveTab(item.id)}
-                      className={`flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-[13.5px] font-semibold ${
-                        active
-                          ? 'bg-white text-[#070709]'
-                          : 'text-[#B4B4BE] hover:bg-white/[0.07] hover:text-[#F5F5F7]'
-                      }`}
+                      onClick={() => {
+                        if (item.id === 'Buscar') {
+                          setSpotlightOpen(true);
+                        } else {
+                          setActiveTab(item.id);
+                        }
+                      }}
+                      className={
+                        sidebarCollapsed
+                          ? `mx-auto flex h-11 w-11 items-center justify-center rounded-[14px] transition-all ${
+                              active
+                                ? 'bg-white text-[#070709] shadow-sm'
+                                : 'text-[#B4B4BE] hover:bg-white/[0.08] hover:text-[#F5F5F7]'
+                            }`
+                          : `flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-[13.5px] font-semibold transition-colors ${
+                              active
+                                ? 'bg-white text-[#070709]'
+                                : 'text-[#B4B4BE] hover:bg-white/[0.07] hover:text-[#F5F5F7]'
+                            }`
+                      }
                     >
                       {item.icon}
                       {!sidebarCollapsed && <span>{item.label}</span>}
@@ -452,9 +506,99 @@ export const App: React.FC = () => {
                 })}
               </nav>
 
+              {/* Compact Collapsed Shortcut Icons + Drop Targets */}
+              {sidebarCollapsed && (
+                <div className="flex w-full flex-col items-center gap-2 border-t border-white/[0.08] pt-3">
+                  <button
+                    type="button"
+                    title="Canciones que te gustan"
+                    aria-label="Canciones que te gustan"
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'copy';
+                      setSidebarDropTargetId('liked');
+                    }}
+                    onDragLeave={() => {
+                      if (sidebarDropTargetId === 'liked') setSidebarDropTargetId(null);
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setSidebarDropTargetId(null);
+                      const dropped = readTrackFromDropEvent(e);
+                      if (dropped) void likeTrackIfNeeded(dropped);
+                    }}
+                    onClick={() => {
+                      setActiveTab('Biblioteca');
+                      setLibraryCategory('Me gusta');
+                    }}
+                    className={`mx-auto flex h-10 w-10 items-center justify-center rounded-[11px] bg-[#24131B] text-[#F43F5E] transition-all hover:scale-105 ${
+                      sidebarDropTargetId === 'liked' ? 'ring-2 ring-white/80' : ''
+                    }`}
+                  >
+                    <Heart className="h-4 w-4 fill-current" />
+                  </button>
+
+                  <button
+                    type="button"
+                    title="En este dispositivo"
+                    aria-label="En este dispositivo"
+                    onClick={() => {
+                      setActiveTab('Biblioteca');
+                      setLibraryCategory('Descargas');
+                    }}
+                    className="mx-auto flex h-10 w-10 items-center justify-center rounded-[11px] bg-[#0F241D] text-[#34D399] transition-all hover:scale-105"
+                  >
+                    <Download className="h-4 w-4" />
+                  </button>
+
+                  {playlists.slice(0, 5).map((pl) => {
+                    const thumb = pl.coverUrl ?? pl.tracks[0]?.thumbnailUrl;
+                    const isDropActive = sidebarDropTargetId === pl.id;
+                    return (
+                      <button
+                        key={pl.id}
+                        type="button"
+                        title={pl.name}
+                        aria-label={`Playlist ${pl.name}`}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = 'copy';
+                          setSidebarDropTargetId(pl.id);
+                        }}
+                        onDragLeave={() => {
+                          if (sidebarDropTargetId === pl.id) setSidebarDropTargetId(null);
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          setSidebarDropTargetId(null);
+                          const dropped = readTrackFromDropEvent(e);
+                          if (dropped) void addTrackToPlaylist(pl.id, dropped);
+                        }}
+                        onClick={() => openLocalPlaylistDetail(pl.id)}
+                        className={`mx-auto flex h-10 w-10 items-center justify-center overflow-hidden rounded-[11px] transition-all hover:scale-105 ${
+                          isDropActive ? 'ring-2 ring-white/80' : ''
+                        }`}
+                      >
+                        {thumb ? (
+                          <img
+                            src={thumb}
+                            alt=""
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <span className="flex h-full w-full items-center justify-center bg-[#181820] text-xs font-bold text-[#B4B4BE]">
+                            {pl.name.slice(0, 1).toUpperCase()}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
               {/* Solid Collection Shortcuts (Zero gradients, Drag & Drop Playlist Targets) */}
               {!sidebarCollapsed && (
-                <div className="space-y-1.5 border-t border-white/[0.07] pt-4">
+                <div className="space-y-1.5 border-t border-white/[0.07] pt-3">
                   <div className="flex items-center justify-between px-2">
                     <span className="text-[11px] font-semibold tracking-wider text-[#8E8E98]">
                       TU COLECCIÓN
@@ -604,12 +748,21 @@ export const App: React.FC = () => {
             </div>
 
             {/* Bottom Sidebar Utilities */}
-            <div className="space-y-1 border-t border-white/[0.07] pt-2.5">
+            <div
+              className={`flex w-full flex-col border-t border-white/[0.07] pt-2.5 ${
+                sidebarCollapsed ? 'items-center gap-1' : 'space-y-1'
+              }`}
+            >
               <button
                 type="button"
+                title="Importar playlist"
                 aria-label="Importar playlist"
                 onClick={() => setImportModalOpen(true)}
-                className="flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-xs font-medium text-[#B4B4BE] hover:bg-white/[0.07] hover:text-white"
+                className={
+                  sidebarCollapsed
+                    ? 'mx-auto flex h-10 w-10 items-center justify-center rounded-[12px] text-[#B4B4BE] hover:bg-white/[0.08] hover:text-white'
+                    : 'flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-xs font-medium text-[#B4B4BE] hover:bg-white/[0.07] hover:text-white'
+                }
               >
                 <ListMusic className="h-4 w-4 shrink-0" />
                 {!sidebarCollapsed && <span>Importar playlist</span>}
@@ -617,9 +770,14 @@ export const App: React.FC = () => {
 
               <button
                 type="button"
+                title="Dispositivos"
                 aria-label="Dispositivos"
                 onClick={() => setDevicesSheetOpen(true)}
-                className="flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-xs font-medium text-[#B4B4BE] hover:bg-white/[0.07] hover:text-white"
+                className={
+                  sidebarCollapsed
+                    ? 'mx-auto flex h-10 w-10 items-center justify-center rounded-[12px] text-[#34D399] hover:bg-white/[0.08]'
+                    : 'flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-xs font-medium text-[#B4B4BE] hover:bg-white/[0.07] hover:text-white'
+                }
               >
                 <Wifi className="h-4 w-4 shrink-0 text-[#34D399]" />
                 {!sidebarCollapsed && <span>Dispositivos</span>}
@@ -627,9 +785,14 @@ export const App: React.FC = () => {
 
               <button
                 type="button"
+                title="Ajustes"
                 aria-label="Ajustes"
                 onClick={() => setSettingsOpen(true)}
-                className="flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-xs font-medium text-[#B4B4BE] hover:bg-white/[0.07] hover:text-white"
+                className={
+                  sidebarCollapsed
+                    ? 'mx-auto flex h-10 w-10 items-center justify-center rounded-[12px] text-[#B4B4BE] hover:bg-white/[0.08] hover:text-white'
+                    : 'flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-xs font-medium text-[#B4B4BE] hover:bg-white/[0.07] hover:text-white'
+                }
               >
                 <Settings className="h-4 w-4 shrink-0" />
                 {!sidebarCollapsed && <span>Ajustes</span>}
@@ -707,6 +870,7 @@ export const App: React.FC = () => {
           ) : (
             <>
               {activeTab === 'Inicio' && <HomeScreen />}
+              {activeTab === 'Explorar' && <ExploreScreen />}
               {activeTab === 'Buscar' && <SearchScreen />}
               {activeTab === 'Biblioteca' && <LibraryScreen />}
             </>
@@ -920,52 +1084,185 @@ export const App: React.FC = () => {
         )}
       </div>
 
-      {/* Desktop Floating Liquid Glass Player Bar (>= 768px) */}
+      {/* Desktop Full-Bar Progress Floating Liquid Glass Player Bar (>= 768px) */}
       {!isMobileViewport && (
         <footer
           aria-label="Reproductor de escritorio"
           data-testid="desktop-player-bar"
-          className="pm-glass-regular fixed inset-x-3 bottom-3 z-40 grid h-[88px] grid-cols-[minmax(220px,1fr)_minmax(420px,1.65fr)_minmax(240px,1fr)] items-center gap-6 rounded-[20px] px-5 py-2.5"
+          onMouseMove={(e) => {
+            const target = e.target as HTMLElement | null;
+            if (target?.closest('button, input[aria-label="Volumen"], .pm-dock-cluster')) {
+              if (dockHoverPct !== null) setDockHoverPct(null);
+              return;
+            }
+            const rect = e.currentTarget.getBoundingClientRect();
+            const pct = Math.max(
+              0,
+              Math.min(100, ((e.clientX - rect.left) / Math.max(1, rect.width)) * 100)
+            );
+            setDockHoverPct(pct);
+          }}
+          onMouseLeave={() => setDockHoverPct(null)}
+          className="pm-glass-regular fixed inset-x-3 bottom-3 z-40 grid h-[72px] select-none grid-cols-[minmax(220px,1fr)_auto_minmax(260px,1fr)] items-center gap-4 overflow-hidden rounded-[20px] px-4"
         >
-          {/* Left: Track Info */}
-          <div className="flex min-w-0 items-center gap-3">
+          {/* Full-Bar Ambient Progress Fill & Hairline Leading Edge */}
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 left-0 z-0 border-r border-white/30 transition-[width] duration-150"
+            style={{
+              width: `${progressPct}%`,
+              background:
+                'linear-gradient(90deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.16) 100%)',
+              boxShadow: '2px 0 18px rgba(255,255,255,0.14)',
+            }}
+          />
+
+          {/* Subtle Hover Scrub Preview Fill */}
+          {dockHoverPct !== null && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-y-0 left-0 z-0 bg-white/[0.04]"
+              style={{ width: `${dockHoverPct}%` }}
+            />
+          )}
+
+          {/* Top Edge DJ AutoMix Cue Window Strip */}
+          {cueStartPct !== null && cueWidthPct > 0 && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute top-0 z-0 h-[2.5px] rounded-full bg-[#C084FC]/85"
+              style={{
+                left: `${cueStartPct}%`,
+                width: `${cueWidthPct}%`,
+              }}
+            />
+          )}
+
+          {/* Full-Dock Interactive Seek Slider (sits behind foreground buttons at z-0) */}
+          <input
+            type="range"
+            role="slider"
+            aria-label="Posición de reproducción"
+            min={0}
+            max={Math.max(1, Math.round(durationSec))}
+            value={Math.min(Math.round(durationSec), Math.round(positionSec))}
+            onChange={(e) => seekTo(Number(e.target.value))}
+            className="absolute inset-0 z-0 h-full w-full cursor-pointer opacity-[0.01]"
+          />
+
+          {/* Hover Scrub Time Tooltip */}
+          {dockHoverPct !== null && dockHoverSec !== null && (
+            <span
+              aria-hidden="true"
+              style={{ left: `clamp(28px, ${dockHoverPct}%, calc(100% - 28px))` }}
+              className="tabular-nums pointer-events-none absolute top-1.5 z-20 -translate-x-1/2 rounded-full bg-black/75 px-2 py-0.5 text-[11px] font-semibold text-[#F5F5F7]"
+            >
+              {formatDurationSec(dockHoverSec)}
+            </span>
+          )}
+
+          {/* Left: Artwork + Title & Clickable Artist + Heart */}
+          <div className="pm-dock-cluster relative z-10 flex min-w-0 items-center gap-3">
             <button
               type="button"
               aria-label="Abrir reproductor a pantalla completa"
               onClick={() => setNowPlayingOpen(true)}
-              className="group flex min-w-0 items-center gap-3 text-left"
+              className="group relative h-11 w-11 shrink-0 overflow-hidden rounded-[10px] shadow-md"
             >
               <img
                 src={currentTrack.thumbnailUrl}
                 alt={currentTrack.title}
-                className="h-12 w-12 shrink-0 rounded-[10px] object-cover shadow-md transition-transform group-hover:scale-105"
+                className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
               />
-              <div className="min-w-0">
-                <div className="truncate text-[14px] font-semibold text-[#F5F5F7]">
-                  {currentTrack.title}
-                </div>
-                <div className="truncate text-[12px] text-[#B4B4BE]">
-                  {currentTrack.artists.map((a) => a.name).join(', ')}
-                </div>
-              </div>
             </button>
+
+            <div className="min-w-0 max-w-[210px] xl:max-w-[260px]">
+              <button
+                type="button"
+                onClick={() => setNowPlayingOpen(true)}
+                className="block max-w-full truncate text-left text-[14px] font-semibold leading-tight text-[#F5F5F7] hover:underline"
+              >
+                {currentTrack.title}
+              </button>
+              <div className="mt-0.5 flex items-center gap-1.5 truncate">
+                {currentTrack.isExplicit && (
+                  <span
+                    aria-label="Explícita"
+                    className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-[3px] bg-white/[0.16] px-1 text-[11px] font-bold leading-none text-[#F5F5F7]"
+                  >
+                    E
+                  </span>
+                )}
+                <button
+                  type="button"
+                  aria-label={`Ir al artista ${primaryArtistNames}`}
+                  onClick={() => {
+                    if (primaryArtistRef) void openArtistDetail(primaryArtistRef);
+                  }}
+                  className="truncate text-left text-[12px] text-[#C4C4CE] hover:text-white hover:underline"
+                >
+                  {primaryArtistNames}
+                </button>
+              </div>
+            </div>
 
             <button
               type="button"
               aria-label={isLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
               aria-pressed={isLiked}
-              onClick={() => void toggleLike(currentTrack)}
-              className={`inline-flex shrink-0 items-center justify-center rounded-full p-2 ${
-                isLiked ? 'text-[#F43F5E]' : 'text-[#8E8E98] hover:text-white'
-              }`}
+              onClick={() => {
+                triggerHeartBurst();
+                void toggleLike(currentTrack);
+              }}
+              className={`inline-flex shrink-0 items-center justify-center rounded-full p-2 hover:bg-white/[0.09] ${
+                heartBurst ? 'pm-heart-pop' : ''
+              } ${isLiked ? 'text-[#F43F5E]' : 'text-[#B4B4BE] hover:text-white'}`}
             >
               <Heart className={`h-4 w-4 ${isLiked ? 'fill-current' : ''}`} />
             </button>
           </div>
 
-          {/* Center: Shuffle + Transport + Repeat & Scrubber */}
-          <div className="flex w-full max-w-2xl flex-col items-center justify-self-center">
-            <div className="flex items-center justify-center gap-5">
+          {/* Center: Clean Transport Cluster + Discreet Time Readout */}
+          <div className="relative z-10 flex items-center justify-center gap-3 justify-self-center">
+            <button
+              type="button"
+              aria-label="Anterior"
+              onClick={() => void prevTrack()}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full text-[#E5E5EA] hover:bg-white/[0.10] hover:text-white"
+            >
+              <SkipBack className="h-4 w-4" />
+            </button>
+
+            <button
+              type="button"
+              aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
+              onClick={() => void togglePlayPause()}
+              className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-[#070709] shadow-[0_6px_22px_rgba(255,255,255,0.24)] hover:scale-105"
+            >
+              {isPlaying ? (
+                <Pause className="h-5 w-5 fill-current" />
+              ) : (
+                <Play className="h-5 w-5 translate-x-[1px] fill-current" />
+              )}
+            </button>
+
+            <button
+              type="button"
+              aria-label="Siguiente"
+              onClick={() => void nextTrack()}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full text-[#E5E5EA] hover:bg-white/[0.10] hover:text-white"
+            >
+              <SkipForward className="h-4 w-4" />
+            </button>
+
+            <span className="tabular-nums ml-1 hidden text-[11px] font-medium text-[#C4C4CE] lg:inline">
+              {formatDurationSec(positionSec)} / {formatDurationSec(durationSec)}
+            </span>
+          </div>
+
+          {/* Right: Sleek Unified Utility Capsule */}
+          <div className="relative z-10 flex items-center justify-end">
+            <div className="pm-dock-cluster flex items-center gap-0.5 rounded-[14px] border border-white/[0.10] bg-white/[0.06] p-1">
               <button
                 type="button"
                 aria-label={
@@ -975,48 +1272,13 @@ export const App: React.FC = () => {
                 }
                 aria-pressed={shuffleEnabled}
                 onClick={() => toggleShuffle()}
-                className={`relative inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/[0.08] ${
-                  shuffleEnabled ? 'text-white' : 'text-[#8E8E98] hover:text-white'
+                className={`inline-flex h-8 w-8 items-center justify-center rounded-[10px] ${
+                  shuffleEnabled
+                    ? 'bg-white/[0.18] text-white'
+                    : 'text-[#C4C4CE] hover:bg-white/[0.09] hover:text-white'
                 }`}
               >
-                <Shuffle className="h-4 w-4" />
-                {shuffleEnabled && (
-                  <span
-                    aria-hidden="true"
-                    className="absolute bottom-0.5 h-1 w-1 rounded-full bg-white"
-                  />
-                )}
-              </button>
-
-              <button
-                type="button"
-                aria-label="Anterior"
-                onClick={() => void prevTrack()}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[#B4B4BE] hover:bg-white/[0.08] hover:text-white"
-              >
-                <SkipBack className="h-4 w-4" />
-              </button>
-
-              <button
-                type="button"
-                aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
-                onClick={() => void togglePlayPause()}
-                className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-[#070709] shadow-[0_6px_20px_rgba(255,255,255,0.20)] hover:scale-105"
-              >
-                {isPlaying ? (
-                  <Pause className="h-4 w-4 fill-current" />
-                ) : (
-                  <Play className="h-4 w-4 translate-x-[1px] fill-current" />
-                )}
-              </button>
-
-              <button
-                type="button"
-                aria-label="Siguiente"
-                onClick={() => void nextTrack()}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[#B4B4BE] hover:bg-white/[0.08] hover:text-white"
-              >
-                <SkipForward className="h-4 w-4" />
+                <Shuffle className="h-3.5 w-3.5" />
               </button>
 
               <button
@@ -1024,131 +1286,109 @@ export const App: React.FC = () => {
                 aria-label={repeatLabel}
                 aria-pressed={repeatMode !== 'off'}
                 onClick={() => cycleRepeatMode()}
-                className={`relative inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/[0.08] ${
-                  repeatMode !== 'off' ? 'text-white' : 'text-[#8E8E98] hover:text-white'
+                className={`inline-flex h-8 w-8 items-center justify-center rounded-[10px] ${
+                  repeatMode !== 'off'
+                    ? 'bg-white/[0.18] text-white'
+                    : 'text-[#C4C4CE] hover:bg-white/[0.09] hover:text-white'
                 }`}
               >
                 {repeatMode === 'one' ? (
-                  <Repeat1 className="h-4 w-4" />
+                  <Repeat1 className="h-3.5 w-3.5" />
                 ) : (
-                  <Repeat className="h-4 w-4" />
+                  <Repeat className="h-3.5 w-3.5" />
                 )}
-                {repeatMode !== 'off' && (
-                  <span
-                    aria-hidden="true"
-                    className="absolute bottom-0.5 h-1 w-1 rounded-full bg-white"
-                  />
+              </button>
+
+              <button
+                type="button"
+                aria-label="Modo Sesión DJ"
+                aria-pressed={djMode.enabled}
+                onClick={() => {
+                  setNowPlayingOpen(true);
+                  setNowPlayingTab('Cola');
+                }}
+                className={`inline-flex h-8 items-center justify-center gap-1 rounded-[10px] px-2 text-[11px] font-bold ${
+                  djMode.enabled
+                    ? 'bg-[#C084FC]/25 text-[#E9D5FF]'
+                    : 'text-[#C4C4CE] hover:bg-white/[0.09] hover:text-white'
+                }`}
+              >
+                <Disc3 className="h-3.5 w-3.5 text-[#C084FC]" />
+                <span className="hidden xl:inline">DJ</span>
+              </button>
+
+              <button
+                type="button"
+                aria-label="Ecualizador"
+                onClick={() => setEqSheetOpen(true)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-[10px] text-[#C4C4CE] hover:bg-white/[0.09] hover:text-white"
+              >
+                <Sliders className="h-3.5 w-3.5" />
+              </button>
+
+              <button
+                type="button"
+                aria-label="Letras sincronizadas"
+                onClick={() => {
+                  setNowPlayingOpen(true);
+                  setNowPlayingTab('Letras');
+                }}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-[10px] text-[#C4C4CE] hover:bg-white/[0.09] hover:text-white"
+              >
+                <Mic2 className="h-3.5 w-3.5" />
+              </button>
+
+              <button
+                type="button"
+                aria-label={volume === 0 ? 'Activar sonido' : 'Silenciar'}
+                onClick={() => toggleMute()}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-[10px] text-[#C4C4CE] hover:bg-white/[0.09] hover:text-white"
+              >
+                {volume === 0 ? (
+                  <VolumeX className="h-3.5 w-3.5" />
+                ) : (
+                  <Volume2 className="h-3.5 w-3.5" />
+                )}
+              </button>
+
+              <input
+                type="range"
+                role="slider"
+                aria-label="Volumen"
+                min={0}
+                max={100}
+                value={volumePct}
+                onChange={(e) => setVolume(Number(e.target.value) / 100)}
+                style={{ '--pm-fill': `${volumePct}%` } as React.CSSProperties}
+                className="pm-range-subtle mx-1 hidden w-16 lg:block xl:w-20"
+              />
+
+              <span aria-hidden="true" className="mx-0.5 h-4 w-px bg-white/[0.14]" />
+
+              <button
+                type="button"
+                aria-label="Expandir reproductor"
+                onClick={() => setNowPlayingOpen(true)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-[10px] text-[#C4C4CE] hover:bg-white/[0.09] hover:text-white"
+              >
+                <Maximize2 className="h-3.5 w-3.5" />
+              </button>
+
+              <button
+                type="button"
+                aria-label={
+                  rightPanelOpen ? 'Ocultar panel de cola' : 'Mostrar panel de cola'
+                }
+                onClick={() => setRightPanelOpen(!rightPanelOpen)}
+                className="hidden h-8 w-8 items-center justify-center rounded-[10px] text-[#C4C4CE] hover:bg-white/[0.09] hover:text-white xl:inline-flex"
+              >
+                {rightPanelOpen ? (
+                  <PanelRightClose className="h-3.5 w-3.5" />
+                ) : (
+                  <PanelRightOpen className="h-3.5 w-3.5" />
                 )}
               </button>
             </div>
-
-            <div className="mt-2 flex w-full items-center gap-3">
-              <span className="tabular-nums w-9 text-right text-[11px] font-medium text-[#8E8E98]">
-                {formatDurationSec(positionSec)}
-              </span>
-              <div className="relative flex flex-1 items-center">
-                {cueStartPct !== null && cueWidthPct > 0 && (
-                  <span
-                    aria-hidden="true"
-                    className="pointer-events-none absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-[#C084FC]/60"
-                    style={{
-                      left: `${cueStartPct}%`,
-                      width: `${cueWidthPct}%`,
-                    }}
-                  />
-                )}
-                <input
-                  type="range"
-                  role="slider"
-                  aria-label="Posición de reproducción"
-                  min={0}
-                  max={Math.max(1, Math.round(durationSec))}
-                  value={Math.min(Math.round(durationSec), Math.round(positionSec))}
-                  onChange={(e) => seekTo(Number(e.target.value))}
-                  style={{ '--pm-fill': `${progressPct}%` } as React.CSSProperties}
-                  className="pm-range-subtle relative z-10 w-full"
-                />
-              </div>
-              <span className="tabular-nums w-9 text-[11px] font-medium text-[#8E8E98]">
-                {formatDurationSec(durationSec)}
-              </span>
-            </div>
-          </div>
-
-          {/* Right: DJ, Lyrics, EQ, Devices, Volume */}
-          <div className="flex items-center justify-end gap-1.5">
-            <button
-              type="button"
-              aria-label="Modo Sesión DJ"
-              aria-pressed={djMode.enabled}
-              onClick={() => {
-                setNowPlayingOpen(true);
-                setNowPlayingTab('Cola');
-              }}
-              className={`inline-flex items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold ${
-                djMode.enabled
-                  ? 'bg-[#221536] text-[#E9D5FF] ring-1 ring-[#C084FC]/50'
-                  : 'text-[#B4B4BE] hover:bg-white/[0.08] hover:text-white'
-              }`}
-            >
-              <Disc3 className="h-3.5 w-3.5 text-[#C084FC]" />
-              <span>DJ</span>
-            </button>
-
-            <button
-              type="button"
-              aria-label="Letras sincronizadas"
-              onClick={() => {
-                setNowPlayingOpen(true);
-                setNowPlayingTab('Letras');
-              }}
-              className="inline-flex items-center justify-center rounded-full p-2 text-[#B4B4BE] hover:bg-white/[0.08] hover:text-white"
-            >
-              <Mic2 className="h-4 w-4" />
-            </button>
-
-            <button
-              type="button"
-              aria-label="Ecualizador"
-              onClick={() => setEqSheetOpen(true)}
-              className="inline-flex items-center justify-center rounded-full p-2 text-[#B4B4BE] hover:bg-white/[0.08] hover:text-white"
-            >
-              <Sliders className="h-4 w-4" />
-            </button>
-
-            <button
-              type="button"
-              aria-label="Dispositivos"
-              onClick={() => setDevicesSheetOpen(true)}
-              className="inline-flex items-center justify-center rounded-full p-2 text-[#34D399] hover:bg-white/[0.08]"
-            >
-              <Wifi className="h-4 w-4" />
-            </button>
-
-            <button
-              type="button"
-              aria-label={volume === 0 ? 'Activar sonido' : 'Silenciar'}
-              onClick={() => toggleMute()}
-              className="inline-flex items-center justify-center rounded-full p-2 text-[#B4B4BE] hover:bg-white/[0.08] hover:text-white"
-            >
-              {volume === 0 ? (
-                <VolumeX className="h-4 w-4" />
-              ) : (
-                <Volume2 className="h-4 w-4" />
-              )}
-            </button>
-
-            <input
-              type="range"
-              role="slider"
-              aria-label="Volumen"
-              min={0}
-              max={100}
-              value={volumePct}
-              onChange={(e) => setVolume(Number(e.target.value) / 100)}
-              style={{ '--pm-fill': `${volumePct}%` } as React.CSSProperties}
-              className="pm-range-subtle w-20"
-            />
           </div>
         </footer>
       )}
@@ -1230,7 +1470,7 @@ export const App: React.FC = () => {
             role="tablist"
             aria-label="Navegación móvil"
             data-testid="mobile-tab-bar"
-            className="pm-glass-regular fixed inset-x-3 bottom-3 z-40 grid grid-cols-3 gap-1 rounded-[22px] p-1.5"
+            className="pm-glass-regular fixed inset-x-3 bottom-3 z-40 grid grid-cols-4 gap-1 rounded-[22px] p-1.5"
           >
             {navTabs.map((item) => {
               const active = activeTab === item.id;
@@ -1256,7 +1496,8 @@ export const App: React.FC = () => {
         </>
       )}
 
-      {/* Overlays / Modals / Spotify Context Menu */}
+      {/* Overlays / Modals / Spotlight & Context Menu */}
+      <SpotlightSearchModal />
       <NowPlayingSheet />
       <EqAndCrossfadeSheet />
       <DevicesConnectSheet />
