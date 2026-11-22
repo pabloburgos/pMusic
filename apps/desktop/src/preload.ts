@@ -8,6 +8,11 @@ contextBridge.exposeInMainWorld('pmusicDesktop', {
     ipcRenderer.invoke('pmusic:get-auth-headers'),
   updateDiscordPresence: (state: DiscordPresenceState): Promise<void> =>
     ipcRenderer.invoke('pmusic:update-discord', state),
+  setTitleBarOverlay: (opts: {
+    color?: string;
+    symbolColor?: string;
+    height?: number;
+  }): Promise<void> => ipcRenderer.invoke('pmusic:set-titlebar-overlay', opts),
   onMediaShortcut: (cb: (action: NativeMediaAction) => void): (() => void) => {
     const handler = (_event: unknown, action: NativeMediaAction) => cb(action);
     ipcRenderer.on('pmusic:media-action', handler);

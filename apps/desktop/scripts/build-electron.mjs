@@ -19,18 +19,13 @@ if (existsSync(webDist)) {
   cpSync(webDist, desktopDist, { recursive: true });
 }
 
-// Generate original pMusic brand SVG + valid 256x256 PNG icon
+// Generate original pMusic brand SVG + valid 256x256 PNG icon (obsidian squircle + 4-bar acoustic play-wave)
 const brandSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
-  <defs>
-    <linearGradient id="pmGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#FFFFFF" />
-      <stop offset="100%" stop-color="#C084FC" />
-    </linearGradient>
-  </defs>
-  <rect width="256" height="256" rx="56" fill="#08080C" />
-  <rect x="16" y="16" width="224" height="224" rx="44" fill="url(#pmGrad)" opacity="0.16" />
-  <circle cx="128" cy="128" r="76" fill="none" stroke="url(#pmGrad)" stroke-width="18" />
-  <polygon points="108,92 168,128 108,164" fill="#F5F5F7" />
+  <rect x="8" y="8" width="240" height="240" rx="64" fill="#111117" stroke="rgba(255,255,255,0.22)" stroke-width="6" />
+  <rect x="61" y="85" width="25" height="86" rx="12.5" fill="#FFFFFF" fill-opacity="0.86" />
+  <rect x="101" y="53" width="25" height="150" rx="12.5" fill="#E2CCFF" />
+  <rect x="141" y="74" width="25" height="108" rx="12.5" fill="#FFFFFF" fill-opacity="0.96" />
+  <rect x="181" y="103" width="25" height="50" rx="12.5" fill="#FFFFFF" fill-opacity="0.76" />
 </svg>`;
 writeFileSync(resolve(buildDir, 'icon.svg'), brandSvg, 'utf-8');
 
@@ -55,16 +50,35 @@ function makePngChunk(type, data) {
   return Buffer.concat([len, typeBuf, data, crcBuf]);
 }
 
+function sdRoundedBox(px, py, cx, cy, halfW, halfH, radius) {
+  const qx = Math.abs(px - cx) - (halfW - radius);
+  const qy = Math.abs(py - cy) - (halfH - radius);
+  const outDist = Math.hypot(Math.max(qx, 0), Math.max(qy, 0));
+  const inDist = Math.min(Math.max(qx, qy), 0);
+  return outDist + inDist - radius;
+}
+
+function clamp01(v) {
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
 function generateBrandPng(width = 256, height = 256) {
   const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0);
   ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8; // 8-bit
-  ihdr[9] = 6; // RGBA
+  ihdr[8] = 8;
+  ihdr[9] = 6;
   ihdr[10] = 0;
   ihdr[11] = 0;
   ihdr[12] = 0;
+
+  const bars = [
+    { cx: 73.5, halfH: 43, r: 226, g: 226, b: 232 },
+    { cx: 113.5, halfH: 75, r: 226, g: 204, b: 255 },
+    { cx: 153.5, halfH: 54, r: 248, g: 248, b: 252 },
+    { cx: 193.5, halfH: 25, r: 204, g: 204, b: 214 },
+  ];
 
   const rawRows = Buffer.alloc(height * (1 + width * 4));
   for (let y = 0; y < height; y++) {
@@ -72,20 +86,40 @@ function generateBrandPng(width = 256, height = 256) {
     rawRows[rowStart] = 0;
     for (let x = 0; x < width; x++) {
       const px = rowStart + 1 + x * 4;
-      const dx = x - width / 2;
-      const dy = y - height / 2;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < 90 && dist > 62) {
-        rawRows[px] = 200;
-        rawRows[px + 1] = 160;
-        rawRows[px + 2] = 255;
-        rawRows[px + 3] = 255;
-      } else {
-        rawRows[px] = 8;
-        rawRows[px + 1] = 8;
-        rawRows[px + 2] = 12;
-        rawRows[px + 3] = 255;
+      const dOuter = sdRoundedBox(x + 0.5, y + 0.5, 128, 128, 120, 120, 62);
+      const outerAlpha = clamp01(0.75 - dOuter);
+      if (outerAlpha <= 0) {
+        rawRows[px] = 0;
+        rawRows[px + 1] = 0;
+        rawRows[px + 2] = 0;
+        rawRows[px + 3] = 0;
+        continue;
       }
+
+      // Base obsidian fill + specular rim
+      let r = 17;
+      let g = 17;
+      let b = 23;
+      const rimFactor = clamp01(1 - Math.abs(dOuter + 2.5) / 2.2) * 0.24;
+      r = Math.round(r + (255 - r) * rimFactor);
+      g = Math.round(g + (255 - g) * rimFactor);
+      b = Math.round(b + (255 - b) * rimFactor);
+
+      // Blend 4 acoustic play-wave bars
+      for (const bar of bars) {
+        const dBar = sdRoundedBox(x + 0.5, y + 0.5, bar.cx, 128, 12.5, bar.halfH, 12.5);
+        const a = clamp01(0.75 - dBar);
+        if (a > 0) {
+          r = Math.round(r * (1 - a) + bar.r * a);
+          g = Math.round(g * (1 - a) + bar.g * a);
+          b = Math.round(b * (1 - a) + bar.b * a);
+        }
+      }
+
+      rawRows[px] = r;
+      rawRows[px + 1] = g;
+      rawRows[px + 2] = b;
+      rawRows[px + 3] = Math.round(outerAlpha * 255);
     }
   }
 
@@ -98,7 +132,9 @@ function generateBrandPng(width = 256, height = 256) {
   ]);
 }
 
-writeFileSync(resolve(buildDir, 'icon.png'), generateBrandPng(256, 256));
+const brandPng = generateBrandPng(256, 256);
+writeFileSync(resolve(buildDir, 'icon.png'), brandPng);
+writeFileSync(resolve(desktopDist, 'icon.png'), brandPng);
 
 // Update src/main.ts to serve both static dist/ files AND /api/* over http://127.0.0.1:<port>
 const mainEntrySource = `import { createServer, type Server } from 'node:http';
@@ -179,17 +215,43 @@ function sendMediaAction(type: string): void {
 ipcMain.handle('pmusic:get-api-base-url', () => \`http://127.0.0.1:\${loopbackPort}\`);
 ipcMain.handle('pmusic:get-auth-headers', () => ({}));
 ipcMain.handle('pmusic:update-discord', () => undefined);
+ipcMain.handle(
+  'pmusic:set-titlebar-overlay',
+  (_event, opts: { color?: string; symbolColor?: string; height?: number }) => {
+    try {
+      mainWindow?.setTitleBarOverlay?.({
+        color: opts?.color ?? '#070709',
+        symbolColor: opts?.symbolColor ?? '#B4B4BE',
+        height: opts?.height ?? 48,
+      });
+    } catch {
+      // ignore on unsupported platforms
+    }
+  }
+);
 
 async function createMainWindow(): Promise<void> {
   const port = await startLoopbackServer();
+  const iconCandidates = [
+    join(__dirname, '../dist/icon.png'),
+    join(__dirname, '../build/icon.png'),
+  ];
+  const windowIcon = iconCandidates.find((p) => existsSync(p));
 
   mainWindow = new BrowserWindow({
     width: 1380,
     height: 860,
     minWidth: 420,
     minHeight: 640,
-    backgroundColor: '#08080C',
+    backgroundColor: '#070709',
     title: 'pMusic',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#070709',
+      symbolColor: '#B4B4BE',
+      height: 48,
+    },
+    ...(windowIcon ? { icon: windowIcon } : {}),
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),

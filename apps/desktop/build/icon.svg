@@ -1,12 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
-  <defs>
-    <linearGradient id="pmGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#FFFFFF" />
-      <stop offset="100%" stop-color="#C084FC" />
-    </linearGradient>
-  </defs>
-  <rect width="256" height="256" rx="56" fill="#08080C" />
-  <rect x="16" y="16" width="224" height="224" rx="44" fill="url(#pmGrad)" opacity="0.16" />
-  <circle cx="128" cy="128" r="76" fill="none" stroke="url(#pmGrad)" stroke-width="18" />
-  <polygon points="108,92 168,128 108,164" fill="#F5F5F7" />
+  <rect x="8" y="8" width="240" height="240" rx="64" fill="#111117" stroke="rgba(255,255,255,0.22)" stroke-width="6" />
+  <rect x="61" y="85" width="25" height="86" rx="12.5" fill="#FFFFFF" fill-opacity="0.86" />
+  <rect x="101" y="53" width="25" height="150" rx="12.5" fill="#E2CCFF" />
+  <rect x="141" y="74" width="25" height="108" rx="12.5" fill="#FFFFFF" fill-opacity="0.96" />
+  <rect x="181" y="103" width="25" height="50" rx="12.5" fill="#FFFFFF" fill-opacity="0.76" />
 </svg>

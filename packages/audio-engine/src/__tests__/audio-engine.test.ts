@@ -121,4 +121,65 @@ describe('@pmusic/audio-engine', () => {
     expect(engine.getState().isTransitioning).toBe(false);
     await engine.dispose();
   });
+
+  it('detects BPM and true integrated loudness from Float32Array kick pulses', async () => {
+    const sampleRate = 8000;
+    const durationSec = 30;
+    const samples = new Float32Array(sampleRate * durationSec);
+    // Synthesize 120 BPM kick pulses (every 0.5s = 4000 samples) + verse/chorus lift
+    const period = sampleRate * 0.5;
+    for (let i = 0; i < samples.length; i++) {
+      const posInBeat = i % period;
+      const env = posInBeat < 400 ? Math.exp(-posInBeat / 90) : 0;
+      const sectionGain = i > sampleRate * 8 ? 0.85 : 0.35;
+      samples[i] = Math.sin(2 * Math.PI * 75 * (i / sampleRate)) * env * sectionGain;
+    }
+
+    const analyzer = new PcmTrackAnalyzer();
+    const res = await analyzer.analyzeFloatPcm('pcm_120', samples, sampleRate, durationSec);
+    expect(res.source).toBe('pcm');
+    expect(Math.abs(res.bpm - 120)).toBeLessThanOrEqual(4);
+    expect(res.loudnessDb).toBeLessThan(-1);
+    expect(res.loudnessDb).toBeGreaterThan(-25);
+  });
+
+  it('adapts transition choreography and bar count to BPM and energy compatibility', () => {
+    const planner = new DjCuePlanner();
+    const base = {
+      trackId: 'a',
+      durationSec: 210,
+      bpm: 122,
+      bpmConfidence: 0.9,
+      meanEnergy: 0.72,
+      peakEnergy: 1,
+      rmsEnvelope: Array.from({ length: 180 }, () => 0.72),
+      introEndSec: 12,
+      primaryDropSec: 24,
+      chorusStartSec: 24,
+      chorusEndSec: 88,
+      outroStartSec: 184,
+      camelotKey: '8A',
+      source: 'pcm' as const,
+      analyzedAtMs: Date.now(),
+    };
+
+    const harmonicFull = planner.planTransition(
+      base,
+      { ...base, trackId: 'b', bpm: 124, camelotKey: '8A' },
+      'full',
+      'auto'
+    );
+    expect(harmonicFull.transitionType).toBe('eq_swap');
+    expect(harmonicFull.transitionBars).toBe(8);
+
+    const wideGap = planner.planTransition(
+      base,
+      { ...base, trackId: 'c', bpm: 92, camelotKey: '3B', meanEnergy: 0.25 },
+      'quick',
+      'auto'
+    );
+    expect(wideGap.transitionType).toBe('echo_out');
+    expect(wideGap.transitionBars).toBe(4);
+    expect(wideGap.transitionDurationSec).toBeLessThanOrEqual(6.8);
+  });
 });

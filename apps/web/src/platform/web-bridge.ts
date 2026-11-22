@@ -27,7 +27,28 @@ interface ElectronDesktopWindowBridge {
   getApiBaseUrl?: () => Promise<string>;
   getAuthHeaders?: () => Promise<Record<string, string>>;
   updateDiscordPresence?: (state: DiscordPresenceState) => Promise<void>;
+  setTitleBarOverlay?: (opts: {
+    color?: string;
+    symbolColor?: string;
+    height?: number;
+  }) => Promise<void>;
   onMediaShortcut?: (cb: (action: NativeMediaAction) => void) => Unsubscribe;
+}
+
+export function isElectronDesktopRuntime(): boolean {
+  if (typeof window === 'undefined') return false;
+  const win = window as unknown as { pmusicDesktop?: ElectronDesktopWindowBridge };
+  return win.pmusicDesktop?.runtime === 'electron';
+}
+
+export async function setDesktopTitleBarOverlay(opts: {
+  color?: string;
+  symbolColor?: string;
+  height?: number;
+}): Promise<void> {
+  if (typeof window === 'undefined') return;
+  const win = window as unknown as { pmusicDesktop?: ElectronDesktopWindowBridge };
+  await win.pmusicDesktop?.setTitleBarOverlay?.(opts);
 }
 
 class BrowserOfflineStorageBridge implements IOfflineStorageBridge {

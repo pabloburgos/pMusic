@@ -17,17 +17,23 @@ import {
   PanelRightOpen,
   Pause,
   Play,
+  Repeat,
+  Repeat1,
   Search,
   Settings,
+  Shuffle,
   SkipBack,
   SkipForward,
   Sliders,
+  Sparkles,
   Volume2,
   VolumeX,
   Wifi,
 } from 'lucide-react';
 import { formatDurationSec } from '@pmusic/core';
 import { usePMusicStore, type MainNavTab } from './store/usePMusicStore.ts';
+import { isElectronDesktopRuntime } from './platform/web-bridge.ts';
+import { PMusicLogo } from './components/PMusicLogo.tsx';
 import {
   DetailViewPanel,
   HomeScreen,
@@ -52,11 +58,18 @@ export const App: React.FC = () => {
     currentTrack,
     queue,
     queueIndex,
+    shuffleEnabled,
+    repeatMode,
     isPlaying,
     positionSec,
     durationSec,
     volume,
     djMode,
+    isTransitioning,
+    activeTransitionType,
+    transitionProgress01,
+    activeTransitionPlan,
+    trackAnalyses,
     likedTracks,
     offlineDownloads,
     offlineEntries,
@@ -83,6 +96,8 @@ export const App: React.FC = () => {
     togglePlayPause,
     nextTrack,
     prevTrack,
+    toggleShuffle,
+    cycleRepeatMode,
     seekTo,
     setVolume,
     toggleMute,
@@ -94,6 +109,7 @@ export const App: React.FC = () => {
   const [isMobileViewport, setIsMobileViewport] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth < 768 : false
   );
+  const isElectronDesktop = isElectronDesktopRuntime();
 
   const swipeStartXRef = useRef<number | null>(null);
 
@@ -163,6 +179,12 @@ export const App: React.FC = () => {
       } else if (e.key.toLowerCase() === 'd') {
         e.preventDefault();
         void toggleDjMode();
+      } else if (e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        toggleShuffle();
+      } else if (e.key.toLowerCase() === 'r') {
+        e.preventDefault();
+        cycleRepeatMode();
       } else if (e.key === '/') {
         e.preventDefault();
         setActiveTab('Buscar');
@@ -187,6 +209,8 @@ export const App: React.FC = () => {
     setImportModalOpen,
     setSettingsOpen,
     togglePlayPause,
+    toggleShuffle,
+    cycleRepeatMode,
     seekTo,
     setVolume,
     toggleMute,
@@ -202,6 +226,31 @@ export const App: React.FC = () => {
   );
   const volumePct = Math.round(volume * 100);
   const upNextQueue = queue.slice(queueIndex + 1, queueIndex + 6);
+  const cueStartPct =
+    djMode.enabled && activeTransitionPlan && durationSec > 10
+      ? Math.max(0, Math.min(96, (activeTransitionPlan.cueOutSec / durationSec) * 100))
+      : null;
+  const cueWidthPct =
+    djMode.enabled && activeTransitionPlan && durationSec > 10
+      ? Math.max(
+          2.5,
+          Math.min(
+            100 - (cueStartPct ?? 0),
+            (activeTransitionPlan.transitionDurationSec / durationSec) * 100
+          )
+        )
+      : 0;
+  const djCueCountdownSec =
+    djMode.enabled && activeTransitionPlan
+      ? Math.max(0, Math.round(activeTransitionPlan.cueOutSec - positionSec))
+      : null;
+  const currentBpm = trackAnalyses[currentTrack.id]?.bpm;
+  const repeatLabel =
+    repeatMode === 'one'
+      ? 'Repetir esta canción (activar siguiente: desactivar)'
+      : repeatMode === 'all'
+        ? 'Repetir cola o playlist (siguiente: repetir una)'
+        : 'Activar repetición de playlist';
 
   const navTabs: Array<{ id: MainNavTab; label: string; icon: React.ReactNode }> = [
     { id: 'Inicio', label: 'Inicio', icon: <Home className="h-[18px] w-[18px]" /> },
@@ -225,51 +274,149 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="relative flex min-h-dvh w-full flex-col bg-[#070709] text-[#F5F5F7]">
-      <div className="relative z-10 flex flex-1">
+    <div
+      className={`relative flex w-full flex-col bg-[#070709] text-[#F5F5F7] ${
+        isMobileViewport ? 'min-h-dvh' : 'h-dvh overflow-hidden'
+      }`}
+    >
+      {/* Unified Desktop Header & Integrated Frameless Windows Drag Bar */}
+      {!isMobileViewport && (
+        <header className="pm-drag-region z-30 flex h-12 w-full shrink-0 items-center justify-between gap-3 border-b border-white/[0.05] bg-[#070709] px-3">
+          <div className="pm-no-drag flex items-center gap-2">
+            <button
+              type="button"
+              aria-label="Ir al inicio"
+              onClick={() => setActiveTab('Inicio')}
+              className="flex items-center rounded-[10px] px-1.5 py-1 hover:bg-white/[0.06]"
+            >
+              <PMusicLogo size={28} showWordmark />
+            </button>
+
+            <button
+              type="button"
+              aria-label={
+                sidebarCollapsed ? 'Expandir barra lateral' : 'Colapsar barra lateral'
+              }
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[#B4B4BE] hover:bg-white/[0.08] hover:text-white"
+            >
+              {sidebarCollapsed ? (
+                <PanelLeftOpen className="h-4 w-4" />
+              ) : (
+                <PanelLeftClose className="h-4 w-4" />
+              )}
+            </button>
+
+            {activeDetailView && (
+              <button
+                type="button"
+                aria-label="Volver"
+                onClick={() => closeDetailView()}
+                className="inline-flex h-8 items-center gap-1.5 rounded-full bg-[#14141A] px-3 text-xs font-semibold text-[#F5F5F7] hover:bg-[#1E1E26]"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+                <span>Volver</span>
+              </button>
+            )}
+          </div>
+
+          <div className="flex flex-1 items-center justify-center">
+            {activeTab !== 'Buscar' && (
+              <button
+                type="button"
+                onClick={() => setActiveTab('Buscar')}
+                className="pm-no-drag flex w-72 items-center justify-between gap-2 rounded-full bg-[#131318] px-3.5 py-1.5 text-xs text-[#8E8E98] ring-1 ring-white/[0.07] hover:bg-[#1A1A22] hover:text-[#F5F5F7] lg:w-96"
+              >
+                <span className="flex items-center gap-2">
+                  <Search className="h-3.5 w-3.5 text-[#B4B4BE]" />
+                  <span>Buscar canciones, artistas o álbumes…</span>
+                </span>
+                <kbd className="rounded bg-white/[0.08] px-1.5 py-0.5 text-[10px] font-semibold text-[#B4B4BE]">
+                  /
+                </kbd>
+              </button>
+            )}
+          </div>
+
+          <div
+            className={`pm-no-drag flex items-center gap-1.5 ${
+              isElectronDesktop ? 'mr-[138px]' : ''
+            }`}
+          >
+            <button
+              type="button"
+              aria-label="Modo Sesión DJ"
+              aria-pressed={djMode.enabled}
+              onClick={() => void toggleDjMode()}
+              className={`inline-flex items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ${
+                djMode.enabled
+                  ? 'bg-[#221536] text-[#E9D5FF] ring-1 ring-[#C084FC]/50'
+                  : 'bg-[#131318] text-[#B4B4BE] hover:bg-[#1D1D25] hover:text-white'
+              }`}
+            >
+              <Disc3 className="h-3.5 w-3.5 text-[#C084FC]" />
+              <span>{djMode.enabled ? 'DJ Activo' : 'Sesión DJ'}</span>
+            </button>
+
+            <button
+              type="button"
+              aria-label="Ecualizador"
+              onClick={() => setEqSheetOpen(true)}
+              className="inline-flex items-center justify-center rounded-full bg-[#131318] p-2 text-[#B4B4BE] hover:bg-[#1D1D25] hover:text-white"
+            >
+              <Sliders className="h-4 w-4" />
+            </button>
+
+            <button
+              type="button"
+              aria-label="Dispositivos"
+              onClick={() => setDevicesSheetOpen(true)}
+              className="inline-flex items-center justify-center rounded-full bg-[#131318] p-2 text-[#34D399] hover:bg-[#1D1D25]"
+            >
+              <Wifi className="h-4 w-4" />
+            </button>
+
+            <button
+              type="button"
+              aria-label="Ajustes"
+              onClick={() => setSettingsOpen(true)}
+              className="inline-flex items-center justify-center rounded-full bg-[#131318] p-2 text-[#B4B4BE] hover:bg-[#1D1D25] hover:text-white"
+            >
+              <Settings className="h-4 w-4" />
+            </button>
+
+            <button
+              type="button"
+              aria-label={
+                rightPanelOpen ? 'Ocultar panel de cola' : 'Mostrar panel de cola'
+              }
+              onClick={() => setRightPanelOpen(!rightPanelOpen)}
+              className="hidden items-center justify-center rounded-full bg-[#131318] p-2 text-[#B4B4BE] hover:bg-[#1D1D25] hover:text-white xl:inline-flex"
+            >
+              {rightPanelOpen ? (
+                <PanelRightClose className="h-4 w-4" />
+              ) : (
+                <PanelRightOpen className="h-4 w-4" />
+              )}
+            </button>
+          </div>
+        </header>
+      )}
+
+      <div
+        className={`relative z-10 flex min-h-0 flex-1 ${
+          !isMobileViewport ? 'gap-3 px-3 pt-3 pb-[112px]' : ''
+        }`}
+      >
         {/* Desktop Floating Collapsible Liquid Glass Sidebar (>= 768px) */}
         {!isMobileViewport && (
           <aside
             aria-label="Navegación principal"
             data-testid="desktop-sidebar"
-            style={{ width: sidebarCollapsed ? 72 : 248 }}
-            className="pm-glass-regular sticky top-2.5 z-30 ml-2.5 mt-2.5 flex h-[calc(100dvh-106px)] shrink-0 flex-col justify-between rounded-[18px] p-3 transition-[width] duration-200"
+            style={{ width: sidebarCollapsed ? 72 : 244 }}
+            className="pm-glass-regular z-30 flex h-full shrink-0 flex-col justify-between rounded-[20px] p-3 transition-[width] duration-200"
           >
-            <div className="space-y-5 overflow-y-auto pm-no-scrollbar">
-              {/* Brand Header & Collapse Toggle */}
-              <div className="flex items-center justify-between px-1.5 pt-0.5">
-                {!sidebarCollapsed && (
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('Inicio')}
-                    className="flex items-center gap-2.5 text-left"
-                  >
-                    <div className="flex h-7 w-7 items-center justify-center rounded-[8px] bg-white text-sm font-black text-[#070709]">
-                      p
-                    </div>
-                    <span className="text-[16px] font-bold tracking-tight text-[#F5F5F7]">
-                      pMusic
-                    </span>
-                  </button>
-                )}
-                <button
-                  type="button"
-                  aria-label={
-                    sidebarCollapsed
-                      ? 'Expandir barra lateral'
-                      : 'Colapsar barra lateral'
-                  }
-                  onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-[#B4B4BE] hover:bg-white/[0.08] hover:text-white"
-                >
-                  {sidebarCollapsed ? (
-                    <PanelLeftOpen className="h-4 w-4" />
-                  ) : (
-                    <PanelLeftClose className="h-4 w-4" />
-                  )}
-                </button>
-              </div>
-
+            <div className="space-y-4 overflow-y-auto pm-no-scrollbar">
               {/* Primary Navigation */}
               <nav role="tablist" aria-label="Secciones principales" className="space-y-1">
                 {navTabs.map((item) => {
@@ -427,115 +574,66 @@ export const App: React.FC = () => {
         {/* Center Main Canvas (Solid #070709, Zero Blur, Zero Background Gradients) */}
         <main
           data-surface="content"
-          className="min-w-0 flex-1 overflow-y-auto px-4 pb-44 pt-0 md:px-8 md:pb-32"
+          className={
+            isMobileViewport
+              ? 'min-w-0 flex-1 overflow-y-auto px-4 pb-44 pt-0'
+              : 'h-full min-w-0 flex-1 overflow-y-auto px-5 pt-1 pb-6'
+          }
         >
-          {/* Sticky Solid Command Bar */}
-          <div className="sticky top-0 z-20 -mx-4 mb-5 flex items-center justify-between gap-3 border-b border-white/[0.05] bg-[#070709] px-4 py-3 md:-mx-8 md:px-8">
-            <div className="flex items-center gap-2.5">
-              {activeDetailView ? (
+          {/* Mobile Top Command Bar */}
+          {isMobileViewport && (
+            <div className="sticky top-0 z-20 -mx-4 mb-5 flex items-center justify-between gap-3 border-b border-white/[0.05] bg-[#070709] px-4 py-3">
+              <div className="flex items-center gap-2.5">
+                {activeDetailView ? (
+                  <button
+                    type="button"
+                    aria-label="Volver"
+                    onClick={() => closeDetailView()}
+                    className="inline-flex h-10 items-center gap-1.5 rounded-full bg-[#14141A] px-3.5 text-xs font-semibold text-[#F5F5F7] hover:bg-[#1E1E26]"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    <span>Volver</span>
+                  </button>
+                ) : (
+                  <PMusicLogo size={28} showWordmark />
+                )}
+              </div>
+
+              <div className="flex items-center gap-1.5">
                 <button
                   type="button"
-                  aria-label="Volver"
-                  onClick={() => closeDetailView()}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[#14141A] px-3.5 text-xs font-semibold text-[#F5F5F7] hover:bg-[#1E1E26]"
+                  aria-label="Modo Sesión DJ"
+                  aria-pressed={djMode.enabled}
+                  onClick={() => void toggleDjMode()}
+                  className={`inline-flex items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ${
+                    djMode.enabled
+                      ? 'bg-[#221536] text-[#E9D5FF] ring-1 ring-[#C084FC]/50'
+                      : 'bg-[#131318] text-[#B4B4BE] hover:bg-[#1D1D25] hover:text-white'
+                  }`}
                 >
-                  <ArrowLeft className="h-4 w-4" />
-                  <span>Volver</span>
+                  <Disc3 className="h-3.5 w-3.5 text-[#C084FC]" />
                 </button>
-              ) : isMobileViewport ? (
-                <div className="flex items-center gap-2">
-                  <div className="flex h-7 w-7 items-center justify-center rounded-[8px] bg-white text-xs font-black text-[#070709]">
-                    p
-                  </div>
-                  <span className="text-[16px] font-bold tracking-tight text-[#F5F5F7]">
-                    pMusic
-                  </span>
-                </div>
-              ) : null}
 
-              {/* Quick Search Launcher Pill on Desktop (opens Buscar) */}
-              {!isMobileViewport && activeTab !== 'Buscar' && (
                 <button
                   type="button"
-                  onClick={() => setActiveTab('Buscar')}
-                  className="flex w-72 items-center justify-between gap-2 rounded-full bg-[#131318] px-3.5 py-2 text-xs text-[#8E8E98] ring-1 ring-white/[0.07] hover:bg-[#1A1A22] hover:text-[#F5F5F7] lg:w-80"
+                  aria-label="Dispositivos"
+                  onClick={() => setDevicesSheetOpen(true)}
+                  className="inline-flex items-center justify-center rounded-full bg-[#131318] p-2 text-[#34D399] hover:bg-[#1D1D25]"
                 >
-                  <span className="flex items-center gap-2">
-                    <Search className="h-3.5 w-3.5 text-[#B4B4BE]" />
-                    <span>Buscar canciones, artistas o álbumes…</span>
-                  </span>
-                  <kbd className="rounded bg-white/[0.08] px-1.5 py-0.5 text-[10px] font-semibold text-[#B4B4BE]">
-                    /
-                  </kbd>
+                  <Wifi className="h-4 w-4" />
                 </button>
-              )}
-            </div>
 
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                aria-label="Modo Sesión DJ"
-                aria-pressed={djMode.enabled}
-                onClick={() => void toggleDjMode()}
-                className={`inline-flex items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ${
-                  djMode.enabled
-                    ? 'bg-[#221536] text-[#E9D5FF] ring-1 ring-[#C084FC]/50'
-                    : 'bg-[#131318] text-[#B4B4BE] hover:bg-[#1D1D25] hover:text-white'
-                }`}
-              >
-                <Disc3 className="h-3.5 w-3.5 text-[#C084FC]" />
-                <span className="hidden sm:inline">
-                  {djMode.enabled ? 'DJ Activo' : 'Sesión DJ'}
-                </span>
-              </button>
-
-              {!isMobileViewport && (
                 <button
                   type="button"
-                  aria-label="Ecualizador"
-                  onClick={() => setEqSheetOpen(true)}
+                  aria-label="Ajustes"
+                  onClick={() => setSettingsOpen(true)}
                   className="inline-flex items-center justify-center rounded-full bg-[#131318] p-2 text-[#B4B4BE] hover:bg-[#1D1D25] hover:text-white"
                 >
-                  <Sliders className="h-4 w-4" />
+                  <Settings className="h-4 w-4" />
                 </button>
-              )}
-
-              <button
-                type="button"
-                aria-label="Dispositivos"
-                onClick={() => setDevicesSheetOpen(true)}
-                className="inline-flex items-center justify-center rounded-full bg-[#131318] p-2 text-[#34D399] hover:bg-[#1D1D25]"
-              >
-                <Wifi className="h-4 w-4" />
-              </button>
-
-              <button
-                type="button"
-                aria-label="Ajustes"
-                onClick={() => setSettingsOpen(true)}
-                className="inline-flex items-center justify-center rounded-full bg-[#131318] p-2 text-[#B4B4BE] hover:bg-[#1D1D25] hover:text-white"
-              >
-                <Settings className="h-4 w-4" />
-              </button>
-
-              {!isMobileViewport && (
-                <button
-                  type="button"
-                  aria-label={
-                    rightPanelOpen ? 'Ocultar panel de cola' : 'Mostrar panel de cola'
-                  }
-                  onClick={() => setRightPanelOpen(!rightPanelOpen)}
-                  className="hidden items-center justify-center rounded-full bg-[#131318] p-2 text-[#B4B4BE] hover:bg-[#1D1D25] hover:text-white xl:inline-flex"
-                >
-                  {rightPanelOpen ? (
-                    <PanelRightClose className="h-4 w-4" />
-                  ) : (
-                    <PanelRightOpen className="h-4 w-4" />
-                  )}
-                </button>
-              )}
+              </div>
             </div>
-          </div>
+          )}
 
           {activeDetailView ? (
             <DetailViewPanel />
@@ -552,7 +650,7 @@ export const App: React.FC = () => {
         {!isMobileViewport && rightPanelOpen && (
           <aside
             aria-label="En reproducción y siguiente"
-            className="hidden h-[calc(100dvh-106px)] w-[304px] shrink-0 flex-col gap-5 overflow-y-auto border-l border-white/[0.06] bg-[#0B0B0E] p-4 pm-no-scrollbar xl:sticky xl:top-2.5 xl:mt-2.5 xl:flex"
+            className="hidden h-full w-[304px] shrink-0 flex-col gap-5 overflow-y-auto rounded-[20px] border border-white/[0.06] bg-[#0B0B0F] p-4 pm-no-scrollbar xl:flex"
           >
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold tracking-wide text-[#B4B4BE]">
@@ -658,6 +756,45 @@ export const App: React.FC = () => {
               </button>
             </div>
 
+            {/* DJ Live Transition Preview Card */}
+            {djMode.enabled && activeTransitionPlan && (
+              <div className="rounded-[12px] border border-[#C084FC]/30 bg-[#171222] p-3 text-xs">
+                <div className="flex items-center justify-between font-bold text-[#E9D5FF]">
+                  <span className="flex items-center gap-1.5">
+                    <Sparkles className="h-3.5 w-3.5 text-[#C084FC]" />
+                    <span>
+                      {isTransitioning
+                        ? 'Mezclando en vivo…'
+                        : djCueCountdownSec !== null && djCueCountdownSec > 0
+                          ? `Mezcla DJ en ${djCueCountdownSec}s`
+                          : 'Mezcla lista'}
+                    </span>
+                  </span>
+                  <span className="tabular-nums text-[11px] text-[#B4B4BE]">
+                    {currentBpm ?? 120} BPM
+                  </span>
+                </div>
+                <div className="mt-1 text-[11px] text-[#B4B4BE]">
+                  {activeTransitionPlan.transitionType === 'eq_swap'
+                    ? 'EQ Swap 200Hz'
+                    : activeTransitionPlan.transitionType === 'filter_sweep'
+                      ? 'Filtro Resonante'
+                      : 'Echo Out BPM'}{' '}
+                  · {activeTransitionPlan.transitionBars} compases (
+                  {activeTransitionPlan.transitionDurationSec}s) ·{' '}
+                  {Math.round(activeTransitionPlan.compatibilityScore * 100)}% fit
+                </div>
+                {isTransitioning && (
+                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                    <div
+                      className="h-full rounded-full bg-[#C084FC] transition-[width] duration-100"
+                      style={{ width: `${Math.round(transitionProgress01 * 100)}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Next in Queue Preview */}
             <div className="space-y-2.5 border-t border-white/[0.06] pt-4">
               <div className="flex items-center justify-between">
@@ -710,10 +847,10 @@ export const App: React.FC = () => {
         <footer
           aria-label="Reproductor de escritorio"
           data-testid="desktop-player-bar"
-          className="pm-glass-regular fixed inset-x-2.5 bottom-2.5 z-40 flex h-20 items-center justify-between gap-6 rounded-[18px] px-5"
+          className="pm-glass-regular fixed inset-x-3 bottom-3 z-40 grid h-[88px] grid-cols-[minmax(220px,1fr)_minmax(420px,1.65fr)_minmax(240px,1fr)] items-center gap-6 rounded-[20px] px-5 py-2.5"
         >
           {/* Left: Track Info */}
-          <div className="flex min-w-0 flex-1 items-center gap-3">
+          <div className="flex min-w-0 items-center gap-3">
             <button
               type="button"
               aria-label="Abrir reproductor a pantalla completa"
@@ -723,7 +860,7 @@ export const App: React.FC = () => {
               <img
                 src={currentTrack.thumbnailUrl}
                 alt={currentTrack.title}
-                className="h-12 w-12 shrink-0 rounded-[8px] object-cover shadow-md transition-transform group-hover:scale-105"
+                className="h-12 w-12 shrink-0 rounded-[10px] object-cover shadow-md transition-transform group-hover:scale-105"
               />
               <div className="min-w-0">
                 <div className="truncate text-[14px] font-semibold text-[#F5F5F7]">
@@ -740,7 +877,7 @@ export const App: React.FC = () => {
               aria-label={isLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
               aria-pressed={isLiked}
               onClick={() => void toggleLike(currentTrack)}
-              className={`rounded-full p-2 ${
+              className={`inline-flex shrink-0 items-center justify-center rounded-full p-2 ${
                 isLiked ? 'text-[#F43F5E]' : 'text-[#8E8E98] hover:text-white'
               }`}
             >
@@ -748,14 +885,36 @@ export const App: React.FC = () => {
             </button>
           </div>
 
-          {/* Center: Transport & Custom Filled Scrubber */}
-          <div className="flex max-w-xl flex-1 flex-col items-center gap-1.5">
-            <div className="flex items-center gap-4">
+          {/* Center: Shuffle + Transport + Repeat & Scrubber */}
+          <div className="flex w-full max-w-2xl flex-col items-center justify-self-center">
+            <div className="flex items-center justify-center gap-5">
+              <button
+                type="button"
+                aria-label={
+                  shuffleEnabled
+                    ? 'Desactivar reproducción aleatoria'
+                    : 'Activar reproducción aleatoria'
+                }
+                aria-pressed={shuffleEnabled}
+                onClick={() => toggleShuffle()}
+                className={`relative inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/[0.08] ${
+                  shuffleEnabled ? 'text-white' : 'text-[#8E8E98] hover:text-white'
+                }`}
+              >
+                <Shuffle className="h-4 w-4" />
+                {shuffleEnabled && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute bottom-0.5 h-1 w-1 rounded-full bg-white"
+                  />
+                )}
+              </button>
+
               <button
                 type="button"
                 aria-label="Anterior"
                 onClick={() => void prevTrack()}
-                className="rounded-full p-2 text-[#B4B4BE] hover:text-white"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[#B4B4BE] hover:bg-white/[0.08] hover:text-white"
               >
                 <SkipBack className="h-4 w-4" />
               </button>
@@ -764,7 +923,7 @@ export const App: React.FC = () => {
                 type="button"
                 aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
                 onClick={() => void togglePlayPause()}
-                className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-[#070709] shadow-sm hover:scale-105"
+                className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-[#070709] shadow-[0_6px_20px_rgba(255,255,255,0.20)] hover:scale-105"
               >
                 {isPlaying ? (
                   <Pause className="h-4 w-4 fill-current" />
@@ -777,27 +936,61 @@ export const App: React.FC = () => {
                 type="button"
                 aria-label="Siguiente"
                 onClick={() => void nextTrack()}
-                className="rounded-full p-2 text-[#B4B4BE] hover:text-white"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[#B4B4BE] hover:bg-white/[0.08] hover:text-white"
               >
                 <SkipForward className="h-4 w-4" />
               </button>
+
+              <button
+                type="button"
+                aria-label={repeatLabel}
+                aria-pressed={repeatMode !== 'off'}
+                onClick={() => cycleRepeatMode()}
+                className={`relative inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/[0.08] ${
+                  repeatMode !== 'off' ? 'text-white' : 'text-[#8E8E98] hover:text-white'
+                }`}
+              >
+                {repeatMode === 'one' ? (
+                  <Repeat1 className="h-4 w-4" />
+                ) : (
+                  <Repeat className="h-4 w-4" />
+                )}
+                {repeatMode !== 'off' && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute bottom-0.5 h-1 w-1 rounded-full bg-white"
+                  />
+                )}
+              </button>
             </div>
 
-            <div className="flex w-full items-center gap-2.5">
+            <div className="mt-2 flex w-full items-center gap-3">
               <span className="tabular-nums w-9 text-right text-[11px] font-medium text-[#8E8E98]">
                 {formatDurationSec(positionSec)}
               </span>
-              <input
-                type="range"
-                role="slider"
-                aria-label="Posición de reproducción"
-                min={0}
-                max={Math.max(1, Math.round(durationSec))}
-                value={Math.min(Math.round(durationSec), Math.round(positionSec))}
-                onChange={(e) => seekTo(Number(e.target.value))}
-                style={{ '--pm-fill': `${progressPct}%` } as React.CSSProperties}
-                className="pm-range-subtle flex-1"
-              />
+              <div className="relative flex flex-1 items-center">
+                {cueStartPct !== null && cueWidthPct > 0 && (
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-[#C084FC]/60"
+                    style={{
+                      left: `${cueStartPct}%`,
+                      width: `${cueWidthPct}%`,
+                    }}
+                  />
+                )}
+                <input
+                  type="range"
+                  role="slider"
+                  aria-label="Posición de reproducción"
+                  min={0}
+                  max={Math.max(1, Math.round(durationSec))}
+                  value={Math.min(Math.round(durationSec), Math.round(positionSec))}
+                  onChange={(e) => seekTo(Number(e.target.value))}
+                  style={{ '--pm-fill': `${progressPct}%` } as React.CSSProperties}
+                  className="pm-range-subtle relative z-10 w-full"
+                />
+              </div>
               <span className="tabular-nums w-9 text-[11px] font-medium text-[#8E8E98]">
                 {formatDurationSec(durationSec)}
               </span>
@@ -805,7 +998,7 @@ export const App: React.FC = () => {
           </div>
 
           {/* Right: DJ, Lyrics, EQ, Devices, Volume */}
-          <div className="flex flex-1 items-center justify-end gap-1">
+          <div className="flex items-center justify-end gap-1.5">
             <button
               type="button"
               aria-label="Modo Sesión DJ"
@@ -814,7 +1007,7 @@ export const App: React.FC = () => {
                 setNowPlayingOpen(true);
                 setNowPlayingTab('Cola');
               }}
-              className={`mr-1 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold ${
+              className={`inline-flex items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold ${
                 djMode.enabled
                   ? 'bg-[#221536] text-[#E9D5FF] ring-1 ring-[#C084FC]/50'
                   : 'text-[#B4B4BE] hover:bg-white/[0.08] hover:text-white'
@@ -831,7 +1024,7 @@ export const App: React.FC = () => {
                 setNowPlayingOpen(true);
                 setNowPlayingTab('Letras');
               }}
-              className="rounded-full p-2 text-[#B4B4BE] hover:bg-white/[0.08] hover:text-white"
+              className="inline-flex items-center justify-center rounded-full p-2 text-[#B4B4BE] hover:bg-white/[0.08] hover:text-white"
             >
               <Mic2 className="h-4 w-4" />
             </button>
@@ -840,7 +1033,7 @@ export const App: React.FC = () => {
               type="button"
               aria-label="Ecualizador"
               onClick={() => setEqSheetOpen(true)}
-              className="rounded-full p-2 text-[#B4B4BE] hover:bg-white/[0.08] hover:text-white"
+              className="inline-flex items-center justify-center rounded-full p-2 text-[#B4B4BE] hover:bg-white/[0.08] hover:text-white"
             >
               <Sliders className="h-4 w-4" />
             </button>
@@ -849,7 +1042,7 @@ export const App: React.FC = () => {
               type="button"
               aria-label="Dispositivos"
               onClick={() => setDevicesSheetOpen(true)}
-              className="rounded-full p-2 text-[#34D399] hover:bg-white/[0.08]"
+              className="inline-flex items-center justify-center rounded-full p-2 text-[#34D399] hover:bg-white/[0.08]"
             >
               <Wifi className="h-4 w-4" />
             </button>
@@ -858,7 +1051,7 @@ export const App: React.FC = () => {
               type="button"
               aria-label={volume === 0 ? 'Activar sonido' : 'Silenciar'}
               onClick={() => toggleMute()}
-              className="rounded-full p-2 text-[#B4B4BE] hover:bg-white/[0.08] hover:text-white"
+              className="inline-flex items-center justify-center rounded-full p-2 text-[#B4B4BE] hover:bg-white/[0.08] hover:text-white"
             >
               {volume === 0 ? (
                 <VolumeX className="h-4 w-4" />

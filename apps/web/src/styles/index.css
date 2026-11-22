@@ -82,6 +82,23 @@ body,
   display: none;
 }
 
+/* Frameless Windows Desktop Drag Region */
+.pm-drag-region {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+.pm-drag-region button,
+.pm-drag-region input,
+.pm-drag-region a,
+.pm-drag-region [role="button"],
+.pm-drag-region [role="tab"],
+.pm-drag-region [role="slider"],
+.pm-no-drag {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
 /* Functional Chrome Liquid Glass (never nested, never on content cards/rows) */
 .pm-glass-regular {
   background-color: rgba(14, 14, 18, 0.76);
@@ -89,6 +106,48 @@ body,
   backdrop-filter: blur(28px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.09);
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.11);
+}
+
+.pm-glass-liquid {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.14) 0%,
+    rgba(255, 255, 255, 0.06) 100%
+  );
+  -webkit-backdrop-filter: blur(28px) saturate(200%);
+  backdrop-filter: blur(28px) saturate(200%);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow:
+    0 20px 52px rgba(0, 0, 0, 0.48),
+    inset 0 1px 0 rgba(255, 255, 255, 0.32),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.07);
+}
+
+.pm-glass-chip {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.13) 0%,
+    rgba(255, 255, 255, 0.05) 100%
+  );
+  border: 1px solid rgba(255, 255, 255, 0.19);
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  transition:
+    background 160ms var(--ease-out),
+    border-color 160ms var(--ease-out),
+    transform 140ms var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .pm-glass-chip:hover {
+    background: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.19) 0%,
+      rgba(255, 255, 255, 0.09) 100%
+    );
+    border-color: rgba(255, 255, 255, 0.30);
+  }
 }
 
 .pm-glass-clear {
@@ -225,29 +284,92 @@ input[type="range"]::-webkit-slider-thumb {
   transform-origin: bottom;
 }
 
-/* Synced Lyrics Active & Inactive lines (Apple Music Sing feel) */
+/* Synced Lyrics Active, Depth Tiers & Apple Music Sing Animations */
+@keyframes pmLyricDotPulse {
+  0%, 100% {
+    opacity: 0.35;
+    transform: scale(0.84);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.18);
+  }
+}
+
+.pm-lyric-dot {
+  animation: pmLyricDotPulse 1.4s ease-in-out infinite;
+}
+.pm-lyric-dot:nth-child(2) {
+  animation-delay: 0.22s;
+}
+.pm-lyric-dot:nth-child(3) {
+  animation-delay: 0.44s;
+}
+
 .pm-lyric-line-active {
   color: #FFFFFF;
   opacity: 1;
   filter: none;
-  transform: scale(1.012);
+  transform: scale(1.028) translateX(6px);
   transform-origin: left center;
-  text-shadow: 0 4px 24px rgba(255, 255, 255, 0.18);
-  transition: transform 220ms var(--ease-out), color 200ms ease, filter 200ms ease;
+  text-shadow: 0 4px 28px rgba(255, 255, 255, 0.22);
+  transition:
+    transform 320ms var(--ease-out),
+    color 240ms ease,
+    opacity 260ms ease,
+    filter 280ms ease;
 }
 
 .pm-lyric-line-inactive {
-  color: #AEAEB2;
-  opacity: 1;
-  filter: blur(1.3px);
-  transition: transform 220ms var(--ease-out), color 200ms ease, filter 200ms ease;
+  color: #C2C2CC;
+  filter: blur(1.4px);
+  opacity: 0.56;
+  transform: scale(0.99);
+  transform-origin: left center;
+  transition:
+    transform 300ms var(--ease-out),
+    color 240ms ease,
+    opacity 260ms ease,
+    filter 280ms ease;
+}
+
+.pm-lyric-dist-1 {
+  opacity: 0.66;
+  filter: blur(0.9px);
+}
+
+.pm-lyric-dist-2 {
+  opacity: 0.42;
+  filter: blur(1.9px);
+}
+
+.pm-lyric-dist-far {
+  opacity: 0.25;
+  filter: blur(2.9px);
 }
 
 @media (hover: hover) and (pointer: fine) {
   .pm-lyric-line-inactive:hover {
     color: #F5F5F7;
-    filter: blur(0.2px);
+    opacity: 0.96;
+    filter: blur(0px);
+    transform: scale(1) translateX(3px);
   }
+}
+
+@keyframes pmCoverSwap {
+  from {
+    opacity: 0.65;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.pm-cover-swap {
+  animation: pmCoverSwap 280ms var(--ease-out) both;
 }
 
 /* Dynamic Ambient Mesh Animation (Used ONLY in Song / Now Playing view) */
@@ -334,7 +456,10 @@ input:focus-visible {
     --pm-glass-border: rgba(255, 255, 255, 0.22);
   }
   .pm-glass-regular,
+  .pm-glass-liquid,
+  .pm-glass-chip,
   .pm-glass-clear {
+    background: #14141B !important;
     background-color: #14141B !important;
     -webkit-backdrop-filter: none !important;
     backdrop-filter: none !important;
@@ -342,7 +467,10 @@ input:focus-visible {
 }
 
 html.pm-reduced-transparency .pm-glass-regular,
+html.pm-reduced-transparency .pm-glass-liquid,
+html.pm-reduced-transparency .pm-glass-chip,
 html.pm-reduced-transparency .pm-glass-clear {
+  background: #14141B !important;
   background-color: #14141B !important;
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
@@ -354,6 +482,8 @@ html.pm-reduced-transparency .pm-glass-clear {
   .pm-eq-bar-1,
   .pm-eq-bar-2,
   .pm-eq-bar-3,
+  .pm-lyric-dot,
+  .pm-cover-swap,
   .pm-sheet-enter {
     animation: none !important;
   }
@@ -373,6 +503,8 @@ html.pm-reduced-motion .pm-ambient-mesh,
 html.pm-reduced-motion .pm-eq-bar-1,
 html.pm-reduced-motion .pm-eq-bar-2,
 html.pm-reduced-motion .pm-eq-bar-3,
+html.pm-reduced-motion .pm-lyric-dot,
+html.pm-reduced-motion .pm-cover-swap,
 html.pm-reduced-motion .pm-sheet-enter {
   animation: none !important;
 }
@@ -392,6 +524,8 @@ html.pm-reduced-motion .pm-lyric-line-inactive {
     --pm-separator: rgba(255, 255, 255, 0.32);
   }
   .pm-glass-regular,
+  .pm-glass-liquid,
+  .pm-glass-chip,
   .pm-glass-clear {
     background-color: rgba(18, 18, 24, 0.95) !important;
     border-color: rgba(255, 255, 255, 0.42) !important;

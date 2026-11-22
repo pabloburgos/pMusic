@@ -11,8 +11,11 @@ import {
   Pause,
   Play,
   Plus,
+  Repeat,
+  Repeat1,
   RotateCcw,
   Settings,
+  Shuffle,
   SkipBack,
   SkipForward,
   Sliders,
@@ -28,6 +31,10 @@ import {
   formatDurationSec,
 } from '@pmusic/core';
 import { usePMusicStore } from '../store/usePMusicStore.ts';
+import {
+  isElectronDesktopRuntime,
+  setDesktopTitleBarOverlay,
+} from '../platform/web-bridge.ts';
 
 export const NowPlayingSheet: React.FC = () => {
   const {
@@ -38,13 +45,17 @@ export const NowPlayingSheet: React.FC = () => {
     currentTrack,
     queue,
     queueIndex,
+    shuffleEnabled,
+    repeatMode,
     isPlaying,
     positionSec,
     durationSec,
     activeDeck,
     isTransitioning,
     activeTransitionType,
+    transitionProgress01,
     djMode,
+    activeTransitionPlan,
     trackAnalyses,
     currentLyrics,
     activeLyricIndex,
@@ -55,6 +66,8 @@ export const NowPlayingSheet: React.FC = () => {
     togglePlayPause,
     nextTrack,
     prevTrack,
+    toggleShuffle,
+    cycleRepeatMode,
     seekTo,
     toggleLike,
     downloadTrackOffline,
@@ -70,7 +83,56 @@ export const NowPlayingSheet: React.FC = () => {
     openArtistDetail,
   } = usePMusicStore();
 
+  const isElectronDesktop = isElectronDesktopRuntime();
   const activeLyricRef = useRef<HTMLButtonElement | null>(null);
+  const [smoothPosSec, setSmoothPosSec] = useState(positionSec);
+  const syncClockRef = useRef({
+    posSec: positionSec,
+    atMs: typeof performance !== 'undefined' ? performance.now() : 0,
+  });
+
+  useEffect(() => {
+    syncClockRef.current = {
+      posSec: positionSec,
+      atMs: typeof performance !== 'undefined' ? performance.now() : 0,
+    };
+    setSmoothPosSec(positionSec);
+  }, [positionSec, currentTrack.id]);
+
+  useEffect(() => {
+    if (
+      !nowPlayingOpen ||
+      nowPlayingTab !== 'Letras' ||
+      !isPlaying ||
+      typeof requestAnimationFrame !== 'function'
+    ) {
+      return;
+    }
+    let rafId = 0;
+    const step = (now: number) => {
+      const elapsed = Math.max(0, (now - syncClockRef.current.atMs) / 1000);
+      setSmoothPosSec(Math.min(Math.max(1, durationSec), syncClockRef.current.posSec + elapsed));
+      rafId = requestAnimationFrame(step);
+    };
+    rafId = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(rafId);
+  }, [nowPlayingOpen, nowPlayingTab, isPlaying, durationSec]);
+
+  useEffect(() => {
+    if (!isElectronDesktop) return;
+    void setDesktopTitleBarOverlay({
+      color: nowPlayingOpen ? '#00000000' : '#070709',
+      symbolColor: nowPlayingOpen ? '#F5F5F7' : '#B4B4BE',
+      height: 48,
+    });
+    return () => {
+      void setDesktopTitleBarOverlay({
+        color: '#070709',
+        symbolColor: '#B4B4BE',
+        height: 48,
+      });
+    };
+  }, [isElectronDesktop, nowPlayingOpen]);
 
   useEffect(() => {
     if (
@@ -92,6 +154,8 @@ export const NowPlayingSheet: React.FC = () => {
   const isLiked = likedTracks.some((l) => l.trackId === currentTrack.id);
   const dlStatus = offlineDownloads[currentTrack.id] ?? 'idle';
   const currentAnalysis = trackAnalyses[currentTrack.id];
+  const nextQueueTrack = queue[(queueIndex + 1) % Math.max(1, queue.length)];
+  const nextAnalysis = nextQueueTrack ? trackAnalyses[nextQueueTrack.id] : undefined;
   const enabledFx = djMode.enabledTransitions ?? {
     eq_swap: true,
     filter_sweep: true,
@@ -101,6 +165,33 @@ export const NowPlayingSheet: React.FC = () => {
     0,
     Math.min(100, (positionSec / Math.max(1, durationSec)) * 100)
   );
+  const cueStartPct =
+    djMode.enabled && activeTransitionPlan && durationSec > 10
+      ? Math.max(0, Math.min(96, (activeTransitionPlan.cueOutSec / durationSec) * 100))
+      : null;
+  const cueWidthPct =
+    djMode.enabled && activeTransitionPlan && durationSec > 10
+      ? Math.max(
+          2.5,
+          Math.min(
+            100 - (cueStartPct ?? 0),
+            (activeTransitionPlan.transitionDurationSec / durationSec) * 100
+          )
+        )
+      : 0;
+  const smoothPosMs = smoothPosSec * 1000;
+  const resolvedActiveLyricIdx =
+    currentLyrics && currentLyrics.lines.length > 0
+      ? activeLyricIndex >= 0
+        ? activeLyricIndex
+        : 0
+      : -1;
+  const repeatLabel =
+    repeatMode === 'one'
+      ? 'Repetir esta canción (siguiente: desactivar)'
+      : repeatMode === 'all'
+        ? 'Repetir playlist (siguiente: repetir una)'
+        : 'Activar repetición de playlist';
 
   const PlayerDeckColumn = (compact = false) => (
     <div
@@ -108,9 +199,10 @@ export const NowPlayingSheet: React.FC = () => {
         compact ? 'w-full gap-5' : 'mx-auto w-full max-w-md gap-6'
       }`}
     >
-      {/* Artwork with responsive playback scale */}
+      {/* Artwork with responsive playback scale & swap spring */}
       <div
-        className={`relative aspect-square overflow-hidden rounded-[20px] border border-white/10 bg-[#111115] shadow-[0_32px_80px_rgba(0,0,0,0.75)] transition-transform duration-300 ${
+        key={currentTrack.id}
+        className={`pm-cover-swap relative aspect-square overflow-hidden rounded-[22px] border border-white/15 bg-[#111115] shadow-[0_32px_80px_rgba(0,0,0,0.72)] transition-transform duration-300 ${
           compact ? 'w-56 lg:w-72' : 'w-64 sm:w-80'
         } ${isPlaying ? 'scale-100' : 'scale-[0.95]'}`}
       >
@@ -120,16 +212,17 @@ export const NowPlayingSheet: React.FC = () => {
           className="h-full w-full object-cover"
         />
         {djMode.enabled && (
-          <div className="absolute top-3 left-3 flex items-center gap-1.5 rounded-full border border-white/15 bg-[#0B0B0E]/90 px-3 py-1 text-xs font-semibold text-[#E9D5FF]">
-            <Sparkles className="h-3.5 w-3.5 text-[#C084FC]" />
+          <div className="pm-glass-chip absolute top-3 left-3 flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold text-[#F5F5F7]">
+            <Sparkles className="h-3.5 w-3.5 text-[#E2CCFF]" />
             <span>
               Deck {activeDeck} · {currentAnalysis?.bpm ?? 120} BPM
+              {currentAnalysis?.source === 'pcm' ? ' · PCM' : ''}
             </span>
           </div>
         )}
       </div>
 
-      {/* Title, Artist & Quick Actions */}
+      {/* Title, Artist & Liquid Glass Quick Actions */}
       <div className="flex w-full items-center justify-between gap-4">
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-2xl font-bold tracking-tight text-[#F5F5F7]">
@@ -143,23 +236,21 @@ export const NowPlayingSheet: React.FC = () => {
                 currentTrack.artists[0]?.id ?? currentTrack.artists[0]?.name ?? ''
               );
             }}
-            className="block max-w-full truncate text-left text-[15px] text-[#B4B4BE] hover:text-white hover:underline"
+            className="block max-w-full truncate text-left text-[15px] text-[#C4C4CE] hover:text-white hover:underline"
           >
             {currentTrack.artists.map((a) => a.name).join(', ')}
             {currentTrack.album ? ` · ${currentTrack.album.name}` : ''}
           </button>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2">
           <button
             type="button"
             aria-label={isLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
             aria-pressed={isLiked}
             onClick={() => void toggleLike(currentTrack)}
-            className={`flex items-center justify-center rounded-full border border-white/[0.10] p-2.5 ${
-              isLiked
-                ? 'bg-[#281219] text-[#F43F5E]'
-                : 'bg-[#121217]/90 text-[#B4B4BE] hover:text-white'
+            className={`pm-glass-chip flex h-10 w-10 items-center justify-center rounded-full ${
+              isLiked ? 'text-[#FB7185]' : 'text-[#F5F5F7]'
             }`}
           >
             <Heart className={`h-5 w-5 ${isLiked ? 'fill-current' : ''}`} />
@@ -173,7 +264,7 @@ export const NowPlayingSheet: React.FC = () => {
                 : 'Descargar para escuchar offline'
             }
             onClick={() => void downloadTrackOffline(currentTrack)}
-            className="flex items-center justify-center rounded-full border border-white/[0.10] bg-[#121217]/90 p-2.5 text-[#B4B4BE] hover:text-white"
+            className="pm-glass-chip flex h-10 w-10 items-center justify-center rounded-full text-[#F5F5F7]"
           >
             {dlStatus === 'downloading' ? (
               <Loader2 className="h-5 w-5 animate-spin text-white" />
@@ -186,32 +277,69 @@ export const NowPlayingSheet: React.FC = () => {
         </div>
       </div>
 
-      {/* Filled Scrubber & Timestamps */}
+      {/* Filled Scrubber & DJ Cue Marker + Timestamps */}
       <div className="w-full space-y-2">
-        <input
-          type="range"
-          role="slider"
-          aria-label="Progreso de la canción"
-          min={0}
-          max={Math.max(1, Math.round(durationSec))}
-          value={Math.min(Math.round(durationSec), Math.round(positionSec))}
-          onChange={(e) => seekTo(Number(e.target.value))}
-          style={{ '--pm-fill': `${progressPct}%` } as React.CSSProperties}
-          className="w-full"
-        />
-        <div className="tabular-nums flex justify-between text-xs font-medium text-[#B4B4BE]">
+        <div className="relative flex w-full items-center">
+          {cueStartPct !== null && cueWidthPct > 0 && (
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-[#C084FC]/70"
+              style={{
+                left: `${cueStartPct}%`,
+                width: `${cueWidthPct}%`,
+              }}
+            />
+          )}
+          <input
+            type="range"
+            role="slider"
+            aria-label="Progreso de la canción"
+            min={0}
+            max={Math.max(1, Math.round(durationSec))}
+            value={Math.min(Math.round(durationSec), Math.round(positionSec))}
+            onChange={(e) => seekTo(Number(e.target.value))}
+            style={{ '--pm-fill': `${progressPct}%` } as React.CSSProperties}
+            className="relative z-10 w-full"
+          />
+        </div>
+        <div className="tabular-nums flex justify-between text-xs font-medium text-[#C4C4CE]">
           <span>{formatDurationSec(positionSec)}</span>
           <span>-{formatDurationSec(Math.max(0, durationSec - positionSec))}</span>
         </div>
       </div>
 
-      {/* Transport Controls */}
-      <div className="flex items-center justify-center gap-6">
+      {/* Full Liquid Glass Floating Transport Capsule */}
+      <div
+        data-surface="glass"
+        className="pm-glass-liquid flex items-center justify-center gap-3.5 rounded-full px-5 py-2.5 sm:gap-5"
+      >
+        <button
+          type="button"
+          aria-label={
+            shuffleEnabled
+              ? 'Desactivar reproducción aleatoria'
+              : 'Activar reproducción aleatoria'
+          }
+          aria-pressed={shuffleEnabled}
+          onClick={() => toggleShuffle()}
+          className={`relative flex h-9 w-9 items-center justify-center rounded-full hover:bg-white/10 ${
+            shuffleEnabled ? 'text-white' : 'text-[#C4C4CE]'
+          }`}
+        >
+          <Shuffle className="h-4 w-4" />
+          {shuffleEnabled && (
+            <span
+              aria-hidden="true"
+              className="absolute bottom-1 h-1 w-1 rounded-full bg-white"
+            />
+          )}
+        </button>
+
         <button
           type="button"
           aria-label="Canción anterior"
           onClick={() => void prevTrack()}
-          className="flex items-center justify-center rounded-full border border-white/[0.10] bg-[#121217]/85 p-3.5 text-[#F5F5F7] hover:bg-[#1E1E26]"
+          className="pm-glass-chip flex h-10 w-10 items-center justify-center rounded-full text-[#F5F5F7]"
         >
           <SkipBack className="h-5 w-5" />
         </button>
@@ -220,7 +348,7 @@ export const NowPlayingSheet: React.FC = () => {
           type="button"
           aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
           onClick={() => void togglePlayPause()}
-          className="flex h-15 w-15 items-center justify-center rounded-full bg-white text-[#070709] shadow-[0_10px_32px_rgba(255,255,255,0.22)] hover:scale-105"
+          className="flex h-14 w-14 items-center justify-center rounded-full bg-white text-[#070709] shadow-[0_10px_32px_rgba(255,255,255,0.28)] hover:scale-105"
         >
           {isPlaying ? (
             <Pause className="h-6 w-6 fill-current" />
@@ -233,9 +361,31 @@ export const NowPlayingSheet: React.FC = () => {
           type="button"
           aria-label="Siguiente canción"
           onClick={() => void nextTrack()}
-          className="flex items-center justify-center rounded-full border border-white/[0.10] bg-[#121217]/85 p-3.5 text-[#F5F5F7] hover:bg-[#1E1E26]"
+          className="pm-glass-chip flex h-10 w-10 items-center justify-center rounded-full text-[#F5F5F7]"
         >
           <SkipForward className="h-5 w-5" />
+        </button>
+
+        <button
+          type="button"
+          aria-label={repeatLabel}
+          aria-pressed={repeatMode !== 'off'}
+          onClick={() => cycleRepeatMode()}
+          className={`relative flex h-9 w-9 items-center justify-center rounded-full hover:bg-white/10 ${
+            repeatMode !== 'off' ? 'text-white' : 'text-[#C4C4CE]'
+          }`}
+        >
+          {repeatMode === 'one' ? (
+            <Repeat1 className="h-4 w-4" />
+          ) : (
+            <Repeat className="h-4 w-4" />
+          )}
+          {repeatMode !== 'off' && (
+            <span
+              aria-hidden="true"
+              className="absolute bottom-1 h-1 w-1 rounded-full bg-white"
+            />
+          )}
         </button>
       </div>
     </div>
@@ -247,12 +397,12 @@ export const NowPlayingSheet: React.FC = () => {
       aria-modal="true"
       aria-label="Reproduciendo ahora"
       data-testid="now-playing-sheet"
-      className="pm-glass-regular pm-sheet-enter fixed inset-0 z-50 flex flex-col overflow-hidden text-[#F5F5F7]"
+      className="pm-sheet-enter fixed inset-0 z-50 flex flex-col overflow-hidden bg-[#070709] text-[#F5F5F7]"
     >
       {/* Dynamic Cover-Art Gradient Backdrop (Exclusive to Song / Now Playing view) */}
       <div
         aria-hidden="true"
-        className="pm-ambient-mesh pointer-events-none absolute inset-0 opacity-75"
+        className="pm-ambient-mesh pointer-events-none absolute inset-0 opacity-80"
         style={{
           background:
             'radial-gradient(circle at 18% 22%, var(--pm-ambient-1), transparent 56%), radial-gradient(circle at 82% 76%, var(--pm-ambient-2), transparent 58%), linear-gradient(180deg, var(--pm-ambient-3) 0%, #070709 100%)',
@@ -268,13 +418,17 @@ export const NowPlayingSheet: React.FC = () => {
         style={{ backgroundColor: 'rgba(8, 8, 12, 0.44)' }}
       />
 
-      {/* Minimal Header */}
-      <header className="relative z-10 flex items-center justify-between border-b border-white/[0.08] px-4 py-3.5 md:px-10">
+      {/* Minimalist Full Liquid Glass Header (with Electron Windows drag & titlebar clearance) */}
+      <header
+        className={`pm-drag-region relative z-10 flex items-center justify-between border-b border-white/[0.10] px-4 py-3 md:px-8 ${
+          isElectronDesktop ? 'pr-[152px] md:pr-[152px]' : ''
+        }`}
+      >
         <button
           type="button"
           aria-label="Cerrar reproductor"
           onClick={() => setNowPlayingOpen(false)}
-          className="inline-flex items-center gap-2 rounded-full border border-white/[0.10] bg-[#121217]/85 px-4 py-2 text-xs font-semibold text-[#F5F5F7] hover:bg-[#1D1D25]"
+          className="pm-glass-chip pm-no-drag inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-[#F5F5F7]"
         >
           <X className="h-4 w-4" />
           <span className="hidden sm:inline">Cerrar</span>
@@ -283,7 +437,8 @@ export const NowPlayingSheet: React.FC = () => {
         <div
           role="tablist"
           aria-label="Vistas del reproductor"
-          className="flex items-center gap-1 rounded-full border border-white/[0.08] bg-[#0B0B0E]/85 p-1"
+          data-surface="glass"
+          className="pm-glass-liquid pm-no-drag flex items-center gap-1 rounded-full p-1"
         >
           {(['Portada', 'Letras', 'Cola'] as const).map((tab) => {
             const active = nowPlayingTab === tab;
@@ -296,8 +451,8 @@ export const NowPlayingSheet: React.FC = () => {
                 onClick={() => setNowPlayingTab(tab)}
                 className={`rounded-full px-4 py-1.5 text-xs font-bold ${
                   active
-                    ? 'bg-white text-[#070709]'
-                    : 'text-[#B4B4BE] hover:text-[#F5F5F7]'
+                    ? 'bg-white text-[#070709] shadow-sm'
+                    : 'text-[#E5E5EA] hover:bg-white/10 hover:text-white'
                 }`}
               >
                 {tab}
@@ -306,7 +461,7 @@ export const NowPlayingSheet: React.FC = () => {
           })}
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="pm-no-drag flex items-center gap-2">
           <button
             type="button"
             aria-label="Ecualizador y Crossfade"
@@ -314,9 +469,9 @@ export const NowPlayingSheet: React.FC = () => {
               setNowPlayingOpen(false);
               setEqSheetOpen(true);
             }}
-            className="inline-flex items-center gap-1.5 rounded-full border border-white/[0.10] bg-[#121217]/85 px-3.5 py-2 text-xs font-semibold text-[#F5F5F7] hover:bg-[#1D1D25]"
+            className="pm-glass-chip inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-semibold text-[#F5F5F7]"
           >
-            <Sliders className="h-4 w-4 text-[#B4B4BE]" />
+            <Sliders className="h-4 w-4 text-[#E5E5EA]" />
             <span className="hidden sm:inline">EQ</span>
           </button>
           <button
@@ -326,7 +481,7 @@ export const NowPlayingSheet: React.FC = () => {
               setNowPlayingOpen(false);
               setDevicesSheetOpen(true);
             }}
-            className="inline-flex items-center gap-1.5 rounded-full border border-white/[0.10] bg-[#121217]/85 px-3.5 py-2 text-xs font-semibold text-[#F5F5F7] hover:bg-[#1D1D25]"
+            className="pm-glass-chip inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-semibold text-[#F5F5F7]"
           >
             <Wifi className="h-4 w-4 text-[#34D399]" />
             <span className="hidden sm:inline">Dispositivos</span>
@@ -386,32 +541,89 @@ export const NowPlayingSheet: React.FC = () => {
               )}
 
               {currentLyrics && currentLyrics.lines.length > 0 ? (
-                <div className="space-y-3 pb-12">
+                <div className="space-y-3 pb-14">
+                  {/* Animated 3-dot instrumental breathing pulse before intro verse */}
+                  {currentLyrics.lines[0] &&
+                    currentLyrics.lines[0].timeMs > 4000 &&
+                    smoothPosMs < currentLyrics.lines[0].timeMs && (
+                      <div className="pm-glass-chip inline-flex items-center gap-1.5 rounded-full px-3.5 py-2">
+                        <span className="pm-lyric-dot h-2 w-2 rounded-full bg-white" />
+                        <span className="pm-lyric-dot h-2 w-2 rounded-full bg-[#E2CCFF]" />
+                        <span className="pm-lyric-dot h-2 w-2 rounded-full bg-white" />
+                      </div>
+                    )}
+
                   {currentLyrics.lines.map((line, idx) => {
-                    const isActive =
-                      idx === activeLyricIndex ||
-                      (activeLyricIndex === -1 && idx === 0);
+                    const isActive = idx === resolvedActiveLyricIdx;
+                    const dist =
+                      resolvedActiveLyricIdx >= 0
+                        ? Math.abs(idx - resolvedActiveLyricIdx)
+                        : idx;
+                    const nextLine = currentLyrics.lines[idx + 1];
+                    const lineEndMs =
+                      nextLine && nextLine.timeMs > line.timeMs
+                        ? nextLine.timeMs
+                        : line.timeMs + 4200;
+                    const spanMs = Math.max(800, lineEndMs - line.timeMs);
+                    const verseFillPct = isActive
+                      ? Math.max(8, Math.min(100, ((smoothPosMs - line.timeMs) / spanMs) * 100))
+                      : 0;
+                    const showInstrumentalGap =
+                      isActive &&
+                      nextLine &&
+                      nextLine.timeMs - line.timeMs > 6500 &&
+                      smoothPosMs - line.timeMs > 3200;
+
+                    const distClass = isActive
+                      ? 'pm-lyric-line-active pm-glass-chip border border-white/20 shadow-[0_14px_36px_rgba(0,0,0,0.35)]'
+                      : `pm-lyric-line-inactive ${
+                          dist === 1
+                            ? 'pm-lyric-dist-1'
+                            : dist === 2
+                              ? 'pm-lyric-dist-2'
+                              : 'pm-lyric-dist-far'
+                        }`;
+
                     return (
-                      <button
-                        key={`${line.index}-${line.timeMs}`}
-                        ref={isActive ? activeLyricRef : undefined}
-                        type="button"
-                        data-lyric-state={isActive ? 'active' : 'inactive'}
-                        onClick={() => {
-                          seekTo(line.timeMs / 1000);
-                          setLyricsUserScrolled(false);
-                        }}
-                        className={`block w-full rounded-[14px] px-4 py-3 text-left text-2xl font-bold tracking-tight md:text-[30px] md:leading-[1.28] ${
-                          isActive
-                            ? 'pm-lyric-line-active bg-white/[0.09]'
-                            : 'pm-lyric-line-inactive hover:bg-white/[0.04]'
-                        }`}
-                      >
-                        <span>{line.text}</span>
-                        <span className="tabular-nums ml-3 align-middle text-xs font-medium text-[#B4B4BE]">
-                          {formatDurationSec(line.timeMs / 1000)}
-                        </span>
-                      </button>
+                      <React.Fragment key={`${line.index}-${line.timeMs}`}>
+                        <button
+                          ref={isActive ? activeLyricRef : undefined}
+                          type="button"
+                          data-lyric-state={isActive ? 'active' : 'inactive'}
+                          onClick={() => {
+                            seekTo(line.timeMs / 1000);
+                            setLyricsUserScrolled(false);
+                          }}
+                          className={`relative block w-full overflow-hidden rounded-[16px] px-5 py-3.5 text-left text-2xl font-bold tracking-tight md:text-[31px] md:leading-[1.28] ${distClass}`}
+                        >
+                          {isActive && (
+                            <>
+                              <span
+                                aria-hidden="true"
+                                className="pointer-events-none absolute inset-y-0 left-0 bg-gradient-to-r from-white/[0.16] via-[#E2CCFF]/[0.18] to-transparent transition-[width] duration-75"
+                                style={{ width: `${verseFillPct}%` }}
+                              />
+                              <span
+                                aria-hidden="true"
+                                className="pointer-events-none absolute bottom-0 left-0 h-[2px] rounded-full bg-gradient-to-r from-white to-[#E2CCFF] transition-[width] duration-75"
+                                style={{ width: `${verseFillPct}%` }}
+                              />
+                            </>
+                          )}
+                          <span className="relative z-10">{line.text}</span>
+                          <span className="tabular-nums relative z-10 ml-3 align-middle text-xs font-medium text-[#D1D1DC]">
+                            {formatDurationSec(line.timeMs / 1000)}
+                          </span>
+                        </button>
+
+                        {showInstrumentalGap && (
+                          <div className="pm-glass-chip ml-2 inline-flex items-center gap-1.5 rounded-full px-3.5 py-2">
+                            <span className="pm-lyric-dot h-2 w-2 rounded-full bg-white" />
+                            <span className="pm-lyric-dot h-2 w-2 rounded-full bg-[#E2CCFF]" />
+                            <span className="pm-lyric-dot h-2 w-2 rounded-full bg-white" />
+                          </div>
+                        )}
+                      </React.Fragment>
                     );
                   })}
                 </div>
@@ -551,6 +763,47 @@ export const NowPlayingSheet: React.FC = () => {
                       : 'Mezclar siguiente ahora'}
                   </button>
                 </div>
+
+                {/* Live Adaptive AutoMix Plan Summary */}
+                {djMode.enabled && activeTransitionPlan && (
+                  <div className="mt-4 rounded-[12px] border border-[#C084FC]/30 bg-[#14101D] p-3.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <span className="font-bold text-[#E9D5FF]">
+                        Plan inteligente:{' '}
+                        {activeTransitionPlan.transitionType === 'eq_swap'
+                          ? 'EQ Swap 200Hz (suave)'
+                          : activeTransitionPlan.transitionType === 'filter_sweep'
+                            ? 'Filtro Resonante (progresivo)'
+                            : 'Echo Out BPM (corte limpio)'}
+                      </span>
+                      <span className="tabular-nums text-[11px] font-semibold text-[#C4C4CE]">
+                        {activeTransitionPlan.transitionBars} compases ·{' '}
+                        {activeTransitionPlan.transitionDurationSec}s ·{' '}
+                        {Math.round(activeTransitionPlan.compatibilityScore * 100)}% compatible
+                      </span>
+                    </div>
+                    <div className="tabular-nums mt-1.5 flex flex-wrap items-center gap-3 text-[11px] text-[#B4B4BE]">
+                      <span>Salida: {formatDurationSec(activeTransitionPlan.cueOutSec)}</span>
+                      <span>Entrada: {formatDurationSec(activeTransitionPlan.cueInSec)}</span>
+                      <span>
+                        Análisis:{' '}
+                        {currentAnalysis?.source === 'pcm' && nextAnalysis?.source === 'pcm'
+                          ? 'Audio real (PCM)'
+                          : currentAnalysis?.source === 'pcm' || nextAnalysis?.source === 'pcm'
+                            ? 'Híbrido (PCM + mapa)'
+                            : 'Curva energética'}
+                      </span>
+                    </div>
+                    {isTransitioning && (
+                      <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                        <div
+                          className="h-full rounded-full bg-[#C084FC] transition-[width] duration-100"
+                          style={{ width: `${Math.round(transitionProgress01 * 100)}%` }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
               </section>
 
               {/* Queue List */}

@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
@@ -86,13 +87,26 @@ function sendMediaAction(action: NativeMediaAction): void {
 async function createMainWindow(): Promise<void> {
   await startLoopbackProxyServer();
 
+  const iconCandidates = [
+    join(__dirname, '../dist/icon.png'),
+    join(__dirname, '../build/icon.png'),
+  ];
+  const windowIcon = iconCandidates.find((p) => existsSync(p));
+
   mainWindow = new BrowserWindow({
     width: 1380,
     height: 860,
     minWidth: 420,
     minHeight: 640,
-    backgroundColor: '#06060A',
+    backgroundColor: '#070709',
     title: 'pMusic',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#070709',
+      symbolColor: '#B4B4BE',
+      height: 48,
+    },
+    ...(windowIcon ? { icon: windowIcon } : {}),
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
@@ -143,6 +157,20 @@ ipcMain.handle('pmusic:get-auth-headers', () => ({
 ipcMain.handle('pmusic:update-discord', async (_event, state: DiscordPresenceState) => {
   await updateDiscordActivity(state);
 });
+ipcMain.handle(
+  'pmusic:set-titlebar-overlay',
+  (_event, opts: { color?: string; symbolColor?: string; height?: number }) => {
+    try {
+      mainWindow?.setTitleBarOverlay?.({
+        color: opts?.color ?? '#070709',
+        symbolColor: opts?.symbolColor ?? '#B4B4BE',
+        height: opts?.height ?? 48,
+      });
+    } catch {
+      // Ignore on unsupported platforms
+    }
+  }
+);
 
 void app.whenReady().then(async () => {
   await createMainWindow();

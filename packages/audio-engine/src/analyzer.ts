@@ -48,7 +48,9 @@ export class PcmTrackAnalyzer {
     durationSec: number
   ): Promise<TrackAnalysis> {
     const cached = await this.cache.get(trackId);
-    if (cached) return cached;
+    if (cached && (!audioData || cached.source === 'pcm')) {
+      return cached;
+    }
 
     const safeDuration = Number.isFinite(durationSec) && durationSec > 10 ? durationSec : 195;
     let analysis: TrackAnalysis;
@@ -61,6 +63,353 @@ export class PcmTrackAnalyzer {
 
     await this.cache.set(analysis);
     return analysis;
+  }
+
+  public async analyzeEncodedAudio(
+    trackId: string,
+    encodedData: ArrayBuffer,
+    durationSec: number
+  ): Promise<TrackAnalysis> {
+    const cached = await this.cache.get(trackId);
+    if (cached && cached.source === 'pcm') {
+      return cached;
+    }
+
+    const AudioCtxCtor =
+      typeof window !== 'undefined'
+        ? window.AudioContext ??
+          (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+        : undefined;
+
+    if (AudioCtxCtor && encodedData.byteLength > 1024) {
+      let ctx: AudioContext | null = null;
+      try {
+        ctx = new AudioCtxCtor();
+        const copy = encodedData.slice(0);
+        const decoded = await ctx.decodeAudioData(copy);
+        const ch0 = decoded.getChannelData(0);
+        let mono: Float32Array;
+        if (decoded.numberOfChannels > 1) {
+          const ch1 = decoded.getChannelData(1);
+          mono = new Float32Array(ch0.length);
+          for (let i = 0; i < ch0.length; i++) {
+            mono[i] = ((ch0[i] ?? 0) + (ch1[i] ?? 0)) * 0.5;
+          }
+        } else {
+          mono = ch0;
+        }
+        const realDur =
+          Number.isFinite(decoded.duration) && decoded.duration > 10
+            ? decoded.duration
+            : durationSec;
+        return await this.analyzeFloatPcm(trackId, mono, decoded.sampleRate, realDur);
+      } catch {
+        // Fallback smoothly when container/codec cannot decode offline in sandbox
+      } finally {
+        if (ctx) {
+          await ctx.close().catch(() => {});
+        }
+      }
+    }
+
+    return this.analyzeTrack(trackId, null, durationSec);
+  }
+
+  public async analyzeFloatPcm(
+    trackId: string,
+    monoSamples: Float32Array,
+    sampleRate: number,
+    durationSec: number
+  ): Promise<TrackAnalysis> {
+    const safeRate = Math.max(8000, sampleRate);
+    const derivedDur = monoSamples.length / safeRate;
+    const safeDuration =
+      Number.isFinite(durationSec) && durationSec > 10
+        ? durationSec
+        : Math.max(20, derivedDur);
+
+    const frameHz = 20; // 50ms windows for accurate transient + phrase tracking
+    const frameSamples = Math.max(256, Math.floor(safeRate / frameHz));
+    const numFrames = Math.floor(monoSamples.length / frameSamples);
+
+    if (numFrames < 40) {
+      const fallback = this.analyzeHeuristic(trackId, safeDuration);
+      await this.cache.set(fallback);
+      return fallback;
+    }
+
+    // 1-pole IIR lowpass @ ~180Hz to isolate kick & sub-bass pulse
+    const lpAlpha = 1 - Math.exp((-2 * Math.PI * 180) / safeRate);
+    let lpState = 0;
+
+    const fullRms: number[] = new Array(numFrames);
+    const bassRms: number[] = new Array(numFrames);
+    const midRms: number[] = new Array(numFrames);
+
+    let maxFull = 1e-6;
+    let maxBass = 1e-6;
+    let sumSqTotal = 0;
+    let countTotal = 0;
+
+    for (let f = 0; f < numFrames; f++) {
+      let sqFull = 0;
+      let sqBass = 0;
+      let sqMid = 0;
+      const start = f * frameSamples;
+      for (let i = 0; i < frameSamples; i++) {
+        const s = monoSamples[start + i] ?? 0;
+        lpState += lpAlpha * (s - lpState);
+        const low = lpState;
+        const hi = s - low;
+        sqFull += s * s;
+        sqBass += low * low;
+        sqMid += hi * hi;
+      }
+      sumSqTotal += sqFull;
+      countTotal += frameSamples;
+
+      const rFull = Math.sqrt(sqFull / frameSamples);
+      const rBass = Math.sqrt(sqBass / frameSamples);
+      const rMid = Math.sqrt(sqMid / frameSamples);
+      fullRms[f] = rFull;
+      bassRms[f] = rBass;
+      midRms[f] = rMid;
+      if (rFull > maxFull) maxFull = rFull;
+      if (rBass > maxBass) maxBass = rBass;
+    }
+
+    const normFull = fullRms.map((v) => Math.min(1, Number((v / maxFull).toFixed(3))));
+    const normBass = bassRms.map((v) => Math.min(1, v / maxBass));
+
+    // Downsample to ~1Hz RMS envelope (capped [16, 240]) for UI waveform & cue scanning
+    const targetBins = Math.max(16, Math.min(240, Math.round(safeDuration)));
+    const rmsEnvelope: number[] = [];
+    for (let b = 0; b < targetBins; b++) {
+      const idx = Math.min(normFull.length - 1, Math.floor((b / targetBins) * normFull.length));
+      rmsEnvelope.push(normFull[idx] ?? 0.5);
+    }
+
+    // Weighted onset flux (65% sub-bass kick + 35% full-band transient) at 20Hz
+    const flux: number[] = new Array(numFrames).fill(0);
+    for (let i = 1; i < numFrames; i++) {
+      const dBass = Math.max(0, (normBass[i] ?? 0) - (normBass[i - 1] ?? 0));
+      const dFull = Math.max(0, (normFull[i] ?? 0) - (normFull[i - 1] ?? 0));
+      flux[i] = dBass * 0.65 + dFull * 0.35;
+    }
+
+    // Sub-band autocorrelation in [72..168] BPM with gentle musical tempo prior around 115 BPM
+    let bestBpm = 120;
+    let bestScore = -1;
+    for (let candidateBpm = 72; candidateBpm <= 168; candidateBpm += 1) {
+      const exactLag = (60 / candidateBpm) * frameHz;
+      const lagFloor = Math.floor(exactLag);
+      const frac = exactLag - lagFloor;
+      let corr = 0;
+      let n = 0;
+      for (let i = 0; i + lagFloor + 1 < flux.length; i++) {
+        const delayed = (flux[i + lagFloor] ?? 0) * (1 - frac) + (flux[i + lagFloor + 1] ?? 0) * frac;
+        corr += (flux[i] ?? 0) * delayed;
+        n++;
+      }
+      const avgCorr = n > 0 ? corr / n : 0;
+      const octavePrior =
+        candidateBpm >= 85 && candidateBpm <= 150 ? 1.0 : 0.86;
+      const score = avgCorr * octavePrior;
+      if (score > bestScore) {
+        bestScore = score;
+        bestBpm = candidateBpm;
+      }
+    }
+
+    // If peak lag is double-time or half-time harmonic, fold weakly into natural pop/urban range
+    if (bestBpm > 152) {
+      bestBpm = Math.round(bestBpm * 0.5);
+    }
+    const bpm = Math.max(65, Math.min(175, bestBpm));
+    const barSec = (60 / bpm) * 4;
+
+    // Estimate first downbeat phase offset using modular beat grid energy
+    const beatPeriodFrames = (60 / bpm) * frameHz;
+    let bestPhase = 0;
+    let bestPhaseScore = -1;
+    const phaseSteps = Math.max(1, Math.round(beatPeriodFrames));
+    for (let ph = 0; ph < phaseSteps; ph++) {
+      let s = 0;
+      for (let f = ph; f < flux.length; f += Math.max(1, Math.round(beatPeriodFrames))) {
+        s += flux[Math.min(flux.length - 1, Math.round(f))] ?? 0;
+      }
+      if (s > bestPhaseScore) {
+        bestPhaseScore = s;
+        bestPhase = ph;
+      }
+    }
+    const phaseSec = bestPhase / frameHz;
+
+    const integratedRms = Math.sqrt(sumSqTotal / Math.max(1, countTotal));
+    const loudnessDb = Number(
+      Math.max(-24, Math.min(-1, 20 * Math.log10(Math.max(1e-5, integratedRms)))).toFixed(1)
+    );
+    const meanEnergy = Number(
+      Math.max(0.1, Math.min(1, integratedRms / maxFull)).toFixed(3)
+    );
+
+    const structure = this.detectMusicalStructure(
+      normFull,
+      normBass,
+      frameHz,
+      safeDuration,
+      barSec,
+      phaseSec,
+      rmsEnvelope
+    );
+
+    const h = hashTrackId(trackId);
+    const analysis: TrackAnalysis = {
+      trackId,
+      durationSec: Math.round(safeDuration),
+      bpm,
+      bpmConfidence: bestScore > 0.002 ? 0.92 : 0.78,
+      meanEnergy,
+      peakEnergy: 1,
+      rmsEnvelope,
+      ...structure,
+      camelotKey: CAMELOT_KEYS[h % CAMELOT_KEYS.length],
+      loudnessDb,
+      source: 'pcm',
+      analyzedAtMs: Date.now(),
+    };
+
+    await this.cache.set(analysis);
+    return analysis;
+  }
+
+  private snapToBar(sec: number, phaseSec: number, barSec: number, minSec: number, maxSec: number): number {
+    if (barSec <= 0.5) return Math.round(Math.max(minSec, Math.min(maxSec, sec)));
+    const idx = Math.round((sec - phaseSec) / barSec);
+    const snapped = Math.round(phaseSec + idx * barSec);
+    return Math.max(minSec, Math.min(maxSec, snapped));
+  }
+
+  private detectMusicalStructure(
+    normFull: readonly number[],
+    normBass: readonly number[],
+    frameHz: number,
+    durationSec: number,
+    barSec: number,
+    phaseSec: number,
+    rmsEnvelope: readonly number[]
+  ): {
+    introEndSec: number;
+    primaryDropSec: number;
+    chorusStartSec: number;
+    chorusEndSec: number;
+    outroStartSec: number;
+  } {
+    const winFrames = Math.max(10, Math.round(6 * frameHz));
+
+    // 1) Detect intro end: first frame >= 6s where sustained kick+energy crosses 54% peak
+    let introEndSec = Math.round(Math.min(24, Math.max(8, durationSec * 0.1)));
+    const introMinFrame = Math.round(6 * frameHz);
+    const introMaxFrame = Math.min(normFull.length - 1, Math.round(Math.min(36, durationSec * 0.25) * frameHz));
+    for (let f = introMinFrame; f < introMaxFrame; f++) {
+      const e = (normFull[f] ?? 0) * 0.6 + (normBass[f] ?? 0) * 0.4;
+      if (e >= 0.54) {
+        introEndSec = this.snapToBar(f / frameHz, phaseSec, barSec, 6, Math.round(durationSec * 0.26));
+        break;
+      }
+    }
+
+    // 2) Detect primary drop: highest contrast jump (next 8s avg - prev 6s avg) in [intro .. 48%]
+    const dropStartF = Math.max(winFrames, Math.round(Math.max(introEndSec, durationSec * 0.1) * frameHz));
+    const dropEndF = Math.min(normFull.length - winFrames - 1, Math.round(durationSec * 0.48 * frameHz));
+    let bestDropF = dropStartF;
+    let bestDropScore = -999;
+
+    const avgRange = (arr: readonly number[], from: number, to: number): number => {
+      const a = Math.max(0, from);
+      const b = Math.min(arr.length, to);
+      if (b <= a) return 0;
+      let sum = 0;
+      for (let i = a; i < b; i++) sum += arr[i] ?? 0;
+      return sum / (b - a);
+    };
+
+    for (let f = dropStartF; f < dropEndF; f += 4) {
+      const before = avgRange(normFull, f - winFrames, f);
+      const afterFull = avgRange(normFull, f, f + Math.round(8 * frameHz));
+      const afterBass = avgRange(normBass, f, f + Math.round(8 * frameHz));
+      const jump = (afterFull - before) * 0.7 + afterFull * 0.25 + afterBass * 0.35;
+      if (jump > bestDropScore) {
+        bestDropScore = jump;
+        bestDropF = f;
+      }
+    }
+
+    let primaryDropSec = this.snapToBar(
+      bestDropF / frameHz,
+      phaseSec,
+      barSec,
+      introEndSec,
+      Math.round(durationSec * 0.48)
+    );
+    if (primaryDropSec < introEndSec) primaryDropSec = introEndSec;
+    const chorusStartSec = primaryDropSec;
+
+    // 3) Phrase-aligned chorusEndSec inside [primaryDropSec + 46s .. primaryDropSec + 84s]
+    const winMinSec = Math.min(durationSec - 14, chorusStartSec + 46);
+    const winMaxSec = Math.min(durationSec - 12, chorusStartSec + 84);
+    let chorusEndSec = Math.max(winMinSec, Math.round(chorusStartSec + Math.min(68, durationSec * 0.34)));
+
+    if (winMaxSec > winMinSec + 4) {
+      let bestDipVal = Infinity;
+      for (let s = winMinSec; s <= winMaxSec; s += 2) {
+        const idx = Math.min(rmsEnvelope.length - 1, Math.floor((s / durationSec) * rmsEnvelope.length));
+        const val = rmsEnvelope[idx] ?? 0.6;
+        if (val < bestDipVal) {
+          bestDipVal = val;
+          chorusEndSec = s;
+        }
+      }
+      chorusEndSec = this.snapToBar(chorusEndSec, phaseSec, barSec, winMinSec, winMaxSec);
+    }
+
+    // 4) Scan tail [duration * 0.68 .. duration - 8s] for outro transition point
+    let outroStartSec = Math.max(
+      chorusEndSec,
+      Math.round(durationSec - Math.min(26, Math.max(12, durationSec * 0.14)))
+    );
+    const tailMin = Math.max(chorusStartSec + 20, Math.round(durationSec * 0.7));
+    const tailMax = Math.round(durationSec - 8);
+    if (tailMax > tailMin + 4) {
+      let lowestTailEnergy = Infinity;
+      let bestTailSec = outroStartSec;
+      for (let s = tailMin; s <= tailMax; s += 2) {
+        const f = Math.min(normFull.length - 1, Math.round(s * frameHz));
+        const e = avgRange(normFull, f, f + Math.round(4 * frameHz));
+        if (e < lowestTailEnergy && e <= 0.68) {
+          lowestTailEnergy = e;
+          bestTailSec = s;
+        }
+      }
+      outroStartSec = this.snapToBar(
+        bestTailSec,
+        phaseSec,
+        barSec,
+        Math.max(primaryDropSec + 12, tailMin),
+        Math.round(durationSec - 8)
+      );
+    }
+    if (outroStartSec <= primaryDropSec) {
+      outroStartSec = Math.min(Math.round(durationSec - 6), primaryDropSec + 20);
+    }
+
+    return {
+      introEndSec,
+      primaryDropSec,
+      chorusStartSec,
+      chorusEndSec,
+      outroStartSec,
+    };
   }
 
   private analyzePcmBuffer(
@@ -108,7 +457,6 @@ export class PcmTrackAnalyzer {
 
     const normalized10Hz = windowEnergies.map((e) => Math.min(1, Number((e / maxRms).toFixed(3))));
 
-    // Downsample to ~1Hz envelope (capped between 16 and 240 bins)
     const targetBins = Math.max(16, Math.min(240, Math.round(durationSec)));
     const rmsEnvelope: number[] = [];
     for (let b = 0; b < targetBins; b++) {
@@ -119,7 +467,6 @@ export class PcmTrackAnalyzer {
       rmsEnvelope.push(normalized10Hz[idx] ?? 0.5);
     }
 
-    // Autocorrelation over onset flux in 10Hz envelope for BPM [65..175]
     const onsetFlux: number[] = [];
     for (let i = 1; i < normalized10Hz.length; i++) {
       const diff = (normalized10Hz[i] ?? 0) - (normalized10Hz[i - 1] ?? 0);
@@ -224,7 +571,6 @@ export class PcmTrackAnalyzer {
   } {
     const introEndSec = Math.round(Math.min(24, Math.max(8, durationSec * 0.12)));
 
-    // Find highest sustained energy window between 12% and 55% of the track
     const startBin = Math.floor(envelope.length * 0.12);
     const endBin = Math.max(startBin + 1, Math.floor(envelope.length * 0.55));
     let bestBin = startBin;
@@ -240,7 +586,6 @@ export class PcmTrackAnalyzer {
     const rawDropSec = Math.round((bestBin / Math.max(1, envelope.length)) * durationSec);
     const primaryDropSec = Math.max(introEndSec, Math.min(Math.round(durationSec * 0.45), rawDropSec));
     const chorusStartSec = primaryDropSec;
-    // Quick session plays 45-90s around the drop/chorus
     const chorusWindow = Math.min(72, Math.max(48, Math.round(durationSec * 0.36)));
     const chorusEndSec = Math.min(
       Math.round(durationSec - 12),
