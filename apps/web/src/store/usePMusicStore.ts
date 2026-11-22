@@ -131,6 +131,14 @@ const decodedAudioAnalyzedIds = new Set<string>();
 const decodedAudioInFlightIds = new Set<string>();
 
 export type RepeatMode = 'off' | 'all' | 'one';
+export type TrackMenuState = {
+  track: Track;
+  x: number;
+  y: number;
+  playlistId?: string;
+} | null;
+
+let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
 function applyAmbientPaletteForTrack(track: Track | null): void {
   applyAmbientPaletteFromCover(track);
@@ -151,6 +159,8 @@ export interface PMusicStoreState {
   isOfflineNetwork: boolean;
   graphicSaverMode: boolean;
   discordRpcEnabled: boolean;
+  trackMenu: TrackMenuState;
+  toastMessage: string | null;
 
   // Playback & Audio
   currentTrack: Track;
@@ -234,6 +244,9 @@ export interface PMusicStoreState {
   openPlaylistDetail: (playlistId: string) => Promise<void>;
   openLocalPlaylistDetail: (playlistId: string) => void;
   closeDetailView: () => void;
+  showToast: (message: string) => void;
+  openTrackMenu: (track: Track, x: number, y: number, playlistId?: string) => void;
+  closeTrackMenu: () => void;
 
   // Playback Actions
   playTrack: (track: Track, newQueue?: Track[], startSec?: number) => Promise<void>;
@@ -248,6 +261,8 @@ export interface PMusicStoreState {
   moveQueueItem: (fromIndex: number, toIndex: number) => void;
   removeQueueItem: (index: number) => void;
   addToQueue: (track: Track) => void;
+  playNextInQueue: (track: Track) => void;
+  startTrackRadio: (track: Track, withDj?: boolean) => Promise<void>;
   setAutoplayEnabled: (enabled: boolean) => void;
 
   // DJ AutoMix & EQ Actions
@@ -280,6 +295,10 @@ export interface PMusicStoreState {
   renamePlaylist: (playlistId: string, name: string) => Promise<void>;
   deletePlaylist: (playlistId: string) => Promise<void>;
   addTrackToPlaylist: (playlistId: string, track: Track) => Promise<void>;
+  removeTrackFromPlaylist: (playlistId: string, trackId: string) => Promise<void>;
+  reorderPlaylistTrack: (playlistId: string, fromIndex: number, toIndex: number) => Promise<void>;
+  likeTrackIfNeeded: (track: Track) => Promise<void>;
+  searchTracksForPlaylist: (query: string) => Promise<Track[]>;
   toggleLike: (track?: Track) => Promise<void>;
   downloadTrackOffline: (track: Track) => Promise<void>;
   removeOfflineTrack: (trackId: string) => Promise<void>;
@@ -480,6 +499,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   isOfflineNetwork: typeof navigator !== 'undefined' ? !navigator.onLine : false,
   graphicSaverMode: false,
   discordRpcEnabled: true,
+  trackMenu: null,
+  toastMessage: null,
 
   currentTrack: initialTrack,
   queue: [...FALLBACK_TRACKS],
@@ -859,6 +880,24 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   },
   closeDetailView: () => set({ activeDetailView: null }),
 
+  showToast: (message) => {
+    if (toastTimer) {
+      clearTimeout(toastTimer);
+      toastTimer = null;
+    }
+    set({ toastMessage: message });
+    toastTimer = setTimeout(() => {
+      toastTimer = null;
+      set({ toastMessage: null });
+    }, 2600);
+  },
+
+  openTrackMenu: (track, x, y, playlistId) => {
+    set({ trackMenu: { track, x, y, playlistId } });
+  },
+
+  closeTrackMenu: () => set({ trackMenu: null }),
+
   playTrack: async (track, newQueue, startSec) => {
     const st = get();
     const queue = newQueue && newQueue.length > 0 ? [...newQueue] : st.queue;
@@ -1106,9 +1145,70 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   addToQueue: (track) => {
     const st = get();
-    if (st.queue.some((t) => t.id === track.id)) return;
+    if (st.queue.some((t) => t.id === track.id)) {
+      const idx = st.queue.findIndex((t) => t.id === track.id);
+      if (idx !== st.queueIndex) {
+        const copy = st.queue.filter((t) => t.id !== track.id);
+        copy.push(track);
+        const curIdx = Math.max(
+          0,
+          copy.findIndex((t) => t.id === st.currentTrack.id)
+        );
+        set({ queue: copy, queueIndex: curIdx });
+      }
+      st.showToast('Añadida al final de la cola');
+      void recomputeActiveDjPlan();
+      return;
+    }
     set({ queue: [...st.queue, track] });
+    st.showToast('Añadida a la cola');
     void recomputeActiveDjPlan();
+  },
+
+  playNextInQueue: (track) => {
+    const st = get();
+    if (track.id === st.currentTrack.id) {
+      st.showToast('Ya está sonando ahora');
+      return;
+    }
+    const copy = st.queue.filter((t) => t.id !== track.id);
+    const curIdx = Math.max(
+      0,
+      copy.findIndex((t) => t.id === st.currentTrack.id)
+    );
+    copy.splice(curIdx + 1, 0, track);
+    set({
+      queue: copy,
+      queueIndex: curIdx,
+    });
+    djPreloadedKey = '';
+    st.showToast('Sonará a continuación');
+    void recomputeActiveDjPlan();
+  },
+
+  startTrackRadio: async (track, withDj = true) => {
+    const st = get();
+    let related: Track[] = [];
+    try {
+      related = await musicProvider.getUpNext(track.id, true);
+    } catch {
+      related = [];
+    }
+    if (related.length === 0) {
+      try {
+        const artistQuery = track.artists[0]?.name ?? track.title;
+        const bundle = await musicProvider.search(artistQuery, 'song');
+        related = bundle.songs;
+      } catch {
+        related = [];
+      }
+    }
+    const radioQueue = [track, ...related.filter((t) => t.id !== track.id).slice(0, 20)];
+    if (withDj && !st.djMode.enabled) {
+      await st.toggleDjMode(true);
+    }
+    await get().playTrack(track, radioQueue);
+    get().showToast(`Radio de «${track.title}» iniciada`);
   },
 
   setAutoplayEnabled: (enabled) => set({ autoplayEnabled: enabled }),
@@ -1477,12 +1577,54 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   },
 
   addTrackToPlaylist: async (playlistId, track) => {
+    const existing = get().playlists.find((p) => p.id === playlistId);
+    const alreadyIn = Boolean(existing?.tracks.some((t) => t.id === track.id));
     await libraryStore.addTrackToPlaylist(playlistId, track);
-    await recommendationEngine.recordSignal(track, 'add_to_playlist');
+    if (!alreadyIn) {
+      await recommendationEngine.recordSignal(track, 'add_to_playlist');
+    }
     set({
       playlists: libraryStore.getPlaylists(),
       affinityProfile: recommendationEngine.getAffinityProfile(),
     });
+    if (existing) {
+      get().showToast(
+        alreadyIn
+          ? `Ya estaba en «${existing.name}»`
+          : `Añadida a «${existing.name}»`
+      );
+    }
+  },
+
+  removeTrackFromPlaylist: async (playlistId, trackId) => {
+    await libraryStore.removeTrackFromPlaylist(playlistId, trackId);
+    set({ playlists: libraryStore.getPlaylists() });
+    get().showToast('Eliminada de la playlist');
+  },
+
+  reorderPlaylistTrack: async (playlistId, fromIndex, toIndex) => {
+    await libraryStore.reorderPlaylistTrack(playlistId, fromIndex, toIndex);
+    set({ playlists: libraryStore.getPlaylists() });
+  },
+
+  likeTrackIfNeeded: async (track) => {
+    if (libraryStore.isTrackLiked(track.id)) {
+      get().showToast('Ya estaba en Canciones que te gustan');
+      return;
+    }
+    await get().toggleLike(track);
+    get().showToast('Añadida a Canciones que te gustan');
+  },
+
+  searchTracksForPlaylist: async (query) => {
+    const q = query.trim();
+    if (!q) return get().searchResults.songs.slice(0, 12);
+    try {
+      const bundle = await musicProvider.search(q, 'song');
+      return bundle.songs.slice(0, 16);
+    } catch {
+      return [];
+    }
   },
 
   toggleLike: async (track) => {

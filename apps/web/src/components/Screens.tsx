@@ -5,10 +5,12 @@ import {
   ChevronRight,
   Disc3,
   Download,
+  GripVertical,
   Heart,
   ListMusic,
   ListPlus,
   Loader2,
+  MoreHorizontal,
   Pause,
   Play,
   Plus,
@@ -21,6 +23,12 @@ import {
   type LibraryCategoryTab,
   type SearchScopeTab,
 } from '../store/usePMusicStore.ts';
+import {
+  clearDraggedTrack,
+  getDraggedSource,
+  readTrackFromDropEvent,
+  setDraggedTrack,
+} from '../utils/track-dnd.ts';
 
 function getSpanishGreeting(): string {
   const hour = new Date().getHours();
@@ -44,7 +52,9 @@ export const TrackListRow: React.FC<{
   track: Track;
   index?: number;
   queueContext?: Track[];
-}> = ({ track, index, queueContext }) => {
+  playlistId?: string;
+  onDropReorder?: (fromIndex: number, toIndex: number) => void;
+}> = ({ track, index, queueContext, playlistId, onDropReorder }) => {
   const {
     currentTrack,
     isPlaying,
@@ -55,8 +65,12 @@ export const TrackListRow: React.FC<{
     toggleLike,
     downloadTrackOffline,
     addToQueue,
+    removeTrackFromPlaylist,
     openArtistDetail,
+    openTrackMenu,
   } = usePMusicStore();
+
+  const [dragOver, setDragOver] = useState(false);
 
   const isCurrent = currentTrack.id === track.id;
   const isLiked = likedTracks.some((l) => l.trackId === track.id);
@@ -74,11 +88,57 @@ export const TrackListRow: React.FC<{
     <div
       role="row"
       data-surface="content"
+      draggable
+      onDragStart={(e) => {
+        e.stopPropagation();
+        setDraggedTrack(
+          e,
+          track,
+          playlistId && typeof index === 'number'
+            ? { playlistId, index }
+            : undefined
+        );
+      }}
+      onDragEnd={() => {
+        setDragOver(false);
+        clearDraggedTrack();
+      }}
+      onDragOver={(e) => {
+        if (!playlistId || !onDropReorder || typeof index !== 'number') return;
+        const src = getDraggedSource();
+        if (src && src.playlistId === playlistId && src.index !== index) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          setDragOver(true);
+        }
+      }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(e) => {
+        if (!playlistId || !onDropReorder || typeof index !== 'number') return;
+        const src = getDraggedSource();
+        if (src && src.playlistId === playlistId && src.index !== index) {
+          e.preventDefault();
+          e.stopPropagation();
+          setDragOver(false);
+          onDropReorder(src.index, index);
+        }
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        openTrackMenu(track, e.clientX, e.clientY, playlistId);
+      }}
       className={`group flex h-16 items-center justify-between gap-3 rounded-[10px] px-2.5 transition-colors hover:bg-white/[0.06] ${
         isCurrent ? 'bg-white/[0.09]' : ''
-      }`}
+      } ${dragOver ? 'border-t-2 border-white/80 bg-white/[0.08]' : ''}`}
     >
       <div className="flex min-w-0 flex-1 items-center gap-3">
+        <span
+          aria-hidden="true"
+          className="hidden cursor-grab text-[#8E8E98]/60 opacity-0 transition-opacity group-hover:opacity-100 md:inline-flex"
+        >
+          <GripVertical className="h-3.5 w-3.5" />
+        </span>
+
         {typeof index === 'number' && (
           <span className="tabular-nums hidden w-5 shrink-0 text-center text-xs font-medium text-[#8E8E98] sm:inline-flex sm:items-center sm:justify-center">
             {isCurrent && isPlaying ? (
@@ -162,7 +222,7 @@ export const TrackListRow: React.FC<{
         </div>
       </div>
 
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-0.5 sm:gap-1">
         <button
           type="button"
           aria-label={`Añadir ${track.title} a la cola`}
@@ -198,7 +258,7 @@ export const TrackListRow: React.FC<{
               : `Descargar ${track.title} offline`
           }
           onClick={() => void downloadTrackOffline(track)}
-          className="flex items-center justify-center rounded-full p-2 text-[#8E8E98] hover:bg-white/[0.08] hover:text-[#F5F5F7]"
+          className="hidden items-center justify-center rounded-full p-2 text-[#8E8E98] hover:bg-white/[0.08] hover:text-[#F5F5F7] md:flex"
         >
           {dlStatus === 'downloading' ? (
             <Loader2 className="h-4 w-4 animate-spin text-white" />
@@ -207,6 +267,29 @@ export const TrackListRow: React.FC<{
           ) : (
             <Download className="h-4 w-4" />
           )}
+        </button>
+
+        {playlistId && (
+          <button
+            type="button"
+            aria-label={`Quitar ${track.title} de esta playlist`}
+            onClick={() => void removeTrackFromPlaylist(playlistId, track.id)}
+            className="hidden items-center justify-center rounded-full p-2 text-[#8E8E98] opacity-0 transition-opacity hover:bg-[#2A1418] hover:text-[#F87171] group-hover:opacity-100 focus-visible:opacity-100 sm:flex"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        )}
+
+        <button
+          type="button"
+          aria-label={`Más opciones para ${track.title}`}
+          onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            openTrackMenu(track, rect.left - 180, rect.bottom + 6, playlistId);
+          }}
+          className="flex items-center justify-center rounded-full p-2 text-[#8E8E98] opacity-100 transition-opacity hover:bg-white/[0.08] hover:text-white sm:opacity-70 sm:group-hover:opacity-100"
+        >
+          <MoreHorizontal className="h-4 w-4" />
         </button>
 
         <span className="tabular-nums w-11 text-right text-[12px] font-medium text-[#8E8E98]">
@@ -223,13 +306,29 @@ const CoverCard: React.FC<{
   subtitle?: string;
   badge?: string;
   round?: boolean;
+  dragTrack?: Track;
   onOpen: () => void;
   onPlay?: () => void;
-}> = ({ image, title, subtitle, badge, round, onOpen, onPlay }) => (
-  <article
-    data-surface="content"
-    className="pm-cover-card group w-[152px] shrink-0 snap-start rounded-[12px] bg-[#111115] p-2.5 transition-colors hover:bg-[#18181E] md:w-[178px]"
-  >
+}> = ({ image, title, subtitle, badge, round, dragTrack, onOpen, onPlay }) => {
+  const openTrackMenu = usePMusicStore((s) => s.openTrackMenu);
+
+  return (
+    <article
+      data-surface="content"
+      draggable={Boolean(dragTrack)}
+      onDragStart={(e) => {
+        if (dragTrack) setDraggedTrack(e, dragTrack);
+      }}
+      onDragEnd={() => {
+        if (dragTrack) clearDraggedTrack();
+      }}
+      onContextMenu={(e) => {
+        if (!dragTrack) return;
+        e.preventDefault();
+        openTrackMenu(dragTrack, e.clientX, e.clientY);
+      }}
+      className="pm-cover-card group w-[152px] shrink-0 snap-start rounded-[12px] bg-[#111115] p-2.5 transition-colors hover:bg-[#18181E] md:w-[178px]"
+    >
     <div className="relative">
       <button
         type="button"
@@ -277,7 +376,8 @@ const CoverCard: React.FC<{
       )}
     </div>
   </article>
-);
+  );
+};
 
 const CarouselSection: React.FC<{
   title: string;
@@ -325,7 +425,7 @@ const CarouselSection: React.FC<{
 
       <div
         ref={scrollerRef}
-        className="pm-no-scrollbar -mx-4 flex snap-x gap-3.5 overflow-x-auto px-4 pb-1 md:-mx-8 md:px-8"
+        className="pm-no-scrollbar flex snap-x gap-4 overflow-x-auto px-1 pb-1.5"
       >
         {children}
       </div>
@@ -337,21 +437,30 @@ export const DetailViewPanel: React.FC = () => {
   const {
     activeDetailView,
     playlists,
+    searchResults,
     playTrack,
     toggleDjMode,
     renamePlaylist,
     deletePlaylist,
+    addTrackToPlaylist,
+    reorderPlaylistTrack,
+    searchTracksForPlaylist,
     openAlbumDetail,
     openArtistDetail,
   } = usePMusicStore();
 
   const [editingName, setEditingName] = useState('');
+  const [playlistDropActive, setPlaylistDropActive] = useState(false);
+  const [addSearchQuery, setAddSearchQuery] = useState('');
+  const [addSearchResults, setAddSearchResults] = useState<Track[]>([]);
+  const [isSearchingAdd, setIsSearchingAdd] = useState(false);
 
   if (!activeDetailView) return null;
 
   if (activeDetailView.kind === 'artist') {
     const { artist, description, topSongs, albums, relatedArtists } =
       activeDetailView.data;
+    const popularSongs = topSongs.slice(0, 10);
     return (
       <div className="space-y-8">
         <section
@@ -365,7 +474,7 @@ export const DetailViewPanel: React.FC = () => {
           />
           <div className="min-w-0 flex-1 space-y-2">
             <span className="inline-block rounded-md bg-white/[0.08] px-2.5 py-1 text-[11px] font-semibold tracking-wide text-[#B4B4BE]">
-              ARTISTA · {topSongs.length} CANCIONES POPULARES
+              ARTISTA
             </span>
             <h1 className="truncate text-3xl font-bold tracking-tight text-[#F5F5F7] md:text-5xl">
               {artist.name}
@@ -379,7 +488,7 @@ export const DetailViewPanel: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
-                  if (topSongs[0]) void playTrack(topSongs[0], topSongs);
+                  if (popularSongs[0]) void playTrack(popularSongs[0], popularSongs);
                 }}
                 className="inline-flex items-center gap-2 rounded-full bg-white px-6 py-2.5 text-xs font-bold text-[#070709] hover:bg-white/90"
               >
@@ -390,7 +499,7 @@ export const DetailViewPanel: React.FC = () => {
                 type="button"
                 onClick={async () => {
                   await toggleDjMode(true);
-                  if (topSongs[0]) await playTrack(topSongs[0], topSongs);
+                  if (popularSongs[0]) await playTrack(popularSongs[0], popularSongs);
                 }}
                 className="inline-flex items-center gap-2 rounded-full border border-white/[0.12] bg-[#16161C] px-5 py-2.5 text-xs font-semibold text-[#F5F5F7] hover:bg-[#1E1E26]"
               >
@@ -404,12 +513,12 @@ export const DetailViewPanel: React.FC = () => {
         <section className="space-y-2">
           <h2 className="text-[20px] font-bold text-[#F5F5F7]">Populares</h2>
           <div className="space-y-0.5">
-            {topSongs.map((track, idx) => (
+            {popularSongs.map((track, idx) => (
               <TrackListRow
                 key={track.id}
                 track={track}
                 index={idx}
-                queueContext={topSongs}
+                queueContext={popularSongs}
               />
             ))}
           </div>
@@ -577,6 +686,10 @@ export const DetailViewPanel: React.FC = () => {
   const localPl = playlists.find((p) => p.id === activeDetailView.playlistId);
   if (!localPl) return null;
 
+  const suggestedAdds = (
+    addSearchQuery.trim() ? addSearchResults : searchResults.songs.slice(0, 8)
+  ).filter((t) => !localPl.tracks.some((ex) => ex.id === t.id));
+
   return (
     <div className="space-y-7">
       <div
@@ -670,16 +783,134 @@ export const DetailViewPanel: React.FC = () => {
         </div>
       </div>
 
-      <div className="space-y-0.5">
-        {localPl.tracks.map((t, idx) => (
-          <TrackListRow
-            key={t.id}
-            track={t}
-            index={idx}
-            queueContext={localPl.tracks}
-          />
-        ))}
+      {/* Playlist Tracks Dropzone + Reorder */}
+      <div
+        onDragOver={(e) => {
+          const src = getDraggedSource();
+          if (src?.playlistId === localPl.id) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+          setPlaylistDropActive(true);
+        }}
+        onDragLeave={() => setPlaylistDropActive(false)}
+        onDrop={(e) => {
+          setPlaylistDropActive(false);
+          const src = getDraggedSource();
+          if (src?.playlistId === localPl.id) return;
+          const dropped = readTrackFromDropEvent(e);
+          if (dropped) {
+            e.preventDefault();
+            void addTrackToPlaylist(localPl.id, dropped);
+          }
+        }}
+        className={`space-y-0.5 rounded-[14px] transition-colors ${
+          playlistDropActive ? 'bg-white/[0.06] ring-2 ring-white/60 p-2' : ''
+        }`}
+      >
+        {localPl.tracks.length > 0 ? (
+          localPl.tracks.map((t, idx) => (
+            <TrackListRow
+              key={t.id}
+              track={t}
+              index={idx}
+              queueContext={localPl.tracks}
+              playlistId={localPl.id}
+              onDropReorder={(from, to) =>
+                void reorderPlaylistTrack(localPl.id, from, to)
+              }
+            />
+          ))
+        ) : (
+          <div className="rounded-[14px] border border-dashed border-white/[0.14] bg-[#101016] p-8 text-center text-xs text-[#B4B4BE]">
+            Esta playlist está vacía. Arrastra canciones aquí o usa el buscador de abajo para añadir temas.
+          </div>
+        )}
       </div>
+
+      {/* Spotify-style Inline Add Songs Search Section */}
+      <section
+        data-surface="content"
+        className="pm-surface-card space-y-4 rounded-[16px] p-5"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-[17px] font-bold text-[#F5F5F7]">
+              Añadir canciones a «{localPl.name}»
+            </h2>
+            <p className="text-xs text-[#8E8E98]">
+              Busca temas o pulsa el menú ••• en cualquier canción de la app
+            </p>
+          </div>
+        </div>
+
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            setIsSearchingAdd(true);
+            const found = await searchTracksForPlaylist(addSearchQuery);
+            setAddSearchResults(found);
+            setIsSearchingAdd(false);
+          }}
+          className="flex items-center gap-2.5 rounded-full border border-white/[0.10] bg-[#0B0B0E] px-4 py-2"
+        >
+          <Search className="h-4 w-4 text-[#B4B4BE]" />
+          <input
+            type="search"
+            aria-label="Buscar canciones para añadir a esta playlist"
+            placeholder="Buscar canciones o artistas para añadir..."
+            value={addSearchQuery}
+            onChange={async (e) => {
+              const q = e.target.value;
+              setAddSearchQuery(q);
+              if (q.trim().length >= 2) {
+                setIsSearchingAdd(true);
+                const found = await searchTracksForPlaylist(q);
+                setAddSearchResults(found);
+                setIsSearchingAdd(false);
+              } else {
+                setAddSearchResults([]);
+              }
+            }}
+            className="flex-1 bg-transparent text-xs text-[#F5F5F7] placeholder:text-[#8E8E98] focus:outline-none"
+          />
+          {isSearchingAdd && (
+            <Loader2 className="h-4 w-4 animate-spin text-[#B4B4BE]" />
+          )}
+        </form>
+
+        <div className="space-y-1">
+          {suggestedAdds.slice(0, 6).map((t) => (
+            <div
+              key={`add-${t.id}`}
+              className="flex items-center justify-between gap-3 rounded-[10px] px-2.5 py-2 hover:bg-white/[0.06]"
+            >
+              <div className="flex min-w-0 flex-1 items-center gap-3">
+                <img
+                  src={t.thumbnailUrl}
+                  alt=""
+                  className="h-10 w-10 shrink-0 rounded-[7px] object-cover"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[13.5px] font-medium text-[#F5F5F7]">
+                    {t.title}
+                  </div>
+                  <div className="truncate text-xs text-[#8E8E98]">
+                    {t.artists.map((a) => a.name).join(', ')}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => void addTrackToPlaylist(localPl.id, t)}
+                className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-[#181822] px-3.5 py-1.5 text-xs font-semibold text-[#F5F5F7] hover:bg-white hover:text-[#070709]"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>Añadir</span>
+              </button>
+            </div>
+          ))}
+        </div>
+      </section>
     </div>
   );
 };
@@ -694,6 +925,7 @@ export const HomeScreen: React.FC = () => {
     toggleDjMode,
     openAlbumDetail,
     openArtistDetail,
+    openTrackMenu,
   } = usePMusicStore();
   const [chip, setChip] = useState<(typeof HOME_CHIPS)[number]>('Todo');
 
@@ -761,7 +993,14 @@ export const HomeScreen: React.FC = () => {
               <div
                 key={t.id}
                 data-surface="content"
-                className="group flex items-center gap-3 overflow-hidden rounded-[8px] border border-white/[0.05] bg-[#121217] pr-3 transition-colors hover:bg-[#1A1A22]"
+                draggable
+                onDragStart={(e) => setDraggedTrack(e, t)}
+                onDragEnd={() => clearDraggedTrack()}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  openTrackMenu(t, e.clientX, e.clientY);
+                }}
+                className="group flex items-center gap-3 overflow-hidden rounded-[8px] border border-white/[0.05] bg-[#121217] pr-2 transition-colors hover:bg-[#1A1A22]"
               >
                 <button
                   type="button"
@@ -782,6 +1021,17 @@ export const HomeScreen: React.FC = () => {
                       {t.artists.map((a) => a.name).join(', ')}
                     </div>
                   </div>
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Más opciones para ${t.title}`}
+                  onClick={(e) => {
+                    const r = e.currentTarget.getBoundingClientRect();
+                    openTrackMenu(t, r.left - 180, r.bottom + 6);
+                  }}
+                  className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#8E8E98] opacity-0 transition-opacity hover:bg-white/[0.10] hover:text-white group-hover:opacity-100 sm:flex"
+                >
+                  <MoreHorizontal className="h-4 w-4" />
                 </button>
                 <button
                   type="button"
@@ -831,6 +1081,7 @@ export const HomeScreen: React.FC = () => {
               image={t.thumbnailHighUrl ?? t.thumbnailUrl}
               title={t.title}
               subtitle={t.artists.map((a) => a.name).join(', ')}
+              dragTrack={t}
               onOpen={() => void playTrack(t, because.tracks)}
               onPlay={() => void playTrack(t, because.tracks)}
             />
@@ -1362,13 +1613,16 @@ export const LibraryScreen: React.FC = () => {
     setLibraryFilterQuery,
     createPlaylist,
     deletePlaylist,
+    addTrackToPlaylist,
     openLocalPlaylistDetail,
     setImportModalOpen,
     removeOfflineTrack,
     playTrack,
+    showToast,
   } = usePMusicStore();
 
   const [newPlaylistName, setNewPlaylistName] = useState('');
+  const [dragOverPlaylistId, setDragOverPlaylistId] = useState<string | null>(null);
 
   const categories: readonly LibraryCategoryTab[] = [
     'Todo',
@@ -1467,13 +1721,10 @@ export const LibraryScreen: React.FC = () => {
           <button
             type="button"
             onClick={async () => {
-              const name = newPlaylistName.trim() || 'Mi Playlist pMusic';
-              await createPlaylist(
-                name,
-                'Creada en pMusic',
-                searchResults.songs.slice(0, 4)
-              );
+              const name = newPlaylistName.trim() || `Mi Playlist #${playlists.length + 1}`;
+              const created = await createPlaylist(name, 'Creada en pMusic', []);
               setNewPlaylistName('');
+              showToast(`Playlist «${created.name}» creada`);
             }}
             className="inline-flex items-center gap-1.5 rounded-full bg-white px-4 py-2 text-xs font-bold text-[#070709]"
           >
@@ -1493,11 +1744,32 @@ export const LibraryScreen: React.FC = () => {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {filteredPlaylists.map((pl) => {
                 const thumb = pl.coverUrl ?? pl.tracks[0]?.thumbnailUrl;
+                const isDropTarget = dragOverPlaylistId === pl.id;
                 return (
                   <article
                     key={pl.id}
                     data-surface="content"
-                    className="pm-surface-card flex items-center justify-between gap-3 rounded-[12px] p-3.5"
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'copy';
+                      setDragOverPlaylistId(pl.id);
+                    }}
+                    onDragLeave={() => {
+                      if (dragOverPlaylistId === pl.id) setDragOverPlaylistId(null);
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setDragOverPlaylistId(null);
+                      const dropped = readTrackFromDropEvent(e);
+                      if (dropped) {
+                        void addTrackToPlaylist(pl.id, dropped);
+                      }
+                    }}
+                    className={`pm-surface-card flex items-center justify-between gap-3 rounded-[12px] p-3.5 transition-all ${
+                      isDropTarget
+                        ? 'bg-white/[0.12] ring-2 ring-white/75'
+                        : ''
+                    }`}
                   >
                     <div className="flex min-w-0 items-center gap-3">
                       {thumb ? (

@@ -11,12 +11,14 @@ import {
   Loader2,
   Maximize2,
   Mic2,
+  MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
   Pause,
   Play,
+  Plus,
   Repeat,
   Repeat1,
   Search,
@@ -34,6 +36,8 @@ import { formatDurationSec } from '@pmusic/core';
 import { usePMusicStore, type MainNavTab } from './store/usePMusicStore.ts';
 import { isElectronDesktopRuntime } from './platform/web-bridge.ts';
 import { PMusicLogo } from './components/PMusicLogo.tsx';
+import { AppToast, TrackContextMenu } from './components/TrackMenu.tsx';
+import { readTrackFromDropEvent } from './utils/track-dnd.ts';
 import {
   DetailViewPanel,
   HomeScreen,
@@ -102,6 +106,11 @@ export const App: React.FC = () => {
     setVolume,
     toggleMute,
     toggleLike,
+    likeTrackIfNeeded,
+    createPlaylist,
+    addTrackToPlaylist,
+    openTrackMenu,
+    showToast,
     downloadTrackOffline,
     toggleDjMode,
   } = usePMusicStore();
@@ -109,6 +118,7 @@ export const App: React.FC = () => {
   const [isMobileViewport, setIsMobileViewport] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth < 768 : false
   );
+  const [sidebarDropTargetId, setSidebarDropTargetId] = useState<string | null>(null);
   const isElectronDesktop = isElectronDesktopRuntime();
 
   const swipeStartXRef = useRef<number | null>(null);
@@ -442,30 +452,66 @@ export const App: React.FC = () => {
                 })}
               </nav>
 
-              {/* Solid Collection Shortcuts (Zero gradients) */}
+              {/* Solid Collection Shortcuts (Zero gradients, Drag & Drop Playlist Targets) */}
               {!sidebarCollapsed && (
                 <div className="space-y-1.5 border-t border-white/[0.07] pt-4">
                   <div className="flex items-center justify-between px-2">
                     <span className="text-[11px] font-semibold tracking-wider text-[#8E8E98]">
                       TU COLECCIÓN
                     </span>
-                    <button
-                      type="button"
-                      aria-label="Importar playlist"
-                      onClick={() => setImportModalOpen(true)}
-                      className="rounded-md p-1 text-[#8E8E98] hover:bg-white/[0.08] hover:text-white"
-                    >
-                      <ListMusic className="h-3.5 w-3.5" />
-                    </button>
+                    <div className="flex items-center gap-0.5">
+                      <button
+                        type="button"
+                        aria-label="Crear nueva playlist"
+                        onClick={async () => {
+                          const created = await createPlaylist(
+                            `Mi Playlist #${playlists.length + 1}`,
+                            'Creada en pMusic',
+                            []
+                          );
+                          openLocalPlaylistDetail(created.id);
+                          showToast(`Playlist «${created.name}» creada`);
+                        }}
+                        className="rounded-md p-1 text-[#8E8E98] hover:bg-white/[0.08] hover:text-white"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Importar playlist"
+                        onClick={() => setImportModalOpen(true)}
+                        className="rounded-md p-1 text-[#8E8E98] hover:bg-white/[0.08] hover:text-white"
+                      >
+                        <ListMusic className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
 
                   <button
                     type="button"
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'copy';
+                      setSidebarDropTargetId('liked');
+                    }}
+                    onDragLeave={() => {
+                      if (sidebarDropTargetId === 'liked') setSidebarDropTargetId(null);
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setSidebarDropTargetId(null);
+                      const dropped = readTrackFromDropEvent(e);
+                      if (dropped) void likeTrackIfNeeded(dropped);
+                    }}
                     onClick={() => {
                       setActiveTab('Biblioteca');
                       setLibraryCategory('Me gusta');
                     }}
-                    className="flex w-full items-center gap-3 rounded-[10px] px-2 py-2 text-left hover:bg-white/[0.07]"
+                    className={`flex w-full items-center gap-3 rounded-[10px] px-2 py-2 text-left transition-all ${
+                      sidebarDropTargetId === 'liked'
+                        ? 'bg-white/[0.14] ring-2 ring-white/75'
+                        : 'hover:bg-white/[0.07]'
+                    }`}
                   >
                     <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-[#24131B] text-[#F43F5E]">
                       <Heart className="h-4 w-4 fill-current" />
@@ -475,7 +521,9 @@ export const App: React.FC = () => {
                         Canciones que te gustan
                       </div>
                       <div className="text-[11px] text-[#8E8E98]">
-                        {likedTracks.length} pistas
+                        {sidebarDropTargetId === 'liked'
+                          ? 'Suelta para guardar'
+                          : `${likedTracks.length} pistas`}
                       </div>
                     </div>
                   </button>
@@ -501,14 +549,33 @@ export const App: React.FC = () => {
                     </div>
                   </button>
 
-                  {playlists.slice(0, 6).map((pl) => {
+                  {playlists.slice(0, 12).map((pl) => {
                     const thumb = pl.coverUrl ?? pl.tracks[0]?.thumbnailUrl;
+                    const isDropActive = sidebarDropTargetId === pl.id;
                     return (
                       <button
                         key={pl.id}
                         type="button"
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = 'copy';
+                          setSidebarDropTargetId(pl.id);
+                        }}
+                        onDragLeave={() => {
+                          if (sidebarDropTargetId === pl.id) setSidebarDropTargetId(null);
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          setSidebarDropTargetId(null);
+                          const dropped = readTrackFromDropEvent(e);
+                          if (dropped) void addTrackToPlaylist(pl.id, dropped);
+                        }}
                         onClick={() => openLocalPlaylistDetail(pl.id)}
-                        className="flex w-full items-center gap-3 rounded-[10px] px-2 py-1.5 text-left hover:bg-white/[0.07]"
+                        className={`flex w-full items-center gap-3 rounded-[10px] px-2 py-1.5 text-left transition-all ${
+                          isDropActive
+                            ? 'bg-white/[0.14] ring-2 ring-white/75'
+                            : 'hover:bg-white/[0.07]'
+                        }`}
                       >
                         {thumb ? (
                           <img
@@ -526,7 +593,7 @@ export const App: React.FC = () => {
                             {pl.name}
                           </div>
                           <div className="truncate text-[11px] text-[#8E8E98]">
-                            {pl.tracks.length} canciones
+                            {isDropActive ? '+ Soltar para añadir' : `${pl.tracks.length} canciones`}
                           </div>
                         </div>
                       </button>
@@ -577,7 +644,7 @@ export const App: React.FC = () => {
           className={
             isMobileViewport
               ? 'min-w-0 flex-1 overflow-y-auto px-4 pb-44 pt-0'
-              : 'h-full min-w-0 flex-1 overflow-y-auto px-5 pt-1 pb-6'
+              : 'h-full min-w-0 flex-1 overflow-y-auto px-7 pt-3 pb-8'
           }
         >
           {/* Mobile Top Command Bar */}
@@ -739,6 +806,17 @@ export const App: React.FC = () => {
                     ) : (
                       <Download className="h-4 w-4" />
                     )}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Más opciones para ${currentTrack.title}`}
+                    onClick={(e) => {
+                      const r = e.currentTarget.getBoundingClientRect();
+                      openTrackMenu(currentTrack, r.left - 220, r.bottom + 6);
+                    }}
+                    className="rounded-full p-2 text-[#8E8E98] hover:text-white"
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
                   </button>
                 </div>
               </div>
@@ -1178,12 +1256,14 @@ export const App: React.FC = () => {
         </>
       )}
 
-      {/* Overlays / Modals */}
+      {/* Overlays / Modals / Spotify Context Menu */}
       <NowPlayingSheet />
       <EqAndCrossfadeSheet />
       <DevicesConnectSheet />
       <ImportPlaylistModal />
       <SettingsModal />
+      <TrackContextMenu />
+      <AppToast />
     </div>
   );
 };

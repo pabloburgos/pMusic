@@ -231,6 +231,43 @@ export class LibraryStore {
     });
   }
 
+  public async removeTrackFromPlaylist(
+    playlistId: string,
+    trackId: string
+  ): Promise<PlaylistRecord | null> {
+    const pl = this.playlists.find((p) => p.id === playlistId);
+    if (!pl) return null;
+    const filtered = pl.tracks.filter((t) => t.id !== trackId);
+    if (filtered.length === pl.tracks.length) return pl;
+    return this.updatePlaylist(playlistId, {
+      tracks: filtered,
+      coverUrl: filtered[0]?.thumbnailUrl,
+    });
+  }
+
+  public async reorderPlaylistTrack(
+    playlistId: string,
+    fromIndex: number,
+    toIndex: number
+  ): Promise<PlaylistRecord | null> {
+    const pl = this.playlists.find((p) => p.id === playlistId);
+    if (!pl) return null;
+    if (
+      fromIndex < 0 ||
+      toIndex < 0 ||
+      fromIndex >= pl.tracks.length ||
+      toIndex >= pl.tracks.length ||
+      fromIndex === toIndex
+    ) {
+      return pl;
+    }
+    const copy = [...pl.tracks];
+    const [moved] = copy.splice(fromIndex, 1);
+    if (!moved) return pl;
+    copy.splice(toIndex, 0, moved);
+    return this.updatePlaylist(playlistId, { tracks: copy });
+  }
+
   public getLikedTracks(): LikedTrackRecord[] {
     return [...this.likedTracks];
   }

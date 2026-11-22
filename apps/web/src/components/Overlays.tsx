@@ -8,6 +8,7 @@ import {
   ListMusic,
   Loader2,
   Mic2,
+  MoreHorizontal,
   Pause,
   Play,
   Plus,
@@ -22,6 +23,8 @@ import {
   Smartphone,
   Sparkles,
   Trash2,
+  Volume2,
+  VolumeX,
   Wifi,
   X,
 } from 'lucide-react';
@@ -50,6 +53,7 @@ export const NowPlayingSheet: React.FC = () => {
     isPlaying,
     positionSec,
     durationSec,
+    volume,
     activeDeck,
     isTransitioning,
     activeTransitionType,
@@ -69,6 +73,9 @@ export const NowPlayingSheet: React.FC = () => {
     toggleShuffle,
     cycleRepeatMode,
     seekTo,
+    setVolume,
+    toggleMute,
+    openTrackMenu,
     toggleLike,
     downloadTrackOffline,
     toggleDjMode,
@@ -165,6 +172,7 @@ export const NowPlayingSheet: React.FC = () => {
     0,
     Math.min(100, (positionSec / Math.max(1, durationSec)) * 100)
   );
+  const volumePct = Math.round(volume * 100);
   const cueStartPct =
     djMode.enabled && activeTransitionPlan && durationSec > 10
       ? Math.max(0, Math.min(96, (activeTransitionPlan.cueOutSec / durationSec) * 100))
@@ -274,6 +282,18 @@ export const NowPlayingSheet: React.FC = () => {
               <Download className="h-5 w-5" />
             )}
           </button>
+
+          <button
+            type="button"
+            aria-label={`Más opciones para ${currentTrack.title}`}
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              openTrackMenu(currentTrack, r.left - 210, r.bottom + 8);
+            }}
+            className="pm-glass-chip flex h-10 w-10 items-center justify-center rounded-full text-[#F5F5F7]"
+          >
+            <MoreHorizontal className="h-5 w-5" />
+          </button>
         </div>
       </div>
 
@@ -308,7 +328,7 @@ export const NowPlayingSheet: React.FC = () => {
         </div>
       </div>
 
-      {/* Full Liquid Glass Floating Transport Capsule */}
+      {/* Single Outer Full Liquid Glass Floating Transport Capsule */}
       <div
         data-surface="glass"
         className="pm-glass-liquid flex items-center justify-center gap-3.5 rounded-full px-5 py-2.5 sm:gap-5"
@@ -322,7 +342,7 @@ export const NowPlayingSheet: React.FC = () => {
           }
           aria-pressed={shuffleEnabled}
           onClick={() => toggleShuffle()}
-          className={`relative flex h-9 w-9 items-center justify-center rounded-full hover:bg-white/10 ${
+          className={`relative flex h-9 w-9 items-center justify-center rounded-full hover:bg-white/15 ${
             shuffleEnabled ? 'text-white' : 'text-[#C4C4CE]'
           }`}
         >
@@ -339,7 +359,7 @@ export const NowPlayingSheet: React.FC = () => {
           type="button"
           aria-label="Canción anterior"
           onClick={() => void prevTrack()}
-          className="pm-glass-chip flex h-10 w-10 items-center justify-center rounded-full text-[#F5F5F7]"
+          className="flex h-10 w-10 items-center justify-center rounded-full text-[#F5F5F7] hover:bg-white/15"
         >
           <SkipBack className="h-5 w-5" />
         </button>
@@ -361,7 +381,7 @@ export const NowPlayingSheet: React.FC = () => {
           type="button"
           aria-label="Siguiente canción"
           onClick={() => void nextTrack()}
-          className="pm-glass-chip flex h-10 w-10 items-center justify-center rounded-full text-[#F5F5F7]"
+          className="flex h-10 w-10 items-center justify-center rounded-full text-[#F5F5F7] hover:bg-white/15"
         >
           <SkipForward className="h-5 w-5" />
         </button>
@@ -371,7 +391,7 @@ export const NowPlayingSheet: React.FC = () => {
           aria-label={repeatLabel}
           aria-pressed={repeatMode !== 'off'}
           onClick={() => cycleRepeatMode()}
-          className={`relative flex h-9 w-9 items-center justify-center rounded-full hover:bg-white/10 ${
+          className={`relative flex h-9 w-9 items-center justify-center rounded-full hover:bg-white/15 ${
             repeatMode !== 'off' ? 'text-white' : 'text-[#C4C4CE]'
           }`}
         >
@@ -387,6 +407,36 @@ export const NowPlayingSheet: React.FC = () => {
             />
           )}
         </button>
+      </div>
+
+      {/* Minimalist Player Volume Bar */}
+      <div className="flex w-full max-w-[280px] items-center gap-3 pt-1">
+        <button
+          type="button"
+          aria-label={volume === 0 ? 'Activar sonido' : 'Silenciar'}
+          onClick={() => toggleMute()}
+          className="flex h-8 w-8 items-center justify-center rounded-full text-[#C4C4CE] hover:bg-white/15 hover:text-white"
+        >
+          {volume === 0 ? (
+            <VolumeX className="h-4 w-4" />
+          ) : (
+            <Volume2 className="h-4 w-4" />
+          )}
+        </button>
+        <input
+          type="range"
+          role="slider"
+          aria-label="Volumen del reproductor"
+          min={0}
+          max={100}
+          value={volumePct}
+          onChange={(e) => setVolume(Number(e.target.value) / 100)}
+          style={{ '--pm-fill': `${volumePct}%` } as React.CSSProperties}
+          className="pm-range-subtle flex-1"
+        />
+        <span className="tabular-nums w-9 text-right text-[11px] font-medium text-[#C4C4CE]">
+          {volumePct}%
+        </span>
       </div>
     </div>
   );
@@ -418,7 +468,7 @@ export const NowPlayingSheet: React.FC = () => {
         style={{ backgroundColor: 'rgba(8, 8, 12, 0.44)' }}
       />
 
-      {/* Minimalist Full Liquid Glass Header (with Electron Windows drag & titlebar clearance) */}
+      {/* Minimalist Full Liquid Glass Header (with Electron Windows drag & optical 50% tab centering) */}
       <header
         className={`pm-drag-region relative z-10 flex items-center justify-between border-b border-white/[0.10] px-4 py-3 md:px-8 ${
           isElectronDesktop ? 'pr-[152px] md:pr-[152px]' : ''
@@ -438,7 +488,7 @@ export const NowPlayingSheet: React.FC = () => {
           role="tablist"
           aria-label="Vistas del reproductor"
           data-surface="glass"
-          className="pm-glass-liquid pm-no-drag flex items-center gap-1 rounded-full p-1"
+          className="pm-glass-liquid pm-no-drag flex items-center gap-1 rounded-full p-1 sm:absolute sm:left-1/2 sm:-translate-x-1/2"
         >
           {(['Portada', 'Letras', 'Cola'] as const).map((tab) => {
             const active = nowPlayingTab === tab;

@@ -28,6 +28,21 @@ describe('@pmusic/sync', () => {
     expect(liked).toBe(true);
     expect(store.isTrackLiked(SAMPLE_TRACK.id)).toBe(true);
     expect(store.outbox.getPending().length).toBeGreaterThanOrEqual(2);
+
+    const secondTrack: Track = {
+      ...SAMPLE_TRACK,
+      id: 'cc_02',
+      title: 'Cayetano',
+    };
+    await store.addTrackToPlaylist(pl.id, secondTrack);
+    expect(store.getPlaylists()[0]?.tracks).toHaveLength(2);
+
+    const reordered = await store.reorderPlaylistTrack(pl.id, 1, 0);
+    expect(reordered?.tracks[0]?.id).toBe('cc_02');
+
+    const trimmed = await store.removeTrackFromPlaylist(pl.id, 'cc_01');
+    expect(trimmed?.tracks).toHaveLength(1);
+    expect(trimmed?.tracks[0]?.id).toBe('cc_02');
   });
 
   it('enforces <= 8 keys on Presence payload and transfers playback at exact millisecond between devices', async () => {
