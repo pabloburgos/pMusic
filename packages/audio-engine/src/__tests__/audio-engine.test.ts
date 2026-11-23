@@ -568,6 +568,22 @@ describe('@pmusic/audio-engine', () => {
       deckAEl.dispatch('waiting');
       expect(engine.getState().isBuffering).toBe(true);
 
+      deckAEl.paused = false;
+      deckAEl.currentTime = 12.4;
+      deckAEl.dispatch('timeupdate');
+      expect(engine.getState().isBuffering).toBe(false);
+
+      const errs: string[] = [];
+      engine.onError((err) => {
+        errs.push(err.code);
+      });
+      deckAEl.dispatch('waiting');
+      expect(engine.getState().isBuffering).toBe(true);
+      deckAEl.dispatch('error');
+      expect(engine.getState().isBuffering).toBe(false);
+      expect(engine.getState().isPlaying).toBe(false);
+      expect(errs).toContain('TRACK_UNPLAYABLE');
+
       engine.pause();
       expect(engine.getState().isBuffering).toBe(false);
       expect(states).toContain(true);
@@ -609,6 +625,8 @@ describe('@pmusic/audio-engine', () => {
     try {
       await engine.init();
       await engine.loadAndPlay(SAMPLE_TRACKS[0]!, 0);
+      created[0]!.readyState = 4;
+      created[0]!.dispatch('playing');
       await new Promise((r) => setTimeout(r, 80));
 
       await engine.loadAndPlay(SAMPLE_TRACKS[0]!, 0);

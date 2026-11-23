@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { normalizeSearchText, type IMusicProvider, type SearchFilter } from '@pmusic/core';
-import { FALLBACK_TRACKS, synthesizeDeterministicWavBuffer } from './catalog-fallback.ts';
+import { FALLBACK_TRACKS } from './catalog-fallback.ts';
 import { isAuthenticLyricsText } from './lrclib.ts';
 import {
   PlaylistImporter,
@@ -15,14 +15,6 @@ export interface PMusicApiHandlerOptions {
   musicProvider?: IMusicProvider;
   authToken?: string;
   fetchFn?: typeof fetch;
-}
-
-let cachedWavBuffer: Uint8Array | null = null;
-function getCachedWavBuffer(): Uint8Array {
-  if (!cachedWavBuffer) {
-    cachedWavBuffer = synthesizeDeterministicWavBuffer(12, 122);
-  }
-  return cachedWavBuffer;
 }
 
 const textEncoder = new TextEncoder();
@@ -451,40 +443,7 @@ export function createPMusicApiHandler(options: PMusicApiHandlerOptions = {}) {
         ) {
           return true;
         }
-        const wav = getCachedWavBuffer();
-        const total = wav.byteLength;
-        res.setHeader('Accept-Ranges', 'bytes');
-        res.setHeader('Content-Type', 'audio/wav');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.setHeader('X-PMusic-Stream-Source', 'offline-wav');
-
-        const rangeHeader = req.headers.range;
-        if (typeof rangeHeader === 'string' && rangeHeader.startsWith('bytes=')) {
-          const parts = rangeHeader.slice('bytes='.length).split('-');
-          const startRaw = Number.parseInt(parts[0] ?? '0', 10);
-          const endRaw = parts[1] && parts[1].length > 0 ? Number.parseInt(parts[1], 10) : total - 1;
-          const start = Number.isFinite(startRaw) && startRaw >= 0 ? Math.min(startRaw, total - 1) : 0;
-          const end = Number.isFinite(endRaw) && endRaw >= start ? Math.min(endRaw, total - 1) : total - 1;
-          const chunk = wav.subarray(start, end + 1);
-
-          res.statusCode = 206;
-          res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
-          res.setHeader('Content-Length', chunk.byteLength);
-          if (req.method === 'HEAD') {
-            res.end();
-          } else {
-            res.end(chunk);
-          }
-          return true;
-        }
-
-        res.statusCode = 200;
-        res.setHeader('Content-Length', total);
-        if (req.method === 'HEAD') {
-          res.end();
-        } else {
-          res.end(wav);
-        }
+        sendJson(res, 503, { error: 'No se pudo cargar el audio completo de esta pista' });
         return true;
       }
 

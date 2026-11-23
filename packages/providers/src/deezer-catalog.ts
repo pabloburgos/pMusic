@@ -835,11 +835,222 @@ export class DeezerCatalog {
   public async related(trackId: string, signal?: AbortSignal): Promise<RelatedResult> {
     const raw = trackId.replace(DZ_PREFIX, '');
     const t = await this.get(`/track/${encodeURIComponent(raw)}`, signal);
-    const radio = await this.get(`/artist/${t.artist.id}/radio?limit=30`, signal);
-    const rel = await this.get(`/artist/${t.artist.id}/related?limit=6`, signal);
+    const seedTrackId = toTrackId(raw);
+    const seedArtistId = t?.artist?.id ? String(t.artist.id) : '';
+    const seedArtistName = String(t?.artist?.name ?? '').trim();
+    const seedAlbumId = t?.album?.id ? String(t.album.id) : '';
+
+    const [relRes, radioRes, artistTopRes, albumRes, playlistSearchRes] = await Promise.allSettled([
+      seedArtistId
+        ? this.get(`/artist/${encodeURIComponent(seedArtistId)}/related?limit=10`, signal)
+        : Promise.resolve({ data: [] }),
+      seedArtistId
+        ? this.get(`/artist/${encodeURIComponent(seedArtistId)}/radio?limit=25`, signal)
+        : Promise.resolve({ data: [] }),
+      seedArtistId
+        ? this.get(`/artist/${encodeURIComponent(seedArtistId)}/top?limit=15`, signal)
+        : Promise.resolve({ data: [] }),
+      seedAlbumId
+        ? this.get(`/album/${encodeURIComponent(seedAlbumId)}`, signal)
+        : Promise.resolve(null),
+      seedArtistName
+        ? this.get(`/search/playlist?q=${encodeURIComponent(seedArtistName)}&limit=6`, signal)
+        : Promise.resolve({ data: [] }),
+    ]);
+
+    const relArtistsRaw: Json[] =
+      relRes.status === 'fulfilled' && Array.isArray(relRes.value?.data) ? relRes.value.data : [];
+    const radioRaw: Json[] =
+      radioRes.status === 'fulfilled' && Array.isArray(radioRes.value?.data)
+        ? radioRes.value.data
+        : [];
+    const artistTopRaw: Json[] =
+      artistTopRes.status === 'fulfilled' && Array.isArray(artistTopRes.value?.data)
+        ? artistTopRes.value.data
+        : [];
+    const albumData: Json | null = albumRes.status === 'fulfilled' ? albumRes.value : null;
+    const playlistsRaw: Json[] =
+      playlistSearchRes.status === 'fulfilled' && Array.isArray(playlistSearchRes.value?.data)
+        ? playlistSearchRes.value.data
+        : [];
+
+    // Gather collaborator IDs from the seed track & artist's top tracks (vital for underground scenes)
+    const collabIds: string[] = [];
+    const collabSet = new Set<string>();
+    const addCollabId = (idVal: unknown) => {
+      const idStr = idVal !== undefined && idVal !== null ? String(idVal).trim() : '';
+      if (!idStr || idStr === seedArtistId || collabSet.has(idStr)) return;
+      collabSet.add(idStr);
+      collabIds.push(idStr);
+    };
+
+    if (Array.isArray(t?.contributors)) {
+      for (const c of t.contributors) addCollabId(c?.id);
+    }
+    for (const topItem of artistTopRaw) {
+      if (topItem?.artist?.id) addCollabId(topItem.artist.id);
+      if (Array.isArray(topItem?.contributors)) {
+        for (const c of topItem.contributors) addCollabId(c?.id);
+      }
+    }
+
+    // If Deezer omitted contributor IDs on underground tracks, resolve featured artists by name
+    if (collabIds.length < 3) {
+      const candidateNames: string[] = [
+        ...parseFeaturedArtistsFromTitle(String(t?.title ?? '')),
+        ...artistTopRaw.slice(0, 6).flatMap((x) => parseFeaturedArtistsFromTitle(String(x?.title ?? ''))),
+      ].filter(
+        (name, idx, arr) =>
+          name.toLowerCase() !== seedArtistName.toLowerCase() &&
+          arr.findIndex((other) => other.toLowerCase() === name.toLowerCase()) === idx
+      );
+      if (candidateNames.length > 0) {
+        const lookedUp = await Promise.allSettled(
+          candidateNames.slice(0, 3).map((name) =>
+            this.get(`/search/artist?q=${encodeURIComponent(name)}&limit=3`, signal)
+          )
+        );
+        for (let i = 0; i < lookedUp.length; i++) {
+          const item = lookedUp[i];
+          if (item?.status !== 'fulfilled') continue;
+          const hits: Json[] = item.value?.data ?? [];
+          const want = candidateNames[i]!.toLowerCase();
+          const exact =
+            hits.find((a) => String(a?.name ?? '').trim().toLowerCase() === want) ?? hits[0];
+          if (exact?.id) addCollabId(exact.id);
+        }
+      }
+    }
+
+    const peerIdsToFetch = [
+      ...collabIds.slice(0, 4),
+      ...relArtistsRaw
+        .map((a) => String(a?.id ?? '').trim())
+        .filter((idStr) => idStr && idStr !== seedArtistId && !collabSet.has(idStr))
+        .slice(0, 4),
+    ];
+
+    const scenePlaylists = playlistsRaw
+      .filter((p) => {
+        const n = Number(p?.nb_tracks ?? 0);
+        return p?.id && n >= 5 && n <= 180;
+      })
+      .slice(0, 2);
+
+    const [peerTopResponses, playlistResponses] = await Promise.all([
+      Promise.allSettled(
+        peerIdsToFetch.map((idStr) =>
+          this.get(`/artist/${encodeURIComponent(idStr)}/top?limit=5`, signal)
+        )
+      ),
+      Promise.allSettled(
+        scenePlaylists.map((p) =>
+          this.get(`/playlist/${encodeURIComponent(String(p.id))}/tracks?limit=40`, signal)
+        )
+      ),
+    ]);
+
+    const collabTracks: Track[] = [];
+    const relArtistTracks: Track[] = [];
+    peerTopResponses.forEach((res, idx) => {
+      if (res.status !== 'fulfilled' || !Array.isArray(res.value?.data)) return;
+      const mapped = res.value.data.map((x: Json) => this.mapTrack(x));
+      if (idx < collabIds.slice(0, 4).length) {
+        collabTracks.push(...mapped);
+      } else {
+        relArtistTracks.push(...mapped);
+      }
+    });
+
+    const playlistSceneTracks: Track[] = [];
+    playlistResponses.forEach((res, idx) => {
+      if (res.status !== 'fulfilled' || !Array.isArray(res.value?.data)) return;
+      const rawItems: Json[] = res.value.data;
+      const plTitle = String(scenePlaylists[idx]?.title ?? '').toLowerCase();
+      const seedLower = seedArtistName.toLowerCase();
+      const containsSeed =
+        (seedLower.length >= 3 && plTitle.includes(seedLower)) ||
+        rawItems.some(
+          (item) =>
+            (seedArtistId && String(item?.artist?.id ?? '') === seedArtistId) ||
+            (seedLower && String(item?.artist?.name ?? '').toLowerCase() === seedLower)
+        );
+      if (!containsSeed) return;
+      playlistSceneTracks.push(...rawItems.map((x: Json) => this.mapTrack(x)));
+    });
+
+    const radioTracks = radioRaw.map((x: Json) => this.mapTrack(x));
+    const seedOtherTracks = artistTopRaw
+      .map((x: Json) => this.mapTrack(x))
+      .filter((tr) => !seedAlbumId || tr.album?.id !== seedAlbumId);
+
+    // Same-genre cushion ONLY if artist radio, collaborators, related artists & playlists produced < 8 tracks
+    const preCount =
+      collabTracks.length +
+      relArtistTracks.length +
+      playlistSceneTracks.length +
+      radioTracks.length +
+      seedOtherTracks.length;
+    const genreTracks: Track[] = [];
+    const genreId = Number(albumData?.genres?.data?.[0]?.id ?? albumData?.genre_id ?? -1);
+    if (preCount < 8 && Number.isFinite(genreId) && genreId > 0) {
+      const genreRes = await this.get(`/chart/${genreId}/tracks?limit=15`, signal).catch(() => ({
+        data: [],
+      }));
+      if (Array.isArray(genreRes?.data)) {
+        genreTracks.push(...genreRes.data.map((x: Json) => this.mapTrack(x)));
+      }
+    }
+
+    // Interleave style-matched pools cleanly while capping any single artist/album from dominating
+    const pools: Track[][] = [
+      collabTracks,
+      playlistSceneTracks,
+      relArtistTracks,
+      radioTracks,
+      seedOtherTracks,
+      genreTracks,
+    ];
+    const cursors = pools.map(() => 0);
+    const seenIds = new Set<string>([seedTrackId]);
+    const seenTitleArtist = new Set<string>();
+    if (t?.title && seedArtistName) {
+      seenTitleArtist.add(
+        `${String(t.title).trim().toLowerCase()}::${seedArtistName.toLowerCase()}`
+      );
+    }
+    const artistCounts = new Map<string, number>();
+    const mixed: Track[] = [];
+
+    let progressed = true;
+    while (mixed.length < 30 && progressed) {
+      progressed = false;
+      for (let pIdx = 0; pIdx < pools.length && mixed.length < 30; pIdx++) {
+        const pool = pools[pIdx]!;
+        while (cursors[pIdx]! < pool.length) {
+          const cand = pool[cursors[pIdx]!]!;
+          cursors[pIdx]!++;
+          if (!cand?.id || seenIds.has(cand.id)) continue;
+          const primaryArtist = (cand.artists[0]?.name ?? '').trim().toLowerCase();
+          const normKey = `${cand.title.trim().toLowerCase()}::${primaryArtist}`;
+          if (seenTitleArtist.has(normKey)) continue;
+          const aCount = artistCounts.get(primaryArtist) ?? 0;
+          const maxForArtist =
+            seedArtistName && primaryArtist === seedArtistName.toLowerCase() ? 3 : 2;
+          if (primaryArtist && aCount >= maxForArtist) continue;
+          seenIds.add(cand.id);
+          seenTitleArtist.add(normKey);
+          if (primaryArtist) artistCounts.set(primaryArtist, aCount + 1);
+          mixed.push(cand);
+          progressed = true;
+          break;
+        }
+      }
+    }
+
     return {
-      tracks: (radio.data ?? []).map((x: Json) => this.mapTrack(x)),
-      artists: (rel.data ?? []).map((r: Json) => this.mapArtist(r)),
+      tracks: mixed,
+      artists: relArtistsRaw.map((r: Json) => this.mapArtist(r)),
       playlists: [],
     } as RelatedResult;
   }

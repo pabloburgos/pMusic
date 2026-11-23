@@ -5,6 +5,7 @@ import {
   LrclibLyricsProvider,
   PlaylistImporter,
   YouTubeMusicProvider,
+  createPMusicApiHandler,
   isAuthenticLyricsText,
   parseFeaturedArtistsFromTitle,
   parseSpotifyEmbedHtml,
@@ -476,5 +477,139 @@ describe('@pmusic/providers', () => {
     });
     expect(doc.status).toBe('not_found');
     expect(doc.lines).toHaveLength(0);
+  });
+
+  it('keeps underground style-matched recommendations resilient when artist radio fails', async () => {
+    const mockFetch = (async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes('/track/8801')) {
+        return new Response(
+          JSON.stringify({
+            id: 8801,
+            title: 'DIABLA',
+            duration: 186,
+            artist: { id: 501, name: 'Pablete' },
+            album: { id: 9901, title: 'DIABLA', cover_medium: 'https://example.com/d.jpg' },
+            contributors: [
+              { id: 501, name: 'Pablete' },
+              { id: 502, name: 'ScenePeer' },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('/artist/501/radio')) {
+        return new Response(JSON.stringify({ error: { message: 'no data' } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (u.includes('/artist/501/related') || u.includes('/artist/501/top')) {
+        return new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (u.includes('/album/9901')) {
+        return new Response(
+          JSON.stringify({ id: 9901, title: 'DIABLA', genres: { data: [{ id: 116 }] } }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('/artist/502/top')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 7701,
+                title: 'Noche Under',
+                duration: 175,
+                artist: { id: 502, name: 'ScenePeer' },
+                album: { id: 9902, title: 'Under Tape', cover_medium: 'https://example.com/u.jpg' },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('/search/playlist?')) {
+        return new Response(
+          JSON.stringify({
+            data: [{ id: 3301, title: 'Underground ES', nb_tracks: 24 }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('/playlist/3301/tracks')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 8801,
+                title: 'DIABLA',
+                duration: 186,
+                artist: { id: 501, name: 'Pablete' },
+                album: { id: 9901, title: 'DIABLA' },
+              },
+              {
+                id: 7702,
+                title: 'Calle Oscura',
+                duration: 192,
+                artist: { id: 503, name: 'UnderBoy' },
+                album: { id: 9903, title: 'Oscura', cover_medium: 'https://example.com/o.jpg' },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      return new Response(JSON.stringify({ data: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    const catalog = new DeezerCatalog(mockFetch);
+    const rel = await catalog.related('dz:8801');
+    const titles = rel.tracks.map((t) => t.title);
+    expect(titles).toContain('Noche Under');
+    expect(titles).toContain('Calle Oscura');
+    expect(titles).not.toContain('DIABLA');
+  });
+
+  it('returns HTTP 503 JSON instead of 12s WAV tone or 30s preview when stream resolution fails', async () => {
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ data: [] }), { status: 500 })) as typeof fetch;
+    try {
+      const handler = createPMusicApiHandler({ fetchFn: globalThis.fetch });
+      const headers: Record<string, string | number> = {};
+      let bodyBytes = Buffer.alloc(0);
+      const fakeReq = {
+        method: 'GET',
+        url: '/api/stream/dz:999888?title=Inexistente&artist=Nadie',
+        headers: { host: '127.0.0.1' },
+      } as unknown as import('node:http').IncomingMessage;
+      const fakeRes = {
+        statusCode: 200,
+        setHeader(k: string, v: string | number) {
+          headers[k.toLowerCase()] = v;
+        },
+        end(chunk?: unknown) {
+          if (chunk) {
+            bodyBytes = Buffer.from(chunk as Uint8Array);
+          }
+        },
+      } as unknown as import('node:http').ServerResponse;
+
+      const handled = await handler(fakeReq, fakeRes);
+      expect(handled).toBe(true);
+      expect(fakeRes.statusCode).toBe(503);
+      expect(String(headers['content-type'])).toContain('application/json');
+      const parsed = JSON.parse(bodyBytes.toString('utf-8')) as { error?: string };
+      expect(parsed.error).toBeTruthy();
+    } finally {
+      globalThis.fetch = prevFetch;
+    }
   });
 });

@@ -16,7 +16,7 @@ import './styles/index.css';
 import { App } from './App.tsx';
 
 if (typeof document !== 'undefined') {
-  document.documentElement.classList.add('pm-liquid-glass-all');
+  document.documentElement.classList.add('pm-surface-liquid', 'pm-liquid-glass-all');
 }
 
 const container = document.getElementById('root');

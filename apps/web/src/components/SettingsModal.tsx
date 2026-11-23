@@ -83,6 +83,7 @@ export const SettingsModal: React.FC = () => {
     themeId,
     playerBarStyle,
     accentPreset,
+    surfaceStyle,
     liquidGlassMode,
     ambientMotionEnabled,
     visualizerEnabled,
@@ -111,6 +112,7 @@ export const SettingsModal: React.FC = () => {
     setTheme,
     setPlayerBarStyle,
     setAccentPreset,
+    setSurfaceStyle,
     setLiquidGlassMode,
     setAmbientMotionEnabled,
     setVisualizerEnabled,
@@ -287,7 +289,7 @@ export const SettingsModal: React.FC = () => {
                   </p>
                 </div>
 
-                {/* Interactive Material Selector FIRST: Liquid/Frosted Glass vs Solid Modern */}
+                {/* Interactive Material Selector FIRST: Full Liquid Glass vs Full Frosted Glass vs Sencillo */}
                 <section
                   data-surface="content"
                   className="pm-surface-card space-y-3 rounded-[16px] p-4"
@@ -298,7 +300,7 @@ export const SettingsModal: React.FC = () => {
                         Material de la interfaz
                       </div>
                       <p className="text-xs pm-text-secondary">
-                        Elige entre cristal translúcido Frosted/Liquid o acabado moderno sólido mate
+                        Unifica toda la app en un mismo acabado: cristal líquido, cristal esmerilado o sencillo
                       </p>
                     </div>
                     <button
@@ -312,52 +314,86 @@ export const SettingsModal: React.FC = () => {
                         liquidGlassMode ? 'pm-btn-primary' : 'pm-btn-secondary'
                       }`}
                     >
-                      {liquidGlassMode ? 'Liquid Glass Activo' : 'Sólido Moderno'}
+                      {surfaceStyle === 'liquid-glass'
+                        ? 'Full Liquid Glass'
+                        : surfaceStyle === 'frosted-glass'
+                          ? 'Full Frosted Glass'
+                          : 'Sencillo'}
                     </button>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
                     <button
                       type="button"
-                      aria-pressed={liquidGlassMode}
-                      onClick={() => setLiquidGlassMode(true)}
+                      data-testid="surface-style-liquid-glass"
+                      aria-pressed={surfaceStyle === 'liquid-glass'}
+                      onClick={() => setSurfaceStyle('liquid-glass')}
                       className={`pm-surface-card pm-card-lift flex flex-col gap-2 rounded-[14px] p-3.5 text-left ${
-                        liquidGlassMode ? 'ring-2 ring-[var(--pm-accent-primary)]' : ''
+                        surfaceStyle === 'liquid-glass' ? 'ring-2 ring-[var(--pm-accent-primary)]' : ''
                       }`}
                     >
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between gap-1.5">
                         <span className="text-xs font-bold pm-text-primary">
-                          Frosted & Liquid Glass
+                          Full Liquid Glass
                         </span>
-                        {liquidGlassMode && (
-                          <span className="pm-btn-primary inline-flex h-4 w-4 items-center justify-center rounded-full">
+                        {surfaceStyle === 'liquid-glass' && (
+                          <span className="pm-btn-primary inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full">
                             <Check className="h-2.5 w-2.5" />
                           </span>
                         )}
                       </div>
-                      <div className="relative flex h-11 items-center gap-2 overflow-hidden rounded-lg border border-white/15 bg-gradient-to-r from-purple-500/25 via-sky-500/20 to-rose-500/25 px-3">
-                        <span className="h-5 w-10 rounded-full border border-white/30 bg-white/20 shadow-[inset_0_1px_0_rgba(255,255,255,0.35)]" />
-                        <span className="h-2 flex-1 rounded-full bg-white/30" />
+                      <div className="relative flex h-11 items-center gap-2 overflow-hidden rounded-lg border border-white/25 bg-gradient-to-br from-white/20 via-sky-500/20 to-purple-500/25 px-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.4)]">
+                        <span className="h-5 w-10 rounded-full border border-white/35 bg-white/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)]" />
+                        <span className="h-2 flex-1 rounded-full bg-white/35" />
                       </div>
                       <p className="text-[11px] pm-text-secondary">
-                        Menús emergentes, barras y paneles translúcidos con profundidad y desenfoque real
+                        Cristal óptico translúcido con brillos especulares y desenfoque en botones, tarjetas y menús
                       </p>
                     </button>
 
                     <button
                       type="button"
-                      aria-pressed={!liquidGlassMode}
-                      onClick={() => setLiquidGlassMode(false)}
+                      data-testid="surface-style-frosted-glass"
+                      aria-pressed={surfaceStyle === 'frosted-glass'}
+                      onClick={() => setSurfaceStyle('frosted-glass')}
                       className={`pm-surface-card pm-card-lift flex flex-col gap-2 rounded-[14px] p-3.5 text-left ${
-                        !liquidGlassMode ? 'ring-2 ring-[var(--pm-accent-primary)]' : ''
+                        surfaceStyle === 'frosted-glass' ? 'ring-2 ring-[var(--pm-accent-primary)]' : ''
                       }`}
                     >
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between gap-1.5">
                         <span className="text-xs font-bold pm-text-primary">
-                          Sólido Moderno Mate
+                          Full Frosted Glass
                         </span>
-                        {!liquidGlassMode && (
-                          <span className="pm-btn-primary inline-flex h-4 w-4 items-center justify-center rounded-full">
+                        {surfaceStyle === 'frosted-glass' && (
+                          <span className="pm-btn-primary inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full">
+                            <Check className="h-2.5 w-2.5" />
+                          </span>
+                        )}
+                      </div>
+                      <div className="relative flex h-11 items-center gap-2 overflow-hidden rounded-lg border border-white/12 bg-white/10 px-3 backdrop-blur-md">
+                        <span className="h-5 w-10 rounded-full border border-white/15 bg-white/15" />
+                        <span className="h-2 flex-1 rounded-full bg-white/22" />
+                      </div>
+                      <p className="text-[11px] pm-text-secondary">
+                        Acabado esmerilado mate uniforme sin reflejos brillantes ni bordes luminosos
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      data-testid="surface-style-simple"
+                      aria-pressed={surfaceStyle === 'simple'}
+                      onClick={() => setSurfaceStyle('simple')}
+                      className={`pm-surface-card pm-card-lift flex flex-col gap-2 rounded-[14px] p-3.5 text-left ${
+                        surfaceStyle === 'simple' ? 'ring-2 ring-[var(--pm-accent-primary)]' : ''
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-1.5">
+                        <span className="text-xs font-bold pm-text-primary">
+                          Sencillo
+                        </span>
+                        {surfaceStyle === 'simple' && (
+                          <span className="pm-btn-primary inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full">
                             <Check className="h-2.5 w-2.5" />
                           </span>
                         )}
@@ -367,7 +403,7 @@ export const SettingsModal: React.FC = () => {
                         <span className="h-2 flex-1 rounded-full bg-current opacity-20" />
                       </div>
                       <p className="text-[11px] pm-text-secondary">
-                        Superficies opacas nítidas con cero transparencia y máximo ahorro gráfico
+                        Superficies sólidas limpias y planas, cero transparencia y máximo rendimiento
                       </p>
                     </button>
                   </div>

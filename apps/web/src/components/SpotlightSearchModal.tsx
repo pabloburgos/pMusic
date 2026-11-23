@@ -76,7 +76,7 @@ export const SpotlightSearchModal: React.FC = () => {
             setSpotlightOpen(false);
             setActiveTab('Buscar');
           }}
-          className="pm-elevated pm-border flex items-center gap-3 rounded-[14px] border px-4 py-2.5 shadow-[0_24px_64px_rgba(0,0,0,0.45)] focus-within:border-[var(--pm-border-strong)]"
+          className="pm-input flex items-center gap-3 rounded-[14px] px-4 py-2.5 shadow-[0_24px_64px_rgba(0,0,0,0.45)] focus-within:border-[var(--pm-border-strong)]"
         >
           <Search className="h-4 w-4 shrink-0 pm-text-tertiary" />
           <input
@@ -110,7 +110,7 @@ export const SpotlightSearchModal: React.FC = () => {
         {/* Floating Dropdown Card */}
         <div
           data-testid="spotlight-search-panel"
-          className="pm-panel mt-2 max-h-[68vh] overflow-y-auto rounded-[16px] p-2 shadow-[0_32px_84px_rgba(0,0,0,0.55)] pm-no-scrollbar"
+          className="pm-glass-regular mt-2 max-h-[68vh] overflow-y-auto rounded-[16px] p-2 shadow-[0_32px_84px_rgba(0,0,0,0.55)] pm-no-scrollbar"
         >
           {!hasQuery ? (
             <div>

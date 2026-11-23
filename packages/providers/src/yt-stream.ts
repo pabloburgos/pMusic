@@ -10,7 +10,7 @@ export interface AudioStreamMeta {
   durationSec?: number;
 }
 
-export type StreamSourceKind = 'youtube-full' | 'deezer-preview';
+export type StreamSourceKind = 'youtube-full';
 
 interface Resolved {
   url: string;
@@ -257,9 +257,14 @@ export class AudioStreamResolver {
 
         const adaptiveAudio = (info.streaming_data?.adaptive_formats ?? [])
           .filter((f: any) => Boolean(f?.has_audio) && !f?.has_video)
-          .sort((a: any, b: any) => Number(b?.bitrate ?? 0) - Number(a?.bitrate ?? 0));
+          .sort((a: any, b: any) => {
+            const aMp4 = String(a?.mime_type ?? '').includes('mp4') ? 1 : 0;
+            const bMp4 = String(b?.mime_type ?? '').includes('mp4') ? 1 : 0;
+            if (aMp4 !== bMp4) return bMp4 - aMp4;
+            return Number(b?.bitrate ?? 0) - Number(a?.bitrate ?? 0);
+          });
 
-        for (const fmt of [...progressive, ...adaptiveAudio]) {
+        for (const fmt of [...adaptiveAudio, ...progressive]) {
           try {
             const url = await fmt?.decipher(yt.session.player);
             if (!url) continue;
@@ -342,7 +347,8 @@ export class AudioStreamResolver {
       info.artist.split(/,|&|\bfeat\.?\b|\bft\.?\b/i)[0]?.trim() || info.artist.trim();
     const focusedQuery = `${primaryArtist} ${strippedTitle}`.trim();
 
-    // 1) Priority: YouTube Music official songs search with strict validation gate
+    // 1) Priority: YouTube Music official songs search (strict then relaxed for underground tracks)
+    const relaxedYtm: Array<{ id: string; score: number }> = [];
     try {
       const ytMusicRes = await yt.music.search(focusedQuery, { type: 'song' });
       const musicCandidates: Array<{ id: string; score: number }> = [];
@@ -356,14 +362,21 @@ export class AudioStreamResolver {
             .map((a: any) => a?.name ?? '')
             .filter(Boolean)
             .join(', ');
+          const candTitleStr = String(item?.title ?? item?.name ?? '');
           const score = scoreAudioCandidate(info, {
-            candidateTitle: String(item?.title ?? item?.name ?? ''),
+            candidateTitle: candTitleStr,
             candidateArtists: itemArtists,
             candidateDurationSec: dur,
             isYtMusicSong: true,
           });
           if (score >= 6) {
             musicCandidates.push({ id, score });
+          } else if (dur >= 45 && dur <= 900) {
+            const normCand = normText(candTitleStr);
+            const normTok = tokenize(strippedTitle).filter((t) => t.length >= 3);
+            if (normTok.some((t) => normCand.includes(t)) && !BAD_VERSION_RE.test(normCand)) {
+              relaxedYtm.push({ id, score: Number.isFinite(score) ? score : 0 });
+            }
           }
         }
       }
@@ -376,30 +389,43 @@ export class AudioStreamResolver {
       // fall through to standard YouTube video search
     }
 
-    // 2) Fallback: Standard YouTube video search with focused queries & strict gate
+    // 2) Fallback: Standard YouTube video search with focused queries + underground relaxed rescue
     const queries = Array.from(
       new Set([
         primaryArtist ? `${primaryArtist} - ${strippedTitle} audio` : strippedTitle,
         primaryArtist ? `${primaryArtist} ${strippedTitle} topic` : '',
         focusedQuery,
+        primaryArtist ? `${strippedTitle} ${primaryArtist}` : '',
       ].filter(Boolean))
     );
+    const relaxedYt: Array<{ id: string; score: number }> = [];
     for (const q of queries) {
       try {
         const res = await yt.search(q, { type: 'video' });
-        const candidates = (res?.videos ?? [])
-          .filter((v: any) => v?.id && Number(v.duration?.seconds) >= 40)
-          .map((v: any) => ({
-            id: String(v.id),
-            score: scoreAudioCandidate(info, {
-              candidateTitle: String(v.title?.text ?? ''),
-              candidateAuthor: String(v.author?.name ?? ''),
-              candidateDurationSec: Number(v.duration.seconds),
-              isYtMusicSong: false,
-            }),
-          }))
-          .filter((c: { id: string; score: number }) => c.score >= 6)
-          .sort((a: any, b: any) => b.score - a.score);
+        const candidates: Array<{ id: string; score: number }> = [];
+        for (const v of res?.videos ?? []) {
+          const vid = String(v?.id ?? '');
+          const dur = Number(v?.duration?.seconds ?? 0);
+          if (!vid || dur < 40) continue;
+          const candTitleStr = String(v.title?.text ?? '');
+          const candAuthor = String(v.author?.name ?? '');
+          const sc = scoreAudioCandidate(info, {
+            candidateTitle: candTitleStr,
+            candidateAuthor: candAuthor,
+            candidateDurationSec: dur,
+            isYtMusicSong: false,
+          });
+          if (sc >= 6) {
+            candidates.push({ id: vid, score: sc });
+          } else if (dur >= 45 && dur <= 900) {
+            const normCand = normText(candTitleStr);
+            const normTok = tokenize(strippedTitle).filter((t) => t.length >= 3);
+            if (normTok.some((t) => normCand.includes(t)) && !BAD_VERSION_RE.test(normCand)) {
+              relaxedYt.push({ id: vid, score: Number.isFinite(sc) ? sc : 0 });
+            }
+          }
+        }
+        candidates.sort((a, b) => b.score - a.score);
 
         for (const c of candidates.slice(0, 3)) {
           const resolved = await this.decipherVideo(yt, c.id);
@@ -408,6 +434,17 @@ export class AudioStreamResolver {
       } catch {
         // try next query
       }
+    }
+
+    // 3) Underground / obscure rescue pass (strict title token matched, duration >= 45s)
+    const allRelaxed = [...relaxedYtm, ...relaxedYt].sort((a, b) => b.score - a.score);
+    const seenIds = new Set<string>();
+    for (const c of allRelaxed) {
+      if (seenIds.has(c.id)) continue;
+      seenIds.add(c.id);
+      const resolved = await this.decipherVideo(yt, c.id);
+      if (resolved) return resolved;
+      if (seenIds.size >= 4) break;
     }
 
     return null;
@@ -426,17 +463,6 @@ export class AudioStreamResolver {
           r = await this.resolveYoutube(trackId, meta);
         } catch {
           r = null;
-        }
-        if (!r && isDeezerTrackId(trackId)) {
-          const preview = await this.catalog.previewUrl(trackId).catch(() => null);
-          if (preview) {
-            r = {
-              url: preview,
-              mime: 'audio/mpeg',
-              source: 'deezer-preview',
-              expiresAt: Date.now() + 10 * 60_000,
-            };
-          }
         }
         if (r) this.cache.set(cacheKey, r);
         return r;

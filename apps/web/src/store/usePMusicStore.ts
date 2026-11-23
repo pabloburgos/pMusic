@@ -77,6 +77,18 @@ export type NowPlayingSubTab = 'Portada' | 'Letras' | 'Cola';
 export type SearchScopeTab = 'Todo' | 'Canciones' | 'Artistas' | 'Álbumes' | 'Playlists';
 export type LibraryCategoryTab = 'Todo' | 'Playlists' | 'Me gusta' | 'Descargas' | 'Historial';
 export type OfflineDownloadStatus = 'idle' | 'downloading' | 'downloaded' | 'error';
+export type PMusicSurfaceStyle = 'liquid-glass' | 'frosted-glass' | 'simple';
+
+function applySurfaceStyleClasses(style: PMusicSurfaceStyle): void {
+  if (typeof document === 'undefined') return;
+  const cls = document.documentElement.classList;
+  cls.toggle('pm-surface-liquid', style === 'liquid-glass');
+  cls.toggle('pm-surface-frosted', style === 'frosted-glass');
+  cls.toggle('pm-surface-simple', style === 'simple');
+  cls.toggle('pm-liquid-glass-all', style === 'liquid-glass');
+  cls.toggle('pm-solid-modern', style === 'simple');
+  cls.toggle('pm-reduced-transparency', style === 'simple');
+}
 
 export type RecentSearchItem =
   | { kind: 'track'; id: string; track: Track; addedAtMs: number }
@@ -316,6 +328,7 @@ export interface PMusicStoreState {
   activeDetailView: ActiveDetailView;
   detailViewHistory: Exclude<ActiveDetailView, null>[];
   isOfflineNetwork: boolean;
+  surfaceStyle: PMusicSurfaceStyle;
   liquidGlassMode: boolean;
   ambientMotionEnabled: boolean;
   graphicSaverMode: boolean;
@@ -536,6 +549,7 @@ export interface PMusicStoreState {
     volume01?: number
   ) => Promise<void>;
   transferPlaybackToDevice: (targetDeviceId: string) => Promise<void>;
+  setSurfaceStyle: (style: PMusicSurfaceStyle) => void;
   setLiquidGlassMode: (enabled: boolean) => void;
   setGraphicSaverMode: (enabled: boolean) => void;
   setReducedMotionPref: (enabled: boolean) => void;
@@ -858,6 +872,12 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         completionRatio: 1.0,
       });
       void st.nextTrack(true);
+    });
+
+    audioEngine.onError?.((err) => {
+      set({ isBuffering: false, isPlaying: false });
+      syncDiscordPresenceState();
+      get().showToast(err.message || 'No se pudo cargar el audio completo de esta pista');
     });
 
     syncEngine.onDevicesChanged((devices) => {
@@ -1272,6 +1292,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       themeId: st.themeId,
       playerBarStyle: st.playerBarStyle,
       accentPreset: st.accentPreset,
+      surfaceStyle: st.surfaceStyle,
       liquidGlassMode: st.liquidGlassMode,
       ambientMotionEnabled: st.ambientMotionEnabled,
       graphicSaverMode: st.graphicSaverMode,
@@ -1314,6 +1335,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   activeDetailView: null,
   detailViewHistory: [],
   isOfflineNetwork: typeof navigator !== 'undefined' ? !navigator.onLine : false,
+  surfaceStyle: 'liquid-glass',
   liquidGlassMode: true,
   ambientMotionEnabled: true,
   graphicSaverMode: false,
@@ -1618,17 +1640,22 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       hydratedPrefs = null;
     }
 
-    const resolvedLiquidGlass =
-      hydratedPrefs && typeof hydratedPrefs.liquidGlassMode === 'boolean'
-        ? hydratedPrefs.liquidGlassMode
-        : hydratedPrefs
-          ? !Boolean(hydratedPrefs.graphicSaverMode)
-          : get().liquidGlassMode;
+    const resolvedSurfaceStyle: PMusicSurfaceStyle =
+      hydratedPrefs &&
+      (hydratedPrefs.surfaceStyle === 'liquid-glass' ||
+        hydratedPrefs.surfaceStyle === 'frosted-glass' ||
+        hydratedPrefs.surfaceStyle === 'simple')
+        ? hydratedPrefs.surfaceStyle
+        : hydratedPrefs && typeof hydratedPrefs.liquidGlassMode === 'boolean'
+          ? hydratedPrefs.liquidGlassMode
+            ? 'liquid-glass'
+            : 'simple'
+          : hydratedPrefs && hydratedPrefs.graphicSaverMode
+            ? 'simple'
+            : get().surfaceStyle;
 
+    applySurfaceStyleClasses(resolvedSurfaceStyle);
     if (typeof document !== 'undefined') {
-      document.documentElement.classList.toggle('pm-liquid-glass-all', resolvedLiquidGlass);
-      document.documentElement.classList.toggle('pm-solid-modern', !resolvedLiquidGlass);
-      document.documentElement.classList.toggle('pm-reduced-transparency', !resolvedLiquidGlass);
       document.documentElement.classList.toggle(
         'pm-reduced-motion',
         Boolean(hydratedPrefs?.reducedMotionPref)
@@ -1703,9 +1730,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
                 : prev.playerBarStyle,
             accentPreset:
               (hydratedPrefs.accentPreset as PMusicAccentPresetId) ?? prev.accentPreset,
-            liquidGlassMode: resolvedLiquidGlass,
+            surfaceStyle: resolvedSurfaceStyle,
+            liquidGlassMode: resolvedSurfaceStyle === 'liquid-glass',
             ambientMotionEnabled: Boolean(hydratedPrefs.ambientMotionEnabled ?? prev.ambientMotionEnabled),
-            graphicSaverMode: !resolvedLiquidGlass,
+            graphicSaverMode: resolvedSurfaceStyle === 'simple',
             reducedMotionPref: Boolean(hydratedPrefs.reducedMotionPref ?? prev.reducedMotionPref),
             visualizerEnabled: Boolean(hydratedPrefs.visualizerEnabled ?? prev.visualizerEnabled),
             lyricsSize: hydratedPrefs.lyricsSize ?? prev.lyricsSize,
@@ -2408,43 +2436,76 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       const baseExisting = force ? [] : st.recommendedQueue;
       for (const t of baseExisting) excludedIds.add(t.id);
 
-      let fetched: Track[] = [];
+      const primaryFetched: Track[] = [];
       try {
         const [relRes, upNextRes] = await Promise.allSettled([
           musicProvider.getRelated(st.currentTrack.id),
           musicProvider.getUpNext(st.currentTrack.id, true),
         ]);
         if (relRes.status === 'fulfilled') {
-          fetched.push(...(relRes.value.tracks ?? []));
+          primaryFetched.push(...(relRes.value.tracks ?? []));
         }
         if (upNextRes.status === 'fulfilled') {
-          fetched.push(...(upNextRes.value ?? []));
+          primaryFetched.push(...(upNextRes.value ?? []));
         }
       } catch {
-        // ignore and fall back below
+        // ignore and search artist scene below
       }
 
-      if (fetched.length < 8) {
-        const explorePool = get().exploreSimilarTracks;
-        const shelfPool = get().homeShelves.flatMap((s) => s.tracks ?? []);
-        fetched.push(...explorePool, ...shelfPool, ...FALLBACK_TRACKS);
+      if (primaryFetched.length < 4) {
+        try {
+          const seedArtist = st.currentTrack.artists[0]?.name?.trim();
+          const query = seedArtist || st.currentTrack.title;
+          if (query) {
+            const bundle = await musicProvider.search(query, 'song');
+            primaryFetched.push(...(bundle.songs ?? []));
+          }
+        } catch {
+          // ignore search failure
+        }
       }
 
-      const uniqueNew: Track[] = [];
+      const fallbackCushion =
+        primaryFetched.length < 6
+          ? [
+              ...get().exploreSimilarTracks,
+              ...get().homeShelves.flatMap((s) => s.tracks ?? []),
+              ...FALLBACK_TRACKS,
+            ]
+          : [];
+
+      const uniquePrimary: Track[] = [];
+      const uniqueCushion: Track[] = [];
       const seenKeys = new Set<string>();
-      for (const item of fetched) {
-        if (!item?.id || excludedIds.has(item.id)) continue;
-        const normKey = `${item.title.trim().toLowerCase()}::${(item.artists[0]?.name ?? '').trim().toLowerCase()}`;
-        if (seenKeys.has(normKey)) continue;
-        seenKeys.add(normKey);
-        excludedIds.add(item.id);
-        uniqueNew.push(item);
-      }
+      const pushUnique = (list: Track[], target: Track[]) => {
+        for (const item of list) {
+          if (!item?.id || excludedIds.has(item.id)) continue;
+          const normKey = `${item.title.trim().toLowerCase()}::${(item.artists[0]?.name ?? '').trim().toLowerCase()}`;
+          if (seenKeys.has(normKey)) continue;
+          seenKeys.add(normKey);
+          excludedIds.add(item.id);
+          target.push(item);
+        }
+      };
 
-      const rankedNew = recommendationEngine.rerankTracks(uniqueNew, {
-        maxPerArtistInWindow: 2,
-        limit: 28,
-      });
+      pushUnique(primaryFetched, uniquePrimary);
+      pushUnique(fallbackCushion, uniqueCushion);
+
+      const rankedPrimary =
+        uniquePrimary.length > 0
+          ? recommendationEngine.rerankTracks(uniquePrimary, {
+              maxPerArtistInWindow: 2,
+              limit: 24,
+            })
+          : [];
+      const rankedCushion =
+        rankedPrimary.length < 8 && uniqueCushion.length > 0
+          ? recommendationEngine.rerankTracks(uniqueCushion, {
+              maxPerArtistInWindow: 2,
+              limit: 12,
+            })
+          : [];
+      const rankedNew = [...rankedPrimary, ...rankedCushion].slice(0, 28);
 
       const curAlbumKey = (st.currentTrack.album?.name ?? '').trim().toLowerCase();
       const diversified: Track[] = [];
@@ -3448,15 +3509,26 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     });
   },
 
-  setLiquidGlassMode: (enabled) => {
-    const saver = !enabled;
+  setSurfaceStyle: (style) => {
+    applySurfaceStyleClasses(style);
+    const simple = style === 'simple';
     if (typeof document !== 'undefined') {
-      document.documentElement.classList.toggle('pm-liquid-glass-all', enabled);
-      document.documentElement.classList.toggle('pm-solid-modern', saver);
-      document.documentElement.classList.toggle('pm-reduced-transparency', saver);
+      document.documentElement.classList.toggle(
+        'pm-reduced-motion',
+        simple || get().reducedMotionPref
+      );
     }
-    set({ liquidGlassMode: enabled, graphicSaverMode: saver });
+    set({
+      surfaceStyle: style,
+      liquidGlassMode: style === 'liquid-glass',
+      graphicSaverMode: simple,
+    });
     persistPrefsFromStore();
+  },
+
+  setLiquidGlassMode: (enabled) => {
+    const nextStyle: PMusicSurfaceStyle = enabled ? 'liquid-glass' : 'simple';
+    get().setSurfaceStyle(nextStyle);
   },
 
   setAmbientMotionEnabled: (enabled) => {
@@ -3465,18 +3537,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   },
 
   setGraphicSaverMode: (enabled) => {
-    const liquid = !enabled;
-    if (typeof document !== 'undefined') {
-      document.documentElement.classList.toggle('pm-liquid-glass-all', liquid);
-      document.documentElement.classList.toggle('pm-solid-modern', enabled);
-      document.documentElement.classList.toggle('pm-reduced-transparency', enabled);
-      document.documentElement.classList.toggle(
-        'pm-reduced-motion',
-        enabled || get().reducedMotionPref
-      );
-    }
-    set({ graphicSaverMode: enabled, liquidGlassMode: liquid });
-    persistPrefsFromStore();
+    const nextStyle: PMusicSurfaceStyle = enabled ? 'simple' : 'liquid-glass';
+    get().setSurfaceStyle(nextStyle);
   },
 
   setReducedMotionPref: (enabled) => {

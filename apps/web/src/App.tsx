@@ -1464,7 +1464,7 @@ export const App: React.FC = () => {
             {isTransitioning &&
               incomingTransitionTrack &&
               incomingTransitionTrack.id !== currentTrack.id && (
-                <div className="pm-dock-takeover-in pointer-events-auto mr-3 flex max-w-[230px] items-center gap-2 rounded-[12px] border border-white/15 bg-white/[0.1] px-2.5 py-1.5 backdrop-blur-xl">
+                <div className="pm-dock-takeover-in pm-glass-chip pointer-events-auto mr-3 flex max-w-[230px] items-center gap-2 rounded-[12px] px-2.5 py-1.5">
                   <img
                     src={incomingTransitionTrack.thumbnailUrl}
                     alt={incomingTransitionTrack.title}

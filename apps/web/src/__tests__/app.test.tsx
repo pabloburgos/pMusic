@@ -69,6 +69,19 @@ describe('@pmusic/web UI', () => {
     expect(document.documentElement.classList.contains('pm-liquid-glass-all')).toBe(true);
     expect(document.documentElement.classList.contains('pm-solid-modern')).toBe(false);
 
+    fireEvent.click(screen.getByTestId('surface-style-frosted-glass'));
+    expect(document.documentElement.classList.contains('pm-surface-frosted')).toBe(true);
+    expect(document.documentElement.classList.contains('pm-surface-liquid')).toBe(false);
+    expect(document.documentElement.classList.contains('pm-surface-simple')).toBe(false);
+
+    fireEvent.click(screen.getByTestId('surface-style-simple'));
+    expect(document.documentElement.classList.contains('pm-surface-simple')).toBe(true);
+    expect(document.documentElement.classList.contains('pm-solid-modern')).toBe(true);
+
+    fireEvent.click(screen.getByTestId('surface-style-liquid-glass'));
+    expect(document.documentElement.classList.contains('pm-surface-liquid')).toBe(true);
+    expect(document.documentElement.classList.contains('pm-liquid-glass-all')).toBe(true);
+
     const ambientCard = screen.getByTestId('dock-style-ambient-dock');
     const classicCard = screen.getByTestId('dock-style-classic-center');
     const islandCard = screen.getByTestId('dock-style-floating-island');

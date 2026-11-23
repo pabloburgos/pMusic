@@ -2448,7 +2448,7 @@ export const NowPlayingSheet: React.FC = () => {
             aria-label="Estilo de visualización de letras"
             data-testid="lyrics-style-switcher"
             onClick={(e) => e.stopPropagation()}
-            className="pm-glass-frosted-neutral pm-modal-pop max-h-[78dvh] w-full max-w-[400px] overflow-y-auto rounded-[24px] p-4 shadow-2xl pm-no-scrollbar sm:max-w-[600px] sm:rounded-[28px] sm:p-5"
+            className="pm-glass-frosted-neutral pm-hud-dark pm-modal-pop max-h-[78dvh] w-full max-w-[400px] overflow-y-auto rounded-[24px] p-4 shadow-2xl pm-no-scrollbar sm:max-w-[600px] sm:rounded-[28px] sm:p-5"
           >
             <div className="mb-3.5 flex items-center justify-between gap-3">
               <div>
@@ -2608,7 +2608,7 @@ export const AudioStudioSheet: React.FC = () => {
         aria-modal="false"
         aria-label={audioPanelTab === 'dj' ? 'Modo Sesión DJ y Efectos' : 'Ecualizador y Crossfade'}
         data-testid={audioPanelTab === 'dj' ? 'dj-popover' : 'eq-sheet'}
-        className={`pm-glass-frosted-neutral pm-popover-enter fixed inset-x-0 bottom-0 z-[65] max-h-[82dvh] overflow-y-auto rounded-t-[28px] px-5 pt-3 pb-[max(1.5rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] pm-no-scrollbar sm:inset-x-auto sm:mx-0 sm:w-[376px] sm:rounded-[24px] sm:p-4 sm:right-6 ${
+        className={`pm-glass-frosted-neutral pm-hud-dark pm-popover-enter fixed inset-x-0 bottom-0 z-[65] max-h-[82dvh] overflow-y-auto rounded-t-[28px] px-5 pt-3 pb-[max(1.5rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] pm-no-scrollbar sm:inset-x-auto sm:mx-0 sm:w-[376px] sm:rounded-[24px] sm:p-4 sm:right-6 ${
           nowPlayingOpen ? 'sm:bottom-[74px]' : 'sm:bottom-[104px]'
         }`}
       >

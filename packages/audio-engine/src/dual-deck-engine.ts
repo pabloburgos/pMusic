@@ -404,7 +404,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
           curTime > 1 &&
           curTime < realDur - 4.5 &&
           (audio.readyState < 3 || audio.paused) &&
-          stalledMs >= 2200
+          stalledMs >= 2800
         ) {
           if (!this.isBuffering) {
             this.isBuffering = true;
@@ -412,7 +412,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
           }
           const trackId = deck.track?.id;
           const cachedBlob = trackId ? this.trackBlobCache.get(trackId) : undefined;
-          if (cachedBlob && audio.src && !audio.src.startsWith('blob:')) {
+          if (cachedBlob && audio.readyState < 2 && audio.src && !audio.src.startsWith('blob:')) {
             this.hotSwapDeckToBlob(deck, trackId!, cachedBlob);
             this.lastRecoveryNudgeWallMs = nowMs;
             return;
@@ -591,23 +591,8 @@ export class DualDeckAudioEngine implements IAudioEngine {
       if (deck.track?.id !== trackId || deck.audio.src.startsWith('blob:')) return;
 
       const audio = deck.audio;
-      const realDur =
-        Number.isFinite(audio.duration) && audio.duration > 1 ? audio.duration : this.durationSec;
-      let bufferedRatio = 0;
-      try {
-        if (realDur > 0 && audio.buffered && audio.buffered.length > 0) {
-          bufferedRatio = audio.buffered.end(audio.buffered.length - 1) / realDur;
-        }
-      } catch {
-        bufferedRatio = 0;
-      }
-
-      if (
-        (typeof (audio as { readyState?: unknown }).readyState === 'number' &&
-          audio.readyState < 3) ||
-        this.isBuffering ||
-        bufferedRatio < 0.85
-      ) {
+      const isBrowserAudio = typeof (audio as { readyState?: unknown }).readyState === 'number';
+      if (isBrowserAudio && (this.isBuffering || audio.readyState < 2)) {
         this.hotSwapDeckToBlob(deck, trackId, blobUrl);
       }
     } catch {
@@ -676,6 +661,16 @@ export class DualDeckAudioEngine implements IAudioEngine {
         this.isBuffering = false;
         this.emitState();
       }
+      const currentDeck = this.getDeck(id);
+      if (
+        currentDeck.track &&
+        audio.src &&
+        !audio.src.startsWith('blob:') &&
+        !audio.src.startsWith('data:') &&
+        !this.trackBlobCache.has(currentDeck.track.id)
+      ) {
+        void this.startBackgroundFullDownload(id, currentDeck.track.id, audio.src);
+      }
     };
 
     const updateBufferedProgress = () => {
@@ -695,7 +690,10 @@ export class DualDeckAudioEngine implements IAudioEngine {
 
     audio.addEventListener('loadedmetadata', syncDuration);
     audio.addEventListener('durationchange', syncDuration);
-    audio.addEventListener('canplay', syncDuration);
+    audio.addEventListener('canplay', () => {
+      syncDuration();
+      markBufferingOff();
+    });
     audio.addEventListener('loadstart', markBufferingOn);
     audio.addEventListener('waiting', markBufferingOn);
     audio.addEventListener('stalled', markBufferingOn);
@@ -715,6 +713,9 @@ export class DualDeckAudioEngine implements IAudioEngine {
         if (!audio.seeking && Number.isFinite(audio.currentTime) && audio.currentTime >= 0) {
           this.positionSec = realDur > 0 ? Math.min(audio.currentTime, realDur) : audio.currentTime;
         }
+        if (this.isBuffering && !audio.paused && audio.currentTime > 0) {
+          this.isBuffering = false;
+        }
         this.emitState();
 
         if (
@@ -732,14 +733,22 @@ export class DualDeckAudioEngine implements IAudioEngine {
     });
 
     audio.addEventListener('error', () => {
-      if (this.activeDeck === id && this.isPlaying && !this.isTransitioning) {
+      if (this.activeDeck === id) {
+        this.isBuffering = false;
         const realDur =
           Number.isFinite(audio.duration) && audio.duration > 1
             ? audio.duration
             : this.durationSec;
         const curPos = Number.isFinite(audio.currentTime) ? audio.currentTime : this.positionSec;
-        if (realDur > 4 && curPos >= realDur - 5) {
+        if (this.isPlaying && !this.isTransitioning && realDur > 4 && curPos >= realDur - 5) {
           this.triggerTrackEnded(id);
+          return;
+        }
+        this.isPlaying = false;
+        this.emitState();
+        const err = new DomainError('TRACK_UNPLAYABLE', 'No se pudo cargar el audio completo de esta pista');
+        for (const listener of this.errorListeners) {
+          listener(err);
         }
       }
     });
@@ -896,9 +905,6 @@ export class DualDeckAudioEngine implements IAudioEngine {
     this.durationSec = track.durationSec > 0 ? track.durationSec : 195;
     this.positionSec = Math.max(0, startSec);
     this.resetEofTracking(this.positionSec);
-    if (!cachedBlob && !streamUrl.startsWith('blob:') && !streamUrl.startsWith('data:')) {
-      void this.startBackgroundFullDownload(deck.id, track.id, streamUrl);
-    }
 
     try {
       deck.audio.currentTime = this.positionSec;

@@ -152,8 +152,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="9"
-    android:versionName="0.9.0">
+    android:versionCode="10"
+    android:versionName="0.10.0">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -421,7 +421,6 @@ public class MainActivity extends Activity {
     private WebView webView;
     private int safeInsetTopDp = 0;
     private int safeInsetBottomDp = 0;
-    private byte[] syntheticWavBytes;
     private final Object streamCacheLock = new Object();
     private String lastStreamId;
     private byte[] lastStreamBytes;
@@ -463,8 +462,6 @@ public class MainActivity extends Activity {
                 );
             }
         }
-
-        syntheticWavBytes = buildDeterministicWav(12, 120);
 
         webView = new WebView(this);
         webView.setBackgroundColor(Color.parseColor("#070709"));
@@ -583,80 +580,8 @@ public class MainActivity extends Activity {
                             if (ytResp != null) return ytResp;
                         }
 
-                        byte[] audioBytes = null;
-                        String audioMime = "audio/wav";
-
-                        if (rawTrackId != null) {
-                            synchronized (streamCacheLock) {
-                                if (rawTrackId.equals(lastStreamId) && lastStreamBytes != null) {
-                                    audioBytes = lastStreamBytes;
-                                    audioMime = lastStreamMime != null ? lastStreamMime : "audio/mpeg";
-                                }
-                            }
-                        }
-
-                        if (audioBytes == null && rawTrackId != null && rawTrackId.startsWith("dz:")) {
-                            String dzId = rawTrackId.substring(3);
-                            try {
-                                byte[] metaBytes = fetchRemoteBytes("https://api.deezer.com/track/" + dzId);
-                                if (metaBytes != null) {
-                                    JSONObject obj = new JSONObject(new String(metaBytes, StandardCharsets.UTF_8));
-                                    String previewUrl = obj.optString("preview", "");
-                                    if (previewUrl != null && previewUrl.startsWith("http")) {
-                                        byte[] mp3Bytes = fetchRemoteBytes(previewUrl);
-                                        if (mp3Bytes != null && mp3Bytes.length > 1024) {
-                                            audioBytes = mp3Bytes;
-                                            audioMime = "audio/mpeg";
-                                            synchronized (streamCacheLock) {
-                                                lastStreamId = rawTrackId;
-                                                lastStreamBytes = mp3Bytes;
-                                                lastStreamMime = "audio/mpeg";
-                                            }
-                                        }
-                                    }
-                                }
-                            } catch (Exception ignored) {
-                            }
-                        }
-
-                        if (audioBytes == null) {
-                            if (qTitle != null && !qTitle.trim().isEmpty()) {
-                                try {
-                                    String rawQuery = (qArtist != null && !qArtist.trim().isEmpty() ? qArtist.trim() + " " : "") + qTitle.trim();
-                                    String encodedQ = URLEncoder.encode(rawQuery, "UTF-8");
-                                    byte[] searchBytes = fetchRemoteBytes("https://api.deezer.com/search?q=" + encodedQ + "&limit=1");
-                                    if (searchBytes != null) {
-                                        JSONObject sObj = new JSONObject(new String(searchBytes, StandardCharsets.UTF_8));
-                                        JSONArray dataArr = sObj.optJSONArray("data");
-                                        if (dataArr != null && dataArr.length() > 0) {
-                                            String previewUrl = dataArr.getJSONObject(0).optString("preview", "");
-                                            if (previewUrl != null && previewUrl.startsWith("http")) {
-                                                byte[] mp3Bytes = fetchRemoteBytes(previewUrl);
-                                                if (mp3Bytes != null && mp3Bytes.length > 1024) {
-                                                    audioBytes = mp3Bytes;
-                                                    audioMime = "audio/mpeg";
-                                                    if (rawTrackId != null) {
-                                                        synchronized (streamCacheLock) {
-                                                            lastStreamId = rawTrackId;
-                                                            lastStreamBytes = mp3Bytes;
-                                                            lastStreamMime = "audio/mpeg";
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                } catch (Exception ignored) {
-                                }
-                            }
-                        }
-
-                        if (audioBytes == null) {
-                            audioBytes = syntheticWavBytes;
-                            audioMime = "audio/wav";
-                        }
-
-                        return buildAudioStreamResponse(audioBytes, audioMime, corsHeaders, request.getRequestHeaders());
+                        byte[] unavail = "{\\"error\\":\\"stream_unavailable\\"}".getBytes(StandardCharsets.UTF_8);
+                        return new WebResourceResponse("application/json", "UTF-8", 503, "Service Unavailable", corsHeaders, new ByteArrayInputStream(unavail));
                     }
 
                     if (path.startsWith("/api/")) {
@@ -942,16 +867,18 @@ public class MainActivity extends Activity {
     }
 
     private ResolvedStream fetchYoutubeIosPlayerStream(String videoId) {
-        ResolvedStream iosStream = fetchYoutubeClientPlayerStream(videoId, true);
+        ResolvedStream iosStream = fetchYoutubeClientPlayerStream(videoId, "IOS");
         if (iosStream != null) return iosStream;
-        return fetchYoutubeClientPlayerStream(videoId, false);
+        ResolvedStream androidStream = fetchYoutubeClientPlayerStream(videoId, "ANDROID");
+        if (androidStream != null) return androidStream;
+        return fetchYoutubeClientPlayerStream(videoId, "MWEB");
     }
 
-    private ResolvedStream fetchYoutubeClientPlayerStream(String videoId, boolean useIos) {
+    private ResolvedStream fetchYoutubeClientPlayerStream(String videoId, String clientMode) {
         try {
             JSONObject client = new JSONObject();
             String ua;
-            if (useIos) {
+            if ("IOS".equals(clientMode)) {
                 client.put("clientName", "IOS");
                 client.put("clientVersion", "20.10.4");
                 client.put("deviceMake", "Apple");
@@ -959,6 +886,11 @@ public class MainActivity extends Activity {
                 client.put("osName", "iPhone");
                 client.put("osVersion", "18.3.2.22D82");
                 ua = YT_IOS_UA;
+            } else if ("ANDROID".equals(clientMode)) {
+                client.put("clientName", "ANDROID");
+                client.put("clientVersion", "20.10.38");
+                client.put("androidSdkVersion", 34);
+                ua = "com.google.android.youtube/20.10.38 (Linux; U; Android 14) gzip";
             } else {
                 client.put("clientName", "MWEB");
                 client.put("clientVersion", "2.20250310.01.00");
@@ -1410,7 +1342,7 @@ public class MainActivity extends Activity {
             conn.setConnectTimeout(4500);
             conn.setReadTimeout(6500);
             conn.setInstanceFollowRedirects(true);
-            conn.setRequestProperty("User-Agent", "pMusic-Android/0.9.0");
+            conn.setRequestProperty("User-Agent", "pMusic-Android/0.10.0");
             int code = conn.getResponseCode();
             if (code >= 200 && code < 300) {
                 InputStream in = conn.getInputStream();
@@ -1445,50 +1377,6 @@ public class MainActivity extends Activity {
         if (lower.endsWith(".mp3")) return "audio/mpeg";
         if (lower.endsWith(".wav")) return "audio/wav";
         return "application/octet-stream";
-    }
-
-    private byte[] buildDeterministicWav(int durationSec, int bpm) {
-        int sampleRate = 22050;
-        int numSamples = durationSec * sampleRate;
-        int dataBytes = numSamples * 2;
-        byte[] buf = new byte[44 + dataBytes];
-
-        buf[0] = 'R'; buf[1] = 'I'; buf[2] = 'F'; buf[3] = 'F';
-        writeIntLE(buf, 4, 36 + dataBytes);
-        buf[8] = 'W'; buf[9] = 'A'; buf[10] = 'V'; buf[11] = 'E';
-        buf[12] = 'f'; buf[13] = 'm'; buf[14] = 't'; buf[15] = ' ';
-        writeIntLE(buf, 16, 16);
-        writeShortLE(buf, 20, (short) 1);
-        writeShortLE(buf, 22, (short) 1);
-        writeIntLE(buf, 24, sampleRate);
-        writeIntLE(buf, 28, sampleRate * 2);
-        writeShortLE(buf, 32, (short) 2);
-        writeShortLE(buf, 34, (short) 16);
-        buf[36] = 'd'; buf[37] = 'a'; buf[38] = 't'; buf[39] = 'a';
-        writeIntLE(buf, 40, dataBytes);
-
-        double beatPeriod = 60.0 / bpm;
-        for (int i = 0; i < numSamples; i++) {
-            double t = (double) i / sampleRate;
-            double beatPhase = (t % beatPeriod) / beatPeriod;
-            double env = beatPhase < 0.2 ? Math.exp(-beatPhase * 15.0) : 0.15;
-            double wave = (Math.sin(2.0 * Math.PI * 110.0 * t) * 0.6 + Math.sin(2.0 * Math.PI * 220.0 * t) * 0.3) * env;
-            short pcm = (short) Math.max(-30000, Math.min(30000, (int) (wave * 24000)));
-            writeShortLE(buf, 44 + i * 2, pcm);
-        }
-        return buf;
-    }
-
-    private void writeIntLE(byte[] b, int offset, int v) {
-        b[offset] = (byte) (v & 0xFF);
-        b[offset + 1] = (byte) ((v >>> 8) & 0xFF);
-        b[offset + 2] = (byte) ((v >>> 16) & 0xFF);
-        b[offset + 3] = (byte) ((v >>> 24) & 0xFF);
-    }
-
-    private void writeShortLE(byte[] b, int offset, short v) {
-        b[offset] = (byte) (v & 0xFF);
-        b[offset + 1] = (byte) ((v >>> 8) & 0xFF);
     }
 
     @Override
