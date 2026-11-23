@@ -17,9 +17,9 @@ export interface PMusicLogoProps {
   className?: string;
 }
 
-const TARGET_H = 192;
+const TARGET_H = 190;
 const P_SCALE = TARGET_H / PMUSIC_P_MARK_HEIGHT;
-const P_TX = (256 - PMUSIC_P_MARK_WIDTH * P_SCALE) / 2 + 5;
+const P_TX = (256 - PMUSIC_P_MARK_WIDTH * P_SCALE) / 2;
 const P_TY = (256 - TARGET_H) / 2;
 
 export const PMusicLogo: React.FC<PMusicLogoProps> = ({

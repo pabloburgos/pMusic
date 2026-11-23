@@ -354,51 +354,7 @@ export const SettingsModal: React.FC = () => {
                     </button>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-                    <button
-                      type="button"
-                      data-testid="surface-style-pmusic-original"
-                      aria-pressed={surfaceStyle === 'pmusic-original'}
-                      onClick={() => setSurfaceStyle('pmusic-original')}
-                      className={`pm-surface-card pm-card-lift flex flex-col gap-2 rounded-[20px] p-3.5 text-left ${
-                        surfaceStyle === 'pmusic-original'
-                          ? 'ring-2 ring-[var(--pm-accent-primary)]'
-                          : ''
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-1.5">
-                        <span className="text-xs font-bold pm-text-primary">
-                          pMusic Original (Globo)
-                        </span>
-                        {surfaceStyle === 'pmusic-original' && (
-                          <span className="pm-btn-primary inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full">
-                            <Check className="h-2.5 w-2.5" />
-                          </span>
-                        )}
-                      </div>
-                      <div
-                        className="relative flex h-11 items-center gap-2 overflow-hidden rounded-full border border-white/20 px-3"
-                        style={{
-                          background:
-                            'linear-gradient(165deg, rgba(255,255,255,0.16) 0%, rgba(255,255,255,0.04) 70%, rgba(0,0,0,0.28) 100%)',
-                          boxShadow:
-                            'inset 0 2px 3px rgba(255,255,255,0.28), inset 0 -4px 7px rgba(0,0,0,0.42)',
-                        }}
-                      >
-                        <span
-                          className="h-6 w-11 rounded-full bg-[var(--pm-accent-primary)]"
-                          style={{
-                            boxShadow:
-                              'inset 0 2px 4px rgba(255,255,255,0.48), inset 0 -3px 5px rgba(0,0,0,0.35)',
-                          }}
-                        />
-                        <span className="h-2.5 flex-1 rounded-full bg-white/30" />
-                      </div>
-                      <p className="text-[11px] pm-text-secondary">
-                        Tipografía redondeada estilo logo pMusic con tarjetas, botones y controles abombados 3D tipo globo
-                      </p>
-                    </button>
-
+                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
                     <button
                       type="button"
                       data-testid="surface-style-liquid-glass"

@@ -88,12 +88,12 @@ export type NowPlayingSubTab = 'Portada' | 'Letras' | 'Cola';
 export type SearchScopeTab = 'Todo' | 'Canciones' | 'Artistas' | 'Álbumes' | 'Playlists';
 export type LibraryCategoryTab = 'Todo' | 'Playlists' | 'Me gusta' | 'Descargas' | 'Historial';
 export type OfflineDownloadStatus = 'idle' | 'downloading' | 'downloaded' | 'error';
-export type PMusicSurfaceStyle = 'pmusic-original' | 'liquid-glass' | 'frosted-glass' | 'simple';
+export type PMusicSurfaceStyle = 'liquid-glass' | 'frosted-glass' | 'simple';
 
 function applySurfaceStyleClasses(style: PMusicSurfaceStyle): void {
   if (typeof document === 'undefined') return;
   const cls = document.documentElement.classList;
-  cls.toggle('pm-surface-original', style === 'pmusic-original');
+  cls.remove('pm-surface-original');
   cls.toggle('pm-surface-liquid', style === 'liquid-glass');
   cls.toggle('pm-surface-frosted', style === 'frosted-glass');
   cls.toggle('pm-surface-simple', style === 'simple');
@@ -1874,8 +1874,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
     const resolvedSurfaceStyle: PMusicSurfaceStyle =
       hydratedPrefs &&
-      (hydratedPrefs.surfaceStyle === 'pmusic-original' ||
-        hydratedPrefs.surfaceStyle === 'liquid-glass' ||
+      (hydratedPrefs.surfaceStyle === 'liquid-glass' ||
         hydratedPrefs.surfaceStyle === 'frosted-glass' ||
         hydratedPrefs.surfaceStyle === 'simple')
         ? hydratedPrefs.surfaceStyle

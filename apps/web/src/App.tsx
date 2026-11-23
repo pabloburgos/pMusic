@@ -565,7 +565,7 @@ export const App: React.FC = () => {
               onClick={() => setActiveTab('Inicio')}
               className="pm-no-drag pm-hover pointer-events-auto relative z-20 flex items-center rounded-[10px] px-1.5 py-1"
             >
-              <PMusicLogo size={28} showWordmark />
+              <PMusicLogo size={26} variant="wordmark-only" />
             </button>
 
             {activeDetailView && (
