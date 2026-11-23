@@ -2027,7 +2027,7 @@ html.pm-solid-modern .pm-mobile-glass-header {
 }
 
 .pm-view-transition {
-  animation: pmViewTransitionIn 320ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation: pmViewTransitionIn 280ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 @keyframes pmSheetSpringIn {
@@ -2042,7 +2042,91 @@ html.pm-solid-modern .pm-mobile-glass-header {
 }
 
 .pm-sheet-spring-in {
-  animation: pmSheetSpringIn 340ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation: pmSheetSpringIn 320ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes pmMobileViewFadeIn {
+  from {
+    opacity: 0.01;
+    transform: translate3d(0, 6px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes pmMobileSheetSlideIn {
+  from {
+    opacity: 0.01;
+    transform: translate3d(0, 18px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+/* Android WebView & Touch GPU Artifact Prevention:
+   Avoid stacking 20+ backdrop-filter layers inside scaled scroll containers,
+   which causes black-screen tile eviction on mobile Chromium WebView. */
+@media (max-width: 767px), (hover: none) and (pointer: coarse) {
+  .pm-view-transition {
+    animation: pmMobileViewFadeIn 190ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+  }
+
+  .pm-sheet-spring-in {
+    animation: pmMobileSheetSlideIn 220ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+  }
+
+  .pm-surface-card,
+  .pm-quick-tile,
+  .pm-glass-chip,
+  .pm-btn-secondary,
+  .pm-input,
+  .pm-glass-search {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  :root:not(.pm-surface-simple) .pm-surface-card,
+  :root:not(.pm-surface-simple) .pm-quick-tile {
+    background: color-mix(in srgb, var(--pm-bg-surface) 92%, var(--pm-glass-highlight) 8%) !important;
+  }
+
+  :root:not(.pm-surface-simple) .pm-glass-regular,
+  :root:not(.pm-surface-simple) .pm-glass-liquid,
+  :root:not(.pm-surface-simple) .pm-glass-surface,
+  :root:not(.pm-surface-simple) .pm-glass-clear,
+  :root:not(.pm-surface-simple) .pm-glass-frosted-neutral,
+  :root:not(.pm-surface-simple) .pm-dock-cluster {
+    -webkit-backdrop-filter: blur(12px) saturate(145%) !important;
+    backdrop-filter: blur(12px) saturate(145%) !important;
+  }
+
+  .pm-ambient-mesh,
+  .pm-fluid-cover-a,
+  .pm-fluid-cover-b {
+    filter: blur(36px) saturate(1.25) !important;
+  }
+}
+
+/* TikTok / Reels-ready Focus Lyrics artwork pulse */
+@keyframes pmFocusCoverBreath {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.028);
+  }
+}
+
+.pm-focus-cover-playing {
+  animation: pmFocusCoverBreath 4.2s ease-in-out infinite;
 }
 
 @keyframes pmBufferShimmer {

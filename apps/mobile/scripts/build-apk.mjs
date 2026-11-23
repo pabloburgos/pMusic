@@ -152,8 +152,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="13"
-    android:versionName="0.12.0">
+    android:versionCode="14"
+    android:versionName="0.13.0">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -343,7 +343,7 @@ import java.util.regex.Pattern;
 public class MainActivity extends Activity {
     private static final String YT_IOS_UA = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)";
     private static final String YT_WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
-    private static final long STREAM_CACHE_TTL_MS = 90L * 60L * 1000L;
+    private static final long STREAM_CACHE_TTL_MS = 35L * 60L * 1000L;
     private static final Pattern YT_ID_PATTERN = Pattern.compile("^[a-zA-Z0-9_-]{11}$");
     private static final Pattern BAD_VERSION_PATTERN = Pattern.compile("\\\\b(karaoke|remix|rmx|mashup|bootleg|flip|rework|refix|vip mix|club mix|extended mix|break intro|dj intro|intro edit|acapella|a capella|live|en vivo|cover|reaction|sped up|slowed|nightcore|instrumental|letra|lyrics|tutorial|8d audio|reverb|bass boosted|dj set|mixtape|megamix|tribute|parodia|parody|ai cover|pitched|radio edit|edit|version)\\\\b");
     private static final Pattern TITLE_NOISE_PATTERN = Pattern.compile("\\\\((?:feat\\\\.|ft\\\\.|with|prod\\\\.|official|video|audio|lyric|remix|en vivo|live).*?\\\\)|\\\\[(?:official|video|audio|lyric|remix|hd|4k).*?\\\\]", Pattern.CASE_INSENSITIVE);
@@ -464,8 +464,12 @@ public class MainActivity extends Activity {
             }
         }
 
+        if (window != null) {
+            window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.parseColor("#070709")));
+        }
         webView = new WebView(this);
         webView.setBackgroundColor(Color.parseColor("#070709"));
+        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
         webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
         if (Build.VERSION.SDK_INT >= 20) {
             webView.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
@@ -809,7 +813,7 @@ public class MainActivity extends Activity {
                 return new ResolvedStream(
                         "https://api.audius.co/v1/tracks/" + URLEncoder.encode(bestId, "UTF-8") + "/stream?app_name=pMusic",
                         "audio/mpeg",
-                        "pMusic-Android/0.12.0",
+                        "pMusic-Android/0.13.0",
                         System.currentTimeMillis() + STREAM_CACHE_TTL_MS
                 );
             }
@@ -1447,7 +1451,7 @@ public class MainActivity extends Activity {
             conn.setConnectTimeout(3500);
             conn.setReadTimeout(5000);
             conn.setInstanceFollowRedirects(true);
-            conn.setRequestProperty("User-Agent", "pMusic-Android/0.12.0");
+            conn.setRequestProperty("User-Agent", "pMusic-Android/0.13.0");
             int code = conn.getResponseCode();
             if (code >= 200 && code < 300) {
                 InputStream in = conn.getInputStream();

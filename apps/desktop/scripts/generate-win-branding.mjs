@@ -286,7 +286,7 @@ try {
 
     ctx.fillStyle = '#E8D8FF';
     ctx.font = '600 10.5px "Segoe UI", system-ui, sans-serif';
-    ctx.fillText('v0.12.0', W / 2, 189.5);
+    ctx.fillText('v0.13.0', W / 2, 189.5);
 
     // Acoustic wave decorative bars near footer
     const bars = [10, 18, 28, 16, 24, 32, 20, 14, 22, 12];

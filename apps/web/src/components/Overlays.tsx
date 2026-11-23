@@ -1463,7 +1463,7 @@ export const NowPlayingSheet: React.FC = () => {
 
               {currentLyrics && currentLyrics.lines.length > 0 ? (
                 lyricsStyle === 'focus' ? (
-                  /* Mode 3: Enfoque — Single-line centered spotlight + next verse preview */
+                  /* Mode 3: Enfoque — Mobile TikTok/Reels hero cover + centered spotlight lyric stage */
                   (() => {
                     const activeIdx = Math.max(0, resolvedActiveLyricIdx);
                     const activeLine = currentLyrics.lines[activeIdx];
@@ -1473,45 +1473,88 @@ export const NowPlayingSheet: React.FC = () => {
                       : [];
                     const words = activeLine ? activeLine.text.trim().split(/\s+/).filter(Boolean) : [];
                     return (
-                      <div className="flex flex-1 flex-col items-start justify-center px-3 pb-10">
-                        {activeLine && (
-                          <button
-                            key={`focus-${activeIdx}-${activeLine.timeMs}`}
-                            type="button"
-                            data-lyric-state="active"
-                            onClick={() => seekTo(activeLine.timeMs / 1000)}
-                            className="pm-focus-stage-line text-left text-[28px] font-extrabold leading-[1.22] tracking-tight text-white md:text-[38px]"
-                          >
-                            {words.map((w, wi) => {
-                              const kind = emphasis[wi] ?? 'normal';
-                              return (
-                                <React.Fragment key={wi}>
-                                  <span
-                                    className={
-                                      kind === 'rhyme'
-                                        ? 'pm-kinetic-rhyme'
-                                        : kind === 'punch'
-                                          ? 'pm-kinetic-punch'
-                                          : ''
-                                    }
-                                  >
-                                    {w}
-                                  </span>
-                                  {wi < words.length - 1 ? ' ' : ''}
-                                </React.Fragment>
-                              );
-                            })}
-                          </button>
-                        )}
-                        {nextLine && (
-                          <button
-                            type="button"
-                            onClick={() => seekTo(nextLine.timeMs / 1000)}
-                            className="mt-6 text-left text-lg font-semibold leading-snug text-white/35 transition-colors hover:text-white/65 md:text-2xl"
-                          >
-                            {nextLine.text}
-                          </button>
-                        )}
+                      <div
+                        data-testid="focus-lyrics-stage"
+                        className="flex flex-1 flex-col items-center justify-center gap-5 px-4 pb-8 text-center lg:items-start lg:px-3 lg:pb-10 lg:text-left"
+                      >
+                        {/* Large glowing album cover for mobile vertical TikTok / Reels aesthetic */}
+                        <div className="flex flex-col items-center gap-3 lg:hidden">
+                          <div className="relative">
+                            <div
+                              aria-hidden="true"
+                              className="pointer-events-none absolute -inset-5 rounded-[34px] opacity-55 blur-2xl"
+                              style={{
+                                background:
+                                  'radial-gradient(circle at 50% 50%, var(--pm-ambient-1, rgba(168,85,247,0.55)), transparent 72%)',
+                              }}
+                            />
+                            <div
+                              className={`relative aspect-square w-[min(60vw,236px)] overflow-hidden rounded-[24px] shadow-[0_24px_64px_rgba(0,0,0,0.68)] ring-1 ring-white/25 ${
+                                isPlaying && ambientMotionEnabled ? 'pm-focus-cover-playing' : ''
+                              }`}
+                            >
+                              <img
+                                src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
+                                alt={currentTrack.title}
+                                draggable={false}
+                                className="h-full w-full object-cover"
+                              />
+                              <div
+                                aria-hidden="true"
+                                className="pointer-events-none absolute inset-0 rounded-[24px] shadow-[inset_0_1px_0_rgba(255,255,255,0.35)]"
+                              />
+                            </div>
+                          </div>
+                          <div className="max-w-[82vw] space-y-0.5">
+                            <div className="truncate text-[16px] font-extrabold tracking-tight text-white drop-shadow-sm">
+                              {currentTrack.title}
+                            </div>
+                            <div className="truncate text-xs font-semibold text-white/65">
+                              {currentTrack.artists.map((a) => a.name).join(', ')}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex w-full flex-col items-center lg:items-start">
+                          {activeLine && (
+                            <button
+                              key={`focus-${activeIdx}-${activeLine.timeMs}`}
+                              type="button"
+                              data-lyric-state="active"
+                              onClick={() => seekTo(activeLine.timeMs / 1000)}
+                              className="pm-focus-stage-line max-w-[92vw] text-center text-[25px] font-extrabold leading-[1.2] tracking-tight text-white drop-shadow-[0_6px_26px_rgba(0,0,0,0.48)] sm:text-[29px] lg:max-w-none lg:text-left lg:text-[38px]"
+                            >
+                              {words.map((w, wi) => {
+                                const kind = emphasis[wi] ?? 'normal';
+                                return (
+                                  <React.Fragment key={wi}>
+                                    <span
+                                      className={
+                                        kind === 'rhyme'
+                                          ? 'pm-kinetic-rhyme'
+                                          : kind === 'punch'
+                                            ? 'pm-kinetic-punch'
+                                            : ''
+                                      }
+                                    >
+                                      {w}
+                                    </span>
+                                    {wi < words.length - 1 ? ' ' : ''}
+                                  </React.Fragment>
+                                );
+                              })}
+                            </button>
+                          )}
+                          {nextLine && (
+                            <button
+                              type="button"
+                              onClick={() => seekTo(nextLine.timeMs / 1000)}
+                              className="mt-3 max-w-[88vw] text-center text-[15px] font-semibold leading-snug text-white/40 transition-colors hover:text-white/70 sm:text-lg lg:mt-6 lg:max-w-none lg:text-left lg:text-2xl"
+                            >
+                              {nextLine.text}
+                            </button>
+                          )}
+                        </div>
                       </div>
                     );
                   })()
@@ -2073,7 +2116,8 @@ export const NowPlayingSheet: React.FC = () => {
                         <img
                           src={activeQueueTrack.thumbnailUrl}
                           alt={activeQueueTrack.title}
-                          className="h-full w-full object-cover"
+                          draggable={false}
+                          className="pointer-events-none h-full w-full select-none object-cover"
                         />
                         {isPlaying && (
                           <span className="absolute inset-0 flex items-center justify-center bg-black/45">
@@ -3175,18 +3219,71 @@ export const DevicesConnectSheet: React.FC = () => {
     setDevicesSheetOpen,
     onlineDevices,
     selfDeviceId,
+    deviceName,
     syncMode,
+    authState,
     lastTransferBanner,
+    remoteControlledDeviceId,
+    remoteDeviceSnapshot,
     transferPlaybackToDevice,
+    pullPlaybackFromDevice,
     sendRemoteDeviceCommand,
+    setRemoteControlledDevice,
+    setDeviceName,
+    signInSupabase,
+    signUpSupabase,
     pairDemoCompanionDevice,
     setSettingsOpen,
   } = usePMusicStore();
 
+  const [quickEmail, setQuickEmail] = useState('');
+  const [quickPassword, setQuickPassword] = useState('');
+  const [quickAuthMode, setQuickAuthMode] = useState<'signin' | 'signup'>('signin');
+  const [quickAuthBusy, setQuickAuthBusy] = useState(false);
+  const [quickAuthMsg, setQuickAuthMsg] = useState<string | null>(null);
+  const [remoteVol, setRemoteVol] = useState(85);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(deviceName);
+
+  useEffect(() => {
+    setNameDraft(deviceName);
+  }, [deviceName]);
+
+  useEffect(() => {
+    if (remoteDeviceSnapshot) {
+      setRemoteVol(Math.round(remoteDeviceSnapshot.volume * 100));
+    }
+  }, [remoteDeviceSnapshot]);
+
   if (!devicesSheetOpen) return null;
 
+  const peerDevices = onlineDevices.filter((d) => d.device_id !== selfDeviceId);
+  const selfDevice = onlineDevices.find((d) => d.device_id === selfDeviceId);
+
+  const handleQuickAuth = async () => {
+    setQuickAuthMsg(null);
+    setQuickAuthBusy(true);
+    try {
+      if (quickAuthMode === 'signup') {
+        const res = await signUpSupabase(quickEmail, quickPassword);
+        setQuickAuthMsg(
+          res.needsEmailConfirmation
+            ? 'Cuenta creada. Confirma tu email para conectar tus dispositivos.'
+            : '¡Cuenta creada y conectada en vivo!'
+        );
+      } else {
+        await signInSupabase(quickEmail, quickPassword);
+        setQuickAuthMsg('¡Conectado! Tus dispositivos aparecerán automáticamente.');
+      }
+    } catch (err) {
+      setQuickAuthMsg(err instanceof Error ? err.message : 'No se pudo conectar');
+    } finally {
+      setQuickAuthBusy(false);
+    }
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4">
       <div
         aria-hidden="true"
         onClick={() => setDevicesSheetOpen(false)}
@@ -3197,17 +3294,22 @@ export const DevicesConnectSheet: React.FC = () => {
         aria-modal="true"
         aria-label="Dispositivos conectados"
         data-testid="devices-sheet"
-        className="pm-glass-regular pm-modal-pop relative z-10 flex max-h-[86dvh] w-full max-w-xl flex-col overflow-y-auto rounded-[22px] p-6 pm-text-primary"
+        className="pm-glass-regular pm-modal-pop relative z-10 flex max-h-[88dvh] w-full max-w-xl flex-col overflow-y-auto rounded-t-[28px] p-5 pb-[max(1.5rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] pm-text-primary sm:rounded-[24px] sm:p-6"
       >
+        {/* Mobile grab handle */}
+        <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-current opacity-20 sm:hidden" />
+
         <div className="flex items-center justify-between border-b pm-border pb-4">
           <div className="flex items-center gap-2.5">
-            <Wifi className="h-5 w-5 text-emerald-500" />
+            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-400">
+              <Wifi className="h-5 w-5" />
+            </span>
             <div>
-              <h2 className="text-lg font-bold pm-text-primary">
-                Dispositivos (pMusic Connect)
+              <h2 className="text-base font-bold pm-text-primary sm:text-lg">
+                pMusic Connect
               </h2>
               <p className="text-xs pm-text-secondary">
-                Controla tu PC o móvil en vivo y transfiere la canción en el segundo exacto
+                Cambia entre móvil y PC al instante y controla el volumen en vivo
               </p>
             </div>
           </div>
@@ -3222,102 +3324,288 @@ export const DevicesConnectSheet: React.FC = () => {
         </div>
 
         {lastTransferBanner && (
-          <div className="mt-4 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2.5 text-xs font-semibold pm-text-primary">
-            {lastTransferBanner}
+          <div className="mt-4 flex items-center justify-between gap-2 rounded-2xl border border-emerald-500/40 bg-emerald-500/12 px-4 py-2.5 text-xs font-semibold text-emerald-300">
+            <span>{lastTransferBanner}</span>
+            {remoteControlledDeviceId && (
+              <button
+                type="button"
+                onClick={() => setRemoteControlledDevice(null)}
+                className="rounded-full bg-emerald-500/20 px-2.5 py-1 text-[11px] font-bold text-emerald-200 hover:bg-emerald-500/30"
+              >
+                Soltar control
+              </button>
+            )}
           </div>
         )}
 
-        <div className="mt-4 space-y-3">
-          {onlineDevices.map((dev) => {
-            const isSelf = dev.device_id === selfDeviceId;
-            return (
-              <div
-                key={dev.device_id}
-                data-surface="content"
-                className="pm-surface-card flex flex-col gap-3 rounded-[16px] p-4"
+        {/* Inline Account Connect card when not signed in */}
+        {!authState.connected && (
+          <div
+            data-surface="content"
+            className="pm-surface-card mt-4 space-y-3 rounded-[18px] p-4"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <div className="text-xs font-bold pm-text-primary">
+                  Conecta tu cuenta para sincronizar PC y móvil
+                </div>
+                <div className="text-[11px] pm-text-secondary">
+                  Inicia sesión con el mismo correo en ambos dispositivos
+                </div>
+              </div>
+              <div className="flex rounded-full bg-black/15 p-0.5 text-[11px] font-bold">
+                <button
+                  type="button"
+                  onClick={() => setQuickAuthMode('signin')}
+                  className={`rounded-full px-2.5 py-1 transition-colors ${
+                    quickAuthMode === 'signin' ? 'pm-btn-primary' : 'pm-text-secondary'
+                  }`}
+                >
+                  Entrar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setQuickAuthMode('signup')}
+                  className={`rounded-full px-2.5 py-1 transition-colors ${
+                    quickAuthMode === 'signup' ? 'pm-btn-primary' : 'pm-text-secondary'
+                  }`}
+                >
+                  Crear
+                </button>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <input
+                type="email"
+                placeholder="tu@email.com"
+                value={quickEmail}
+                onChange={(e) => setQuickEmail(e.target.value)}
+                className="pm-input rounded-xl px-3.5 py-2 text-xs"
+              />
+              <input
+                type="password"
+                placeholder="Contraseña (mín. 6 caracteres)"
+                value={quickPassword}
+                onChange={(e) => setQuickPassword(e.target.value)}
+                className="pm-input rounded-xl px-3.5 py-2 text-xs"
+              />
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <button
+                type="button"
+                disabled={quickAuthBusy}
+                onClick={() => void handleQuickAuth()}
+                className="pm-btn-primary rounded-full px-4 py-2 text-xs font-bold disabled:opacity-60"
               >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    {dev.platform === 'android' ? (
-                      <Smartphone className="h-5 w-5 text-emerald-500" />
-                    ) : (
-                      <Laptop className="h-5 w-5 pm-text-primary" />
-                    )}
-                    <div>
-                      <div className="flex items-center gap-2 text-sm font-bold pm-text-primary">
-                        <span>{dev.device_name}</span>
-                        {isSelf && (
-                          <span className="pm-elevated rounded-full border pm-border px-2.5 py-0.5 text-[11px] font-medium pm-text-secondary">
-                            Este dispositivo
-                          </span>
+                {quickAuthBusy
+                  ? 'Conectando…'
+                  : quickAuthMode === 'signup'
+                    ? 'Crear cuenta pMusic'
+                    : 'Iniciar sesión'}
+              </button>
+              {quickAuthMsg && (
+                <span className="text-[11px] font-medium pm-text-secondary">
+                  {quickAuthMsg}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Current Device Hero Card */}
+        {selfDevice && (
+          <div className="mt-4 space-y-2">
+            <div className="px-1 text-[11px] font-bold uppercase tracking-wider pm-text-tertiary">
+              Este dispositivo
+            </div>
+            <div
+              data-surface="content"
+              className="pm-surface-card flex flex-wrap items-center justify-between gap-3 rounded-[18px] border border-emerald-500/35 p-4"
+            >
+              <div className="flex min-w-0 flex-1 items-center gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-400">
+                  {selfDevice.platform === 'android' ? (
+                    <Smartphone className="h-5 w-5" />
+                  ) : (
+                    <Laptop className="h-5 w-5" />
+                  )}
+                </span>
+                <div className="min-w-0 flex-1">
+                  {editingName ? (
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        value={nameDraft}
+                        onChange={(e) => setNameDraft(e.target.value)}
+                        className="pm-input w-44 rounded-lg px-2.5 py-1 text-xs"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void setDeviceName(nameDraft);
+                          setEditingName(false);
+                        }}
+                        className="pm-btn-primary rounded-full px-2.5 py-1 text-[11px] font-bold"
+                      >
+                        Guardar
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-2 text-sm font-bold pm-text-primary">
+                      <span className="truncate">{selfDevice.device_name}</span>
+                      {!remoteControlledDeviceId && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-400">
+                          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+                          Reproduciendo aquí
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  <div className="truncate text-xs pm-text-secondary">
+                    {selfDevice.track_title}
+                  </div>
+                </div>
+              </div>
+              {!editingName && (
+                <button
+                  type="button"
+                  onClick={() => setEditingName(true)}
+                  className="pm-btn-secondary rounded-full px-3 py-1 text-[11px] font-semibold"
+                >
+                  Renombrar
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Peer Devices (Spotify Connect List) */}
+        <div className="mt-4 space-y-2.5">
+          <div className="flex items-center justify-between px-1">
+            <span className="text-[11px] font-bold uppercase tracking-wider pm-text-tertiary">
+              Otros dispositivos ({peerDevices.length})
+            </span>
+          </div>
+
+          {peerDevices.length === 0 ? (
+            <div
+              data-surface="content"
+              className="pm-surface-card rounded-[16px] p-4 text-center text-xs pm-text-secondary"
+            >
+              Abre pMusic en tu PC o móvil con la misma cuenta para verlos aparecer aquí al instante.
+            </div>
+          ) : (
+            peerDevices.map((dev) => {
+              const isRemoteTarget = remoteControlledDeviceId === dev.device_id;
+              return (
+                <div
+                  key={dev.device_id}
+                  data-surface="content"
+                  className={`pm-surface-card flex flex-col gap-3 rounded-[18px] p-4 transition-all ${
+                    isRemoteTarget ? 'ring-2 ring-emerald-500/60' : ''
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white/10">
+                        {dev.platform === 'android' ? (
+                          <Smartphone className="h-5 w-5 text-emerald-400" />
+                        ) : (
+                          <Laptop className="h-5 w-5 pm-text-primary" />
                         )}
-                        {dev.is_active && (
-                          <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-500">
-                            Activo
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs pm-text-secondary">
-                        {dev.track_title}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2 text-sm font-bold pm-text-primary">
+                          <span className="truncate">{dev.device_name}</span>
+                          {(dev.is_playing || isRemoteTarget) && (
+                            <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-400">
+                              Activo
+                            </span>
+                          )}
+                        </div>
+                        <div className="truncate text-xs pm-text-secondary">
+                          {dev.track_title}
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  {!isSelf && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        void transferPlaybackToDevice(dev.device_id)
-                      }
-                      className="pm-btn-primary rounded-full px-4 py-2 text-xs font-bold"
-                    >
-                      Transferir aquí
-                    </button>
-                  )}
-                </div>
-
-                {!isSelf && (
-                  <div className="flex items-center justify-between border-t pm-border pt-2">
-                    <span className="text-xs font-medium pm-text-tertiary">
-                      Control remoto en vivo:
-                    </span>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
                       <button
                         type="button"
-                        aria-label={`Anterior en ${dev.device_name}`}
-                        onClick={() =>
-                          void sendRemoteDeviceCommand(dev.device_id, 'prev')
-                        }
-                        className="pm-btn-secondary rounded-full px-3 py-1.5 text-xs font-semibold"
-                      >
-                        Anterior
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`Play/Pausa en ${dev.device_name}`}
-                        onClick={() =>
-                          void sendRemoteDeviceCommand(dev.device_id, 'toggle')
-                        }
+                        onClick={() => void transferPlaybackToDevice(dev.device_id)}
                         className="pm-btn-primary rounded-full px-3.5 py-1.5 text-xs font-bold"
                       >
-                        Play / Pausa
+                        Transferir aquí
                       </button>
                       <button
                         type="button"
-                        aria-label={`Siguiente en ${dev.device_name}`}
-                        onClick={() =>
-                          void sendRemoteDeviceCommand(dev.device_id, 'next')
-                        }
+                        onClick={() => void pullPlaybackFromDevice(dev.device_id)}
                         className="pm-btn-secondary rounded-full px-3 py-1.5 text-xs font-semibold"
                       >
-                        Siguiente
+                        Traer aquí
                       </button>
                     </div>
                   </div>
-                )}
-              </div>
-            );
-          })}
+
+                  {/* Interactive Remote Controls + Volume Slider */}
+                  <div className="space-y-2.5 border-t pm-border pt-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-[11px] font-semibold pm-text-tertiary">
+                        Control remoto en vivo
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          aria-label={`Anterior en ${dev.device_name}`}
+                          onClick={() => void sendRemoteDeviceCommand(dev.device_id, 'prev')}
+                          className="pm-btn-secondary rounded-full px-3 py-1.5 text-xs font-semibold"
+                        >
+                          Anterior
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Play/Pausa en ${dev.device_name}`}
+                          onClick={() => void sendRemoteDeviceCommand(dev.device_id, 'toggle')}
+                          className="pm-btn-primary rounded-full px-3.5 py-1.5 text-xs font-bold"
+                        >
+                          Play / Pausa
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Siguiente en ${dev.device_name}`}
+                          onClick={() => void sendRemoteDeviceCommand(dev.device_id, 'next')}
+                          className="pm-btn-secondary rounded-full px-3 py-1.5 text-xs font-semibold"
+                        >
+                          Siguiente
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2.5">
+                      <Volume2 className="h-3.5 w-3.5 shrink-0 pm-text-tertiary" />
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        aria-label={`Volumen remoto en ${dev.device_name}`}
+                        value={remoteVol}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          setRemoteVol(v);
+                          void sendRemoteDeviceCommand(dev.device_id, 'toggle', v / 100);
+                        }}
+                        style={{ '--pm-fill': `${remoteVol}%` } as React.CSSProperties}
+                        className="flex-1"
+                      />
+                      <span className="tabular-nums w-8 text-right text-[11px] font-semibold pm-text-secondary">
+                        {remoteVol}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
 
         <div
@@ -3327,9 +3615,11 @@ export const DevicesConnectSheet: React.FC = () => {
           <div className="text-xs pm-text-secondary">
             Estado:{' '}
             <strong className="pm-text-primary">
-              {syncMode === 'supabase'
-                ? 'Supabase Realtime Conectado'
-                : 'Sincronización Local Activa'}
+              {authState.connected && syncMode === 'supabase'
+                ? `Conectado (${authState.email})`
+                : syncMode === 'supabase'
+                  ? 'Supabase listo · Inicia sesión'
+                  : 'Sincronización Local Activa'}
             </strong>
           </div>
           <div className="flex items-center gap-2">
@@ -3338,7 +3628,7 @@ export const DevicesConnectSheet: React.FC = () => {
               onClick={() => pairDemoCompanionDevice()}
               className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-semibold"
             >
-              Vincular dispositivo local
+              Probar dispositivo local
             </button>
             <button
               type="button"

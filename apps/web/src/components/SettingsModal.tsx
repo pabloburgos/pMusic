@@ -35,14 +35,15 @@ type SettingsCategoryId =
 const CATEGORIES: ReadonlyArray<{
   id: SettingsCategoryId;
   label: string;
+  shortLabel: string;
   icon: React.ReactNode;
 }> = [
-  { id: 'apariencia', label: 'Apariencia y Temas', icon: <Palette className="h-4 w-4" /> },
-  { id: 'audio', label: 'Audio y EQ', icon: <Sliders className="h-4 w-4" /> },
-  { id: 'dj', label: 'Sesión DJ', icon: <Disc3 className="h-4 w-4" /> },
-  { id: 'discord', label: 'Discord RPC', icon: <Gamepad2 className="h-4 w-4" /> },
-  { id: 'reproduccion', label: 'Reproducción', icon: <Timer className="h-4 w-4" /> },
-  { id: 'cuenta', label: 'Cuenta y Datos', icon: <Database className="h-4 w-4" /> },
+  { id: 'apariencia', label: 'Apariencia y Temas', shortLabel: 'Temas', icon: <Palette className="h-4 w-4" /> },
+  { id: 'audio', label: 'Audio y EQ', shortLabel: 'Audio', icon: <Sliders className="h-4 w-4" /> },
+  { id: 'dj', label: 'Sesión DJ', shortLabel: 'DJ', icon: <Disc3 className="h-4 w-4" /> },
+  { id: 'discord', label: 'Discord RPC', shortLabel: 'Discord', icon: <Gamepad2 className="h-4 w-4" /> },
+  { id: 'reproduccion', label: 'Reproducción', shortLabel: 'Reprod.', icon: <Timer className="h-4 w-4" /> },
+  { id: 'cuenta', label: 'Cuenta y Datos', shortLabel: 'Cuenta', icon: <Database className="h-4 w-4" /> },
 ];
 
 const SwitchRow: React.FC<{
@@ -52,10 +53,15 @@ const SwitchRow: React.FC<{
   disabled?: boolean;
   onToggle: () => void;
 }> = ({ title, description, checked, disabled, onToggle }) => (
-  <div className="flex items-center justify-between gap-4 py-2">
+  <div
+    onClick={() => {
+      if (!disabled) onToggle();
+    }}
+    className={`flex items-center justify-between gap-4 py-2.5 ${disabled ? 'opacity-60' : 'cursor-pointer'}`}
+  >
     <div className="min-w-0 flex-1">
       <div className="text-[13.5px] font-bold pm-text-primary">{title}</div>
-      <div className="text-xs pm-text-secondary">{description}</div>
+      <div className="text-xs leading-snug pm-text-secondary">{description}</div>
     </div>
     <button
       type="button"
@@ -63,12 +69,19 @@ const SwitchRow: React.FC<{
       aria-checked={checked}
       aria-label={title}
       disabled={disabled}
-      onClick={onToggle}
-      className={`shrink-0 rounded-full px-4 py-1.5 text-xs font-bold transition-all disabled:opacity-50 ${
-        checked ? 'pm-btn-primary' : 'pm-btn-secondary'
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggle();
+      }}
+      className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full p-0.5 transition-colors duration-200 disabled:opacity-50 ${
+        checked ? 'bg-[var(--pm-accent-primary)]' : 'bg-white/15 ring-1 ring-inset ring-white/15'
       }`}
     >
-      {checked ? 'Activado' : 'Desactivado'}
+      <span
+        className={`h-6 w-6 rounded-full bg-white shadow-md transition-transform duration-200 ${
+          checked ? 'translate-x-5' : 'translate-x-0'
+        }`}
+      />
     </button>
   </div>
 );
@@ -108,7 +121,11 @@ export const SettingsModal: React.FC = () => {
     sleepTimerMode,
     sleepTimerRemainingSec,
     authState,
+    onlineDevices,
+    deviceName,
     offlineEntries,
+    setDevicesSheetOpen,
+    setDeviceName,
     setTheme,
     setPlayerBarStyle,
     setAccentPreset,
@@ -154,11 +171,18 @@ export const SettingsModal: React.FC = () => {
   } = usePMusicStore();
 
   const [activeCategory, setActiveCategory] = useState<SettingsCategoryId>('apariencia');
+  const [authTab, setAuthTab] = useState<'signin' | 'signup'>('signup');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [authNotice, setAuthNotice] = useState<string | null>(null);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authNotice, setAuthNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [deviceNameDraft, setDeviceNameDraft] = useState(deviceName);
   const [clientIdInput, setClientIdInput] = useState(discordRpcConfig.clientId);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    setDeviceNameDraft(deviceName);
+  }, [deviceName]);
 
   useEffect(() => {
     setClientIdInput(discordRpcConfig.clientId);
@@ -207,7 +231,7 @@ export const SettingsModal: React.FC = () => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5">
+    <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-5">
       <div
         aria-hidden="true"
         onClick={() => setSettingsOpen(false)}
@@ -219,17 +243,20 @@ export const SettingsModal: React.FC = () => {
         aria-modal="true"
         aria-label="Ajustes de pMusic"
         data-testid="settings-view"
-        className="pm-glass-regular pm-modal-pop relative z-10 flex h-[86dvh] w-[95vw] max-w-4xl flex-col overflow-hidden rounded-[24px]"
+        className="pm-glass-regular pm-modal-pop relative z-10 flex h-[92dvh] w-full flex-col overflow-hidden rounded-t-[28px] sm:h-[86dvh] sm:w-[95vw] sm:max-w-4xl sm:rounded-[24px]"
       >
+        {/* Mobile grab indicator */}
+        <div className="mx-auto mt-2.5 h-1 w-10 shrink-0 rounded-full bg-current opacity-20 sm:hidden" />
+
         {/* Top Modal Header */}
-        <header className="flex shrink-0 items-center justify-between border-b pm-border px-5 py-4 sm:px-6">
+        <header className="flex shrink-0 items-center justify-between border-b pm-border px-4 py-3 sm:px-6 sm:py-4">
           <div className="flex items-center gap-2.5">
             <Settings className="h-5 w-5 pm-text-primary" />
             <div>
-              <h2 className="text-lg font-bold leading-tight pm-text-primary">
+              <h2 className="text-base font-bold leading-tight pm-text-primary sm:text-lg">
                 Configuración de pMusic
               </h2>
-              <p className="text-[11.5px] pm-text-tertiary">
+              <p className="hidden text-[11.5px] pm-text-tertiary sm:block">
                 Temas, motor acústico DSP, Sesión DJ, Discord RPC y sincronización
               </p>
             </div>
@@ -245,12 +272,12 @@ export const SettingsModal: React.FC = () => {
           </button>
         </header>
 
-        {/* Body: Left Category Navigation + Right Interactive Pane */}
+        {/* Body: Mobile Pill Tabs / Desktop Left Sidebar + Right Interactive Pane */}
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
           <nav
             role="tablist"
             aria-label="Categorías de ajustes"
-            className="flex shrink-0 gap-1 overflow-x-auto border-b pm-border px-3 py-2.5 md:w-[232px] md:flex-col md:border-r md:border-b-0 md:p-3 pm-no-scrollbar"
+            className="flex shrink-0 gap-1.5 overflow-x-auto border-b pm-border px-3 py-2.5 md:w-[232px] md:flex-col md:gap-1 md:border-r md:border-b-0 md:p-3 pm-no-scrollbar"
           >
             {CATEGORIES.map((cat) => {
               const active = activeCategory === cat.id;
@@ -262,12 +289,13 @@ export const SettingsModal: React.FC = () => {
                   data-testid={`settings-category-${cat.id}`}
                   aria-selected={active}
                   onClick={() => setActiveCategory(cat.id)}
-                  className={`flex shrink-0 items-center gap-2.5 rounded-[12px] px-3 py-2.5 text-left text-xs font-bold transition-all ${
+                  className={`flex shrink-0 items-center gap-2 rounded-full px-3.5 py-2 text-left text-xs font-bold transition-all md:rounded-[12px] md:px-3 md:py-2.5 ${
                     active ? 'pm-btn-primary shadow-sm' : 'pm-text-secondary pm-hover'
                   }`}
                 >
                   {cat.icon}
-                  <span className="whitespace-nowrap">{cat.label}</span>
+                  <span className="whitespace-nowrap md:hidden">{cat.shortLabel}</span>
+                  <span className="hidden whitespace-nowrap md:inline">{cat.label}</span>
                 </button>
               );
             })}
@@ -275,7 +303,7 @@ export const SettingsModal: React.FC = () => {
 
           <div
             key={activeCategory}
-            className="pm-tab-enter min-h-0 flex-1 space-y-5 overflow-y-auto p-5 sm:p-6"
+            className="pm-tab-enter min-h-0 flex-1 space-y-4 overflow-y-auto px-4 pt-4 pb-[max(1.5rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] sm:space-y-5 sm:p-6"
           >
             {/* 1. APARIENCIA Y TEMAS */}
             {activeCategory === 'apariencia' && (
@@ -1391,96 +1419,167 @@ export const SettingsModal: React.FC = () => {
 
                 <section
                   data-surface="content"
-                  className="pm-surface-card space-y-3 rounded-[16px] p-4"
+                  className="pm-surface-card space-y-4 rounded-[18px] p-4"
                 >
-                  <div>
-                    <h4 className="text-sm font-bold pm-text-primary">
-                      Tu cuenta pMusic
-                    </h4>
-                    <p className="text-xs pm-text-secondary">
-                      La sincronización entre PC y móvil se conecta automáticamente al iniciar sesión con tu cuenta
-                    </p>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h4 className="text-sm font-bold pm-text-primary">
+                        Tu cuenta pMusic
+                      </h4>
+                      <p className="text-xs pm-text-secondary">
+                        Sincroniza tu biblioteca y controla PC y móvil en vivo como Spotify Connect
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSettingsOpen(false);
+                        setDevicesSheetOpen(true);
+                      }}
+                      className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-bold text-emerald-400"
+                    >
+                      Dispositivos ({onlineDevices.length})
+                    </button>
                   </div>
 
                   <div>
                     {authState.connected ? (
-                      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border pm-border px-3.5 py-2.5">
-                        <div className="space-y-0.5">
-                          <div className="text-xs font-bold text-[#34D399]">
-                            Sesión iniciada · Sincronización en la nube activa
+                      <div className="space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
+                          <div className="space-y-0.5">
+                            <div className="text-xs font-bold text-[#34D399]">
+                              Sesión iniciada · Sincronización en la nube activa
+                            </div>
+                            <div className="text-xs pm-text-primary">
+                              {authState.email}
+                            </div>
                           </div>
-                          <div className="text-xs pm-text-secondary">
-                            {authState.email}
-                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void signOutSupabase()}
+                            className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-semibold text-[#F87171]"
+                          >
+                            Cerrar sesión
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => void signOutSupabase()}
-                          className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-semibold text-[#F87171]"
-                        >
-                          Cerrar sesión
-                        </button>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            type="text"
+                            aria-label="Nombre de este dispositivo"
+                            value={deviceNameDraft}
+                            onChange={(e) => setDeviceNameDraft(e.target.value)}
+                            placeholder="Ej: Mi PC / Mi Móvil"
+                            className="pm-input min-w-[180px] flex-1 rounded-xl px-3.5 py-2 text-xs"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => void setDeviceName(deviceNameDraft)}
+                            className="pm-btn-primary rounded-full px-4 py-2 text-xs font-bold"
+                          >
+                            Guardar nombre
+                          </button>
+                        </div>
                       </div>
                     ) : (
-                      <div className="flex flex-wrap items-center gap-2">
-                        <input
-                          type="email"
-                          aria-label="Correo electrónico"
-                          placeholder="tu@email.com"
-                          value={email}
-                          onChange={(e) => setEmail(e.target.value)}
-                          className="pm-input min-w-[180px] flex-1 rounded-full px-4 py-2 text-xs"
-                        />
-                        <input
-                          type="password"
-                          aria-label="Contraseña"
-                          placeholder="Contraseña"
-                          value={password}
-                          onChange={(e) => setPassword(e.target.value)}
-                          className="pm-input min-w-[150px] flex-1 rounded-full px-4 py-2 text-xs"
-                        />
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            try {
-                              await signInSupabase(
-                                email || 'pablo@pmusic.es',
-                                password || 'pmusic123'
-                              );
-                              setAuthNotice('Sesión iniciada.');
-                            } catch (err) {
-                              setAuthNotice(
-                                err instanceof Error ? err.message : 'Error de acceso'
-                              );
-                            }
-                          }}
-                          className="pm-btn-primary rounded-full px-4 py-2 text-xs font-bold"
-                        >
-                          Iniciar sesión
-                        </button>
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            try {
-                              await signUpSupabase(
-                                email || 'pablo@pmusic.es',
-                                password || 'pmusic123'
-                              );
-                              setAuthNotice('Cuenta creada.');
-                            } catch (err) {
-                              setAuthNotice(
-                                err instanceof Error ? err.message : 'Error al registrar'
-                              );
-                            }
-                          }}
-                          className="pm-btn-secondary rounded-full px-4 py-2 text-xs font-semibold"
-                        >
-                          Crear cuenta
-                        </button>
+                      <div className="space-y-3">
+                        <div className="inline-flex rounded-full bg-black/15 p-1 text-xs font-bold">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAuthTab('signup');
+                              setAuthNotice(null);
+                            }}
+                            className={`rounded-full px-4 py-1.5 transition-colors ${
+                              authTab === 'signup' ? 'pm-btn-primary' : 'pm-text-secondary'
+                            }`}
+                          >
+                            Crear cuenta
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAuthTab('signin');
+                              setAuthNotice(null);
+                            }}
+                            className={`rounded-full px-4 py-1.5 transition-colors ${
+                              authTab === 'signin' ? 'pm-btn-primary' : 'pm-text-secondary'
+                            }`}
+                          >
+                            Iniciar sesión
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          <input
+                            type="email"
+                            aria-label="Correo electrónico"
+                            placeholder="tu@email.com"
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            className="pm-input rounded-xl px-4 py-2.5 text-xs"
+                          />
+                          <input
+                            type="password"
+                            aria-label="Contraseña"
+                            placeholder="Contraseña (mín. 6 caracteres)"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            className="pm-input rounded-xl px-4 py-2.5 text-xs"
+                          />
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={authBusy}
+                            onClick={async () => {
+                              setAuthNotice(null);
+                              setAuthBusy(true);
+                              try {
+                                if (authTab === 'signup') {
+                                  const res = await signUpSupabase(email, password);
+                                  setAuthNotice({
+                                    kind: 'ok',
+                                    text: res.needsEmailConfirmation
+                                      ? 'Cuenta creada. Confirma el enlace en tu correo para sincronizar.'
+                                      : '¡Cuenta pMusic creada y conectada!',
+                                  });
+                                } else {
+                                  await signInSupabase(email, password);
+                                  setAuthNotice({
+                                    kind: 'ok',
+                                    text: '¡Sesión iniciada! Conectando tus dispositivos…',
+                                  });
+                                }
+                              } catch (err) {
+                                setAuthNotice({
+                                  kind: 'err',
+                                  text: err instanceof Error ? err.message : 'Error de acceso',
+                                });
+                              } finally {
+                                setAuthBusy(false);
+                              }
+                            }}
+                            className="pm-btn-primary rounded-full px-5 py-2.5 text-xs font-bold disabled:opacity-60"
+                          >
+                            {authBusy
+                              ? 'Conectando…'
+                              : authTab === 'signup'
+                                ? 'Crear cuenta pMusic'
+                                : 'Iniciar sesión'}
+                          </button>
+                        </div>
                       </div>
                     )}
                     {authNotice && (
-                      <p className="mt-2 text-xs font-medium text-[#34D399]">{authNotice}</p>
+                      <p
+                        className={`mt-2.5 text-xs font-medium ${
+                          authNotice.kind === 'err' ? 'text-[#F87171]' : 'text-[#34D399]'
+                        }`}
+                      >
+                        {authNotice.text}
+                      </p>
                     )}
                   </div>
                 </section>

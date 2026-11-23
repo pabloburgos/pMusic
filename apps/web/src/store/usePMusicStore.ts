@@ -26,6 +26,7 @@ import {
   type LikedTrackRecord,
   type LyricsDocument,
   type OfflineAudioEntry,
+  type PlaybackTransferSnapshot,
   type PlayHistoryRecord,
   type PlaylistDetail,
   type PlaylistImportResult,
@@ -431,6 +432,18 @@ export interface PMusicStoreState {
   authState: SyncAuthState;
   onlineDevices: DevicePresenceState[];
   lastTransferBanner: string | null;
+  remoteControlledDeviceId: string | null;
+  remoteDeviceSnapshot: {
+    deviceId: string;
+    deviceName: string;
+    trackTitle: string;
+    trackArtist: string;
+    thumbnailUrl?: string;
+    isPlaying: boolean;
+    positionMs: number;
+    durationMs: number;
+    volume: number;
+  } | null;
 
   // Actions
   initApp: () => Promise<void>;
@@ -540,16 +553,22 @@ export interface PMusicStoreState {
 
   // Sync & Connect Actions
   configureSupabase: (url: string, anonKey: string, deviceName?: string) => Promise<void>;
+  setDeviceName: (deviceName: string) => Promise<void>;
   signInSupabase: (email: string, password: string) => Promise<void>;
-  signUpSupabase: (email: string, password: string) => Promise<void>;
+  signUpSupabase: (
+    email: string,
+    password: string
+  ) => Promise<{ userId: string; needsEmailConfirmation: boolean }>;
   signOutSupabase: () => Promise<void>;
   pairDemoCompanionDevice: () => void;
   sendRemoteDeviceCommand: (
     targetDeviceId: string,
-    action: 'play' | 'pause' | 'toggle' | 'next' | 'prev',
+    action: 'play' | 'pause' | 'toggle' | 'next' | 'prev' | 'request_state' | 'pull_transfer',
     volume01?: number
   ) => Promise<void>;
   transferPlaybackToDevice: (targetDeviceId: string) => Promise<void>;
+  pullPlaybackFromDevice: (sourceDeviceId: string) => Promise<void>;
+  setRemoteControlledDevice: (deviceId: string | null) => void;
   setSurfaceStyle: (style: PMusicSurfaceStyle) => void;
   setLiquidGlassMode: (enabled: boolean) => void;
   setGraphicSaverMode: (enabled: boolean) => void;
@@ -882,7 +901,18 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     });
 
     syncEngine.onDevicesChanged((devices) => {
-      set({ onlineDevices: devices });
+      const curRemote = get().remoteControlledDeviceId;
+      const remoteStillOnline = curRemote ? devices.some((d) => d.device_id === curRemote) : false;
+      set({
+        onlineDevices: devices,
+        ...(curRemote && !remoteStillOnline
+          ? { remoteControlledDeviceId: null, remoteDeviceSnapshot: null }
+          : {}),
+      });
+    });
+
+    syncEngine.onAuthStateChanged((auth) => {
+      set({ authState: auth, onlineDevices: syncEngine.getOnlineDevices() });
     });
 
     syncEngine.onRemoteCommand((cmd) => {
@@ -897,6 +927,35 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       else if (cmd.type === 'set_dj_mode') {
         void st.toggleDjMode(cmd.enabled);
         void st.setDjSessionStyle(cmd.style);
+      } else if (cmd.type === 'pull_transfer') {
+        void st.transferPlaybackToDevice(cmd.originDeviceId);
+      } else if (cmd.type === 'request_state') {
+        void syncEngine.sendRemoteCommand({
+          targetDeviceId: cmd.originDeviceId,
+          type: 'state_pulse',
+          deviceName: st.deviceName,
+          trackTitle: st.currentTrack.title,
+          trackArtist: st.currentTrack.artists.map((a) => a.name).join(', '),
+          thumbnailUrl: st.currentTrack.thumbnailUrl,
+          isPlaying: st.isPlaying,
+          positionMs: Math.round(st.positionSec * 1000),
+          durationMs: Math.round(st.durationSec * 1000),
+          volume: st.volume,
+        });
+      } else if (cmd.type === 'state_pulse') {
+        set({
+          remoteDeviceSnapshot: {
+            deviceId: cmd.originDeviceId,
+            deviceName: cmd.deviceName,
+            trackTitle: cmd.trackTitle,
+            trackArtist: cmd.trackArtist,
+            thumbnailUrl: cmd.thumbnailUrl,
+            isPlaying: cmd.isPlaying,
+            positionMs: cmd.positionMs,
+            durationMs: cmd.durationMs,
+            volume: cmd.volume,
+          },
+        });
       } else if (cmd.type === 'transfer') {
         const snap = cmd.snapshot;
         set({
@@ -904,9 +963,12 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           queue: snap.queue.length > 0 ? snap.queue : [snap.track],
           queueIndex: snap.queueIndex,
           volume: snap.volume,
+          remoteControlledDeviceId: null,
+          remoteDeviceSnapshot: null,
           lastTransferBanner: `Reproducción recibida en ${Math.round(snap.positionMs / 1000)}s`,
         });
         void st.playTrack(snap.track, snap.queue, snap.positionMs / 1000);
+        st.showToast(`Escuchando aquí: ${snap.track.title}`);
       }
     });
 
@@ -942,6 +1004,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     ) {
       return;
     }
+    // Avoid full-track PCM decoding on mobile unless DJ Mode is explicitly active
+    if (isMobileHardwareVolumeRuntime() && !get().djMode.enabled) {
+      return;
+    }
     decodedAudioInFlightIds.add(track.id);
     try {
       const url = await resolveTrackStreamUrl(track);
@@ -951,9 +1017,22 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       const buf = await res.arrayBuffer();
       const pcmAnalysis = await djPlanner.analyzeEncodedAudio(track.id, buf, track.durationSec);
       decodedAudioAnalyzedIds.add(track.id);
-      set((prev) => ({
-        trackAnalyses: { ...prev.trackAnalyses, [track.id]: pcmAnalysis },
-      }));
+      if (decodedAudioAnalyzedIds.size > 24) {
+        const oldest = decodedAudioAnalyzedIds.values().next().value;
+        if (oldest) decodedAudioAnalyzedIds.delete(oldest);
+      }
+      set((prev) => {
+        const nextAnalyses = { ...prev.trackAnalyses, [track.id]: pcmAnalysis };
+        const keys = Object.keys(nextAnalyses);
+        if (keys.length > 16) {
+          for (const k of keys.slice(0, keys.length - 16)) {
+            if (k !== track.id && k !== prev.currentTrack.id) {
+              delete nextAnalyses[k];
+            }
+          }
+        }
+        return { trackAnalyses: nextAnalyses };
+      });
       void recomputeActiveDjPlan();
     } catch {
       // Ignore network/codec failures and keep heuristic analysis
@@ -1331,6 +1410,21 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       showWhenPaused: st.discordRpcConfig.showWhenPaused,
       displayMode: st.discordRpcConfig.displayMode,
     });
+    if (st.authState.connected && !st.remoteControlledDeviceId) {
+      const artistLabel = st.currentTrack.artists.map((a) => a.name).join(', ');
+      void syncEngine.sendRemoteCommand({
+        targetDeviceId: '*',
+        type: 'state_pulse',
+        deviceName: st.deviceName,
+        trackTitle: st.currentTrack.title,
+        trackArtist: artistLabel,
+        thumbnailUrl: st.currentTrack.thumbnailUrl,
+        isPlaying: st.isPlaying,
+        positionMs: Math.round(st.positionSec * 1000),
+        durationMs: Math.round(st.durationSec * 1000),
+        volume: st.volume,
+      });
+    }
   }
 
   function persistPrefsFromStore(): void {
@@ -1554,12 +1648,17 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   syncMode: syncEngine.mode,
   selfDeviceId: syncEngine.deviceId,
-  deviceName: 'pMusic Dispositivo Actual',
+  deviceName:
+    typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent)
+      ? 'pMusic Android'
+      : 'pMusic Windows PC',
   supabaseUrlInput: resolvedSupabaseUrl,
   supabaseAnonKeyInput: resolvedSupabaseKey,
   authState: syncEngine.getAuthState(),
   onlineDevices: syncEngine.getOnlineDevices(),
   lastTransferBanner: null,
+  remoteControlledDeviceId: null,
+  remoteDeviceSnapshot: null,
 
   initApp: async () => {
     ensureAudioEngineBindings();
@@ -1750,9 +1849,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }
 
     const rpcStatus = await defaultPlatformBridge.getDiscordRpcStatus?.();
+    const restoredAuth = await syncEngine.restoreSession();
 
     set((prev) => ({
       ...(isMobileHardwareVolumeRuntime() ? { volume: 1.0 } : {}),
+      authState: restoredAuth,
       playlists: libraryStore.getPlaylists(),
       likedTracks: libraryStore.getLikedTracks(),
       playHistory: libraryStore.getPlayHistory(),
@@ -3534,20 +3635,38 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     });
   },
 
+  setDeviceName: async (deviceName) => {
+    const clean = deviceName.trim();
+    if (!clean) return;
+    await syncEngine.configure({ deviceName: clean });
+    set({
+      deviceName: clean,
+      onlineDevices: syncEngine.getOnlineDevices(),
+    });
+    get().showToast(`Dispositivo renombrado a "${clean}"`);
+  },
+
   signInSupabase: async (email, password) => {
     await syncEngine.signIn(email, password);
     set({
       authState: syncEngine.getAuthState(),
       onlineDevices: syncEngine.getOnlineDevices(),
+      likedTracks: libraryStore.getLikedTracks(),
+      playlists: libraryStore.getPlaylists(),
+    });
+    void syncEngine.sendRemoteCommand({
+      targetDeviceId: '*',
+      type: 'request_state',
     });
   },
 
   signUpSupabase: async (email, password) => {
-    await syncEngine.signUp(email, password);
+    const res = await syncEngine.signUp(email, password);
     set({
       authState: syncEngine.getAuthState(),
       onlineDevices: syncEngine.getOnlineDevices(),
     });
+    return res;
   },
 
   signOutSupabase: async () => {
@@ -3555,6 +3674,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     set({
       authState: syncEngine.getAuthState(),
       onlineDevices: syncEngine.getOnlineDevices(),
+      remoteControlledDeviceId: null,
+      remoteDeviceSnapshot: null,
     });
   },
 
@@ -3588,25 +3709,83 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   transferPlaybackToDevice: async (targetDeviceId) => {
     const st = get();
-    const res = await syncEngine.transferPlaybackTo(targetDeviceId, {
+    const snapshot: PlaybackTransferSnapshot = {
       track: st.currentTrack,
       queue: st.queue,
       queueIndex: st.queueIndex,
       positionMs: Math.round(st.positionSec * 1000),
-      isPlaying: st.isPlaying,
+      isPlaying: st.isPlaying || true,
       volume: st.volume,
       djModeEnabled: st.djMode.enabled,
       djSessionStyle: st.djMode.style,
       sentAtEpochMs: Date.now(),
-    });
+    };
+    const res = await syncEngine.transferPlaybackTo(targetDeviceId, snapshot);
+    void syncEngine.persistDeviceSession(snapshot);
+
+    // Spotify Connect handoff: pause local playback and switch to remote-control mode
+    if (st.isPlaying) {
+      audioEngine.pause();
+    }
 
     const targetDev = st.onlineDevices.find((d) => d.device_id === targetDeviceId);
     set({
+      isPlaying: false,
+      remoteControlledDeviceId: targetDeviceId,
+      remoteDeviceSnapshot: {
+        deviceId: targetDeviceId,
+        deviceName: targetDev?.device_name ?? targetDeviceId,
+        trackTitle: st.currentTrack.title,
+        trackArtist: st.currentTrack.artists.map((a) => a.name).join(', '),
+        thumbnailUrl: st.currentTrack.thumbnailUrl,
+        isPlaying: true,
+        positionMs: snapshot.positionMs,
+        durationMs: Math.round(st.durationSec * 1000),
+        volume: st.volume,
+      },
       onlineDevices: syncEngine.getOnlineDevices(),
       lastTransferBanner: res.acked
         ? `Transferido a ${targetDev?.device_name ?? targetDeviceId} en ${Math.round(st.positionSec)}s`
         : `Enviado a ${targetDev?.device_name ?? targetDeviceId}`,
     });
+  },
+
+  pullPlaybackFromDevice: async (sourceDeviceId) => {
+    await syncEngine.sendRemoteCommand({
+      targetDeviceId: sourceDeviceId,
+      type: 'pull_transfer',
+    });
+    const latest = await syncEngine.fetchLatestDeviceSession();
+    if (latest?.track && latest.activeDeviceId === sourceDeviceId) {
+      set({
+        remoteControlledDeviceId: null,
+        remoteDeviceSnapshot: null,
+        lastTransferBanner: `Reproducción traída desde ${latest.activeDeviceName}`,
+      });
+      await get().playTrack(
+        latest.track,
+        latest.queue.length > 0 ? latest.queue : [latest.track],
+        latest.positionMs / 1000
+      );
+      return;
+    }
+    set({
+      remoteControlledDeviceId: null,
+      lastTransferBanner: 'Solicitando reproducción al otro dispositivo…',
+    });
+  },
+
+  setRemoteControlledDevice: (deviceId) => {
+    set({
+      remoteControlledDeviceId: deviceId,
+      ...(deviceId === null ? { remoteDeviceSnapshot: null } : {}),
+    });
+    if (deviceId) {
+      void syncEngine.sendRemoteCommand({
+        targetDeviceId: deviceId,
+        type: 'request_state',
+      });
+    }
   },
 
   setSurfaceStyle: (style) => {

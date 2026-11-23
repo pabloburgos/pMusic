@@ -242,3 +242,16 @@ begin
   end if;
 end;
 $$;
+
+-- -----------------------------------------------------------------------------
+-- 8. Permisos explícitos para roles authenticated y service_role (Idempotente)
+-- -----------------------------------------------------------------------------
+grant usage on schema public to anon, authenticated, service_role;
+grant all on table
+  public.playlists,
+  public.playlist_tracks,
+  public.liked_tracks,
+  public.play_history,
+  public.artist_affinity,
+  public.device_sessions
+  to authenticated, service_role;

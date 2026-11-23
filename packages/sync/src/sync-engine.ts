@@ -2,6 +2,7 @@ import { createClient, type RealtimeChannel, type SupabaseClient } from '@supaba
 import type {
   DevicePlatform,
   DevicePresenceState,
+  DeviceSessionRecord,
   IPreferencesStorageBridge,
   ISyncEngine,
   PlaybackTransferSnapshot,
@@ -11,6 +12,7 @@ import type {
   SyncConfigInput,
   SyncMode,
   SyncTableName,
+  Track,
   Unsubscribe,
 } from '@pmusic/core';
 import {
@@ -196,11 +198,92 @@ export class SyncEngine implements ISyncEngine {
     this.emitDevicesChanged();
   }
 
+  private formatAuthError(rawMessage?: string, fallback = 'Error de autenticación'): string {
+    const msg = (rawMessage ?? '').trim();
+    const low = msg.toLowerCase();
+    if (low.includes('email signups are disabled') || low.includes('email_provider_disabled') || low.includes('email logins are disabled')) {
+      return 'El inicio/registro con email está desactivado en tu panel de Supabase. Activa Authentication → Providers → Email.';
+    }
+    if (low.includes('invalid login credentials')) {
+      return 'Correo o contraseña incorrectos.';
+    }
+    if (low.includes('user already registered')) {
+      return 'Este correo ya tiene cuenta pMusic. Pulsa "Iniciar sesión".';
+    }
+    if (low.includes('email not confirmed')) {
+      return 'Confirma tu correo electrónico (o desactiva "Confirm email" en Supabase Auth).';
+    }
+    if (low.includes('password should be at least')) {
+      return 'La contraseña debe tener al menos 6 caracteres.';
+    }
+    return msg || fallback;
+  }
+
+  public async restoreSession(): Promise<SyncAuthState> {
+    try {
+      const savedName = await this.preferencesStorage.getItem('pmusic.sync.deviceName');
+      if (savedName && savedName.trim().length > 0) {
+        this.deviceName = savedName.trim();
+        this.selfPresence = {
+          ...this.selfPresence,
+          device_name: this.deviceName,
+          updated_at: Date.now(),
+        };
+      }
+    } catch {
+      // ignore storage read errors
+    }
+
+    if (!this.supabaseBackend) {
+      return this.getAuthState();
+    }
+
+    try {
+      const { data } = await this.supabaseBackend.client.auth.getSession();
+      const session = data?.session;
+      if (session?.user) {
+        this.updateAuthState({
+          userId: session.user.id,
+          email: session.user.email ?? null,
+          connected: true,
+        });
+        await this.connectRealtime();
+        void this.syncNow();
+      }
+      this.supabaseBackend.client.auth.onAuthStateChange((_event, nextSession) => {
+        if (nextSession?.user) {
+          const changed = this.authState.userId !== nextSession.user.id || !this.authState.connected;
+          this.updateAuthState({
+            userId: nextSession.user.id,
+            email: nextSession.user.email ?? null,
+            connected: true,
+          });
+          if (changed) {
+            void this.connectRealtime();
+            void this.syncNow();
+          }
+        } else if (this.authState.connected) {
+          this.updateAuthState({ userId: null, email: null, connected: false });
+          void this.disconnectRealtime();
+        }
+      });
+    } catch {
+      // Keep local-only gracefully if offline
+    }
+    return this.getAuthState();
+  }
+
   public async signUp(
     email: string,
     password: string
   ): Promise<{ userId: string; needsEmailConfirmation: boolean }> {
     const cleanEmail = email.trim();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      throw new Error('Introduce un correo electrónico válido.');
+    }
+    if (!password || password.length < 6) {
+      throw new Error('La contraseña debe tener al menos 6 caracteres.');
+    }
     if (!this.supabaseBackend) {
       const localUserId = `user_local_${cleanEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}`;
       this.updateAuthState({ userId: localUserId, email: cleanEmail, connected: true });
@@ -213,7 +296,7 @@ export class SyncEngine implements ISyncEngine {
       password,
     });
     if (error || !data.user) {
-      throw new Error(error?.message ?? 'No se pudo registrar la cuenta en Supabase');
+      throw new Error(this.formatAuthError(error?.message, 'No se pudo registrar la cuenta en Supabase'));
     }
 
     const needsEmailConfirmation = !data.session;
@@ -225,12 +308,19 @@ export class SyncEngine implements ISyncEngine {
 
     if (data.session) {
       await this.connectRealtime();
+      void this.syncNow();
     }
     return { userId: data.user.id, needsEmailConfirmation };
   }
 
   public async signIn(email: string, password: string): Promise<{ userId: string }> {
     const cleanEmail = email.trim();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      throw new Error('Introduce un correo electrónico válido.');
+    }
+    if (!password || password.length < 4) {
+      throw new Error('Introduce tu contraseña.');
+    }
     if (!this.supabaseBackend) {
       const localUserId = `user_local_${cleanEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}`;
       this.updateAuthState({ userId: localUserId, email: cleanEmail, connected: true });
@@ -243,7 +333,7 @@ export class SyncEngine implements ISyncEngine {
       password,
     });
     if (error || !data.user) {
-      throw new Error(error?.message ?? 'Credenciales incorrectas en Supabase');
+      throw new Error(this.formatAuthError(error?.message, 'Credenciales incorrectas en Supabase'));
     }
 
     this.updateAuthState({
@@ -573,11 +663,37 @@ export class SyncEngine implements ISyncEngine {
     return { acked };
   }
 
+  private rememberCmdId(cmdId: string): void {
+    this.seenCmdIds.add(cmdId);
+    if (this.seenCmdIds.size > 500) {
+      const oldest = this.seenCmdIds.values().next().value;
+      if (oldest) this.seenCmdIds.delete(oldest);
+    }
+  }
+
   private handleIncomingCommand(cmd: RemoteCommand): void {
     if (!cmd || !cmd.cmdId || this.seenCmdIds.has(cmd.cmdId)) return;
     if (cmd.targetDeviceId !== '*' && cmd.targetDeviceId !== this.deviceId) return;
 
-    this.seenCmdIds.add(cmd.cmdId);
+    this.rememberCmdId(cmd.cmdId);
+
+    if (cmd.type === 'state_pulse') {
+      const prev = this.peerDevices.get(cmd.originDeviceId);
+      this.peerDevices.set(cmd.originDeviceId, {
+        device_id: cmd.originDeviceId,
+        device_name: cmd.deviceName || prev?.device_name || 'Dispositivo pMusic',
+        platform: prev?.platform ?? (cmd.originDeviceId.includes('android') ? 'android' : cmd.originDeviceId.includes('windows') ? 'windows' : 'web'),
+        is_active: true,
+        is_playing: cmd.isPlaying,
+        track_title: cmd.trackArtist ? `${cmd.trackTitle} — ${cmd.trackArtist}` : cmd.trackTitle,
+        updated_at: Date.now(),
+      });
+      this.emitDevicesChanged();
+      for (const cb of this.remoteCommandListeners) {
+        cb(cmd);
+      }
+      return;
+    }
 
     if (cmd.type === 'transfer_ack') {
       const resolver = this.pendingTransferAcks.get(cmd.transferCmdId);
@@ -626,10 +742,98 @@ export class SyncEngine implements ISyncEngine {
     }
   }
 
+  public async persistDeviceSession(snapshot: PlaybackTransferSnapshot): Promise<void> {
+    if (!this.supabaseBackend || !this.authState.connected || !this.authState.userId) return;
+    try {
+      await this.supabaseBackend.client.from('device_sessions').upsert(
+        {
+          user_id: this.authState.userId,
+          active_device_id: this.deviceId,
+          active_device_name: this.deviceName,
+          active_platform: this.platform,
+          track_data: snapshot.track,
+          queue_data: snapshot.queue.slice(0, 40),
+          queue_index: Math.max(0, snapshot.queueIndex),
+          position_ms: Math.max(0, Math.round(snapshot.positionMs)),
+          is_playing: Boolean(snapshot.isPlaying),
+          volume: Math.max(0, Math.min(1, snapshot.volume)),
+          dj_mode_enabled: Boolean(snapshot.djModeEnabled),
+          dj_session_style: snapshot.djSessionStyle,
+        },
+        { onConflict: 'user_id' }
+      );
+    } catch {
+      // Non-fatal: Realtime Broadcast still drives live sync
+    }
+  }
+
+  public async fetchLatestDeviceSession(): Promise<DeviceSessionRecord | null> {
+    if (!this.supabaseBackend || !this.authState.connected || !this.authState.userId) return null;
+    try {
+      const { data, error } = await this.supabaseBackend.client
+        .from('device_sessions')
+        .select('*')
+        .eq('user_id', this.authState.userId)
+        .maybeSingle();
+      if (error || !data) return null;
+      return {
+        userId: data.user_id,
+        activeDeviceId: data.active_device_id,
+        activeDeviceName: data.active_device_name,
+        activePlatform: data.active_platform,
+        track: (data.track_data as Track | null) ?? null,
+        queue: Array.isArray(data.queue_data) ? (data.queue_data as Track[]) : [],
+        queueIndex: Number(data.queue_index ?? 0),
+        positionMs: Number(data.position_ms ?? 0),
+        isPlaying: Boolean(data.is_playing),
+        volume: Number(data.volume ?? 0.85),
+        djModeEnabled: Boolean(data.dj_mode_enabled),
+        djSessionStyle: data.dj_session_style === 'full' ? 'full' : 'quick',
+        updatedAt: String(data.updated_at ?? new Date().toISOString()),
+      };
+    } catch {
+      return null;
+    }
+  }
+
   public async syncNow(): Promise<void> {
     const pending = this.libraryStore.outbox.getPending();
     if (!this.supabaseBackend || !this.authState.connected || !this.authState.userId) {
       return;
+    }
+    const userId = this.authState.userId;
+
+    // 1. Push local liked tracks to Supabase cloud (best-effort, idempotent upsert)
+    try {
+      const localLikes = this.libraryStore.getLikedTracks();
+      if (localLikes.length > 0) {
+        const rows = localLikes.slice(0, 200).map((l) => ({
+          user_id: userId,
+          track_id: l.trackId,
+          track_data: l.track,
+          liked_at: l.likedAt,
+        }));
+        await this.supabaseBackend.client
+          .from('liked_tracks')
+          .upsert(rows, { onConflict: 'user_id,track_id' });
+      }
+      // 2. Pull any remote liked tracks not yet present locally
+      const { data: remoteLikes } = await this.supabaseBackend.client
+        .from('liked_tracks')
+        .select('track_id,track_data')
+        .eq('user_id', userId)
+        .order('liked_at', { ascending: false })
+        .limit(200);
+      if (Array.isArray(remoteLikes)) {
+        const localSet = new Set(localLikes.map((l) => l.trackId));
+        for (const row of remoteLikes) {
+          if (row.track_id && row.track_data && !localSet.has(row.track_id)) {
+            await this.libraryStore.toggleLikeTrack(row.track_data as Track);
+          }
+        }
+      }
+    } catch {
+      // Non-fatal if table grants or network are offline
     }
 
     const processedIds: string[] = [];

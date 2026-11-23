@@ -105,7 +105,7 @@ export interface RemoteCommandEnvelope {
 
 export type RemoteCommand =
   | (RemoteCommandEnvelope & {
-      type: 'play' | 'pause' | 'toggle' | 'next' | 'prev' | 'request_state';
+      type: 'play' | 'pause' | 'toggle' | 'next' | 'prev' | 'request_state' | 'pull_transfer';
     })
   | (RemoteCommandEnvelope & { type: 'seek'; positionMs: number })
   | (RemoteCommandEnvelope & { type: 'volume'; volume01: number })
@@ -121,6 +121,17 @@ export type RemoteCommand =
   | (RemoteCommandEnvelope & {
       type: 'transfer_ack';
       transferCmdId: string;
+    })
+  | (RemoteCommandEnvelope & {
+      type: 'state_pulse';
+      deviceName: string;
+      trackTitle: string;
+      trackArtist: string;
+      thumbnailUrl?: string;
+      isPlaying: boolean;
+      positionMs: number;
+      durationMs: number;
+      volume: number;
     })
   | (RemoteCommandEnvelope & { type: 'clock_ping'; t0: number })
   | (RemoteCommandEnvelope & { type: 'clock_pong'; t0: number; t1: number });
@@ -144,7 +155,10 @@ export interface ISyncEngine {
   ): Promise<{ userId: string; needsEmailConfirmation: boolean }>;
   signIn(email: string, password: string): Promise<{ userId: string }>;
   signOut(): Promise<void>;
+  restoreSession?(): Promise<SyncAuthState>;
   getAuthState(): SyncAuthState;
+  persistDeviceSession?(snapshot: PlaybackTransferSnapshot): Promise<void>;
+  fetchLatestDeviceSession?(): Promise<DeviceSessionRecord | null>;
   connectRealtime(): Promise<void>;
   disconnectRealtime(): Promise<void>;
   getOnlineDevices(): DevicePresenceState[];

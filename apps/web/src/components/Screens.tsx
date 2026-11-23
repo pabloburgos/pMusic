@@ -175,7 +175,8 @@ export const TrackListRow: React.FC<{
             src={track.thumbnailUrl}
             alt={track.title}
             loading="lazy"
-            className="h-full w-full object-cover"
+            draggable={false}
+            className="pointer-events-none h-full w-full select-none object-cover"
           />
           <span
             className={`absolute inset-0 flex items-center justify-center bg-black/55 text-white transition-opacity ${

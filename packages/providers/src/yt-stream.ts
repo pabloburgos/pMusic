@@ -206,6 +206,7 @@ export function scoreAudioCandidate(
  */
 export class AudioStreamResolver {
   private ytPromise: Promise<any> | null = null;
+  private ytCreatedAtMs = 0;
   private readonly cache = new Map<string, Resolved>();
   private readonly inflight = new Map<string, Promise<Resolved | null>>();
   private readonly catalog: DeezerCatalog;
@@ -221,7 +222,12 @@ export class AudioStreamResolver {
   }
 
   private async yt(): Promise<any> {
+    // Periodically refresh InnerTube player/cipher during multi-hour listening sessions
+    if (this.ytPromise && this.ytCreatedAtMs > 0 && Date.now() - this.ytCreatedAtMs > 45 * 60_000) {
+      this.ytPromise = null;
+    }
     if (!this.ytPromise) {
+      this.ytCreatedAtMs = Date.now();
       this.ytPromise = (async () => {
         const mod: any = await import('youtubei.js');
         if (mod.Platform?.shim) {
@@ -234,6 +240,7 @@ export class AudioStreamResolver {
         return Innertube.create({ lang: 'es', location: 'ES', retrieve_player: true });
       })().catch((e) => {
         this.ytPromise = null;
+        this.ytCreatedAtMs = 0;
         throw e;
       });
     }
@@ -316,7 +323,7 @@ export class AudioStreamResolver {
                 url,
                 mime: String(fmt.mime_type ?? 'video/mp4').split(';')[0]!,
                 source: 'youtube-full',
-                expiresAt: Date.now() + 90 * 60_000,
+                expiresAt: Date.now() + 35 * 60_000,
               };
             }
           } catch {
@@ -643,7 +650,13 @@ export class AudioStreamResolver {
             }
           }
         }
-        if (r) this.cache.set(cacheKey, r);
+        if (r) {
+          if (this.cache.size >= 40) {
+            const oldestKey = this.cache.keys().next().value;
+            if (oldestKey) this.cache.delete(oldestKey);
+          }
+          this.cache.set(cacheKey, r);
+        }
         return r;
       })().finally(() => this.inflight.delete(cacheKey));
       this.inflight.set(cacheKey, p);

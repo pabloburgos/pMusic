@@ -100,6 +100,9 @@ export const App: React.FC = () => {
     audioPanelTab,
     incomingTransitionTrack,
     devicesSheetOpen,
+    remoteControlledDeviceId,
+    remoteDeviceSnapshot,
+    onlineDevices,
     importModalOpen,
     settingsOpen,
     spotlightOpen,
@@ -418,6 +421,9 @@ export const App: React.FC = () => {
     audioPanelTab,
     incomingTransitionTrack,
     devicesSheetOpen,
+    remoteControlledDeviceId,
+    remoteDeviceSnapshot,
+    onlineDevices,
     importModalOpen,
     settingsOpen,
     durationSec,
@@ -1134,13 +1140,19 @@ export const App: React.FC = () => {
                   <img
                     src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
                     alt={currentTrack.title}
-                    className="aspect-square w-full object-cover shadow-2xl"
+                    draggable={false}
+                    className="pointer-events-none aspect-square w-full select-none object-cover shadow-2xl"
                   />
                 </button>
               </div>
 
               <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0 flex-1">
+                <div
+                  draggable
+                  onDragStart={(e) => setDraggedTrack(e, currentTrack)}
+                  onDragEnd={() => clearDraggedTrack()}
+                  className="min-w-0 flex-1 cursor-grab active:cursor-grabbing"
+                >
                   <button
                     type="button"
                     onClick={() => setNowPlayingOpen(true)}
@@ -1279,7 +1291,8 @@ export const App: React.FC = () => {
                       <img
                         src={track.thumbnailUrl}
                         alt=""
-                        className="h-full w-full object-cover"
+                        draggable={false}
+                        className="pointer-events-none h-full w-full select-none object-cover"
                       />
                     </button>
                     <div className="min-w-0 flex-1">
@@ -1509,7 +1522,8 @@ export const App: React.FC = () => {
                 <img
                   src={currentTrack.thumbnailUrl}
                   alt={currentTrack.title}
-                  className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
+                  draggable={false}
+                  className="pointer-events-none h-full w-full select-none object-cover transition-transform duration-200 group-hover:scale-105"
                 />
                 {playerBarStyle === 'minimal-wave' && isPlaying && (
                   <span
@@ -1872,6 +1886,28 @@ export const App: React.FC = () => {
 
               <button
                 type="button"
+                data-testid="dock-connect-btn"
+                aria-label="Dispositivos conectados (pMusic Connect)"
+                aria-pressed={devicesSheetOpen || Boolean(remoteControlledDeviceId)}
+                onClick={() => setDevicesSheetOpen(true)}
+                className={`pm-pressable inline-flex h-8 items-center justify-center gap-1.5 rounded-full px-2 text-[11px] font-bold transition-colors ${
+                  remoteControlledDeviceId
+                    ? 'bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-400/40'
+                    : onlineDevices.length > 1
+                      ? 'text-emerald-400 hover:bg-emerald-500/15'
+                      : 'pm-text-secondary hover:bg-white/[0.10] hover:text-[var(--pm-text-primary)]'
+                }`}
+              >
+                <Wifi className="h-3.5 w-3.5" />
+                {remoteControlledDeviceId && (
+                  <span className="hidden max-w-[110px] truncate xl:inline">
+                    {remoteDeviceSnapshot?.deviceName ?? 'Conectado'}
+                  </span>
+                )}
+              </button>
+
+              <button
+                type="button"
                 aria-label="Letras sincronizadas"
                 onClick={() => {
                   setNowPlayingOpen(true);
@@ -1958,6 +1994,21 @@ export const App: React.FC = () => {
             onPointerUp={(e) => handleMiniPlayerSwipeEnd(e.clientX)}
             className="pm-glass-regular fixed inset-x-3 bottom-[calc(5.25rem+var(--pm-safe-bottom,env(safe-area-inset-bottom)))] z-40 overflow-hidden rounded-[18px] px-3 py-2"
           >
+            {remoteControlledDeviceId && (
+              <button
+                type="button"
+                onClick={() => setDevicesSheetOpen(true)}
+                className="mb-1.5 flex w-full items-center justify-between gap-2 rounded-xl bg-emerald-500/15 px-2.5 py-1 text-[11px] font-bold text-emerald-400"
+              >
+                <span className="inline-flex min-w-0 items-center gap-1.5 truncate">
+                  <Wifi className="h-3 w-3 shrink-0" />
+                  <span className="truncate">
+                    Escuchando en {remoteDeviceSnapshot?.deviceName ?? 'otro dispositivo'}
+                  </span>
+                </span>
+                <span className="shrink-0 text-[10px] opacity-80">Controlar</span>
+              </button>
+            )}
             <div className="flex items-center justify-between gap-2">
               <div className="flex min-w-0 flex-1 items-center gap-2.5">
                 <button
