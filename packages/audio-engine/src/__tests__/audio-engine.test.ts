@@ -363,6 +363,45 @@ describe('@pmusic/audio-engine', () => {
     }
   }, 10_000);
 
+  it('auto-resumes mid-song if browser audio pauses unexpectedly while engine expects playback', async () => {
+    const created: ReturnType<typeof createFakeBrowserAudioElement>[] = [];
+    const prevDoc = (globalThis as { document?: unknown }).document;
+    (globalThis as { document?: unknown }).document = {
+      createElement: () => {
+        const el = createFakeBrowserAudioElement();
+        created.push(el);
+        return el;
+      },
+      body: { appendChild: () => {} },
+    };
+
+    const engine = new DualDeckAudioEngine();
+    try {
+      let endedCalls = 0;
+      engine.onTrackEnded(() => {
+        endedCalls += 1;
+      });
+      await engine.init();
+      await engine.loadAndPlay(SAMPLE_TRACKS[0]!, 0);
+
+      const deckAEl = created[0]!;
+      deckAEl.duration = 214;
+      deckAEl.readyState = 3;
+      deckAEl.ended = false;
+      deckAEl.currentTime = 48;
+      deckAEl.dispatch('timeupdate');
+      deckAEl.paused = true;
+
+      await new Promise((r) => setTimeout(r, 1750));
+      expect(endedCalls).toBe(0);
+      expect(deckAEl.paused).toBe(false);
+      expect(engine.getState().isPlaying).toBe(true);
+    } finally {
+      await engine.dispose();
+      (globalThis as { document?: unknown }).document = prevDoc;
+    }
+  }, 10_000);
+
   it('never deadlocks isTransitioning if incoming audio.play() hangs', async () => {
     const created: ReturnType<typeof createFakeBrowserAudioElement>[] = [];
     const prevDoc = (globalThis as { document?: unknown }).document;

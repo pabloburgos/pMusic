@@ -229,6 +229,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
   private lastObservedSrc = '';
   private lastObservedTime = -1;
   private lastProgressWallMs = 0;
+  private lastRecoveryNudgeWallMs = 0;
 
   private userEqConfig: UserEqConfig = {
     enabled: true,
@@ -384,6 +385,18 @@ export class DualDeckAudioEngine implements IAudioEngine {
           this.triggerTrackEnded(this.activeDeck);
           return;
         }
+        if (
+          !audio.ended &&
+          !audio.seeking &&
+          realDur > 12 &&
+          curTime > 1 &&
+          curTime < realDur - 4.5 &&
+          ((audio.paused && stalledMs >= 1200) || stalledMs >= 3200) &&
+          nowMs - this.lastRecoveryNudgeWallMs >= 5000
+        ) {
+          this.lastRecoveryNudgeWallMs = nowMs;
+          void audio.play().catch(() => {});
+        }
         this.emitState();
       }, 250);
       (this.watchdogTimer as { unref?: () => void }).unref?.();
@@ -395,6 +408,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
     this.lastObservedSrc = '';
     this.lastObservedTime = posSec;
     this.lastProgressWallMs = Date.now();
+    this.lastRecoveryNudgeWallMs = 0;
   }
 
   private triggerTrackEnded(deckId: DeckId): void {

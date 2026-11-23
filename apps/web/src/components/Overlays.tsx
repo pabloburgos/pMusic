@@ -1,13 +1,16 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Check,
+  ChevronDown,
   Disc3,
   Download,
   GripVertical,
   Heart,
+  Image as ImageIcon,
   Laptop,
   ListMusic,
   Loader2,
+  MessageSquareQuote,
   Mic2,
   MoreHorizontal,
   Pause,
@@ -33,12 +36,14 @@ import {
   USER_EQ_FREQUENCIES_HZ,
   USER_EQ_PRESETS,
   formatDurationSec,
+  type LyricLine,
   type Track,
 } from '@pmusic/core';
 import {
   getLiveAnalyserData,
   getLivePlaybackPosition,
   usePMusicStore,
+  type LyricsVisualStyle,
 } from '../store/usePMusicStore.ts';
 import {
   isElectronDesktopRuntime,
@@ -46,7 +51,71 @@ import {
 } from '../platform/web-bridge.ts';
 import { getThemeDefinition } from '../utils/themes.ts';
 import { ArtistLinks } from './ArtistLinks.tsx';
-import { AudioVisualizer } from './AudioVisualizer.tsx';
+
+function normalizeLyricToken(raw: string): string {
+  return raw
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9ñ]/g, '');
+}
+
+function getRhymeKey(cleanWord: string): string {
+  if (cleanWord.length < 3) return '';
+  return cleanWord.slice(cleanWord.length >= 4 ? -3 : -2);
+}
+
+type WordEmphasis = 'normal' | 'punch' | 'rhyme';
+
+function analyzeKineticWords(
+  lines: readonly LyricLine[],
+  lineIdx: number
+): WordEmphasis[] {
+  const curText = lines[lineIdx]?.text ?? '';
+  const words = curText.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [];
+
+  const neighborRhymes = new Set<string>();
+  for (const offset of [-2, -1, 1, 2]) {
+    const nb = lines[lineIdx + offset]?.text ?? '';
+    const nbWords = nb.trim().split(/\s+/).filter(Boolean);
+    for (let i = Math.max(0, nbWords.length - 3); i < nbWords.length; i++) {
+      const k = getRhymeKey(normalizeLyricToken(nbWords[i] ?? ''));
+      if (k) neighborRhymes.add(k);
+    }
+  }
+
+  let punchBudget = 2;
+  const maxLen = words.reduce((m, w) => Math.max(m, normalizeLyricToken(w).length), 0);
+
+  return words.map((raw, idx) => {
+    const clean = normalizeLyricToken(raw);
+    const isLineTail = idx >= Math.max(0, words.length - 2);
+    const rKey = getRhymeKey(clean);
+    if (isLineTail && rKey && neighborRhymes.has(rKey)) {
+      return 'rhyme';
+    }
+    const isUpper = raw.length >= 3 && raw === raw.toUpperCase() && /[A-Z]/.test(raw);
+    const hasPunct = /[!?¡¿]/.test(raw);
+    const isLongestImpact =
+      punchBudget > 0 && clean.length >= 5 && clean.length === maxLen && idx > 0;
+    if ((isUpper || hasPunct || isLongestImpact) && punchBudget > 0) {
+      punchBudget -= 1;
+      return 'punch';
+    }
+    return 'normal';
+  });
+}
+
+const LYRICS_STYLE_OPTIONS: readonly {
+  id: LyricsVisualStyle;
+  label: string;
+}[] = [
+  { id: 'classic', label: 'Clásico' },
+  { id: 'kinetic', label: 'Cinético' },
+  { id: 'focus', label: 'Enfoque' },
+  { id: 'editorial', label: 'Editorial' },
+];
 
 export const NowPlayingSheet: React.FC = () => {
   const {
@@ -62,6 +131,8 @@ export const NowPlayingSheet: React.FC = () => {
     reducedMotionPref,
     lyricsSize,
     lyricsBlurEnabled,
+    lyricsStyle,
+    setLyricsStyle,
     ambientMotionEnabled,
     lastTrackDirection,
     currentTrack,
@@ -118,7 +189,11 @@ export const NowPlayingSheet: React.FC = () => {
   const backdropBeatRef = useRef<HTMLDivElement | null>(null);
   const progressInputRef = useRef<HTMLInputElement | null>(null);
   const progressTimeRef = useRef<HTMLSpanElement | null>(null);
+  const progressRemainRef = useRef<HTMLSpanElement | null>(null);
+  const showRemainingTimeRef = useRef(true);
+  const [showRemainingTime, setShowRemainingTime] = useState(true);
   const coverSwipeStartRef = useRef<{ x: number; y: number } | null>(null);
+  const sheetSwipeDownRef = useRef<{ y: number; x: number } | null>(null);
   const lastWholeSecRef = useRef<number>(Math.floor(positionSec));
   const lastLyricStateSyncMsRef = useRef<number>(0);
   const [smoothPosSec, setSmoothPosSec] = useState(positionSec);
@@ -330,8 +405,24 @@ export const NowPlayingSheet: React.FC = () => {
       if (progressTimeRef.current) {
         progressTimeRef.current.textContent = formatDurationSec(clampedPos);
       }
+      if (progressRemainRef.current) {
+        progressRemainRef.current.textContent = showRemainingTimeRef.current
+          ? `-${formatDurationSec(Math.max(0, effDur - clampedPos))}`
+          : formatDurationSec(effDur);
+      }
     }
   }, [positionSec, currentTrack.id, isPlaying, durationSec]);
+
+  useEffect(() => {
+    showRemainingTimeRef.current = showRemainingTime;
+    const effDur = Math.max(1, durationSec);
+    const cur = syncClockRef.current.renderedPosSec;
+    if (progressRemainRef.current) {
+      progressRemainRef.current.textContent = showRemainingTime
+        ? `-${formatDurationSec(Math.max(0, effDur - cur))}`
+        : formatDurationSec(effDur);
+    }
+  }, [showRemainingTime, durationSec]);
 
   useEffect(() => {
     if (
@@ -360,6 +451,14 @@ export const NowPlayingSheet: React.FC = () => {
         const txt = formatDurationSec(rendered);
         if (progressTimeRef.current.textContent !== txt) {
           progressTimeRef.current.textContent = txt;
+        }
+      }
+      if (progressRemainRef.current) {
+        const rightTxt = showRemainingTimeRef.current
+          ? `-${formatDurationSec(Math.max(0, effDur - rendered))}`
+          : formatDurationSec(effDur);
+        if (progressRemainRef.current.textContent !== rightTxt) {
+          progressRemainRef.current.textContent = rightTxt;
         }
       }
 
@@ -493,15 +592,22 @@ export const NowPlayingSheet: React.FC = () => {
         ? 'Repetir playlist (siguiente: repetir una)'
         : 'Activar repetición de playlist';
 
+  const remainingSec = Math.max(0, durationSec - smoothPosSec);
+  const trackStatusLabel = isTransitioning
+    ? 'MEZCLANDO · DJ'
+    : isPlaying
+      ? 'REPRODUCIENDO'
+      : 'PAUSADO';
+
   const PlayerDeckColumn = (compact = false) => (
     <div
       className={`flex flex-col items-center ${
         compact
           ? 'w-full gap-3.5 xl:gap-4'
-          : 'mx-auto flex h-full w-full max-w-[420px] justify-between gap-3 py-1 md:h-auto md:justify-center md:gap-5 md:py-0'
+          : 'mx-auto flex h-full w-full max-w-[420px] justify-between gap-2.5 py-1 md:h-auto md:justify-center md:gap-5 md:py-0'
       }`}
     >
-      {/* Larger Centerpiece Artwork with smooth 3D directional slide & mobile swipe skip */}
+      {/* Large Borderless Centerpiece Artwork with smooth 3D slide & swipe skip */}
       <div
         key={currentTrack.id}
         onTouchStart={(e) => {
@@ -527,11 +633,11 @@ export const NowPlayingSheet: React.FC = () => {
         }}
         className={`${
           lastTrackDirection === 'prev' ? 'pm-cover-slide-prev' : 'pm-cover-slide-next'
-        } relative aspect-square overflow-hidden rounded-[22px] border border-white/15 bg-[#111115] shadow-[0_24px_56px_rgba(0,0,0,0.58)] transition-transform duration-300 ease-out md:rounded-[24px] ${
+        } relative aspect-square overflow-hidden rounded-[14px] bg-[#111115] shadow-[0_26px_64px_rgba(0,0,0,0.58)] transition-transform duration-300 ease-out md:rounded-[16px] ${
           compact
             ? 'w-[min(68vw,320px,36dvh)] xl:w-[min(68vw,346px,38dvh)]'
-            : 'w-[min(86vw,356px,44dvh)] md:w-[min(76vw,356px,38dvh)] xl:w-[min(76vw,386px,40dvh)]'
-        } ${isPlaying ? 'scale-100' : 'scale-[0.95]'}`}
+            : 'w-[min(88vw,380px,46dvh)] md:w-[min(74vw,340px,38dvh)] xl:w-[min(74vw,380px,42dvh)]'
+        } ${isPlaying ? 'scale-100' : 'scale-[0.96]'}`}
       >
         <img
           src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
@@ -540,50 +646,14 @@ export const NowPlayingSheet: React.FC = () => {
         />
       </div>
 
-      {/* Title, Full-Width Multi-Artist Info on Mobile & Compact Quick Actions */}
-      <div className="flex w-full flex-col gap-1 md:flex-row md:items-center md:justify-between md:gap-4">
-        <div className="flex min-w-0 flex-1 items-center justify-between gap-2.5 md:block">
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate text-[21px] font-bold leading-snug tracking-tight text-[#F5F5F7] md:text-2xl">
-              {currentTrack.title}
-            </h1>
-            {/* Desktop single-line artist · album */}
-            <div className="mt-0.5 hidden min-w-0 items-center gap-1.5 text-[13.5px] leading-normal text-[#C4C4CE] md:flex">
-              <ArtistLinks
-                artists={currentTrack.artists}
-                singleLine
-                className="min-w-0 shrink-0 max-w-[58%]"
-                onBeforeNavigate={() => setNowPlayingOpen(false)}
-                linkClassName="hover:text-white hover:underline"
-              />
-              {currentTrack.album && (
-                <>
-                  <span aria-hidden="true" className="shrink-0 opacity-60">
-                    ·
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const album = currentTrack.album;
-                      setNowPlayingOpen(false);
-                      if (album?.id) {
-                        void openAlbumDetail(album.id, {
-                          title: album.name,
-                          artist: currentTrack.artists[0]?.name,
-                        });
-                      }
-                    }}
-                    className="min-w-0 flex-1 truncate py-[1px] text-left leading-normal hover:text-white hover:underline"
-                  >
-                    {currentTrack.album.name}
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
+      {/* Minimalist Title, Full Multi-Artist Line & Borderless Actions */}
+      <div className="flex w-full flex-col gap-0.5 md:gap-1">
+        <div className="flex w-full items-center justify-between gap-2">
+          <h1 className="min-w-0 flex-1 truncate text-[21px] font-bold leading-snug tracking-tight text-white md:text-[23px]">
+            {currentTrack.title}
+          </h1>
 
-          {/* Action Buttons: compact 32px on mobile, 36px on desktop */}
-          <div className="flex shrink-0 items-center gap-1.5 md:hidden">
+          <div className="flex shrink-0 items-center gap-0.5">
             <button
               type="button"
               aria-label={isLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
@@ -594,17 +664,42 @@ export const NowPlayingSheet: React.FC = () => {
                 }
                 void toggleLike(currentTrack);
               }}
-              className={`pm-pressable relative flex h-8 w-8 items-center justify-center overflow-visible rounded-full bg-white/[0.10] transition-colors hover:bg-white/[0.18] ${
-                isLiked ? 'text-[#FB7185]' : 'text-[#F5F5F7]'
+              className={`pm-pressable relative flex h-9 w-9 items-center justify-center overflow-visible rounded-full transition-colors hover:bg-white/[0.10] ${
+                isLiked ? 'text-[#FB7185]' : 'text-white/85 hover:text-white'
               }`}
             >
               <Heart
-                key={`deck-m-heart-${heartBurstKey}-${isLiked}`}
-                className={`h-3.5 w-3.5 ${isLiked ? 'fill-current' : ''} ${
+                key={`deck-heart-${heartBurstKey}-${isLiked}`}
+                className={`h-5 w-5 ${isLiked ? 'fill-current' : ''} ${
                   isLiked && heartBurstKey > 0 && !reducedMotionPref ? 'pm-heart-burst-epic' : ''
                 }`}
               />
+              {isLiked &&
+                heartBurstKey > 0 &&
+                !reducedMotionPref &&
+                [
+                  { sx: '0px', sy: '-20px', c: '#FB7185' },
+                  { sx: '17px', sy: '-10px', c: '#F9A8D4' },
+                  { sx: '17px', sy: '10px', c: '#FDE047' },
+                  { sx: '0px', sy: '20px', c: '#FB7185' },
+                  { sx: '-17px', sy: '10px', c: '#F9A8D4' },
+                  { sx: '-17px', sy: '-10px', c: '#FDE047' },
+                ].map((sp, spIdx) => (
+                  <span
+                    key={`deck-sp-${heartBurstKey}-${spIdx}`}
+                    aria-hidden="true"
+                    className="pm-sparkle-dot pointer-events-none absolute left-1/2 top-1/2 h-1.5 w-1.5 rounded-full"
+                    style={
+                      {
+                        backgroundColor: sp.c,
+                        '--sx': sp.sx,
+                        '--sy': sp.sy,
+                      } as React.CSSProperties
+                    }
+                  />
+                ))}
             </button>
+
             <button
               type="button"
               aria-label={
@@ -613,16 +708,17 @@ export const NowPlayingSheet: React.FC = () => {
                   : 'Descargar para escuchar offline'
               }
               onClick={() => void downloadTrackOffline(currentTrack)}
-              className="pm-pressable flex h-8 w-8 items-center justify-center rounded-full bg-white/[0.10] text-[#F5F5F7] transition-colors hover:bg-white/[0.18]"
+              className="pm-pressable hidden h-9 w-9 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/[0.10] hover:text-white md:flex"
             >
               {dlStatus === 'downloading' ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin text-white" />
+                <Loader2 className="h-4.5 w-4.5 animate-spin text-white" />
               ) : dlStatus === 'downloaded' ? (
-                <Check className="h-3.5 w-3.5 text-[#34D399]" />
+                <Check className="h-4.5 w-4.5 text-[#34D399]" />
               ) : (
-                <Download className="h-3.5 w-3.5" />
+                <Download className="h-4.5 w-4.5" />
               )}
             </button>
+
             <button
               type="button"
               aria-label={`Más opciones para ${currentTrack.title}`}
@@ -630,25 +726,26 @@ export const NowPlayingSheet: React.FC = () => {
                 const r = e.currentTarget.getBoundingClientRect();
                 openTrackMenu(currentTrack, r.left - 210, r.bottom + 8);
               }}
-              className="pm-pressable flex h-8 w-8 items-center justify-center rounded-full bg-white/[0.10] text-[#F5F5F7] transition-colors hover:bg-white/[0.18]"
+              className="pm-pressable flex h-9 w-9 items-center justify-center rounded-full text-white/85 transition-colors hover:bg-white/[0.10] hover:text-white"
             >
-              <MoreHorizontal className="h-3.5 w-3.5" />
+              <MoreHorizontal className="h-5 w-5" />
             </button>
           </div>
         </div>
 
-        {/* Mobile full-width multi-artist + album line so ALL featured artists are visible */}
-        {currentTrack.artists.length > 2 ? (
-          <div className="flex w-full flex-col gap-0.5 md:hidden">
-            <div className="text-[13px] leading-snug text-[#D1D1DC]">
-              <ArtistLinks
-                artists={currentTrack.artists}
-                className="flex-wrap"
-                onBeforeNavigate={() => setNowPlayingOpen(false)}
-                linkClassName="hover:text-white hover:underline"
-              />
-            </div>
-            {currentTrack.album && (
+        {/* Full-Width Artist · Album Line so multi-artist collaborations never truncate unnecessarily */}
+        <div className="flex w-full flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[14px] leading-snug text-white/70">
+          <ArtistLinks
+            artists={currentTrack.artists}
+            className="flex-wrap"
+            onBeforeNavigate={() => setNowPlayingOpen(false)}
+            linkClassName="hover:text-white hover:underline"
+          />
+          {currentTrack.album && currentTrack.artists.length <= 2 && (
+            <>
+              <span aria-hidden="true" className="opacity-50">
+                ·
+              </span>
               <button
                 type="button"
                 onClick={() => {
@@ -661,130 +758,17 @@ export const NowPlayingSheet: React.FC = () => {
                     });
                   }
                 }}
-                className="w-full truncate text-left text-[12px] text-[#B8B8C6]/85 hover:text-white hover:underline"
+                className="min-w-0 truncate text-left text-white/55 hover:text-white hover:underline"
               >
                 {currentTrack.album.name}
               </button>
-            )}
-          </div>
-        ) : (
-          <div className="flex w-full min-w-0 items-center gap-1.5 text-[13.5px] leading-snug text-[#D1D1DC] md:hidden">
-            <ArtistLinks
-              artists={currentTrack.artists}
-              singleLine
-              className="min-w-0 shrink-0 max-w-[60%]"
-              onBeforeNavigate={() => setNowPlayingOpen(false)}
-              linkClassName="hover:text-white hover:underline"
-            />
-            {currentTrack.album && (
-              <>
-                <span aria-hidden="true" className="shrink-0 opacity-55">
-                  ·
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const album = currentTrack.album;
-                    setNowPlayingOpen(false);
-                    if (album?.id) {
-                      void openAlbumDetail(album.id, {
-                        title: album.name,
-                        artist: currentTrack.artists[0]?.name,
-                      });
-                    }
-                  }}
-                  className="min-w-0 flex-1 truncate text-left text-[#B8B8C6] hover:text-white hover:underline"
-                >
-                  {currentTrack.album.name}
-                </button>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* Desktop Action Buttons (unchanged) */}
-        <div className="hidden items-center gap-1.5 md:flex">
-          <button
-            type="button"
-            aria-label={isLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
-            aria-pressed={isLiked}
-            onClick={() => {
-              if (!isLiked && !reducedMotionPref) {
-                setHeartBurstKey((k) => k + 1);
-              }
-              void toggleLike(currentTrack);
-            }}
-            className={`pm-pressable relative flex h-9 w-9 items-center justify-center overflow-visible rounded-full bg-white/[0.08] transition-colors hover:bg-white/[0.16] ${
-              isLiked ? 'text-[#FB7185]' : 'text-[#F5F5F7]'
-            }`}
-          >
-            <Heart
-              key={`deck-heart-${heartBurstKey}-${isLiked}`}
-              className={`h-4.5 w-4.5 ${isLiked ? 'fill-current' : ''} ${
-                isLiked && heartBurstKey > 0 && !reducedMotionPref ? 'pm-heart-burst-epic' : ''
-              }`}
-            />
-            {isLiked &&
-              heartBurstKey > 0 &&
-              !reducedMotionPref &&
-              [
-                { sx: '0px', sy: '-20px', c: '#FB7185' },
-                { sx: '17px', sy: '-10px', c: '#F9A8D4' },
-                { sx: '17px', sy: '10px', c: '#FDE047' },
-                { sx: '0px', sy: '20px', c: '#FB7185' },
-                { sx: '-17px', sy: '10px', c: '#F9A8D4' },
-                { sx: '-17px', sy: '-10px', c: '#FDE047' },
-              ].map((sp, spIdx) => (
-                <span
-                  key={`deck-sp-${heartBurstKey}-${spIdx}`}
-                  aria-hidden="true"
-                  className="pm-sparkle-dot pointer-events-none absolute left-1/2 top-1/2 h-1.5 w-1.5 rounded-full"
-                  style={
-                    {
-                      backgroundColor: sp.c,
-                      '--sx': sp.sx,
-                      '--sy': sp.sy,
-                    } as React.CSSProperties
-                  }
-                />
-              ))}
-          </button>
-
-          <button
-            type="button"
-            aria-label={
-              dlStatus === 'downloaded'
-                ? 'Descargada offline'
-                : 'Descargar para escuchar offline'
-            }
-            onClick={() => void downloadTrackOffline(currentTrack)}
-            className="pm-pressable flex h-9 w-9 items-center justify-center rounded-full bg-white/[0.08] text-[#F5F5F7] transition-colors hover:bg-white/[0.16]"
-          >
-            {dlStatus === 'downloading' ? (
-              <Loader2 className="h-4.5 w-4.5 animate-spin text-white" />
-            ) : dlStatus === 'downloaded' ? (
-              <Check className="h-4.5 w-4.5 text-[#34D399]" />
-            ) : (
-              <Download className="h-4.5 w-4.5" />
-            )}
-          </button>
-
-          <button
-            type="button"
-            aria-label={`Más opciones para ${currentTrack.title}`}
-            onClick={(e) => {
-              const r = e.currentTarget.getBoundingClientRect();
-              openTrackMenu(currentTrack, r.left - 210, r.bottom + 8);
-            }}
-            className="pm-pressable flex h-9 w-9 items-center justify-center rounded-full bg-white/[0.08] text-[#F5F5F7] transition-colors hover:bg-white/[0.16]"
-          >
-            <MoreHorizontal className="h-4.5 w-4.5" />
-          </button>
+            </>
+          )}
         </div>
       </div>
 
-      {/* Smooth Pill Progress Bar WITHOUT Thumb Circle */}
-      <div className="w-full space-y-1.5">
+      {/* Thin Apple Music Pill Progress Bar + Status + Clickable Remaining Time */}
+      <div className="w-full space-y-1">
         <div className="relative flex w-full items-center">
           {unplayedCueStartPct !== null && unplayedCueWidthPct > 0 && (
             <span
@@ -815,6 +799,11 @@ export const NowPlayingSheet: React.FC = () => {
               if (progressTimeRef.current) {
                 progressTimeRef.current.textContent = formatDurationSec(next);
               }
+              if (progressRemainRef.current) {
+                progressRemainRef.current.textContent = showRemainingTimeRef.current
+                  ? `-${formatDurationSec(Math.max(0, effDur - next))}`
+                  : formatDurationSec(effDur);
+              }
               lastWholeSecRef.current = Math.floor(next);
               syncClockRef.current.renderedPosSec = next;
               syncClockRef.current.posSec = next;
@@ -825,14 +814,28 @@ export const NowPlayingSheet: React.FC = () => {
             className="pm-range-pill relative z-10 w-full cursor-pointer"
           />
         </div>
-        <div className="tabular-nums flex justify-between text-xs font-medium text-[#C4C4CE]">
+        <div className="tabular-nums flex items-center justify-between text-[11px] font-medium text-white/60">
           <span ref={progressTimeRef}>{formatDurationSec(smoothPosSec)}</span>
-          <span>{formatDurationSec(durationSec)}</span>
+          <span className="font-sans text-[10px] font-semibold tracking-[0.14em] text-white/45">
+            {trackStatusLabel}
+          </span>
+          <button
+            type="button"
+            aria-label="Alternar tiempo restante y duración total"
+            onClick={() => setShowRemainingTime((v) => !v)}
+            className="tabular-nums text-right text-[11px] font-medium text-white/60 transition-colors hover:text-white"
+          >
+            <span ref={progressRemainRef}>
+              {showRemainingTime
+                ? `-${formatDurationSec(remainingSec)}`
+                : formatDurationSec(durationSec)}
+            </span>
+          </button>
         </div>
       </div>
 
-      {/* Minimalist Iconic Transport Row (Borderless Controls + Fluid Play Morph) */}
-      <div className="flex w-full items-center justify-between px-1 md:w-auto md:justify-center md:gap-7 md:px-0">
+      {/* Pure Minimalist Borderless Transport Row (No heavy circle behind Play/Pause) */}
+      <div className="flex w-full items-center justify-around px-2 py-0.5 md:w-auto md:justify-center md:gap-7 md:px-0">
         <button
           type="button"
           aria-label={
@@ -845,10 +848,10 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('shuffle');
             toggleShuffle();
           }}
-          className={`pm-pressable relative flex h-10 w-10 items-center justify-center rounded-full transition-all hover:scale-110 ${
+          className={`pm-pressable relative hidden h-10 w-10 items-center justify-center rounded-full transition-all hover:scale-110 md:flex ${
             shuffleEnabled
               ? 'text-white'
-              : 'text-[#B4B4BE] hover:text-white'
+              : 'text-white/55 hover:text-white'
           }`}
         >
           <Shuffle
@@ -871,10 +874,10 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('prev');
             void prevTrack();
           }}
-          className="pm-pressable flex h-12 w-12 items-center justify-center rounded-full text-white/90 transition-all hover:scale-110 hover:text-white active:scale-90 md:h-11 md:w-11"
+          className="pm-pressable flex h-12 w-12 items-center justify-center rounded-full text-white/90 transition-all hover:scale-110 hover:text-white active:scale-90"
         >
           <SkipBack
-            className={`h-7 w-7 fill-current md:h-6 md:w-6 ${
+            className={`h-7 w-7 fill-current ${
               transportAnim === 'prev' && !reducedMotionPref ? 'pm-skip-glide-prev' : ''
             }`}
           />
@@ -887,17 +890,17 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('play');
             void togglePlayPause();
           }}
-          className="pm-pressable relative flex h-16 w-16 items-center justify-center overflow-hidden rounded-full bg-white text-[#070709] shadow-[0_14px_38px_rgba(255,255,255,0.28)] transition-transform duration-200 hover:scale-105 active:scale-90 md:h-[62px] md:w-[62px]"
+          className="pm-pressable relative flex h-16 w-16 items-center justify-center overflow-hidden rounded-full bg-transparent text-white transition-transform duration-200 hover:bg-white/[0.08] hover:scale-105 active:scale-90"
         >
           <Pause
-            className={`absolute h-7 w-7 fill-current transition-all duration-200 ease-out md:h-6.5 md:w-6.5 ${
+            className={`absolute h-10 w-10 fill-current drop-shadow-[0_4px_16px_rgba(0,0,0,0.45)] transition-all duration-200 ease-out ${
               isPlaying
                 ? 'scale-100 rotate-0 opacity-100 blur-0'
                 : 'scale-50 rotate-90 opacity-0 blur-[1px]'
             }`}
           />
           <Play
-            className={`absolute h-7 w-7 translate-x-[1.5px] fill-current transition-all duration-200 ease-out md:h-6.5 md:w-6.5 ${
+            className={`absolute h-10 w-10 translate-x-[2px] fill-current drop-shadow-[0_4px_16px_rgba(0,0,0,0.45)] transition-all duration-200 ease-out ${
               !isPlaying
                 ? 'scale-100 rotate-0 opacity-100 blur-0'
                 : 'scale-50 -rotate-90 opacity-0 blur-[1px]'
@@ -912,10 +915,10 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('next');
             void nextTrack();
           }}
-          className="pm-pressable flex h-12 w-12 items-center justify-center rounded-full text-white/90 transition-all hover:scale-110 hover:text-white active:scale-90 md:h-11 md:w-11"
+          className="pm-pressable flex h-12 w-12 items-center justify-center rounded-full text-white/90 transition-all hover:scale-110 hover:text-white active:scale-90"
         >
           <SkipForward
-            className={`h-7 w-7 fill-current md:h-6 md:w-6 ${
+            className={`h-7 w-7 fill-current ${
               transportAnim === 'next' && !reducedMotionPref ? 'pm-skip-glide-next' : ''
             }`}
           />
@@ -929,10 +932,10 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('repeat');
             cycleRepeatMode();
           }}
-          className={`pm-pressable relative flex h-10 w-10 items-center justify-center rounded-full transition-all hover:scale-110 ${
+          className={`pm-pressable relative hidden h-10 w-10 items-center justify-center rounded-full transition-all hover:scale-110 md:flex ${
             repeatMode !== 'off'
               ? 'text-white'
-              : 'text-[#B4B4BE] hover:text-white'
+              : 'text-white/55 hover:text-white'
           }`}
         >
           <span
@@ -955,13 +958,13 @@ export const NowPlayingSheet: React.FC = () => {
         </button>
       </div>
 
-      {/* Desktop-only Smooth Pill Volume Bar (mobile uses phone hardware volume at 100%) */}
-      <div className="hidden w-full max-w-[300px] items-center gap-3 pt-1 md:flex">
+      {/* Desktop-only Subtle Pill Volume Bar (mobile locks internal volume to 100%) */}
+      <div className="hidden w-full max-w-[290px] items-center gap-3 pt-1 md:flex">
         <button
           type="button"
           aria-label={volume === 0 ? 'Activar sonido' : 'Silenciar'}
           onClick={() => toggleMute()}
-          className="flex h-8 w-8 items-center justify-center rounded-full text-[#C4C4CE] hover:bg-white/15 hover:text-white"
+          className="flex h-8 w-8 items-center justify-center rounded-full text-white/65 hover:bg-white/15 hover:text-white"
         >
           {volume === 0 ? (
             <VolumeX className="h-4 w-4" />
@@ -980,12 +983,10 @@ export const NowPlayingSheet: React.FC = () => {
           style={{ '--pm-fill': `${volumePct}%` } as React.CSSProperties}
           className="pm-range-pill flex-1 cursor-pointer"
         />
-        <span className="tabular-nums w-9 text-right text-[11px] font-medium text-[#C4C4CE]">
+        <span className="tabular-nums w-9 text-right text-[11px] font-medium text-white/60">
           {volumePct}%
         </span>
       </div>
-
-      {!compact && <AudioVisualizer className="mt-1 hidden md:flex" barClassName="bg-white/75" />}
     </div>
   );
 
@@ -1049,73 +1050,120 @@ export const NowPlayingSheet: React.FC = () => {
             src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
             alt=""
             draggable={false}
-            className="pm-fluid-cover-a absolute inset-0 h-full w-full select-none object-cover opacity-80"
+            className="pm-fluid-cover-a absolute inset-0 h-full w-full select-none object-cover opacity-55"
           />
           <img
             src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
             alt=""
             draggable={false}
-            className="pm-fluid-cover-b absolute inset-0 h-full w-full -scale-x-100 select-none object-cover opacity-50"
+            className="pm-fluid-cover-b absolute inset-0 h-full w-full -scale-x-100 select-none object-cover opacity-35"
           />
         </div>
+
+        {/* GPU-Composited Living Fluid Cover-Palette Orbs (True circles + closest-side fade = zero box seams) */}
+        <div className="pm-orb-1 pointer-events-none absolute -left-[20vmax] -top-[16vmax] h-[78vmax] w-[78vmax] rounded-full mix-blend-screen" />
+        <div className="pm-orb-2 pointer-events-none absolute -bottom-[18vmax] -right-[16vmax] h-[82vmax] w-[82vmax] rounded-full mix-blend-screen" />
+        <div className="pm-orb-3 pointer-events-none absolute left-[10%] top-[22%] h-[68vmax] w-[68vmax] rounded-full mix-blend-screen" />
+        <div className="pm-orb-sheen pointer-events-none absolute inset-[-12%] rounded-full mix-blend-overlay" />
       </div>
 
-      {/* Apple HIG Bright Media Scrim (46% dark wash for guaranteed contrast) */}
+      {/* Apple HIG Bright Media Scrim (34% dark wash for vivid fluid colors with legible text) */}
       <div
         data-testid="bright-media-scrim"
         data-scrim="true"
-        data-scrim-alpha="0.46"
+        data-scrim-alpha="0.34"
         className="pointer-events-none fixed inset-0 z-0"
-        style={{ backgroundColor: 'rgba(8, 8, 12, 0.46)' }}
+        style={{ backgroundColor: 'rgba(8, 8, 12, 0.34)' }}
       />
 
-      {/* Static Unified Header (seamless edge-to-edge on mobile, subtle divider on desktop) */}
+      {/* Minimalist Top Area: Grabber Pill on Mobile Portada, Sleek Mini Track Bar on Letras/Cola, Subtle Cerrar on Desktop */}
       <header
-        className={`pm-drag-region relative z-20 flex shrink-0 items-center justify-between px-4 pt-[max(0.75rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-2 md:border-b md:border-white/[0.08] md:px-8 md:pb-3 ${
+        onTouchStart={(e) => {
+          const t = e.touches[0];
+          if (t) sheetSwipeDownRef.current = { y: t.clientY, x: t.clientX };
+        }}
+        onTouchEnd={(e) => {
+          const s = sheetSwipeDownRef.current;
+          sheetSwipeDownRef.current = null;
+          const t = e.changedTouches[0];
+          if (!s || !t) return;
+          if (t.clientY - s.y > 56 && Math.abs(t.clientX - s.x) < 60) {
+            setNowPlayingOpen(false);
+          }
+        }}
+        className={`pm-drag-region relative z-20 flex shrink-0 items-center justify-between px-4 pt-[max(0.6rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-1 md:px-8 md:pb-2 ${
           isElectronDesktop ? 'pr-[152px] md:pr-[152px]' : ''
         }`}
       >
+        {/* Mobile Portada: clean centered top grabber capsule (tappable or swipe down to close) */}
+        {nowPlayingTab === 'Portada' ? (
+          <div className="flex w-full items-center justify-center py-1 md:hidden">
+            <button
+              type="button"
+              aria-label="Bajar reproductor"
+              onClick={() => setNowPlayingOpen(false)}
+              className="flex h-7 w-16 items-center justify-center rounded-full"
+            >
+              <span className="h-1 w-10 rounded-full bg-white/35" />
+            </button>
+          </div>
+        ) : (
+          /* Mobile Letras / Cola: compact top mini-track header matching Apple Music style */
+          <div className="flex w-full items-center justify-between gap-2.5 py-1 md:hidden">
+            <button
+              type="button"
+              onClick={() => setNowPlayingTab('Portada')}
+              className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+            >
+              <img
+                src={currentTrack.thumbnailUrl}
+                alt={currentTrack.title}
+                className="h-10 w-10 shrink-0 rounded-[8px] object-cover shadow-md"
+              />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[14px] font-bold leading-tight text-white">
+                  {currentTrack.title}
+                </div>
+                <div className="truncate text-xs text-white/65">
+                  {currentTrack.artists.map((a) => a.name).join(', ')}
+                </div>
+              </div>
+            </button>
+            <button
+              type="button"
+              aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
+              onClick={() => void togglePlayPause()}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white hover:bg-white/10"
+            >
+              {isPlaying ? (
+                <Pause className="h-5 w-5 fill-current" />
+              ) : (
+                <Play className="h-5 w-5 translate-x-[1px] fill-current" />
+              )}
+            </button>
+            <button
+              type="button"
+              aria-label="Bajar reproductor"
+              onClick={() => setNowPlayingOpen(false)}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white/75 hover:bg-white/10 hover:text-white"
+            >
+              <ChevronDown className="h-5 w-5" />
+            </button>
+          </div>
+        )}
+
+        {/* Desktop Minimal Left Dismiss Pill (NO ugly centered Portada/Letras/Cola pill bar on top) */}
         <button
           type="button"
           aria-label="Cerrar reproductor"
           onClick={() => setNowPlayingOpen(false)}
-          className="pm-pressable pm-no-drag inline-flex h-9 w-9 items-center justify-center gap-2 rounded-full bg-white/[0.08] px-0 text-xs font-semibold text-[#F5F5F7] transition-colors hover:bg-white/[0.16] sm:w-auto sm:px-4"
+          className="pm-pressable pm-no-drag hidden items-center gap-1.5 rounded-full bg-white/[0.08] px-3.5 py-1.5 text-xs font-semibold text-white/90 transition-colors hover:bg-white/[0.16] md:inline-flex"
         >
-          <X className="h-4 w-4" />
-          <span className="hidden sm:inline">Cerrar</span>
+          <ChevronDown className="h-4 w-4" />
+          <span>Minimizar</span>
         </button>
 
-        <div
-          role="tablist"
-          aria-label="Vistas del reproductor"
-          data-surface="glass"
-          className="pm-no-drag flex items-center gap-1 rounded-full bg-white/[0.08] p-1 sm:absolute sm:left-1/2 sm:-translate-x-1/2"
-        >
-          {(['Portada', 'Letras', 'Cola'] as const).map((tab) => {
-            const active = nowPlayingTab === tab;
-            return (
-              <button
-                key={tab}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => setNowPlayingTab(tab)}
-                className={`rounded-full px-4 py-1.5 text-xs font-bold transition-colors ${
-                  active
-                    ? 'bg-white text-[#070709] shadow-sm'
-                    : 'text-[#E5E5EA] hover:bg-white/[0.12] hover:text-white'
-                }`}
-              >
-                {tab}
-              </button>
-            );
-          })}
-        </div>
-
-        <div
-          aria-hidden="true"
-          className="w-9 sm:w-20"
-        />
+        <div aria-hidden="true" className="hidden w-20 md:block" />
       </header>
 
       {/* Main Content */}
@@ -1148,33 +1196,38 @@ export const NowPlayingSheet: React.FC = () => {
               data-testid="synced-lyrics-view"
               onWheel={markLyricsUserScrolled}
               onTouchMove={markLyricsUserScrolled}
-              className="h-full min-h-0 space-y-6 overflow-y-auto py-10 pr-2 pm-no-scrollbar pm-lyrics-mask lg:col-span-7"
+              className="flex h-full min-h-0 flex-col overflow-y-auto pt-3 pb-10 pr-1 pm-no-scrollbar lg:col-span-7 lg:py-8 lg:pr-2"
             >
-              <div className="flex items-center justify-between lg:hidden">
-                <div className="flex items-center gap-3">
-                  <img
-                    src={currentTrack.thumbnailUrl}
-                    alt={currentTrack.title}
-                    className="h-12 w-12 rounded-[10px] object-cover shadow-md"
-                  />
-                  <div>
-                    <h2 className="text-base font-bold text-[#F5F5F7]">
-                      {currentTrack.title}
-                    </h2>
-                    <p className="text-xs text-[#B4B4BE]">
-                      <ArtistLinks
-                        artists={currentTrack.artists}
-                        onBeforeNavigate={() => setNowPlayingOpen(false)}
-                        linkClassName="hover:text-white hover:underline"
-                      />{' '}
-                      · Toca una frase para saltar
-                    </p>
-                  </div>
+              {/* Expressive Lyrics Style Switcher */}
+              <div className="sticky top-0 z-20 mb-4 flex shrink-0 items-center justify-between gap-2 pb-1">
+                <div
+                  role="group"
+                  aria-label="Estilo de visualización de letras"
+                  data-testid="lyrics-style-switcher"
+                  className="inline-flex items-center gap-1 rounded-full bg-black/30 p-1 backdrop-blur-md"
+                >
+                  {LYRICS_STYLE_OPTIONS.map((opt) => {
+                    const selected = lyricsStyle === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        data-testid={`lyrics-style-${opt.id}`}
+                        aria-pressed={selected}
+                        onClick={() => setLyricsStyle(opt.id)}
+                        className={`rounded-full px-3 py-1 text-[11px] font-bold transition-colors ${
+                          selected
+                            ? 'bg-white text-[#070709] shadow-sm'
+                            : 'text-white/75 hover:bg-white/[0.12] hover:text-white'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
                 </div>
-              </div>
 
-              {lyricsUserScrolled && (
-                <div className="sticky top-2 z-20 flex justify-end">
+                {lyricsUserScrolled && lyricsStyle !== 'focus' && (
                   <button
                     type="button"
                     onClick={() => {
@@ -1183,173 +1236,286 @@ export const NowPlayingSheet: React.FC = () => {
                       }
                       setLyricsUserScrolled(false);
                     }}
-                    className="rounded-full bg-white px-4 py-1.5 text-xs font-bold text-[#070709] shadow-md"
+                    className="rounded-full bg-white px-3.5 py-1.5 text-[11px] font-bold text-[#070709] shadow-md"
                   >
-                    Sincronizar con la reproducción
+                    Sincronizar
                   </button>
-                </div>
-              )}
+                )}
+              </div>
 
               {currentLyrics && currentLyrics.lines.length > 0 ? (
-                <div className="space-y-2 pb-16">
-                  {/* Borderless 3-dot instrumental breathing pulse before intro verse */}
-                  {currentLyrics.lines[0] &&
-                    currentLyrics.lines[0].timeMs > 4000 &&
-                    smoothPosMs < currentLyrics.lines[0].timeMs && (
-                      <div className="inline-flex items-center gap-2 px-4 py-2">
-                        <span className="pm-lyric-dot h-2 w-2 rounded-full bg-white/90" />
-                        <span className="pm-lyric-dot h-2 w-2 rounded-full bg-white/80" />
-                        <span className="pm-lyric-dot h-2 w-2 rounded-full bg-white/90" />
-                      </div>
-                    )}
-
-                  {currentLyrics.lines.map((line, idx) => {
-                    const isActive = idx === resolvedActiveLyricIdx;
-                    const dist =
-                      resolvedActiveLyricIdx >= 0
-                        ? Math.abs(idx - resolvedActiveLyricIdx)
-                        : idx;
-                    const nextLine = currentLyrics.lines[idx + 1];
-                    const lineEndMs =
-                      nextLine && nextLine.timeMs > line.timeMs
-                        ? nextLine.timeMs
-                        : line.timeMs + 4200;
-                    const spanMs = Math.max(800, lineEndMs - line.timeMs);
-                    const vocalSpanMs = Math.min(
-                      spanMs * 0.92,
-                      Math.max(1100, line.text.length * 90)
-                    );
-                    const verseProgress01 = isActive
-                      ? Math.max(
-                          0,
-                          Math.min(1, (smoothPosMs - line.timeMs) / vocalSpanMs)
-                        )
-                      : 0;
-                    const showInstrumentalGap =
-                      isActive &&
-                      nextLine &&
-                      nextLine.timeMs - line.timeMs > 6500 &&
-                      smoothPosMs - line.timeMs > 3200;
-
-                    const lyricSizeClass =
-                      lyricsSize === 'normal'
-                        ? 'text-xl leading-[1.3] md:text-[26px] md:leading-[1.28]'
-                        : lyricsSize === 'xl'
-                          ? 'text-[30px] leading-[1.22] md:text-[38px] md:leading-[1.2]'
-                          : 'text-[26px] leading-[1.26] md:text-[32px] md:leading-[1.24]';
-
-                    const distClass = isActive
-                      ? 'pm-lyric-line-active'
-                      : lyricsBlurEnabled
-                        ? `pm-lyric-line-inactive ${
-                            dist === 1
-                              ? 'pm-lyric-dist-1'
-                              : dist === 2
-                                ? 'pm-lyric-dist-2'
-                                : 'pm-lyric-dist-far'
-                          }`
-                        : `pm-lyric-line-inactive ${
-                            dist === 1
-                              ? 'opacity-65'
-                              : dist === 2
-                                ? 'opacity-50'
-                                : 'opacity-35'
-                          }`;
-
-                    const words = line.text.trim().split(/\s+/).filter(Boolean);
-                    const totalWeight = words.reduce(
-                      (sum, w) => sum + w.length + 1,
-                      0
-                    );
-                    let weightCursor = 0;
-
+                lyricsStyle === 'focus' ? (
+                  /* Mode 3: Enfoque — Single-line centered spotlight + next verse preview */
+                  (() => {
+                    const activeIdx = Math.max(0, resolvedActiveLyricIdx);
+                    const activeLine = currentLyrics.lines[activeIdx];
+                    const nextLine = currentLyrics.lines[activeIdx + 1];
+                    const emphasis = activeLine
+                      ? analyzeKineticWords(currentLyrics.lines, activeIdx)
+                      : [];
+                    const words = activeLine ? activeLine.text.trim().split(/\s+/).filter(Boolean) : [];
                     return (
-                      <React.Fragment key={`${line.index}-${line.timeMs}`}>
-                        <button
-                          ref={isActive ? activeLyricRef : undefined}
-                          type="button"
-                          data-lyric-state={isActive ? 'active' : 'inactive'}
-                          onClick={() => {
-                            seekTo(line.timeMs / 1000);
-                            setLyricsUserScrolled(false);
-                          }}
-                          className={`group relative flex w-full items-baseline justify-between gap-4 rounded-[14px] px-4 py-2.5 text-left font-bold tracking-tight ${lyricSizeClass} ${distClass}`}
-                        >
-                          <span className="flex-1">
-                            {isActive && words.length > 0 ? (
-                              words.map((word, wIdx) => {
-                                const wLen = word.length + 1;
-                                const wStart =
-                                  weightCursor / Math.max(1, totalWeight);
-                                weightCursor += wLen;
-                                const wEnd =
-                                  weightCursor / Math.max(1, totalWeight);
-                                const wp = Math.max(
-                                  0,
-                                  Math.min(
-                                    1,
-                                    (verseProgress01 - wStart) /
-                                      Math.max(0.01, wEnd - wStart)
-                                  )
-                                );
-                                const wordState =
-                                  wp <= 0.005
-                                    ? 'upcoming'
-                                    : wp >= 0.995
-                                      ? 'sung'
-                                      : 'active';
-                                const liftPx =
-                                  wordState === 'active'
-                                    ? '-3.5px'
-                                    : wordState === 'sung'
-                                      ? '-1px'
-                                      : '0px';
-                                const wordScale =
-                                  wordState === 'active' ? '1.035' : '1';
-                                const glowPx =
-                                  wordState === 'active'
-                                    ? `${(8 * Math.sin(Math.min(1, wp) * Math.PI)).toFixed(1)}px`
-                                    : '0px';
-                                return (
-                                  <React.Fragment key={`${idx}-${wIdx}`}>
-                                    <span
-                                      className="pm-sing-word"
-                                      data-word-state={wordState}
-                                      style={
-                                        {
-                                          '--word-p': `${Math.round(wp * 100)}%`,
-                                          '--word-y': liftPx,
-                                          '--word-scale': wordScale,
-                                          '--word-glow': glowPx,
-                                        } as React.CSSProperties
-                                      }
-                                    >
-                                      {word}
-                                    </span>
-                                    {wIdx < words.length - 1 ? ' ' : ''}
-                                  </React.Fragment>
-                                );
-                              })
-                            ) : (
-                              <span>{line.text}</span>
-                            )}
-                          </span>
-                          <span className="tabular-nums shrink-0 text-[11px] font-medium text-[#D1D1DC] opacity-0 transition-opacity group-hover:opacity-75">
-                            {formatDurationSec(line.timeMs / 1000)}
-                          </span>
-                        </button>
-
-                        {showInstrumentalGap && (
-                          <div className="inline-flex items-center gap-2 px-4 py-2">
-                            <span className="pm-lyric-dot h-2 w-2 rounded-full bg-white/90" />
-                            <span className="pm-lyric-dot h-2 w-2 rounded-full bg-white/80" />
-                            <span className="pm-lyric-dot h-2 w-2 rounded-full bg-white/90" />
-                          </div>
+                      <div className="flex flex-1 flex-col items-start justify-center px-3 pb-10">
+                        {activeLine && (
+                          <button
+                            key={`focus-${activeIdx}-${activeLine.timeMs}`}
+                            type="button"
+                            data-lyric-state="active"
+                            onClick={() => seekTo(activeLine.timeMs / 1000)}
+                            className="pm-focus-stage-line text-left text-[28px] font-extrabold leading-[1.22] tracking-tight text-white md:text-[38px]"
+                          >
+                            {words.map((w, wi) => {
+                              const kind = emphasis[wi] ?? 'normal';
+                              return (
+                                <React.Fragment key={wi}>
+                                  <span
+                                    className={
+                                      kind === 'rhyme'
+                                        ? 'pm-kinetic-rhyme'
+                                        : kind === 'punch'
+                                          ? 'pm-kinetic-punch'
+                                          : ''
+                                    }
+                                  >
+                                    {w}
+                                  </span>
+                                  {wi < words.length - 1 ? ' ' : ''}
+                                </React.Fragment>
+                              );
+                            })}
+                          </button>
                         )}
-                      </React.Fragment>
+                        {nextLine && (
+                          <button
+                            type="button"
+                            onClick={() => seekTo(nextLine.timeMs / 1000)}
+                            className="mt-6 text-left text-lg font-semibold leading-snug text-white/35 transition-colors hover:text-white/65 md:text-2xl"
+                          >
+                            {nextLine.text}
+                          </button>
+                        )}
+                      </div>
                     );
-                  })}
-                </div>
+                  })()
+                ) : (
+                  <div
+                    className={
+                      lyricsStyle === 'kinetic'
+                        ? 'space-y-3 pt-4 pb-24'
+                        : 'pm-lyrics-mask space-y-2 pb-16'
+                    }
+                  >
+                    {/* Borderless 3-dot instrumental breathing pulse before intro verse */}
+                    {currentLyrics.lines[0] &&
+                      currentLyrics.lines[0].timeMs > 4000 &&
+                      smoothPosMs < currentLyrics.lines[0].timeMs && (
+                        <div className="inline-flex items-center gap-2 px-4 py-2">
+                          <span className="pm-lyric-dot h-2 w-2 rounded-full bg-white/90" />
+                          <span className="pm-lyric-dot h-2 w-2 rounded-full bg-white/80" />
+                          <span className="pm-lyric-dot h-2 w-2 rounded-full bg-white/90" />
+                        </div>
+                      )}
+
+                    {currentLyrics.lines.map((line, idx) => {
+                      const highlightIdx =
+                        resolvedActiveLyricIdx >= 0
+                          ? resolvedActiveLyricIdx
+                          : (currentLyrics.lines[0]?.timeMs ?? 0) <= 4000
+                            ? 0
+                            : -1;
+                      const isActive = idx === highlightIdx;
+                      const isPast = highlightIdx >= 0 && idx < highlightIdx;
+                      const dist = highlightIdx >= 0 ? Math.abs(idx - highlightIdx) : idx + 1;
+
+                      if (lyricsStyle === 'kinetic' && highlightIdx >= 2 && idx < highlightIdx - 1) {
+                        return null;
+                      }
+
+                      const nextLine = currentLyrics.lines[idx + 1];
+                      const lineEndMs =
+                        nextLine && nextLine.timeMs > line.timeMs
+                          ? nextLine.timeMs
+                          : line.timeMs + 4200;
+                      const spanMs = Math.max(800, lineEndMs - line.timeMs);
+                      const vocalSpanMs = Math.min(
+                        spanMs * 0.92,
+                        Math.max(1100, line.text.length * 90)
+                      );
+                      const verseProgress01 = isActive
+                        ? Math.max(
+                            0,
+                            Math.min(1, (smoothPosMs - line.timeMs) / vocalSpanMs)
+                          )
+                        : 0;
+                      const showInstrumentalGap =
+                        isActive &&
+                        nextLine &&
+                        nextLine.timeMs - line.timeMs > 6500 &&
+                        smoothPosMs - line.timeMs > 3200;
+
+                      const lyricSizeClass =
+                        lyricsStyle === 'kinetic'
+                          ? isActive
+                            ? 'text-[26px] leading-[1.2] md:text-[34px] md:leading-[1.18]'
+                            : 'text-[19px] leading-[1.32] md:text-[23px]'
+                          : lyricsStyle === 'editorial'
+                            ? isActive
+                              ? 'pm-editorial-font text-[30px] italic leading-[1.18] md:text-[40px]'
+                              : 'pm-editorial-font text-[24px] leading-[1.26] md:text-[30px]'
+                            : lyricsSize === 'normal'
+                              ? 'text-xl leading-[1.3] md:text-[26px] md:leading-[1.28]'
+                              : lyricsSize === 'xl'
+                                ? 'text-[30px] leading-[1.22] md:text-[38px] md:leading-[1.2]'
+                                : 'text-[26px] leading-[1.26] md:text-[32px] md:leading-[1.24]';
+
+                      const distClass =
+                        lyricsStyle === 'kinetic' && isPast
+                          ? 'pm-kinetic-vanish max-h-0 overflow-hidden !py-0'
+                          : isActive
+                            ? `pm-lyric-line-active ${lyricsStyle === 'kinetic' ? 'pm-kinetic-enter' : ''}`
+                            : lyricsStyle === 'editorial'
+                              ? isPast
+                                ? 'opacity-20'
+                                : dist === 1
+                                  ? 'opacity-60'
+                                  : 'opacity-35'
+                              : lyricsBlurEnabled
+                                ? `pm-lyric-line-inactive ${
+                                    dist === 1
+                                      ? 'pm-lyric-dist-1'
+                                      : dist === 2
+                                        ? 'pm-lyric-dist-2'
+                                        : 'pm-lyric-dist-far'
+                                  }`
+                                : `pm-lyric-line-inactive ${
+                                    dist === 1
+                                      ? 'opacity-65'
+                                      : dist === 2
+                                        ? 'opacity-50'
+                                        : 'opacity-35'
+                                  }`;
+
+                      const words = line.text.trim().split(/\s+/).filter(Boolean);
+                      const emphasis =
+                        lyricsStyle === 'kinetic' && isActive
+                          ? analyzeKineticWords(currentLyrics.lines, idx)
+                          : null;
+                      const totalWeight = words.reduce(
+                        (sum, w) => sum + w.length + 1,
+                        0
+                      );
+                      let weightCursor = 0;
+
+                      return (
+                        <React.Fragment key={`${line.index}-${line.timeMs}`}>
+                          <button
+                            ref={isActive ? activeLyricRef : undefined}
+                            type="button"
+                            data-lyric-state={isActive ? 'active' : 'inactive'}
+                            onClick={() => {
+                              seekTo(line.timeMs / 1000);
+                              setLyricsUserScrolled(false);
+                            }}
+                            className={`group relative flex w-full items-baseline justify-between gap-4 rounded-[14px] px-3 py-2.5 text-left font-bold tracking-tight ${lyricSizeClass} ${distClass}`}
+                          >
+                            <span className="flex-1">
+                              {isActive && words.length > 0 ? (
+                                emphasis ? (
+                                  words.map((word, wIdx) => {
+                                    const kind = emphasis[wIdx] ?? 'normal';
+                                    return (
+                                      <React.Fragment key={`${idx}-${wIdx}`}>
+                                        <span
+                                          className={
+                                            kind === 'rhyme'
+                                              ? 'pm-kinetic-rhyme'
+                                              : kind === 'punch'
+                                                ? 'pm-kinetic-punch'
+                                                : 'text-white/95'
+                                          }
+                                        >
+                                          {word}
+                                        </span>
+                                        {wIdx < words.length - 1 ? ' ' : ''}
+                                      </React.Fragment>
+                                    );
+                                  })
+                                ) : (
+                                  words.map((word, wIdx) => {
+                                    const wLen = word.length + 1;
+                                    const wStart =
+                                      weightCursor / Math.max(1, totalWeight);
+                                    weightCursor += wLen;
+                                    const wEnd =
+                                      weightCursor / Math.max(1, totalWeight);
+                                    const wp = Math.max(
+                                      0,
+                                      Math.min(
+                                        1,
+                                        (verseProgress01 - wStart) /
+                                          Math.max(0.01, wEnd - wStart)
+                                      )
+                                    );
+                                    const wordState =
+                                      wp <= 0.005
+                                        ? 'upcoming'
+                                        : wp >= 0.995
+                                          ? 'sung'
+                                          : 'active';
+                                    const liftPx =
+                                      wordState === 'active'
+                                        ? '-3.5px'
+                                        : wordState === 'sung'
+                                          ? '-1px'
+                                          : '0px';
+                                    const wordScale =
+                                      wordState === 'active' ? '1.035' : '1';
+                                    const glowPx =
+                                      wordState === 'active'
+                                        ? `${(8 * Math.sin(Math.min(1, wp) * Math.PI)).toFixed(1)}px`
+                                        : '0px';
+                                    return (
+                                      <React.Fragment key={`${idx}-${wIdx}`}>
+                                        <span
+                                          className="pm-sing-word"
+                                          data-word-state={wordState}
+                                          style={
+                                            {
+                                              '--word-p': `${Math.round(wp * 100)}%`,
+                                              '--word-y': liftPx,
+                                              '--word-scale': wordScale,
+                                              '--word-glow': glowPx,
+                                            } as React.CSSProperties
+                                          }
+                                        >
+                                          {word}
+                                        </span>
+                                        {wIdx < words.length - 1 ? ' ' : ''}
+                                      </React.Fragment>
+                                    );
+                                  })
+                                )
+                              ) : (
+                                <span>{line.text}</span>
+                              )}
+                            </span>
+                            <span className="tabular-nums shrink-0 text-[11px] font-medium text-[#D1D1DC] opacity-0 transition-opacity group-hover:opacity-75">
+                              {formatDurationSec(line.timeMs / 1000)}
+                            </span>
+                          </button>
+
+                          {showInstrumentalGap && (
+                            <div className="inline-flex items-center gap-2 px-4 py-2">
+                              <span className="pm-lyric-dot h-2 w-2 rounded-full bg-white/90" />
+                              <span className="pm-lyric-dot h-2 w-2 rounded-full bg-white/80" />
+                              <span className="pm-lyric-dot h-2 w-2 rounded-full bg-white/90" />
+                            </div>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </div>
+                )
               ) : (
                 <div className="flex h-full min-h-[280px] items-center justify-center px-2">
                   <div className="w-full max-w-md rounded-[24px] bg-white/[0.06] px-8 py-10 text-center">
@@ -1394,15 +1560,30 @@ export const NowPlayingSheet: React.FC = () => {
                   </p>
                 </div>
 
-                {upNextTracks.length > 0 && (
+                <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => clearUpNextQueue()}
-                    className="pm-pressable h-8 rounded-full bg-white/[0.08] px-3.5 text-[11px] font-semibold text-[#F5F5F7] transition-colors hover:bg-white/[0.16]"
+                    aria-pressed={shuffleEnabled}
+                    onClick={() => toggleShuffle()}
+                    className={`pm-pressable inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-[11px] font-semibold transition-colors ${
+                      shuffleEnabled
+                        ? 'bg-white text-[#0A0A0D]'
+                        : 'bg-white/[0.08] text-[#F5F5F7] hover:bg-white/[0.16]'
+                    }`}
                   >
-                    Limpiar cola
+                    <Shuffle className="h-3.5 w-3.5" />
+                    Aleatorio
                   </button>
-                )}
+                  {upNextTracks.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => clearUpNextQueue()}
+                      className="pm-pressable h-8 rounded-full bg-white/[0.08] px-3.5 text-[11px] font-semibold text-[#F5F5F7] transition-colors hover:bg-white/[0.16]"
+                    >
+                      Limpiar cola
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Quick Inline Search to Add Songs Directly to Queue */}
@@ -1961,44 +2142,123 @@ export const NowPlayingSheet: React.FC = () => {
         })()}
       </div>
 
-      {/* Seamless Full-Bleed Translucent DJ & EQ Micro-Controls (no dark bar strip on mobile, floating bottom-right on desktop) */}
-      <div className="relative z-20 flex shrink-0 items-center justify-center gap-2.5 bg-transparent px-4 pt-2 pb-[max(0.9rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] lg:fixed lg:right-6 lg:bottom-5 lg:p-0">
-        <button
-          type="button"
-          data-testid="nowplaying-dj-btn"
-          aria-label="Sesión DJ"
-          aria-pressed={djPopoverOpen}
-          onClick={() => setDjPopoverOpen(!djPopoverOpen)}
-          className={`pm-pressable inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-xs font-semibold transition-colors ${
-            djMode.enabled || djPopoverOpen
-              ? 'bg-white/[0.18] text-white'
-              : 'bg-white/[0.08] text-[#F5F5F7] hover:bg-white/[0.16]'
-          }`}
-        >
-          <Disc3
-            className={`h-3.5 w-3.5 ${
-              djMode.enabled ? 'text-purple-300' : 'text-[#F5F5F7]'
+      {/* Unified Bottom Minimalist Navigation Bar (5 clean icons on Mobile, clean icon+label pills on PC) */}
+      <nav
+        aria-label="Controles inferiores del reproductor"
+        className="relative z-20 flex shrink-0 items-center justify-center bg-transparent px-4 pt-1 pb-[max(0.95rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] md:pb-5"
+      >
+        <div className="flex w-full max-w-[420px] items-center justify-between md:w-auto md:max-w-none md:justify-center md:gap-2">
+          <button
+            type="button"
+            aria-label="Portada"
+            aria-pressed={nowPlayingTab === 'Portada'}
+            onClick={() => setNowPlayingTab('Portada')}
+            className={`pm-pressable hidden h-9 items-center gap-1.5 rounded-full px-3.5 text-xs font-semibold transition-colors md:inline-flex ${
+              nowPlayingTab === 'Portada'
+                ? 'bg-white text-[#070709] shadow-sm'
+                : 'text-white/75 hover:bg-white/[0.12] hover:text-white'
             }`}
-          />
-          <span>{djMode.enabled ? `DJ ${djMode.style === 'quick' ? 'Rápida' : 'Completa'}` : 'Sesión DJ'}</span>
-        </button>
+          >
+            <ImageIcon className="h-3.5 w-3.5" />
+            <span>Portada</span>
+          </button>
 
-        <button
-          type="button"
-          data-testid="nowplaying-eq-btn"
-          aria-label="Ecualizador"
-          aria-pressed={eqSheetOpen}
-          onClick={() => setEqSheetOpen(!eqSheetOpen)}
-          className={`pm-pressable inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-xs font-semibold transition-colors ${
-            eqSheetOpen
-              ? 'bg-white/[0.18] text-white'
-              : 'bg-white/[0.08] text-[#F5F5F7] hover:bg-white/[0.16]'
-          }`}
-        >
-          <Sliders className="h-3.5 w-3.5" />
-          <span>EQ</span>
-        </button>
-      </div>
+          <button
+            type="button"
+            aria-label="Letras"
+            aria-pressed={nowPlayingTab === 'Letras'}
+            onClick={() =>
+              setNowPlayingTab(
+                nowPlayingTab === 'Letras' ? 'Portada' : 'Letras'
+              )
+            }
+            className={`pm-pressable inline-flex h-10 w-10 items-center justify-center gap-1.5 rounded-full transition-colors md:h-9 md:w-auto md:px-3.5 md:text-xs md:font-semibold ${
+              nowPlayingTab === 'Letras'
+                ? 'bg-white/[0.22] text-white md:bg-white md:text-[#070709] md:shadow-sm'
+                : 'text-white/70 hover:bg-white/[0.10] hover:text-white'
+            }`}
+          >
+            <MessageSquareQuote className="h-5 w-5 md:h-3.5 md:w-3.5" />
+            <span className="hidden md:inline">Letras</span>
+          </button>
+
+          <button
+            type="button"
+            data-testid="nowplaying-dj-btn"
+            aria-label="Sesión DJ"
+            aria-pressed={djPopoverOpen}
+            onClick={() => setDjPopoverOpen(!djPopoverOpen)}
+            className={`pm-pressable inline-flex h-10 w-10 items-center justify-center gap-1.5 rounded-full transition-colors md:h-9 md:w-auto md:px-3.5 md:text-xs md:font-semibold ${
+              djMode.enabled || djPopoverOpen
+                ? 'bg-white/[0.18] text-white'
+                : 'text-white/70 hover:bg-white/[0.10] hover:text-white'
+            }`}
+          >
+            <Disc3
+              className={`h-5 w-5 md:h-3.5 md:w-3.5 ${
+                djMode.enabled ? 'text-purple-300' : ''
+              }`}
+            />
+            <span className="hidden md:inline">
+              {djMode.enabled ? `DJ ${djMode.style === 'quick' ? 'Rápida' : 'Completa'}` : 'Sesión DJ'}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            aria-label="Cola"
+            aria-pressed={nowPlayingTab === 'Cola'}
+            onClick={() =>
+              setNowPlayingTab(nowPlayingTab === 'Cola' ? 'Portada' : 'Cola')
+            }
+            className={`pm-pressable inline-flex h-10 w-10 items-center justify-center gap-1.5 rounded-full transition-colors md:h-9 md:w-auto md:px-3.5 md:text-xs md:font-semibold ${
+              nowPlayingTab === 'Cola'
+                ? 'bg-white/[0.22] text-white md:bg-white md:text-[#070709] md:shadow-sm'
+                : 'text-white/70 hover:bg-white/[0.10] hover:text-white'
+            }`}
+          >
+            <ListMusic className="h-5 w-5 md:h-3.5 md:w-3.5" />
+            <span className="hidden md:inline">Cola</span>
+          </button>
+
+          <button
+            type="button"
+            data-testid="nowplaying-eq-btn"
+            aria-label="Ecualizador"
+            aria-pressed={eqSheetOpen}
+            onClick={() => setEqSheetOpen(!eqSheetOpen)}
+            className={`pm-pressable inline-flex h-10 w-10 items-center justify-center gap-1.5 rounded-full transition-colors md:h-9 md:w-auto md:px-3.5 md:text-xs md:font-semibold ${
+              eqSheetOpen
+                ? 'bg-white/[0.18] text-white'
+                : 'text-white/70 hover:bg-white/[0.10] hover:text-white'
+            }`}
+          >
+            <Sliders className="h-5 w-5 md:h-3.5 md:w-3.5" />
+            <span className="hidden md:inline">EQ</span>
+          </button>
+
+          <button
+            type="button"
+            aria-label={repeatLabel}
+            aria-pressed={repeatMode !== 'off'}
+            onClick={() => {
+              triggerTransportAnim('repeat');
+              cycleRepeatMode();
+            }}
+            className={`pm-pressable relative inline-flex h-10 w-10 items-center justify-center rounded-full transition-colors md:hidden ${
+              repeatMode !== 'off'
+                ? 'bg-white/[0.18] text-white'
+                : 'text-white/70 hover:bg-white/[0.10] hover:text-white'
+            }`}
+          >
+            {repeatMode === 'one' ? (
+              <Repeat1 className="h-5 w-5" />
+            ) : (
+              <Repeat className="h-5 w-5" />
+            )}
+          </button>
+        </div>
+      </nav>
     </div>
   );
 };

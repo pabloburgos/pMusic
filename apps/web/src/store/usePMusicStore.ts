@@ -271,6 +271,7 @@ let djPreloadedKey = '';
 const decodedAudioAnalyzedIds = new Set<string>();
 const decodedAudioInFlightIds = new Set<string>();
 
+export type LyricsVisualStyle = 'classic' | 'kinetic' | 'focus' | 'editorial';
 export type RepeatMode = 'off' | 'all' | 'one';
 export type TrackMenuState = {
   track: Track;
@@ -312,6 +313,7 @@ export interface PMusicStoreState {
   visualizerEnabled: boolean;
   lyricsSize: 'normal' | 'large' | 'xl';
   lyricsBlurEnabled: boolean;
+  lyricsStyle: LyricsVisualStyle;
   discordRpcEnabled: boolean;
   discordRpcConfig: DiscordRpcConfig;
   discordRpcStatus: DiscordRpcStatus;
@@ -526,6 +528,7 @@ export interface PMusicStoreState {
   setVisualizerEnabled: (enabled: boolean) => void;
   setLyricsSize: (size: 'normal' | 'large' | 'xl') => void;
   setLyricsBlurEnabled: (enabled: boolean) => void;
+  setLyricsStyle: (style: LyricsVisualStyle) => void;
   setPlaybackRate: (rate: number) => void;
   setPreservesPitch: (preserves: boolean) => void;
   setAudioNormalization: (enabled: boolean) => void;
@@ -879,6 +882,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       visualizerEnabled: st.visualizerEnabled,
       lyricsSize: st.lyricsSize,
       lyricsBlurEnabled: st.lyricsBlurEnabled,
+      lyricsStyle: st.lyricsStyle,
       discordRpcEnabled: st.discordRpcEnabled,
       discordRpcConfig: st.discordRpcConfig,
       playbackRate: st.playbackRate,
@@ -924,6 +928,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   visualizerEnabled: true,
   lyricsSize: 'large',
   lyricsBlurEnabled: true,
+  lyricsStyle: 'classic',
   discordRpcEnabled: true,
   discordRpcConfig: {
     clientId: '',
@@ -1275,6 +1280,13 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
             visualizerEnabled: Boolean(hydratedPrefs.visualizerEnabled ?? prev.visualizerEnabled),
             lyricsSize: hydratedPrefs.lyricsSize ?? prev.lyricsSize,
             lyricsBlurEnabled: Boolean(hydratedPrefs.lyricsBlurEnabled ?? prev.lyricsBlurEnabled),
+            lyricsStyle:
+              hydratedPrefs.lyricsStyle === 'classic' ||
+              hydratedPrefs.lyricsStyle === 'kinetic' ||
+              hydratedPrefs.lyricsStyle === 'focus' ||
+              hydratedPrefs.lyricsStyle === 'editorial'
+                ? hydratedPrefs.lyricsStyle
+                : prev.lyricsStyle,
             discordRpcEnabled: Boolean(hydratedPrefs.discordRpcEnabled ?? prev.discordRpcEnabled),
             discordRpcConfig: {
               ...prev.discordRpcConfig,
@@ -3158,6 +3170,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   setLyricsBlurEnabled: (enabled) => {
     set({ lyricsBlurEnabled: enabled });
+    persistPrefsFromStore();
+  },
+
+  setLyricsStyle: (style) => {
+    set({ lyricsStyle: style });
     persistPrefsFromStore();
   },
 

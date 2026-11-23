@@ -1307,6 +1307,185 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   }
 }
 
+/* ── Living GPU-Composited Fluid Color Orbs (Zero filter:blur, 60fps silky on Android WebView & Desktop) ── */
+@keyframes pmOrbDrift1 {
+  0%, 100% {
+    transform: translate3d(-14%, -12%, 0) scale(1.05) rotate(0deg);
+    opacity: 0.72;
+  }
+  33% {
+    transform: translate3d(16%, 6%, 0) scale(1.26) rotate(42deg);
+    opacity: 0.88;
+  }
+  66% {
+    transform: translate3d(-4%, 18%, 0) scale(0.96) rotate(-24deg);
+    opacity: 0.68;
+  }
+}
+
+@keyframes pmOrbDrift2 {
+  0%, 100% {
+    transform: translate3d(16%, 14%, 0) scale(1.12) rotate(0deg);
+    opacity: 0.66;
+  }
+  40% {
+    transform: translate3d(-15%, -8%, 0) scale(1.3) rotate(-48deg);
+    opacity: 0.84;
+  }
+  75% {
+    transform: translate3d(8%, -16%, 0) scale(0.98) rotate(30deg);
+    opacity: 0.62;
+  }
+}
+
+@keyframes pmOrbDrift3 {
+  0%, 100% {
+    transform: translate3d(0%, 18%, 0) scale(1.0) rotate(0deg);
+    opacity: 0.54;
+  }
+  50% {
+    transform: translate3d(12%, -16%, 0) scale(1.28) rotate(55deg);
+    opacity: 0.78;
+  }
+}
+
+@keyframes pmOrbSheen {
+  0%, 100% {
+    transform: translate3d(-12%, -8%, 0) rotate(-14deg) scale(1.04);
+    opacity: 0.24;
+  }
+  50% {
+    transform: translate3d(12%, 10%, 0) rotate(12deg) scale(1.18);
+    opacity: 0.42;
+  }
+}
+
+.pm-orb-1 {
+  background: radial-gradient(
+    circle closest-side at 50% 50%,
+    var(--pm-ambient-1) 0%,
+    color-mix(in srgb, var(--pm-ambient-1) 44%, transparent) 54%,
+    transparent 98%
+  );
+  animation: pmOrbDrift1 13s ease-in-out infinite;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+.pm-orb-2 {
+  background: radial-gradient(
+    circle closest-side at 50% 50%,
+    var(--pm-ambient-2) 0%,
+    color-mix(in srgb, var(--pm-ambient-2) 44%, transparent) 54%,
+    transparent 98%
+  );
+  animation: pmOrbDrift2 17s ease-in-out infinite;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+.pm-orb-3 {
+  background: radial-gradient(
+    circle closest-side at 50% 50%,
+    var(--pm-ambient-3) 0%,
+    color-mix(in srgb, var(--pm-ambient-3) 40%, transparent) 52%,
+    transparent 98%
+  );
+  animation: pmOrbDrift3 21s ease-in-out infinite;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+.pm-orb-sheen {
+  background: radial-gradient(
+    closest-side at 50% 50%,
+    rgba(255, 255, 255, 0.2) 0%,
+    rgba(255, 255, 255, 0.05) 52%,
+    transparent 98%
+  );
+  animation: pmOrbSheen 15s ease-in-out infinite;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+.pm-backdrop-static .pm-orb-1,
+.pm-backdrop-static .pm-orb-2,
+.pm-backdrop-static .pm-orb-3,
+.pm-backdrop-static .pm-orb-sheen {
+  animation: none !important;
+}
+
+/* ── Expressive Lyrics Modes (Kinetic / Focus / Editorial) ── */
+@keyframes pmKineticPop {
+  0% {
+    opacity: 0.15;
+    transform: translate3d(0, 14px, 0) scale(0.92);
+  }
+  65% {
+    opacity: 1;
+    transform: translate3d(0, -2px, 0) scale(1.03);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+.pm-kinetic-enter {
+  animation: pmKineticPop 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.pm-kinetic-punch {
+  display: inline-block;
+  font-family: var(--pm-font-display);
+  font-weight: 800;
+  font-size: 1.36em;
+  line-height: 1.04;
+  letter-spacing: -0.03em;
+  color: #ffffff;
+  text-shadow: 0 4px 26px rgba(255, 255, 255, 0.42);
+}
+
+.pm-kinetic-rhyme {
+  display: inline-block;
+  font-family: "Instrument Serif", Georgia, serif;
+  font-style: italic;
+  font-weight: 400;
+  font-size: 1.52em;
+  line-height: 1.02;
+  letter-spacing: -0.01em;
+  color: #ffffff;
+  text-shadow: 0 4px 28px rgba(255, 255, 255, 0.48);
+}
+
+.pm-kinetic-vanish {
+  opacity: 0;
+  transform: translate3d(0, -16px, 0) scale(0.93);
+  pointer-events: none;
+  transition: opacity 480ms ease, transform 480ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes pmFocusIn {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+.pm-focus-stage-line {
+  animation: pmFocusIn 380ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.pm-editorial-font {
+  font-family: "Instrument Serif", Georgia, serif;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
 @keyframes pmBackdropInNext {
   from {
     opacity: 0;
@@ -1658,6 +1837,12 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   .pm-ambient-mesh,
   .pm-fluid-cover-a,
   .pm-fluid-cover-b,
+  .pm-orb-1,
+  .pm-orb-2,
+  .pm-orb-3,
+  .pm-orb-sheen,
+  .pm-kinetic-enter,
+  .pm-focus-stage-line,
   .pm-backdrop-in-next,
   .pm-backdrop-in-prev,
   .pm-backdrop-out-next,
@@ -1711,6 +1896,12 @@ html.pm-solid-modern .pm-spotlight-backdrop {
 html.pm-reduced-motion .pm-ambient-mesh,
 html.pm-reduced-motion .pm-fluid-cover-a,
 html.pm-reduced-motion .pm-fluid-cover-b,
+html.pm-reduced-motion .pm-orb-1,
+html.pm-reduced-motion .pm-orb-2,
+html.pm-reduced-motion .pm-orb-3,
+html.pm-reduced-motion .pm-orb-sheen,
+html.pm-reduced-motion .pm-kinetic-enter,
+html.pm-reduced-motion .pm-focus-stage-line,
 html.pm-reduced-motion .pm-backdrop-in-next,
 html.pm-reduced-motion .pm-backdrop-in-prev,
 html.pm-reduced-motion .pm-backdrop-out-next,

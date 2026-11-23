@@ -152,8 +152,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="6"
-    android:versionName="0.6.0">
+    android:versionCode="7"
+    android:versionName="0.7.0">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -197,13 +197,57 @@ writeFileSync(
   resolve(javaSrcDir, 'PMusicPlaybackService.java'),
   `package es.pmusic.app;
 
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
+import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
 
 public class PMusicPlaybackService extends Service {
+    private static final String CHANNEL_ID = "pmusic_playback_channel";
+    private static final int NOTIFICATION_ID = 1001;
     private PowerManager.WakeLock wakeLock;
+
+    private void ensureForegroundNotification() {
+        try {
+            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            if (Build.VERSION.SDK_INT >= 26 && nm != null) {
+                NotificationChannel ch = new NotificationChannel(
+                        CHANNEL_ID,
+                        "Reproducci\\u00f3n pMusic",
+                        NotificationManager.IMPORTANCE_LOW
+                );
+                ch.setSound(null, null);
+                ch.setShowBadge(false);
+                ch.enableVibration(false);
+                nm.createNotificationChannel(ch);
+            }
+
+            Intent launchIntent = new Intent(this, MainActivity.class);
+            launchIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            int piFlags = Build.VERSION.SDK_INT >= 23
+                    ? PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                    : PendingIntent.FLAG_UPDATE_CURRENT;
+            PendingIntent pi = PendingIntent.getActivity(this, 0, launchIntent, piFlags);
+
+            Notification.Builder builder = Build.VERSION.SDK_INT >= 26
+                    ? new Notification.Builder(this, CHANNEL_ID)
+                    : new Notification.Builder(this);
+            Notification notif = builder
+                    .setContentTitle("pMusic")
+                    .setContentText("Reproducci\\u00f3n de audio activa")
+                    .setSmallIcon(android.R.drawable.ic_media_play)
+                    .setContentIntent(pi)
+                    .setOngoing(true)
+                    .build();
+            startForeground(NOTIFICATION_ID, notif);
+        } catch (Throwable ignored) {
+        }
+    }
 
     @Override
     public void onCreate() {
@@ -213,10 +257,12 @@ public class PMusicPlaybackService extends Service {
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "pMusic::PlaybackWakeLock");
             wakeLock.setReferenceCounted(false);
         }
+        ensureForegroundNotification();
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        ensureForegroundNotification();
         if (wakeLock != null && !wakeLock.isHeld()) {
             wakeLock.acquire(4 * 60 * 60 * 1000L);
         }
@@ -225,6 +271,10 @@ public class PMusicPlaybackService extends Service {
 
     @Override
     public void onDestroy() {
+        try {
+            stopForeground(true);
+        } catch (Throwable ignored) {
+        }
         if (wakeLock != null && wakeLock.isHeld()) {
             wakeLock.release();
         }
@@ -298,6 +348,7 @@ public class MainActivity extends Activity {
     private static final Pattern BAD_VERSION_PATTERN = Pattern.compile("(karaoke|remix|live|en vivo|cover|reaction|sped up|slowed|nightcore|instrumental|letra|lyrics|tutorial|8d audio|reverb)");
     private static final Pattern TITLE_NOISE_PATTERN = Pattern.compile("\\\\((?:feat\\\\.|ft\\\\.|with|prod\\\\.|official|video|audio|lyric|remix|en vivo|live).*?\\\\)|\\\\[(?:official|video|audio|lyric|remix|hd|4k).*?\\\\]", Pattern.CASE_INSENSITIVE);
     private static final Pattern DURATION_TOKEN_PATTERN = Pattern.compile("^\\\\d{1,2}:\\\\d{2}(?::\\\\d{2})?$");
+    private static final Pattern OPEN_RANGE_PATTERN = Pattern.compile("^bytes=(\\\\d+)-$");
 
     private static final class ResolvedStream {
         final String url;
@@ -636,7 +687,12 @@ public class MainActivity extends Activity {
         setContentView(webView);
 
         try {
-            startService(new Intent(this, PMusicPlaybackService.class));
+            Intent serviceIntent = new Intent(this, PMusicPlaybackService.class);
+            if (Build.VERSION.SDK_INT >= 26) {
+                startForegroundService(serviceIntent);
+            } else {
+                startService(serviceIntent);
+            }
         } catch (Exception ignored) {
         }
 
@@ -736,10 +792,15 @@ public class MainActivity extends Activity {
                 if (rs != null) return rs;
             }
 
-            // 2) Fallback: Standard YouTube search (WEB)
+            // 2) Fallback: Standard YouTube search (WEB) with "audio" hint, then raw title + artist
             List<Candidate> ytCandidates = searchStandardYoutube(focusedQuery + " audio", strippedTitle, primaryArtist, targetDur);
             for (int i = 0; i < Math.min(3, ytCandidates.size()); i++) {
                 ResolvedStream rs = fetchYoutubeIosPlayerStream(ytCandidates.get(i).videoId);
+                if (rs != null) return rs;
+            }
+            List<Candidate> ytDirectCandidates = searchStandardYoutube(focusedQuery, strippedTitle, primaryArtist, targetDur);
+            for (int i = 0; i < Math.min(3, ytDirectCandidates.size()); i++) {
+                ResolvedStream rs = fetchYoutubeIosPlayerStream(ytDirectCandidates.get(i).videoId);
                 if (rs != null) return rs;
             }
         } catch (Exception ignored) {
@@ -749,6 +810,7 @@ public class MainActivity extends Activity {
 
     private List<Candidate> searchYtMusicSongs(String query, String targetTitle, String targetArtist, int targetDurSec) {
         List<Candidate> results = new ArrayList<Candidate>();
+        List<Candidate> relaxed = new ArrayList<Candidate>();
         try {
             JSONObject client = new JSONObject();
             client.put("clientName", "WEB_REMIX");
@@ -776,31 +838,45 @@ public class MainActivity extends Activity {
                 if (flex == null || flex.length() == 0) continue;
 
                 String candTitle = extractFlexColumnText(flex.optJSONObject(0));
-                String subRaw = flex.length() > 1 ? extractFlexColumnText(flex.optJSONObject(1)) : "";
                 int durSec = 0;
                 StringBuilder subText = new StringBuilder();
-                String[] segs = subRaw.split("\\\\s*[\\\\u2022\\\\u00b7|]\\\\s*");
-                for (int s = 0; s < segs.length; s++) {
-                    String part = segs[s].trim();
-                    int parsed = parseDurationSec(part);
-                    if (parsed > 0) {
-                        durSec = parsed;
-                    } else if (!part.isEmpty()) {
-                        if (subText.length() > 0) subText.append(" ");
-                        subText.append(part);
+                for (int c = 1; c < flex.length(); c++) {
+                    String colText = extractFlexColumnText(flex.optJSONObject(c));
+                    if (colText == null || colText.isEmpty()) continue;
+                    String[] segs = colText.split("\\\\s*[\\\\u2022\\\\u00b7|]\\\\s*");
+                    for (int s = 0; s < segs.length; s++) {
+                        String part = segs[s].trim();
+                        int parsed = parseDurationSec(part);
+                        if (parsed > 0 && durSec == 0) {
+                            durSec = parsed;
+                        } else if (!part.isEmpty()) {
+                            if (subText.length() > 0) subText.append(" ");
+                            subText.append(part);
+                        }
                     }
                 }
                 if (durSec == 0) {
                     JSONArray fixed = r.optJSONArray("fixedColumns");
-                    if (fixed != null && fixed.length() > 0) {
-                        durSec = parseDurationSec(extractFlexColumnText(fixed.optJSONObject(0)));
+                    if (fixed != null) {
+                        for (int k = 0; k < fixed.length(); k++) {
+                            int parsedFixed = parseDurationSec(extractFlexColumnText(fixed.optJSONObject(k)));
+                            if (parsedFixed > 0) {
+                                durSec = parsedFixed;
+                                break;
+                            }
+                        }
                     }
                 }
                 if (durSec < 40) continue;
                 int score = scoreAudioCandidate(targetTitle, targetArtist, targetDurSec, candTitle, subText.toString(), durSec, true);
                 if (score >= 6) {
                     results.add(new Candidate(vid, score));
+                } else if (score >= 1 && durSec >= 45) {
+                    relaxed.add(new Candidate(vid, score));
                 }
+            }
+            if (results.isEmpty() && !relaxed.isEmpty()) {
+                results.addAll(relaxed);
             }
             Collections.sort(results, new Comparator<Candidate>() {
                 @Override
@@ -815,6 +891,7 @@ public class MainActivity extends Activity {
 
     private List<Candidate> searchStandardYoutube(String query, String targetTitle, String targetArtist, int targetDurSec) {
         List<Candidate> results = new ArrayList<Candidate>();
+        List<Candidate> relaxed = new ArrayList<Candidate>();
         try {
             JSONObject client = new JSONObject();
             client.put("clientName", "WEB");
@@ -846,7 +923,12 @@ public class MainActivity extends Activity {
                 int score = scoreAudioCandidate(targetTitle, targetArtist, targetDurSec, candTitle, candAuthor, durSec, false);
                 if (score >= 6) {
                     results.add(new Candidate(vid, score));
+                } else if (score >= 1 && durSec >= 45) {
+                    relaxed.add(new Candidate(vid, score));
                 }
+            }
+            if (results.isEmpty() && !relaxed.isEmpty()) {
+                results.addAll(relaxed);
             }
             Collections.sort(results, new Comparator<Candidate>() {
                 @Override
@@ -860,14 +942,28 @@ public class MainActivity extends Activity {
     }
 
     private ResolvedStream fetchYoutubeIosPlayerStream(String videoId) {
+        ResolvedStream iosStream = fetchYoutubeClientPlayerStream(videoId, true);
+        if (iosStream != null) return iosStream;
+        return fetchYoutubeClientPlayerStream(videoId, false);
+    }
+
+    private ResolvedStream fetchYoutubeClientPlayerStream(String videoId, boolean useIos) {
         try {
             JSONObject client = new JSONObject();
-            client.put("clientName", "IOS");
-            client.put("clientVersion", "20.10.4");
-            client.put("deviceMake", "Apple");
-            client.put("deviceModel", "iPhone16,2");
-            client.put("osName", "iPhone");
-            client.put("osVersion", "18.3.2.22D82");
+            String ua;
+            if (useIos) {
+                client.put("clientName", "IOS");
+                client.put("clientVersion", "20.10.4");
+                client.put("deviceMake", "Apple");
+                client.put("deviceModel", "iPhone16,2");
+                client.put("osName", "iPhone");
+                client.put("osVersion", "18.3.2.22D82");
+                ua = YT_IOS_UA;
+            } else {
+                client.put("clientName", "MWEB");
+                client.put("clientVersion", "2.20250310.01.00");
+                ua = YT_WEB_UA;
+            }
             client.put("hl", "es");
             client.put("gl", "ES");
             JSONObject context = new JSONObject();
@@ -876,7 +972,7 @@ public class MainActivity extends Activity {
             payload.put("videoId", videoId);
             payload.put("context", context);
 
-            byte[] resp = postJsonBytes("https://www.youtube.com/youtubei/v1/player?prettyPrint=false", YT_IOS_UA, "https://www.youtube.com", payload.toString());
+            byte[] resp = postJsonBytes("https://www.youtube.com/youtubei/v1/player?prettyPrint=false", ua, "https://www.youtube.com", payload.toString());
             if (resp == null) return null;
             JSONObject root = new JSONObject(new String(resp, StandardCharsets.UTF_8));
             JSONObject statusObj = root.optJSONObject("playabilityStatus");
@@ -930,7 +1026,7 @@ public class MainActivity extends Activity {
             }
 
             if (bestUrl != null) {
-                return new ResolvedStream(bestUrl, bestMime != null ? bestMime : "audio/mp4", YT_IOS_UA, System.currentTimeMillis() + STREAM_CACHE_TTL_MS);
+                return new ResolvedStream(bestUrl, bestMime != null ? bestMime : "audio/mp4", ua, System.currentTimeMillis() + STREAM_CACHE_TTL_MS);
             }
         } catch (Exception ignored) {
         }
@@ -951,6 +1047,17 @@ public class MainActivity extends Activity {
         String clientRange = getHeaderIgnoreCase(reqHeaders, "range");
         boolean hasClientRange = clientRange != null && !clientRange.trim().isEmpty();
         String rangeToSend = hasClientRange ? clientRange.trim() : "bytes=0-";
+        if (hasClientRange) {
+            Matcher om = OPEN_RANGE_PATTERN.matcher(rangeToSend);
+            if (om.matches()) {
+                try {
+                    long startByte = Long.parseLong(om.group(1));
+                    long endByte = startByte + 1572863L;
+                    rangeToSend = "bytes=" + startByte + "-" + endByte;
+                } catch (Exception ignored) {
+                }
+            }
+        }
         boolean isHead = "HEAD".equalsIgnoreCase(method);
 
         ResolvedStream active = stream;
@@ -1303,7 +1410,7 @@ public class MainActivity extends Activity {
             conn.setConnectTimeout(4500);
             conn.setReadTimeout(6500);
             conn.setInstanceFollowRedirects(true);
-            conn.setRequestProperty("User-Agent", "pMusic-Android/0.6.0");
+            conn.setRequestProperty("User-Agent", "pMusic-Android/0.7.0");
             int code = conn.getResponseCode();
             if (code >= 200 && code < 300) {
                 InputStream in = conn.getInputStream();
