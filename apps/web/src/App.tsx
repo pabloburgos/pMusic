@@ -47,7 +47,11 @@ import { AppToast, TrackContextMenu } from './components/TrackMenu.tsx';
 import { ArtistLinks } from './components/ArtistLinks.tsx';
 import { SettingsModal } from './components/SettingsModal.tsx';
 import { TrackInfoModal } from './components/TrackInfoModal.tsx';
-import { readTrackFromDropEvent } from './utils/track-dnd.ts';
+import {
+  clearDraggedTrack,
+  readTrackFromDropEvent,
+  setDraggedTrack,
+} from './utils/track-dnd.ts';
 import {
   DetailViewPanel,
   ExploreScreen,
@@ -1107,7 +1111,12 @@ export const App: React.FC = () => {
 
             {/* Song card with subtle localized cover halo ONLY for the active track artwork */}
             <div data-surface="content" className="space-y-3">
-              <div className="pm-elevated relative overflow-hidden rounded-[14px] p-1">
+              <div
+                draggable
+                onDragStart={(e) => setDraggedTrack(e, currentTrack)}
+                onDragEnd={() => clearDraggedTrack()}
+                className="pm-elevated relative cursor-grab overflow-hidden rounded-[14px] p-1 active:cursor-grabbing"
+              >
                 <div
                   aria-hidden="true"
                   className="pointer-events-none absolute -inset-4 opacity-45 blur-xl"
@@ -1256,7 +1265,10 @@ export const App: React.FC = () => {
                 {upNextQueue.map((track) => (
                   <div
                     key={track.id}
-                    className="pm-hover flex w-full items-center gap-2.5 rounded-[8px] p-1.5"
+                    draggable
+                    onDragStart={(e) => setDraggedTrack(e, track)}
+                    onDragEnd={() => clearDraggedTrack()}
+                    className="pm-hover flex w-full cursor-grab items-center gap-2.5 rounded-[8px] p-1.5 active:cursor-grabbing"
                   >
                     <button
                       type="button"
@@ -1482,7 +1494,12 @@ export const App: React.FC = () => {
                   </div>
                 </div>
               )}
-            <div className="pm-dock-interactive pointer-events-auto inline-flex min-w-0 max-w-full items-center gap-3">
+            <div
+              draggable
+              onDragStart={(e) => setDraggedTrack(e, currentTrack)}
+              onDragEnd={() => clearDraggedTrack()}
+              className="pm-dock-interactive pointer-events-auto inline-flex min-w-0 max-w-full cursor-grab items-center gap-3 active:cursor-grabbing"
+            >
               <button
                 type="button"
                 aria-label="Abrir reproductor a pantalla completa"

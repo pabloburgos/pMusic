@@ -55,6 +55,7 @@ import {
 } from '../platform/web-bridge.ts';
 import { getThemeDefinition } from '../utils/themes.ts';
 import { ArtistLinks } from './ArtistLinks.tsx';
+import { clearDraggedTrack, setDraggedTrack } from '../utils/track-dnd.ts';
 
 function normalizeLyricToken(raw: string): string {
   return raw
@@ -2053,6 +2054,9 @@ export const NowPlayingSheet: React.FC = () => {
                   </div>
                   <div
                     role="listitem"
+                    draggable
+                    onDragStart={(e) => setDraggedTrack(e, activeQueueTrack)}
+                    onDragEnd={() => clearDraggedTrack()}
                     onContextMenu={(e) => {
                       e.preventDefault();
                       openTrackMenu(activeQueueTrack, e.clientX, e.clientY);
@@ -2184,12 +2188,14 @@ export const NowPlayingSheet: React.FC = () => {
                             draggable
                             onDragStart={(e) => {
                               setDragQueueIdx(realIdx);
-                              e.dataTransfer.effectAllowed = 'move';
+                              setDraggedTrack(e, track);
+                              e.dataTransfer.effectAllowed = 'copyMove';
                               e.dataTransfer.setData('text/plain', String(realIdx));
                             }}
                             onDragEnd={() => {
                               setDragQueueIdx(null);
                               setDragOverQueueIdx(null);
+                              clearDraggedTrack();
                             }}
                             onDragOver={(e) => {
                               if (
