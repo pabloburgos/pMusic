@@ -233,8 +233,18 @@ export class DjCuePlanner implements IDjPlanner {
     const barSec = (60 / safeFromBpm) * 4;
     const toBarSec = (60 / safeToBpm) * 4;
 
+    // Harmonic half-time / double-time BPM locking like real club DJs
+    const toCandidates = [safeToBpm, safeToBpm * 2, safeToBpm * 0.5];
+    let lockedToBpm = safeToBpm;
+    for (const cand of toCandidates) {
+      if (Math.abs(cand - safeFromBpm) < Math.abs(lockedToBpm - safeFromBpm)) {
+        lockedToBpm = cand;
+      }
+    }
+
     const bpmDist = computeBpmDistance(safeFromBpm, safeToBpm);
     const relBpmDiff = Math.abs(safeFromBpm - safeToBpm) / safeFromBpm;
+    const relLockedDiff = Math.abs(safeFromBpm - lockedToBpm) / safeFromBpm;
     const camelotPenalty = computeCamelotPenalty(from.camelotKey, to.camelotKey);
 
     // Pairwise stem-aware window search: jointly minimize vocal-on-vocal clash, bass collision & energy jumps
@@ -437,10 +447,31 @@ export class DjCuePlanner implements IDjPlanner {
       );
     }
 
+    // Compose authentic multi-layer generative automation for THIS exact track pair
+    let outTempoTargetRate = 1.0;
+    let inTempoStartRate = 1.0;
+    if (relLockedDiff <= 0.08 && lockedToBpm > 0) {
+      const midBpm = (safeFromBpm + lockedToBpm) * 0.5;
+      outTempoTargetRate = Number(
+        Math.max(0.955, Math.min(1.045, midBpm / safeFromBpm)).toFixed(3)
+      );
+      inTempoStartRate = Number(
+        Math.max(0.955, Math.min(1.045, midBpm / lockedToBpm)).toFixed(3)
+      );
+    } else if (relLockedDiff <= 0.16 && lockedToBpm > 0) {
+      outTempoTargetRate = lockedToBpm > safeFromBpm ? 1.05 : 0.95;
+      inTempoStartRate = lockedToBpm > safeFromBpm ? 0.96 : 1.04;
+    } else if (lockedToBpm !== safeFromBpm) {
+      outTempoTargetRate = lockedToBpm > safeFromBpm ? 1.035 : 0.965;
+      inTempoStartRate = 1.0;
+    }
+
     let tempoNudgeRate = 1.0;
     if (relBpmDiff <= 0.06 && safeToBpm > 0) {
       const ratio = safeFromBpm / safeToBpm;
       tempoNudgeRate = Number(Math.max(0.96, Math.min(1.04, ratio)).toFixed(3));
+    } else if (relLockedDiff <= 0.08) {
+      tempoNudgeRate = Number(Math.max(0.96, Math.min(1.04, inTempoStartRate)).toFixed(3));
     }
 
     const echoSubdivision: 0.5 | 0.75 =
@@ -471,6 +502,13 @@ export class DjCuePlanner implements IDjPlanner {
       cueInSec + transitionDurationSec,
       to.meanEnergy * 0.75
     );
+    const highInWin = sampleStemWindow(
+      to.highEnvelope,
+      to.durationSec,
+      cueInSec,
+      cueInSec + transitionDurationSec,
+      to.meanEnergy * 0.6
+    );
     const vocalOverlap = Math.min(1, vOutWin * vInWin * 1.45);
     const vocalClashAvoided =
       vocalOverlap >= 0.24 ||
@@ -497,7 +535,7 @@ export class DjCuePlanner implements IDjPlanner {
           ? 0.64
           : transitionType === 'loop_build'
             ? 0.7
-            : Math.max(0.34, Math.min(0.64, bpmDist <= 6 ? 0.52 - bassInWin * 0.08 : 0.44))
+            : Math.max(0.32, Math.min(0.68, bpmDist <= 6 ? 0.54 - bassInWin * 0.1 : 0.44))
       ).toFixed(2)
     );
     const bassSwapWidth01 = Number(
@@ -505,7 +543,7 @@ export class DjCuePlanner implements IDjPlanner {
         ? 0.14
         : bpmDist <= 7 && bassInWin >= 0.6
           ? 0.16
-          : 0.28
+          : 0.26
       ).toFixed(2)
     );
     const vocalCarveDb = Number(
@@ -521,28 +559,28 @@ export class DjCuePlanner implements IDjPlanner {
         ? -10.5
         : transitionType === 'instrumental_bed'
           ? -1.2
-          : Math.max(-9, Math.min(-1.5, -2.0 - vocalOverlap * 6.5))
+          : Math.max(-9.5, Math.min(-1.5, -2.0 - vocalOverlap * 6.5))
       ).toFixed(1)
     );
     const outHighPassPeakHz =
       transitionType === 'filter_sweep' || transitionType === 'loop_build'
-        ? Math.round(1800 + Math.min(1600, bpmDist * 85))
+        ? Math.round(1800 + Math.min(1800, bpmDist * 85))
         : transitionType === 'echo_out'
-          ? Math.round(780 + Math.min(620, bpmDist * 30))
-          : Math.round(280 + camelotPenalty * 220);
+          ? Math.round(820 + Math.min(720, bpmDist * 30))
+          : Math.round(320 + camelotPenalty * 340 + energyClash * 280);
     const inLowPassStartHz =
       transitionType === 'filter_sweep'
-        ? Math.round(240 + Math.min(360, toCueEnergy * 320))
-        : transitionType === 'eq_swap' && bpmDist <= 6
-          ? Math.round(3200 + (1 - camelotPenalty) * 2800)
-          : 12000;
+        ? Math.round(240 + Math.min(380, toCueEnergy * 340))
+        : bpmDist <= 8
+          ? Math.round(2200 + (1 - camelotPenalty) * 3200)
+          : Math.round(900 + highInWin * 1200);
     const echoSendPeak = Number(
       Math.min(
         0.65,
         Math.max(
           0.16,
           (transitionType === 'echo_out' || transitionType === 'loop_build' ? 0.58 : 0.24) +
-            vocalOverlap * 0.14
+            vocalOverlap * 0.16
         )
       ).toFixed(2)
     );
@@ -553,11 +591,11 @@ export class DjCuePlanner implements IDjPlanner {
           ? 0.72
           : transitionType === 'echo_out'
             ? 0.62
-            : 0.44
+            : 0.44 + Math.min(0.14, vocalOverlap * 0.16)
       ).toFixed(2)
     );
     const highStemLead01 = Number(
-      (bpmDist <= 8 && transitionType !== 'echo_out' ? 0.24 : 0.05).toFixed(2)
+      (bpmDist <= 8 && transitionType !== 'echo_out' ? 0.22 + highInWin * 0.14 : 0.06).toFixed(2)
     );
     const fromLufs = from.loudnessDb ?? -10;
     const toLufs = to.loudnessDb ?? -10;
@@ -565,32 +603,98 @@ export class DjCuePlanner implements IDjPlanner {
       Math.max(-5, Math.min(5, (fromLufs - toLufs) * 0.55)).toFixed(1)
     );
 
-    const summaryParts: string[] = [];
-    if (transitionType === 'vocal_over_beat') {
-      summaryParts.push(`Voz sobre base entrante (${transitionBars} comp.)`);
-    } else if (transitionType === 'instrumental_bed') {
-      summaryParts.push(`Base instrumental + entrada vocal (${transitionBars} comp.)`);
-    } else if (transitionType === 'loop_build') {
-      summaryParts.push(`Build-up con bucle 1/${loopSubdivision === 0.25 ? '4' : '2'} (${transitionBars} comp.)`);
-    } else if (transitionType === 'eq_swap') {
-      summaryParts.push(
-        transitionBars >= 12
-          ? 'Cruce armónico largo (12 comp.)'
-          : `Cruce armónico de stems (${transitionBars} comp.)`
-      );
-    } else if (transitionType === 'filter_sweep') {
-      summaryParts.push(`Barrido resonante progresivo (${transitionBars} comp.)`);
+    const useOutFilter =
+      toggles.filter_sweep !== false &&
+      (transitionType === 'filter_sweep' ||
+        transitionType === 'loop_build' ||
+        outHighPassPeakHz >= 380);
+    const useInFilter =
+      toggles.filter_sweep !== false &&
+      inLowPassStartHz < 9500 &&
+      (transitionType === 'filter_sweep' || bpmDist <= 10 || toCueEnergy > fromCueEnergy);
+    const useLoopLayer =
+      toggles.loop_build !== false &&
+      (transitionType === 'loop_build' ||
+        bpmDist >= 6 ||
+        toCueEnergy > fromCueEnergy + 0.08);
+    const useEchoLayer =
+      toggles.echo_out !== false &&
+      (transitionType === 'echo_out' ||
+        transitionType === 'loop_build' ||
+        vocalOverlap >= 0.22 ||
+        bpmDist >= 7);
+
+    const outFilterLayer: NonNullable<DjStemChoreography['outFilterLayer']> = {
+      enabled: useOutFilter,
+      type: 'highpass',
+      start01: transitionType === 'filter_sweep' ? 0.08 : 0.34,
+      end01: 0.96,
+      startHz: 34,
+      endHz: outHighPassPeakHz,
+      q: Number(
+        (transitionType === 'loop_build' ? 2.1 : transitionType === 'filter_sweep' ? 1.55 : 0.95).toFixed(2)
+      ),
+    };
+
+    const inFilterLayer: NonNullable<DjStemChoreography['inFilterLayer']> = {
+      enabled: useInFilter,
+      type: 'lowpass',
+      start01: 0,
+      end01: transitionType === 'filter_sweep' ? 0.78 : 0.54,
+      startHz: inLowPassStartHz,
+      endHz: 20000,
+      q: Number((transitionType === 'filter_sweep' ? 1.25 : 0.85).toFixed(2)),
+    };
+
+    const loopLayer: NonNullable<DjStemChoreography['loopLayer']> = {
+      enabled: useLoopLayer,
+      start01: transitionType === 'loop_build' ? 0.14 : 0.42,
+      end01: transitionType === 'loop_build' ? 0.72 : 0.78,
+      subdivision: loopSubdivision,
+      tightenToHalf: bpmDist >= 8 || toCueEnergy > fromCueEnergy + 0.14 || transitionType === 'loop_build',
+    };
+
+    const echoLayer: NonNullable<DjStemChoreography['echoLayer']> = {
+      enabled: useEchoLayer,
+      start01: transitionType === 'echo_out' ? 0.12 : 0.38,
+      end01: 0.92,
+      peakSend: echoSendPeak,
+      peakFeedback: echoFeedbackPeak,
+      subdivision: echoSubdivision,
+      bandpassHz: Math.round(1180 + Math.min(540, vOutWin * 480)),
+    };
+
+    const stemAutomation: NonNullable<DjStemChoreography['stemAutomation']> = {
+      bassSwapPoint01,
+      bassSwapWidth01,
+      outLowCutDb: -24,
+      outMidCarveDb: vocalCarveDb,
+      inMidHoldDb: incomingVocalHoldDb,
+      inHighLead01: highStemLead01,
+      outHighFade01: Number((transitionType === 'vocal_over_beat' ? 0.58 : 0.28).toFixed(2)),
+    };
+
+    const activeLayers: string[] = [];
+    if (Math.abs(outTempoTargetRate - 1.0) >= 0.006 || Math.abs(inTempoStartRate - 1.0) >= 0.006) {
+      activeLayers.push(`BPM ${Math.round(safeFromBpm)}→${Math.round(lockedToBpm)}`);
     } else {
-      summaryParts.push(
-        transitionBars === 2
-          ? `Dub Echo Out rápido (${Math.round(bpmDist)} BPM Δ)`
-          : `Dub Echo Out sincronizado (${Math.round(bpmDist)} BPM Δ)`
-      );
+      activeLayers.push(`${Math.round(safeFromBpm)} BPM Sync`);
     }
-    if (vocalClashAvoided && transitionType !== 'vocal_over_beat' && transitionType !== 'instrumental_bed') {
-      summaryParts.push(`bolsillo vocal ${vocalCarveDb} dB`);
+    activeLayers.push(`Swap bajos ${Math.round(bassSwapPoint01 * 100)}%`);
+    if (vocalClashAvoided || Math.abs(vocalCarveDb) >= 6) {
+      activeLayers.push(`Stems vocal ${vocalCarveDb} dB`);
     }
-    summaryParts.push(`swap bajos @ ${Math.round(bassSwapPoint01 * 100)}%`);
+    if (useOutFilter || useInFilter) {
+      activeLayers.push(useOutFilter && useInFilter ? 'Filtros HPF+LPF' : useOutFilter ? `HPF → ${outHighPassPeakHz}Hz` : 'LPF Reveal');
+    }
+    if (useLoopLayer) {
+      activeLayers.push(loopLayer.tightenToHalf ? 'Bucle 1/2→1/4' : `Bucle 1/${loopSubdivision === 0.25 ? '4' : '2'}`);
+    }
+    if (useEchoLayer) {
+      activeLayers.push(`Dub Echo ${echoSubdivision === 0.75 ? '3/16' : '1/8'}`);
+    }
+
+    const summary = `Mix IA ${transitionBars} comp. (${transitionDurationSec}s) · ${activeLayers.slice(0, 4).join(' · ')}`;
 
     const choreography: DjStemChoreography = {
       bassSwapPoint01,
@@ -604,9 +708,17 @@ export class DjCuePlanner implements IDjPlanner {
       highStemLead01,
       loudnessTrimDb,
       vocalClashAvoided,
-      summary: summaryParts.join(' · '),
+      summary,
       techniqueMode,
       loopSubdivision,
+      outTempoTargetRate,
+      inTempoStartRate,
+      outFilterLayer,
+      inFilterLayer,
+      loopLayer,
+      echoLayer,
+      stemAutomation,
+      activeLayers,
     };
 
     return {

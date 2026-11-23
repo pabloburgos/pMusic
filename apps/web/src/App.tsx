@@ -76,6 +76,7 @@ export const App: React.FC = () => {
     shuffleEnabled,
     repeatMode,
     isPlaying,
+    isBuffering,
     positionSec,
     durationSec,
     volume,
@@ -478,6 +479,16 @@ export const App: React.FC = () => {
       : repeatMode === 'all'
         ? 'Repetir cola o playlist (siguiente: repetir una)'
         : 'Activar repetición de playlist';
+
+  const viewTransitionKey = activeDetailView
+    ? activeDetailView.kind === 'artist'
+      ? `artist:${activeDetailView.data.artist.id}`
+      : activeDetailView.kind === 'album'
+        ? `album:${activeDetailView.data.album.id}`
+        : activeDetailView.kind === 'playlist'
+          ? `playlist:${activeDetailView.data.playlist.id}`
+          : `local:${activeDetailView.playlistId}`
+    : `tab:${activeTab}`;
 
   const navTabs: Array<{ id: MainNavTab; label: string; icon: React.ReactNode }> = [
     { id: 'Inicio', label: 'Inicio', icon: <Home className="h-[18px] w-[18px]" /> },
@@ -998,71 +1009,49 @@ export const App: React.FC = () => {
                 }`
           }
         >
-          {/* Mobile Top Command Bar */}
+          {/* Mobile Top Command Bar (Liquid Glass, clean wordmark + Devices & Settings only) */}
           {isMobileViewport && (
-            <div className="pm-canvas sticky top-0 z-20 -mx-4 mb-5 flex items-center justify-between gap-3 border-b pm-border px-4 pt-[max(0.75rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3">
+            <div className="pm-mobile-glass-header sticky top-0 z-20 -mx-4 mb-4 flex items-center justify-between gap-3 px-4 pt-[max(0.8rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3">
               <div className="flex items-center gap-2.5">
                 {activeDetailView ? (
                   <button
                     type="button"
                     aria-label="Volver"
                     onClick={() => closeDetailView()}
-                    className="pm-btn-secondary inline-flex h-10 items-center gap-1.5 rounded-full px-3.5 text-xs font-semibold"
+                    className="pm-glass-chip inline-flex h-10 items-center gap-1.5 rounded-full px-3.5 text-xs font-semibold pm-text-primary"
                   >
                     <ArrowLeft className="h-4 w-4" />
                     <span>Volver</span>
                   </button>
                 ) : (
-                  <PMusicLogo size={28} showWordmark />
+                  <button
+                    type="button"
+                    aria-label="Ir al inicio"
+                    onClick={() => setActiveTab('Inicio')}
+                    className="pm-pressable py-0.5 text-left"
+                  >
+                    <PMusicLogo size={28} variant="wordmark-only" />
+                  </button>
                 )}
               </div>
 
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  data-testid="mobile-dj-btn"
-                  aria-label="Modo Sesión DJ"
-                  aria-pressed={djMode.enabled || djPopoverOpen}
-                  onClick={() => setDjPopoverOpen(!djPopoverOpen)}
-                  className={`pm-pressable inline-flex h-9 items-center justify-center gap-1.5 rounded-full px-3 text-xs font-semibold transition-colors ${
-                    djMode.enabled || djPopoverOpen
-                      ? 'bg-purple-500/25 text-purple-300'
-                      : 'bg-white/[0.08] pm-text-primary hover:bg-white/[0.16]'
-                  }`}
-                >
-                  <Disc3 className={`h-3.5 w-3.5 text-purple-400 ${djMode.enabled ? 'animate-spin' : ''}`} />
-                  <span>DJ</span>
-                </button>
-
-                <button
-                  type="button"
-                  data-testid="mobile-eq-btn"
-                  aria-label="Ecualizador"
-                  aria-pressed={eqSheetOpen}
-                  onClick={() => setEqSheetOpen(!eqSheetOpen)}
-                  className={`pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors ${
-                    eqSheetOpen
-                      ? 'bg-white/[0.20] pm-text-primary'
-                      : 'bg-white/[0.08] pm-text-secondary hover:bg-white/[0.16]'
-                  }`}
-                >
-                  <Sliders className="h-4 w-4" />
-                </button>
-
-                <button
-                  type="button"
+                  data-testid="mobile-devices-btn"
                   aria-label="Dispositivos"
                   onClick={() => setDevicesSheetOpen(true)}
-                  className="pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/[0.08] text-emerald-400 transition-colors hover:bg-white/[0.16]"
+                  className="pm-glass-chip pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full text-emerald-400"
                 >
                   <Wifi className="h-4 w-4" />
                 </button>
 
                 <button
                   type="button"
+                  data-testid="mobile-settings-btn"
                   aria-label="Ajustes"
                   onClick={() => setSettingsOpen(true)}
-                  className="pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/[0.08] pm-text-secondary transition-colors hover:bg-white/[0.16]"
+                  className="pm-glass-chip pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-secondary"
                 >
                   <Settings className="h-4 w-4" />
                 </button>
@@ -1070,16 +1059,18 @@ export const App: React.FC = () => {
             </div>
           )}
 
-          {activeDetailView ? (
-            <DetailViewPanel />
-          ) : (
-            <>
-              {activeTab === 'Inicio' && <HomeScreen />}
-              {activeTab === 'Explorar' && <ExploreScreen />}
-              {activeTab === 'Buscar' && <SearchScreen />}
-              {activeTab === 'Biblioteca' && <LibraryScreen />}
-            </>
-          )}
+          <div key={viewTransitionKey} className="pm-view-transition">
+            {activeDetailView ? (
+              <DetailViewPanel />
+            ) : (
+              <>
+                {activeTab === 'Inicio' && <HomeScreen />}
+                {activeTab === 'Explorar' && <ExploreScreen />}
+                {activeTab === 'Buscar' && <SearchScreen />}
+                {activeTab === 'Biblioteca' && <LibraryScreen />}
+              </>
+            )}
+          </div>
         </main>
 
         {/* Desktop Collapsible Right "En Reproducción" Panel (>= 1280px) */}
@@ -1949,24 +1940,30 @@ export const App: React.FC = () => {
 
                 <button
                   type="button"
-                  aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
+                  aria-label={isBuffering ? 'Cargando canción' : isPlaying ? 'Pausar' : 'Reproducir'}
                   onClick={() => void togglePlayPause()}
                   className="pm-btn-primary pm-pressable relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-full shadow-md"
                 >
-                  <Pause
-                    className={`absolute h-4.5 w-4.5 fill-current transition-all duration-200 ease-out ${
-                      isPlaying
-                        ? 'scale-100 rotate-0 opacity-100 blur-0'
-                        : 'scale-50 rotate-90 opacity-0 blur-[1px]'
-                    }`}
-                  />
-                  <Play
-                    className={`absolute h-4.5 w-4.5 translate-x-[1px] fill-current transition-all duration-200 ease-out ${
-                      !isPlaying
-                        ? 'scale-100 rotate-0 opacity-100 blur-0'
-                        : 'scale-50 -rotate-90 opacity-0 blur-[1px]'
-                    }`}
-                  />
+                  {isBuffering ? (
+                    <Loader2 className="h-4.5 w-4.5 animate-spin" />
+                  ) : (
+                    <>
+                      <Pause
+                        className={`absolute h-4.5 w-4.5 fill-current transition-all duration-200 ease-out ${
+                          isPlaying
+                            ? 'scale-100 rotate-0 opacity-100 blur-0'
+                            : 'scale-50 rotate-90 opacity-0 blur-[1px]'
+                        }`}
+                      />
+                      <Play
+                        className={`absolute h-4.5 w-4.5 translate-x-[1px] fill-current transition-all duration-200 ease-out ${
+                          !isPlaying
+                            ? 'scale-100 rotate-0 opacity-100 blur-0'
+                            : 'scale-50 -rotate-90 opacity-0 blur-[1px]'
+                        }`}
+                      />
+                    </>
+                  )}
                 </button>
 
                 <button
@@ -1983,10 +1980,12 @@ export const App: React.FC = () => {
             {/* Subtle solid hairline progress track along bottom of mini-player */}
             <div className="mt-1.5 h-[2px] w-full overflow-hidden rounded-full bg-[var(--pm-slider-track)]">
               <div
-                className="h-full rounded-full transition-[width] duration-200"
+                className={`h-full rounded-full transition-[width] duration-200 ${
+                  isBuffering ? 'pm-buffer-shimmer w-full' : ''
+                }`}
                 style={{
-                  width: `${progressPct}%`,
-                  backgroundColor: 'var(--pm-slider-active)',
+                  width: isBuffering ? '100%' : `${progressPct}%`,
+                  backgroundColor: isBuffering ? undefined : 'var(--pm-slider-active)',
                 }}
               />
             </div>
@@ -2007,9 +2006,9 @@ export const App: React.FC = () => {
                   role="tab"
                   aria-selected={active}
                   onClick={() => setActiveTab(item.id)}
-                  className={`flex flex-col items-center justify-center rounded-[16px] py-1.5 text-xs font-bold ${
+                  className={`pm-pressable flex flex-col items-center justify-center rounded-[16px] py-1.5 text-xs font-bold transition-all duration-200 ${
                     active
-                      ? 'pm-btn-primary'
+                      ? 'pm-btn-primary scale-[1.03] shadow-sm'
                       : 'pm-text-secondary hover:text-[var(--pm-text-primary)]'
                   }`}
                 >

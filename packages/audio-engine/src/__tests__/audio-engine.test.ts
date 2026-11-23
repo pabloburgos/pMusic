@@ -534,4 +534,146 @@ describe('@pmusic/audio-engine', () => {
       (globalThis as { document?: unknown }).document = prevDoc;
     }
   }, 12_000);
+
+  it('tracks isBuffering state across loadAndPlay, playing, waiting, and pause', async () => {
+    const created: ReturnType<typeof createFakeBrowserAudioElement>[] = [];
+    const prevDoc = (globalThis as { document?: unknown }).document;
+    (globalThis as { document?: unknown }).document = {
+      createElement: () => {
+        const el = createFakeBrowserAudioElement();
+        el.readyState = 0;
+        created.push(el);
+        return el;
+      },
+      body: { appendChild: () => {} },
+    };
+
+    const engine = new DualDeckAudioEngine();
+    try {
+      await engine.init();
+      const states: boolean[] = [];
+      engine.onStateChange((st) => {
+        states.push(Boolean(st.isBuffering));
+      });
+
+      await engine.loadAndPlay(SAMPLE_TRACKS[0]!, 0);
+      expect(engine.getState().isBuffering).toBe(true);
+
+      const deckAEl = created[0]!;
+      deckAEl.readyState = 4;
+      deckAEl.dispatch('playing');
+      expect(engine.getState().isBuffering).toBe(false);
+
+      deckAEl.readyState = 1;
+      deckAEl.dispatch('waiting');
+      expect(engine.getState().isBuffering).toBe(true);
+
+      engine.pause();
+      expect(engine.getState().isBuffering).toBe(false);
+      expect(states).toContain(true);
+      expect(states).toContain(false);
+    } finally {
+      await engine.dispose();
+      (globalThis as { document?: unknown }).document = prevDoc;
+    }
+  });
+
+  it('caches full downloaded track blobs in background and reuses blob URL on replay', async () => {
+    const created: ReturnType<typeof createFakeBrowserAudioElement>[] = [];
+    const prevDoc = (globalThis as { document?: unknown }).document;
+    const prevFetch = globalThis.fetch;
+    const prevCreateObjUrl = URL.createObjectURL;
+    const prevRevokeObjUrl = URL.revokeObjectURL;
+
+    (globalThis as { document?: unknown }).document = {
+      createElement: () => {
+        const el = createFakeBrowserAudioElement();
+        el.readyState = 2;
+        created.push(el);
+        return el;
+      },
+      body: { appendChild: () => {} },
+    };
+    const bigBytes = new Uint8Array(8192);
+    globalThis.fetch = (async () =>
+      ({
+        ok: true,
+        blob: async () => new Blob([bigBytes], { type: 'audio/mp4' }),
+      }) as Response) as typeof fetch;
+    URL.createObjectURL = () => 'blob:https://pmusic.local/cached-trk-1';
+    URL.revokeObjectURL = () => {};
+
+    const engine = new DualDeckAudioEngine({
+      resolveStreamUrl: async () => 'https://stream.pmusic.test/trk_1',
+    });
+    try {
+      await engine.init();
+      await engine.loadAndPlay(SAMPLE_TRACKS[0]!, 0);
+      await new Promise((r) => setTimeout(r, 80));
+
+      await engine.loadAndPlay(SAMPLE_TRACKS[0]!, 0);
+      expect(created[0]!.src).toBe('blob:https://pmusic.local/cached-trk-1');
+      expect(engine.getState().isBuffering).toBe(false);
+    } finally {
+      await engine.dispose();
+      (globalThis as { document?: unknown }).document = prevDoc;
+      globalThis.fetch = prevFetch;
+      URL.createObjectURL = prevCreateObjUrl;
+      URL.revokeObjectURL = prevRevokeObjUrl;
+    }
+  });
+
+  it('composes multi-layer generative DJ choreography (BPM ramp, stems, dual filters, loop & echo) per track pair', async () => {
+    const planner = new DjCuePlanner();
+    const a1 = await planner.analyzeTrack('gen_1', null, 200);
+    const a2 = await planner.analyzeTrack('gen_2', null, 210);
+
+    const plan = planner.planTransition(
+      {
+        ...a1,
+        bpm: 118,
+        camelotKey: '8A',
+        vocalEnvelope: new Array(200).fill(0.76),
+        bassEnvelope: new Array(200).fill(0.62),
+        rmsEnvelope: new Array(200).fill(0.45),
+      },
+      {
+        ...a2,
+        bpm: 125,
+        camelotKey: '9A',
+        vocalEnvelope: new Array(210).fill(0.72),
+        bassEnvelope: new Array(210).fill(0.78),
+        rmsEnvelope: new Array(210).fill(0.84),
+      },
+      'full',
+      'auto'
+    );
+
+    const ch = plan.choreography;
+    expect(ch).toBeDefined();
+    expect(ch?.stemAutomation).toBeDefined();
+    expect(ch?.outTempoTargetRate).toBeGreaterThan(1.0);
+    expect(ch?.inTempoStartRate).toBeLessThan(1.0);
+    expect(ch?.outFilterLayer?.enabled).toBe(true);
+    expect(ch?.inFilterLayer?.enabled).toBe(true);
+    expect(ch?.loopLayer?.enabled).toBe(true);
+    expect(ch?.echoLayer?.enabled).toBe(true);
+    expect(ch?.echoLayer?.peakFeedback).toBeLessThanOrEqual(0.78);
+    expect((ch?.activeLayers?.length ?? 0)).toBeGreaterThanOrEqual(4);
+
+    const engine = new DualDeckAudioEngine();
+    await engine.init();
+    await engine.loadAndPlay(SAMPLE_TRACKS[0]!, 10);
+    await engine.preloadNextDeck(SAMPLE_TRACKS[1]!, plan.cueInSec);
+    await engine.executeTransition({
+      ...plan,
+      fromTrackId: SAMPLE_TRACKS[0]!.id,
+      toTrackId: SAMPLE_TRACKS[1]!.id,
+      transitionDurationSec: 0.35,
+    });
+    expect(engine.getState().activeDeck).toBe('B');
+    expect(engine.getState().isTransitioning).toBe(false);
+    expect(engine.getState().isPlaying).toBe(true);
+    await engine.dispose();
+  });
 });

@@ -25,6 +25,7 @@ import {
   SkipBack,
   SkipForward,
   Sliders,
+  SlidersHorizontal,
   Smartphone,
   Sparkles,
   Trash2,
@@ -37,6 +38,7 @@ import {
   USER_EQ_FREQUENCIES_HZ,
   USER_EQ_PRESETS,
   formatDurationSec,
+  type AudioStreamQuality,
   type DjFxToggles,
   type LyricLine,
   type Track,
@@ -113,11 +115,16 @@ const LYRICS_STYLE_OPTIONS: readonly {
   id: LyricsVisualStyle;
   label: string;
   desc: string;
+  previewClass: string;
 }[] = [
-  { id: 'classic', label: 'Clásico', desc: 'Sincronizado palabra a palabra' },
-  { id: 'kinetic', label: 'Cinético', desc: 'Rimas y frases clave destacan al ritmo' },
-  { id: 'focus', label: 'Enfoque', desc: 'Verso protagonista limpio y centrado' },
-  { id: 'editorial', label: 'Editorial', desc: 'Tipografía serif cálida de revista' },
+  { id: 'classic', label: 'Clásico', desc: 'Barrido suave palabra a palabra', previewClass: 'font-sans' },
+  { id: 'wordflow', label: 'Palabra Viva', desc: 'Cada palabra salta y varía al ritmo', previewClass: 'font-extrabold tracking-tight' },
+  { id: 'kinetic', label: 'Cinético', desc: 'Rimas y punchlines con impacto visual', previewClass: 'font-black' },
+  { id: 'neon', label: 'Neón', desc: 'Concierto display con brillo luminoso', previewClass: 'pm-neon-font' },
+  { id: 'typewriter', label: 'Máquina', desc: 'Tipografía mono con cursor en vivo', previewClass: 'pm-mono-font' },
+  { id: 'poster', label: 'Póster', desc: 'Contraste bold e itálica editorial', previewClass: 'pm-poster-font' },
+  { id: 'focus', label: 'Enfoque', desc: 'Un verso limpio en el centro', previewClass: 'font-extrabold' },
+  { id: 'editorial', label: 'Editorial', desc: 'Serif cálida estilo revista musical', previewClass: 'pm-editorial-font italic' },
 ];
 
 export const NowPlayingSheet: React.FC = () => {
@@ -149,6 +156,7 @@ export const NowPlayingSheet: React.FC = () => {
     shuffleEnabled,
     repeatMode,
     isPlaying,
+    isBuffering,
     positionSec,
     durationSec,
     volume,
@@ -214,14 +222,7 @@ export const NowPlayingSheet: React.FC = () => {
   const [smoothPosSec, setSmoothPosSec] = useState(positionSec);
 
   useEffect(() => {
-    if (!nowPlayingOpen) {
-      setLyricsStyleModalOpen(false);
-      prevTabForModalRef.current = nowPlayingTab;
-      return;
-    }
-    if (nowPlayingTab === 'Letras' && prevTabForModalRef.current !== 'Letras') {
-      setLyricsStyleModalOpen(true);
-    } else if (nowPlayingTab !== 'Letras') {
+    if (!nowPlayingOpen || nowPlayingTab !== 'Letras') {
       setLyricsStyleModalOpen(false);
     }
     prevTabForModalRef.current = nowPlayingTab;
@@ -508,8 +509,14 @@ export const NowPlayingSheet: React.FC = () => {
         }
         const lineChanged = curLineIdx !== lastRenderedLyricIdxRef.current;
         const wholeChanged = Math.floor(rendered) !== lastWholeSecRef.current;
+        const isSweepStyle =
+          lyricsStyleRef.current === 'classic' ||
+          lyricsStyleRef.current === 'wordflow' ||
+          lyricsStyleRef.current === 'typewriter' ||
+          lyricsStyleRef.current === 'neon' ||
+          lyricsStyleRef.current === 'poster';
         const isClassicSweepDue =
-          lyricsStyleRef.current === 'classic' && now - lastLyricStateSyncMsRef.current >= 165;
+          isSweepStyle && now - lastLyricStateSyncMsRef.current >= 95;
 
         if (lineChanged || isClassicSweepDue || wholeChanged) {
           lastRenderedLyricIdxRef.current = curLineIdx;
@@ -652,7 +659,7 @@ export const NowPlayingSheet: React.FC = () => {
       className={`flex flex-col items-center ${
         compact
           ? 'w-full gap-3.5 xl:gap-4'
-          : 'mx-auto flex h-full w-full max-w-[420px] justify-between gap-2.5 py-1 md:h-auto md:justify-center md:gap-5 md:py-0'
+          : 'mx-auto flex h-full w-full max-w-[420px] justify-center gap-5 pb-4 md:h-auto md:justify-center md:gap-5 md:py-0'
       }`}
     >
       {/* Large Borderless Centerpiece Artwork with smooth 3D slide, DJ crossfade preview & swipe skip */}
@@ -684,7 +691,7 @@ export const NowPlayingSheet: React.FC = () => {
         } relative aspect-square overflow-hidden rounded-[14px] bg-[#111115] shadow-[0_26px_64px_rgba(0,0,0,0.58)] transition-transform duration-300 ease-out md:rounded-[16px] ${
           compact
             ? 'w-[min(68vw,320px,36dvh)] xl:w-[min(68vw,346px,38dvh)]'
-            : 'w-[min(88vw,380px,46dvh)] md:w-[min(74vw,340px,38dvh)] xl:w-[min(74vw,380px,42dvh)]'
+            : 'w-[min(86vw,356px,42dvh)] md:w-[min(74vw,340px,38dvh)] xl:w-[min(74vw,380px,42dvh)]'
         } ${isPlaying ? 'scale-100' : 'scale-[0.96]'}`}
       >
         <img
@@ -834,6 +841,12 @@ export const NowPlayingSheet: React.FC = () => {
       {/* Thin Apple Music Pill Progress Bar + Status + Clickable Remaining Time */}
       <div className="w-full space-y-1">
         <div className="relative flex w-full items-center">
+          {isBuffering && (
+            <span
+              aria-hidden="true"
+              className="pm-buffer-shimmer pointer-events-none absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full opacity-90"
+            />
+          )}
           {unplayedCueStartPct !== null && unplayedCueWidthPct > 0 && (
             <span
               aria-hidden="true"
@@ -880,11 +893,16 @@ export const NowPlayingSheet: React.FC = () => {
         </div>
         <div className="tabular-nums flex items-center justify-between text-[11px] font-medium text-white/60">
           <span ref={progressTimeRef}>{formatDurationSec(smoothPosSec)}</span>
-          {isTransitioning && (
+          {isBuffering ? (
+            <span className="inline-flex items-center gap-1.5 font-sans text-[10px] font-semibold tracking-[0.14em] text-white/90 animate-pulse">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              CARGANDO AUDIO…
+            </span>
+          ) : isTransitioning ? (
             <span className="font-sans text-[10px] font-semibold tracking-[0.14em] text-purple-300/90 animate-pulse">
               MEZCLANDO · DJ
             </span>
-          )}
+          ) : null}
           <button
             type="button"
             aria-label="Alternar tiempo restante y duración total"
@@ -900,8 +918,8 @@ export const NowPlayingSheet: React.FC = () => {
         </div>
       </div>
 
-      {/* Pure Minimalist Centered Borderless Transport Row (Zero halo/ring around Play/Pause) */}
-      <div className="mx-auto grid w-full max-w-[360px] grid-cols-5 place-items-center py-0.5 md:max-w-[380px]">
+      {/* Pure Minimalist Centered Borderless Transport Row (Exact 5 icons matching desktop) */}
+      <div className="mx-auto grid w-full max-w-[300px] grid-cols-5 place-items-center py-0 sm:max-w-[340px]">
         <button
           type="button"
           aria-label={
@@ -914,14 +932,14 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('shuffle');
             toggleShuffle();
           }}
-          className={`pm-pressable relative flex h-10 w-10 items-center justify-center bg-transparent transition-transform duration-150 hover:scale-110 focus:outline-none ${
+          className={`pm-pressable relative flex h-9 w-9 items-center justify-center bg-transparent transition-transform duration-150 hover:scale-110 focus:outline-none ${
             shuffleEnabled
               ? 'text-white'
               : 'text-white/55 hover:text-white'
           }`}
         >
           <Shuffle
-            className={`h-4.5 w-4.5 ${
+            className={`h-4 w-4 ${
               transportAnim === 'shuffle' && !reducedMotionPref ? 'pm-shuffle-flip-epic' : ''
             }`}
           />
@@ -951,27 +969,33 @@ export const NowPlayingSheet: React.FC = () => {
 
         <button
           type="button"
-          aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
+          aria-label={isBuffering ? 'Cargando canción' : isPlaying ? 'Pausar' : 'Reproducir'}
           onClick={() => {
             triggerTransportAnim('play');
             void togglePlayPause();
           }}
-          className="pm-pressable relative flex h-14 w-14 items-center justify-center bg-transparent text-white outline-none ring-0 transition-transform duration-200 hover:scale-105 active:scale-90 focus:outline-none"
+          className="pm-pressable relative flex h-16 w-16 items-center justify-center bg-transparent text-white outline-none ring-0 transition-transform duration-200 hover:scale-105 active:scale-90 focus:outline-none"
         >
-          <Pause
-            className={`absolute h-10 w-10 fill-current drop-shadow-[0_4px_12px_rgba(0,0,0,0.32)] transition-all duration-200 ease-out ${
-              isPlaying
-                ? 'scale-100 rotate-0 opacity-100 blur-0'
-                : 'scale-50 rotate-90 opacity-0 blur-[1px]'
-            }`}
-          />
-          <Play
-            className={`absolute h-10 w-10 translate-x-[2px] fill-current drop-shadow-[0_4px_12px_rgba(0,0,0,0.32)] transition-all duration-200 ease-out ${
-              !isPlaying
-                ? 'scale-100 rotate-0 opacity-100 blur-0'
-                : 'scale-50 -rotate-90 opacity-0 blur-[1px]'
-            }`}
-          />
+          {isBuffering ? (
+            <Loader2 className="h-10 w-10 animate-spin text-white/95" />
+          ) : (
+            <>
+              <Pause
+                className={`absolute h-12 w-12 fill-current drop-shadow-[0_4px_14px_rgba(0,0,0,0.34)] transition-all duration-200 ease-out ${
+                  isPlaying
+                    ? 'scale-100 rotate-0 opacity-100 blur-0'
+                    : 'scale-50 rotate-90 opacity-0 blur-[1px]'
+                }`}
+              />
+              <Play
+                className={`absolute h-12 w-12 translate-x-[2px] fill-current drop-shadow-[0_4px_14px_rgba(0,0,0,0.34)] transition-all duration-200 ease-out ${
+                  !isPlaying
+                    ? 'scale-100 rotate-0 opacity-100 blur-0'
+                    : 'scale-50 -rotate-90 opacity-0 blur-[1px]'
+                }`}
+              />
+            </>
+          )}
         </button>
 
         <button
@@ -998,7 +1022,7 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('repeat');
             cycleRepeatMode();
           }}
-          className={`pm-pressable relative flex h-10 w-10 items-center justify-center bg-transparent transition-transform duration-150 hover:scale-110 focus:outline-none ${
+          className={`pm-pressable relative flex h-9 w-9 items-center justify-center bg-transparent transition-transform duration-150 hover:scale-110 focus:outline-none ${
             repeatMode !== 'off'
               ? 'text-white'
               : 'text-white/55 hover:text-white'
@@ -1010,9 +1034,9 @@ export const NowPlayingSheet: React.FC = () => {
             }`}
           >
             {repeatMode === 'one' ? (
-              <Repeat1 className="h-4.5 w-4.5" />
+              <Repeat1 className="h-4 w-4" />
             ) : (
-              <Repeat className="h-4.5 w-4.5" />
+              <Repeat className="h-4 w-4" />
             )}
           </span>
           {repeatMode !== 'off' && (
@@ -1067,7 +1091,7 @@ export const NowPlayingSheet: React.FC = () => {
         if (e.currentTarget.scrollTop !== 0) e.currentTarget.scrollTop = 0;
         if (e.currentTarget.scrollLeft !== 0) e.currentTarget.scrollLeft = 0;
       }}
-      className="pm-sheet-enter pm-dark-sliders fixed inset-0 z-50 flex h-dvh w-screen flex-col overflow-hidden bg-[#070709] text-[#F5F5F7]"
+      className="pm-sheet-spring-in pm-dark-sliders fixed inset-0 z-50 flex h-dvh w-screen flex-col overflow-hidden bg-[#070709] text-[#F5F5F7]"
     >
       {/* Apple Music Style Living Fluid Cover Backdrop (Fixed & Oversized so zero unfiltered edges ever appear) */}
       <div
@@ -1236,20 +1260,20 @@ export const NowPlayingSheet: React.FC = () => {
       <div
         className={`relative z-10 min-h-0 flex-1 px-5 md:px-10 ${
           nowPlayingTab === 'Portada'
-            ? 'overflow-y-auto py-2 md:py-5'
+            ? 'overflow-x-hidden overflow-y-auto py-2 md:py-5'
             : nowPlayingTab === 'Letras'
               ? 'overflow-hidden py-0'
               : 'overflow-hidden py-2 md:py-5'
         }`}
       >
         {nowPlayingTab === 'Portada' && (
-          <div className="pm-tab-enter flex h-full min-h-full items-center justify-center">
+          <div key="np-portada" className="pm-view-transition flex h-full min-h-full items-center justify-center">
             {PlayerDeckColumn(false)}
           </div>
         )}
 
         {nowPlayingTab === 'Letras' && (
-          <div className="pm-tab-enter mx-auto grid h-full min-h-0 max-w-6xl grid-cols-1 grid-rows-[minmax(0,1fr)] gap-8 lg:grid-cols-12">
+          <div key="np-letras" className="pm-view-transition mx-auto grid h-full min-h-0 max-w-6xl grid-cols-1 grid-rows-[minmax(0,1fr)] gap-8 lg:grid-cols-12">
             <div
               data-testid="letras-left-deck"
               className="hidden h-full min-h-0 px-4 lg:col-span-5 lg:flex lg:items-center lg:justify-center"
@@ -1307,71 +1331,6 @@ export const NowPlayingSheet: React.FC = () => {
                   >
                     Sincronizar
                   </button>
-                </div>
-              )}
-
-              {/* Quick Frosted Modal for Switching Lyrics Visual Mode */}
-              {lyricsStyleModalOpen && (
-                <div
-                  className="fixed inset-0 z-40 flex items-end justify-center p-4 sm:items-center"
-                  onClick={() => setLyricsStyleModalOpen(false)}
-                >
-                  <div
-                    role="dialog"
-                    aria-modal="false"
-                    aria-label="Estilo de visualización de letras"
-                    data-testid="lyrics-style-switcher"
-                    onClick={(e) => e.stopPropagation()}
-                    className="pm-glass-frosted-neutral pm-modal-pop w-full max-w-[360px] rounded-[24px] p-4 shadow-2xl"
-                  >
-                    <div className="mb-3 flex items-center justify-between">
-                      <div>
-                        <h3 className="text-sm font-bold text-white">Estilo de letras</h3>
-                        <p className="text-[11px] text-white/60">
-                          Toca Letras o mantén pulsado para cambiar
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        aria-label="Cerrar selector de letras"
-                        onClick={() => setLyricsStyleModalOpen(false)}
-                        className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white/75 hover:bg-white/20 hover:text-white"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      {LYRICS_STYLE_OPTIONS.map((opt) => {
-                        const selected = lyricsStyle === opt.id;
-                        return (
-                          <button
-                            key={opt.id}
-                            type="button"
-                            data-testid={`lyrics-style-${opt.id}`}
-                            aria-pressed={selected}
-                            onClick={() => {
-                              setLyricsStyle(opt.id);
-                              setLyricsStyleModalOpen(false);
-                            }}
-                            className={`pm-pressable flex flex-col items-start gap-1 rounded-[16px] border p-3 text-left transition-all ${
-                              selected
-                                ? 'border-white/70 bg-white text-[#070709] shadow-sm'
-                                : 'border-white/12 bg-white/[0.06] text-white/85 hover:bg-white/[0.12]'
-                            }`}
-                          >
-                            <span className="text-xs font-bold">{opt.label}</span>
-                            <span
-                              className={`text-[11px] leading-snug ${
-                                selected ? 'text-[#070709]/75' : 'text-white/55'
-                              }`}
-                            >
-                              {opt.desc}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
                 </div>
               )}
 
@@ -1486,28 +1445,46 @@ export const NowPlayingSheet: React.FC = () => {
                         smoothPosMs - line.timeMs > 3200;
 
                       const lyricSizeClass =
-                        lyricsStyle === 'kinetic'
+                        lyricsStyle === 'kinetic' || lyricsStyle === 'wordflow'
                           ? isActive
                             ? 'text-[26px] leading-[1.2] md:text-[34px] md:leading-[1.18]'
                             : 'text-[19px] leading-[1.32] md:text-[23px]'
-                          : lyricsStyle === 'editorial'
+                          : lyricsStyle === 'neon'
                             ? isActive
-                              ? 'pm-editorial-font text-[30px] italic leading-[1.18] md:text-[40px]'
-                              : 'pm-editorial-font text-[24px] leading-[1.26] md:text-[30px]'
-                            : lyricsSize === 'normal'
-                              ? 'text-xl leading-[1.3] md:text-[26px] md:leading-[1.28]'
-                              : lyricsSize === 'xl'
-                                ? 'text-[30px] leading-[1.22] md:text-[38px] md:leading-[1.2]'
-                                : 'text-[26px] leading-[1.26] md:text-[32px] md:leading-[1.24]';
+                              ? 'pm-neon-font text-[25px] leading-[1.18] md:text-[34px]'
+                              : 'pm-neon-font text-[18px] leading-[1.28] md:text-[23px]'
+                            : lyricsStyle === 'typewriter'
+                              ? isActive
+                                ? 'pm-mono-font text-[22px] leading-[1.28] md:text-[29px]'
+                                : 'pm-mono-font text-[16px] leading-[1.35] md:text-[20px]'
+                              : lyricsStyle === 'poster'
+                                ? isActive
+                                  ? 'pm-poster-font text-[27px] leading-[1.18] md:text-[36px]'
+                                  : 'pm-poster-font text-[20px] leading-[1.28] md:text-[25px]'
+                                : lyricsStyle === 'editorial'
+                                  ? isActive
+                                    ? 'pm-editorial-font text-[30px] italic leading-[1.18] md:text-[40px]'
+                                    : 'pm-editorial-font text-[24px] leading-[1.26] md:text-[30px]'
+                                  : lyricsSize === 'normal'
+                                    ? 'text-xl leading-[1.3] md:text-[26px] md:leading-[1.28]'
+                                    : lyricsSize === 'xl'
+                                      ? 'text-[30px] leading-[1.22] md:text-[38px] md:leading-[1.2]'
+                                      : 'text-[26px] leading-[1.26] md:text-[32px] md:leading-[1.24]';
 
                       const distClass =
                         lyricsStyle === 'kinetic' && isPast
                           ? 'pm-kinetic-vanish max-h-0 overflow-hidden !py-0'
                           : isActive
-                            ? `pm-lyric-line-active ${lyricsStyle === 'kinetic' ? 'pm-kinetic-enter' : ''}`
-                            : lyricsStyle === 'editorial'
+                            ? `pm-lyric-line-active ${
+                                lyricsStyle === 'kinetic'
+                                  ? 'pm-kinetic-enter'
+                                  : lyricsStyle === 'poster'
+                                    ? 'pm-poster-enter'
+                                    : ''
+                              }`
+                            : lyricsStyle === 'editorial' || lyricsStyle === 'poster' || lyricsStyle === 'typewriter'
                               ? isPast
-                                ? 'opacity-20'
+                                ? 'opacity-25'
                                 : dist === 1
                                   ? 'opacity-60'
                                   : 'opacity-35'
@@ -1529,7 +1506,7 @@ export const NowPlayingSheet: React.FC = () => {
 
                       const words = line.text.trim().split(/\s+/).filter(Boolean);
                       const emphasis =
-                        lyricsStyle === 'kinetic' && isActive
+                        (lyricsStyle === 'kinetic' || lyricsStyle === 'poster') && isActive
                           ? analyzeKineticWords(currentLyrics.lines, idx)
                           : null;
                       const totalWeight = words.reduce(
@@ -1537,6 +1514,23 @@ export const NowPlayingSheet: React.FC = () => {
                         0
                       );
                       let weightCursor = 0;
+                      const perWordTiming = words.map((word) => {
+                        const wLen = word.length + 1;
+                        const wStart = weightCursor / Math.max(1, totalWeight);
+                        weightCursor += wLen;
+                        const wEnd = weightCursor / Math.max(1, totalWeight);
+                        const wp = Math.max(
+                          0,
+                          Math.min(
+                            1,
+                            (verseProgress01 - wStart) / Math.max(0.01, wEnd - wStart)
+                          )
+                        );
+                        return { word, wp };
+                      });
+                      const currentWordIdx = perWordTiming.findIndex(
+                        (item) => item.wp > 0.005 && item.wp < 0.995
+                      );
 
                       return (
                         <React.Fragment key={`${line.index}-${line.timeMs}`}>
@@ -1552,7 +1546,96 @@ export const NowPlayingSheet: React.FC = () => {
                           >
                             <span className="flex-1">
                               {isActive && words.length > 0 ? (
-                                emphasis ? (
+                                lyricsStyle === 'wordflow' ? (
+                                  perWordTiming.map(({ word, wp }, wIdx) => {
+                                    const isPastWord = wp >= 0.995;
+                                    const isCurWord = wp > 0.005 && wp < 0.995;
+                                    const scaleVar =
+                                      wIdx % 3 === 0 ? '1.14' : wIdx % 3 === 1 ? '1.08' : '1.11';
+                                    const tiltVar =
+                                      wIdx % 4 === 1 ? '-1.2deg' : wIdx % 4 === 3 ? '1.2deg' : '0deg';
+                                    return (
+                                      <React.Fragment key={`${idx}-${wIdx}`}>
+                                        <span
+                                          className={`pm-wordflow-word ${
+                                            isCurWord
+                                              ? 'pm-wordflow-word-active'
+                                              : isPastWord
+                                                ? 'pm-wordflow-word-past'
+                                                : 'pm-wordflow-word-future'
+                                          }`}
+                                          style={
+                                            {
+                                              '--pm-word-scale': scaleVar,
+                                              '--pm-word-tilt': tiltVar,
+                                            } as React.CSSProperties
+                                          }
+                                        >
+                                          {word}
+                                        </span>
+                                        {wIdx < words.length - 1 ? ' ' : ''}
+                                      </React.Fragment>
+                                    );
+                                  })
+                                ) : lyricsStyle === 'typewriter' ? (
+                                  perWordTiming.map(({ word, wp }, wIdx) => {
+                                    const typed = wp > 0.005;
+                                    const showCaret =
+                                      (currentWordIdx >= 0 ? wIdx === currentWordIdx : wIdx === words.length - 1 && verseProgress01 > 0.02);
+                                    return (
+                                      <React.Fragment key={`${idx}-${wIdx}`}>
+                                        <span
+                                          className={`transition-opacity duration-150 ${
+                                            typed ? 'opacity-100 text-white' : 'opacity-20 text-white/55'
+                                          }`}
+                                        >
+                                          {word}
+                                        </span>
+                                        {showCaret && <span aria-hidden="true" className="pm-caret-blink" />}
+                                        {wIdx < words.length - 1 ? ' ' : ''}
+                                      </React.Fragment>
+                                    );
+                                  })
+                                ) : lyricsStyle === 'neon' ? (
+                                  perWordTiming.map(({ word, wp }, wIdx) => {
+                                    const isCurWord = wp > 0.005 && wp < 0.995;
+                                    const isPastWord = wp >= 0.995;
+                                    return (
+                                      <React.Fragment key={`${idx}-${wIdx}`}>
+                                        <span
+                                          className={
+                                            isCurWord
+                                              ? 'pm-neon-active inline-block'
+                                              : isPastWord
+                                                ? 'text-white drop-shadow-[0_0_12px_rgba(255,255,255,0.45)]'
+                                                : 'text-white/35'
+                                          }
+                                        >
+                                          {word}
+                                        </span>
+                                        {wIdx < words.length - 1 ? ' ' : ''}
+                                      </React.Fragment>
+                                    );
+                                  })
+                                ) : lyricsStyle === 'poster' && emphasis ? (
+                                  words.map((word, wIdx) => {
+                                    const kind = emphasis[wIdx] ?? 'normal';
+                                    return (
+                                      <React.Fragment key={`${idx}-${wIdx}`}>
+                                        <span
+                                          className={
+                                            kind === 'rhyme' || kind === 'punch'
+                                              ? 'pm-poster-accent'
+                                              : 'text-white/95'
+                                          }
+                                        >
+                                          {word}
+                                        </span>
+                                        {wIdx < words.length - 1 ? ' ' : ''}
+                                      </React.Fragment>
+                                    );
+                                  })
+                                ) : emphasis ? (
                                   words.map((word, wIdx) => {
                                     const kind = emphasis[wIdx] ?? 'normal';
                                     return (
@@ -1573,21 +1656,7 @@ export const NowPlayingSheet: React.FC = () => {
                                     );
                                   })
                                 ) : (
-                                  words.map((word, wIdx) => {
-                                    const wLen = word.length + 1;
-                                    const wStart =
-                                      weightCursor / Math.max(1, totalWeight);
-                                    weightCursor += wLen;
-                                    const wEnd =
-                                      weightCursor / Math.max(1, totalWeight);
-                                    const wp = Math.max(
-                                      0,
-                                      Math.min(
-                                        1,
-                                        (verseProgress01 - wStart) /
-                                          Math.max(0.01, wEnd - wStart)
-                                      )
-                                    );
+                                  perWordTiming.map(({ word, wp }, wIdx) => {
                                     const wordState =
                                       wp <= 0.005
                                         ? 'upcoming'
@@ -1671,7 +1740,7 @@ export const NowPlayingSheet: React.FC = () => {
           const activeAna = trackAnalyses[activeQueueTrack.id];
           const activeLiked = likedTracks.some((l) => l.trackId === activeQueueTrack.id);
           return (
-          <div className="pm-tab-enter mx-auto grid h-full min-h-0 max-w-6xl grid-cols-1 grid-rows-[minmax(0,1fr)] gap-8 lg:grid-cols-12">
+          <div key="np-cola" className="pm-view-transition mx-auto grid h-full min-h-0 max-w-6xl grid-cols-1 grid-rows-[minmax(0,1fr)] gap-8 lg:grid-cols-12">
             <div className="hidden h-full min-h-0 px-4 lg:col-span-5 lg:flex lg:items-center lg:justify-center">
               {PlayerDeckColumn(true)}
             </div>
@@ -2274,9 +2343,10 @@ export const NowPlayingSheet: React.FC = () => {
         })()}
       </div>
 
-      {/* Unified Bottom Minimalist Navigation Bar (3 crisp icons on Mobile, clean pills on PC) */}
+      {/* Unified Bottom Minimalist Navigation Bar: Letras -> Cola -> Ajustes de audio */}
       <nav
         aria-label="Controles inferiores del reproductor"
+        data-testid="nowplaying-bottom-nav"
         className="relative z-20 flex shrink-0 items-center justify-center bg-transparent px-6 pt-1 pb-[max(0.95rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] md:pb-5"
       >
         <div className="flex w-full max-w-[300px] items-center justify-around md:w-auto md:max-w-none md:justify-center md:gap-2">
@@ -2318,8 +2388,25 @@ export const NowPlayingSheet: React.FC = () => {
 
           <button
             type="button"
+            aria-label="Cola"
+            aria-pressed={nowPlayingTab === 'Cola'}
+            onClick={() =>
+              setNowPlayingTab(nowPlayingTab === 'Cola' ? 'Portada' : 'Cola')
+            }
+            className={`pm-pressable inline-flex h-10 w-10 items-center justify-center gap-1.5 rounded-full transition-colors md:h-9 md:w-auto md:px-3.5 md:text-xs md:font-semibold ${
+              nowPlayingTab === 'Cola'
+                ? 'bg-white/[0.22] text-white md:bg-white md:text-[#070709] md:shadow-sm'
+                : 'text-white/70 hover:bg-white/[0.10] hover:text-white'
+            }`}
+          >
+            <ListMusic className="h-5 w-5 md:h-3.5 md:w-3.5" />
+            <span className="hidden md:inline">Cola</span>
+          </button>
+
+          <button
+            type="button"
             data-testid="nowplaying-dj-btn"
-            aria-label="Estudio DJ y Ecualizador"
+            aria-label="Ajustes de audio, DJ y calidad"
             aria-pressed={djPopoverOpen || eqSheetOpen}
             onClick={() => {
               if (djPopoverOpen || eqSheetOpen) {
@@ -2337,34 +2424,100 @@ export const NowPlayingSheet: React.FC = () => {
                 : 'text-white/70 hover:bg-white/[0.10] hover:text-white'
             }`}
           >
-            <Disc3
+            <SlidersHorizontal
               className={`h-5 w-5 md:h-3.5 md:w-3.5 ${
                 djMode.enabled ? 'text-purple-300' : ''
               }`}
             />
             <span className="hidden md:inline">
-              {djMode.enabled ? 'DJ & EQ · Activo' : 'DJ & EQ'}
+              {djMode.enabled ? 'Audio y DJ · Activo' : 'Audio y DJ'}
             </span>
-          </button>
-
-          <button
-            type="button"
-            aria-label="Cola"
-            aria-pressed={nowPlayingTab === 'Cola'}
-            onClick={() =>
-              setNowPlayingTab(nowPlayingTab === 'Cola' ? 'Portada' : 'Cola')
-            }
-            className={`pm-pressable inline-flex h-10 w-10 items-center justify-center gap-1.5 rounded-full transition-colors md:h-9 md:w-auto md:px-3.5 md:text-xs md:font-semibold ${
-              nowPlayingTab === 'Cola'
-                ? 'bg-white/[0.22] text-white md:bg-white md:text-[#070709] md:shadow-sm'
-                : 'text-white/70 hover:bg-white/[0.10] hover:text-white'
-            }`}
-          >
-            <ListMusic className="h-5 w-5 md:h-3.5 md:w-3.5" />
-            <span className="hidden md:inline">Cola</span>
           </button>
         </div>
       </nav>
+
+      {/* Full-Screen Frosted Modal for Switching Lyrics Visual Mode (viewport-wide blur & dim) */}
+      {lyricsStyleModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 backdrop-blur-md sm:items-center sm:bg-black/45"
+          onClick={() => setLyricsStyleModalOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="false"
+            aria-label="Estilo de visualización de letras"
+            data-testid="lyrics-style-switcher"
+            onClick={(e) => e.stopPropagation()}
+            className="pm-glass-frosted-neutral pm-modal-pop max-h-[78dvh] w-full max-w-[400px] overflow-y-auto rounded-[24px] p-4 shadow-2xl pm-no-scrollbar sm:max-w-[600px] sm:rounded-[28px] sm:p-5"
+          >
+            <div className="mb-3.5 flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-bold text-white sm:text-base">
+                  Estilo visual de letras
+                </h3>
+                <p className="text-[11px] text-white/60 sm:text-xs">
+                  Vuelve a pulsar Letras o mantén pulsado para cambiar
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="Cerrar selector de letras"
+                onClick={() => setLyricsStyleModalOpen(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/75 transition-colors hover:bg-white/20 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-2.5">
+              {LYRICS_STYLE_OPTIONS.map((opt) => {
+                const selected = lyricsStyle === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    data-testid={`lyrics-style-${opt.id}`}
+                    aria-pressed={selected}
+                    onClick={() => {
+                      setLyricsStyle(opt.id);
+                      setLyricsStyleModalOpen(false);
+                    }}
+                    className={`pm-pressable group flex flex-col justify-between gap-2 rounded-[18px] border p-3 text-left transition-all ${
+                      selected
+                        ? 'border-white/80 bg-white text-[#070709] shadow-lg'
+                        : 'border-white/12 bg-white/[0.06] text-white/90 hover:border-white/28 hover:bg-white/[0.12]'
+                    }`}
+                  >
+                    <div className="flex w-full items-start justify-between">
+                      <span
+                        className={`text-[21px] leading-none tracking-tight ${opt.previewClass} ${
+                          selected ? 'text-[#070709]' : 'text-white'
+                        }`}
+                      >
+                        Aa
+                      </span>
+                      {selected && (
+                        <span className="flex h-4.5 w-4.5 items-center justify-center rounded-full bg-[#070709] text-white">
+                          <Check className="h-2.5 w-2.5" />
+                        </span>
+                      )}
+                    </div>
+                    <div className="space-y-0.5">
+                      <div className="text-xs font-bold leading-tight">{opt.label}</div>
+                      <div
+                        className={`text-[10.5px] leading-snug ${
+                          selected ? 'text-[#070709]/70' : 'text-white/55'
+                        }`}
+                      >
+                        {opt.desc}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -2404,6 +2557,10 @@ export const AudioStudioSheet: React.FC = () => {
     toggleDjFx,
     triggerDjMixNow,
     startFullDjRadio,
+    streamQuality,
+    setStreamQuality,
+    audioNormalization,
+    setAudioNormalization,
   } = usePMusicStore();
 
   const isOpen = eqSheetOpen || djPopoverOpen;
@@ -2498,7 +2655,7 @@ export const AudioStudioSheet: React.FC = () => {
             }`}
           >
             <Sliders className="h-3.5 w-3.5" />
-            <span>Ecualizador</span>
+            <span>Audio y EQ</span>
           </button>
         </div>
 
@@ -2622,6 +2779,19 @@ export const AudioStudioSheet: React.FC = () => {
 
             {djMode.enabled && (
               <div className="mt-3 space-y-2 border-t border-white/10 pt-3">
+                {activeTransitionPlan?.choreography?.activeLayers &&
+                  activeTransitionPlan.choreography.activeLayers.length > 0 && (
+                    <div className="flex flex-wrap gap-1" data-testid="dj-active-layers">
+                      {activeTransitionPlan.choreography.activeLayers.map((layerLabel) => (
+                        <span
+                          key={layerLabel}
+                          className="rounded-full border border-white/15 bg-white/[0.08] px-2 py-0.5 text-[10px] font-semibold text-white/85"
+                        >
+                          {layerLabel}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 {activeTransitionPlan?.choreography?.summary && (
                   <p className="text-[11px] opacity-75">
                     {activeTransitionPlan.choreography.summary}
@@ -2784,6 +2954,71 @@ export const AudioStudioSheet: React.FC = () => {
                 style={{ '--pm-fill': `${crossfadePct}%` } as React.CSSProperties}
                 className="pm-range-pill mt-2 w-full cursor-pointer"
               />
+            </div>
+
+            {/* Sound Quality & Volume Normalization */}
+            <div className="mt-3.5 space-y-2.5 border-t border-white/10 pt-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-bold">Calidad de sonido</span>
+                <span className="text-[11px] opacity-70">
+                  {streamQuality === 'high'
+                    ? 'Máxima'
+                    : streamQuality === 'medium'
+                      ? 'Alta'
+                      : 'Normal'}
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
+                {(
+                  [
+                    { id: 'low', label: 'Normal' },
+                    { id: 'medium', label: 'Alta' },
+                    { id: 'high', label: 'Máxima' },
+                  ] as const
+                ).map((q) => {
+                  const selected = streamQuality === q.id;
+                  return (
+                    <button
+                      key={q.id}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => setStreamQuality(q.id as AudioStreamQuality)}
+                      className={`rounded-[10px] py-1.5 text-[11px] font-bold transition-all ${
+                        selected
+                          ? 'bg-white text-[#070709] shadow-sm'
+                          : 'bg-white/[0.08] opacity-80 hover:bg-white/[0.15]'
+                      }`}
+                    >
+                      {q.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex items-center justify-between pt-1">
+                <div>
+                  <span className="text-xs font-semibold">Normalizar volumen</span>
+                  <p className="text-[10.5px] opacity-60">Iguala el nivel entre pistas</p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={audioNormalization}
+                  aria-label="Normalizar volumen"
+                  onClick={() => setAudioNormalization(!audioNormalization)}
+                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors ${
+                    audioNormalization ? 'bg-white' : 'bg-white/25'
+                  }`}
+                >
+                  <span
+                    className={`h-4 w-4 rounded-full shadow-sm transition-transform duration-200 ${
+                      audioNormalization
+                        ? 'translate-x-4 bg-[#070709]'
+                        : 'translate-x-0 bg-white'
+                    }`}
+                  />
+                </button>
+              </div>
             </div>
           </div>
         )}

@@ -94,6 +94,60 @@ export interface DjStemChoreography {
     | 'loop_build';
   /** Beat loop subdivision when techniqueMode === 'loop_build' */
   loopSubdivision?: 0.25 | 0.5;
+  /** Progressive outgoing deck BPM match multiplier (e.g. 0.96..1.05, pitch preserved) */
+  outTempoTargetRate?: number;
+  /** Initial incoming deck BPM match multiplier (e.g. 0.95..1.05) gliding cleanly back to 1.0 */
+  inTempoStartRate?: number;
+  /** Simultaneous outgoing sweep filter curve */
+  outFilterLayer?: {
+    enabled: boolean;
+    type: 'highpass' | 'lowpass';
+    start01: number;
+    end01: number;
+    startHz: number;
+    endHz: number;
+    q: number;
+  };
+  /** Simultaneous incoming reveal filter curve */
+  inFilterLayer?: {
+    enabled: boolean;
+    type: 'highpass' | 'lowpass';
+    start01: number;
+    end01: number;
+    startHz: number;
+    endHz: number;
+    q: number;
+  };
+  /** Simultaneous beat-synced verse/phrase tension loop layer */
+  loopLayer?: {
+    enabled: boolean;
+    start01: number;
+    end01: number;
+    subdivision: 0.25 | 0.5 | 1;
+    tightenToHalf: boolean;
+  };
+  /** Simultaneous BPM-synced dub echo tail layer (feedback strictly <= 0.78) */
+  echoLayer?: {
+    enabled: boolean;
+    start01: number;
+    end01: number;
+    peakSend: number;
+    peakFeedback: number;
+    subdivision: 0.5 | 0.75;
+    bandpassHz: number;
+  };
+  /** Continuous multi-stem EQ automation parameters */
+  stemAutomation?: {
+    bassSwapPoint01: number;
+    bassSwapWidth01: number;
+    outLowCutDb: number;
+    outMidCarveDb: number;
+    inMidHoldDb: number;
+    inHighLead01: number;
+    outHighFade01: number;
+  };
+  /** Concise chips summarizing active generative layers for UI display */
+  activeLayers?: string[];
 }
 
 export interface DeckTransitionPlan {
@@ -173,6 +227,8 @@ export interface AudioAnalyserData {
 export interface AudioEngineState {
   activeDeck: DeckId;
   isPlaying: boolean;
+  isBuffering?: boolean;
+  bufferedPct?: number;
   positionSec: number;
   durationSec: number;
   volume: number;

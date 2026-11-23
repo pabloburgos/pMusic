@@ -656,7 +656,7 @@ export const DetailViewPanel: React.FC = () => {
               key={t.id}
               track={t}
               index={idx}
-              queueContext={tracks}
+              queueContext={[t]}
             />
           ))}
         </div>
@@ -719,7 +719,7 @@ export const DetailViewPanel: React.FC = () => {
               key={t.id}
               track={t}
               index={idx}
-              queueContext={tracks}
+              queueContext={[t]}
             />
           ))}
         </div>
@@ -1782,12 +1782,12 @@ export const SearchScreen: React.FC = () => {
         </button>
       </div>
 
-      {/* Sleek Solid Search Field (hides native searchbox role when Spotlight modal is open to avoid duplicates) */}
+      {/* Sleek Liquid Glass Search Field (hides native searchbox role when Spotlight modal is open to avoid duplicates) */}
       {spotlightOpen ? (
         <button
           type="button"
           onClick={() => setSpotlightOpen(true)}
-          className="pm-input flex w-full items-center gap-3 rounded-full px-4 py-2.5 text-left text-[14px] pm-text-tertiary"
+          className="pm-glass-search flex w-full items-center gap-3 rounded-full px-4 py-3 text-left text-[14px] pm-text-tertiary"
         >
           <Search className="h-4 w-4 shrink-0 pm-text-secondary" />
           <span>{searchQuery || '¿Qué te apetece escuchar hoy?'}</span>
@@ -1799,7 +1799,7 @@ export const SearchScreen: React.FC = () => {
             e.preventDefault();
             void submitSearch();
           }}
-          className="pm-input flex items-center gap-3 rounded-full px-4 py-2 focus-within:border-[var(--pm-accent-primary)]"
+          className="pm-glass-search flex items-center gap-3 rounded-full px-4 py-2.5"
         >
           <Search className="h-4 w-4 shrink-0 pm-text-secondary" />
           <input
