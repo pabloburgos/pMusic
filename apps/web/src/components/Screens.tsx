@@ -210,14 +210,14 @@ export const TrackListRow: React.FC<{
               </span>
             )}
           </div>
-          <div className="flex min-w-0 items-center gap-1.5 overflow-hidden text-[12.5px] pm-text-secondary">
+          <div className="flex min-w-0 items-center gap-1.5 overflow-hidden text-[12.5px] leading-normal pm-text-secondary">
             <ArtistLinks
               artists={track.artists}
               className="min-w-0 shrink-0 max-w-[75%]"
               linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
             />
             {track.album && (
-              <span className="hidden min-w-0 flex-1 truncate pm-text-tertiary lg:inline">
+              <span className="hidden min-w-0 flex-1 truncate leading-normal pm-text-tertiary lg:inline">
                 · {track.album.name}
               </span>
             )}
@@ -386,11 +386,11 @@ const CoverCard: React.FC<{
           <span className={round ? 'block text-center' : ''}>{title}</span>
         </button>
         {subtitleNode ? (
-          <div className="mt-0.5 truncate text-[12px] pm-text-secondary">
+          <div className="mt-0.5 truncate text-[12px] leading-normal pm-text-secondary">
             {subtitleNode}
           </div>
         ) : subtitle ? (
-          <div className="mt-0.5 line-clamp-2 text-[12px] pm-text-tertiary">
+          <div className="mt-0.5 line-clamp-2 text-[12px] leading-normal pm-text-tertiary">
             {subtitle}
           </div>
         ) : null}
@@ -762,10 +762,10 @@ export const DetailViewPanel: React.FC = () => {
     <div className="pm-page-enter space-y-6">
       <div
         data-surface="content"
-        className="pm-surface-card relative rounded-[20px] p-6"
+        className="pm-surface-card relative rounded-[20px] p-4 sm:p-6"
       >
         <div className="flex flex-col gap-5">
-          <div className="flex min-w-0 items-end gap-5">
+          <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-end sm:gap-5">
             {localPl.coverUrl ?? localPl.tracks[0]?.thumbnailUrl ? (
               <img
                 src={localPl.coverUrl ?? localPl.tracks[0]?.thumbnailUrl}
@@ -1337,7 +1337,7 @@ export const HomeScreen: React.FC = () => {
                     >
                       {t.title}
                     </button>
-                    <div className="truncate text-[12px] pm-text-tertiary">
+                    <div className="truncate text-[12px] leading-normal pm-text-tertiary">
                       <ArtistLinks
                         artists={t.artists}
                         className="!flex-nowrap whitespace-nowrap"
@@ -1803,14 +1803,14 @@ export const SearchScreen: React.FC = () => {
       )}
 
       {/* Autocomplete & Recent Searches */}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-1.5">
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1 pm-no-scrollbar sm:flex-wrap sm:overflow-visible sm:pb-0">
           {autocompleteSuggestions.slice(0, 6).map((sug) => (
             <button
               key={sug.text}
               type="button"
               onClick={() => void submitSearch(sug.text)}
-              className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-medium"
+              className="pm-btn-secondary shrink-0 rounded-full px-3.5 py-1.5 text-xs font-medium"
             >
               {sug.text}
             </button>
@@ -1818,14 +1818,14 @@ export const SearchScreen: React.FC = () => {
         </div>
 
         {recentSearches.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs pm-text-tertiary">Recientes:</span>
+          <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1 pm-no-scrollbar sm:flex-wrap sm:overflow-visible sm:pb-0">
+            <span className="shrink-0 text-xs pm-text-tertiary">Recientes:</span>
             {recentSearches.slice(0, 3).map((rec) => (
               <button
                 key={rec}
                 type="button"
                 onClick={() => void submitSearch(rec)}
-                className="pm-elevated rounded-full border pm-border px-3 py-1 text-xs pm-text-secondary hover:text-[var(--pm-text-primary)]"
+                className="pm-elevated shrink-0 rounded-full border pm-border px-3 py-1 text-xs pm-text-secondary hover:text-[var(--pm-text-primary)]"
               >
                 {rec}
               </button>
@@ -1833,7 +1833,7 @@ export const SearchScreen: React.FC = () => {
             <button
               type="button"
               onClick={() => clearRecentSearches()}
-              className="text-xs font-medium pm-text-secondary hover:text-[var(--pm-text-primary)] hover:underline"
+              className="shrink-0 text-xs font-medium pm-text-secondary hover:text-[var(--pm-text-primary)] hover:underline"
             >
               Borrar
             </button>
@@ -1845,7 +1845,7 @@ export const SearchScreen: React.FC = () => {
       <div
         role="tablist"
         aria-label="Filtros de búsqueda"
-        className="flex flex-wrap gap-1.5"
+        className="flex flex-nowrap gap-1.5 overflow-x-auto pb-1 pm-no-scrollbar sm:flex-wrap sm:overflow-visible sm:pb-0"
       >
         {scopes.map((scope) => {
           const active = searchScope === scope;
@@ -1856,7 +1856,7 @@ export const SearchScreen: React.FC = () => {
               role="tab"
               aria-selected={active}
               onClick={() => setSearchScope(scope)}
-              className={`rounded-full px-4 py-1.5 text-xs font-bold transition-colors ${
+              className={`shrink-0 rounded-full px-4 py-1.5 text-xs font-bold transition-colors ${
                 active ? 'pm-btn-primary' : 'pm-btn-secondary'
               }`}
             >
@@ -2232,11 +2232,11 @@ export const LibraryScreen: React.FC = () => {
       </div>
 
       {/* Category Pills & Inline Filter */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <div
           role="tablist"
           aria-label="Categorías de biblioteca"
-          className="flex flex-wrap gap-1.5"
+          className="flex w-full flex-nowrap gap-1.5 overflow-x-auto pb-1 pm-no-scrollbar sm:w-auto sm:flex-wrap sm:overflow-visible sm:pb-0"
         >
           {categories.map((cat) => {
             const active = libraryCategory === cat;
@@ -2247,7 +2247,7 @@ export const LibraryScreen: React.FC = () => {
                 role="tab"
                 aria-selected={active}
                 onClick={() => setLibraryCategory(cat)}
-                className={`rounded-full px-4 py-1.5 text-xs font-bold transition-colors ${
+                className={`shrink-0 rounded-full px-4 py-1.5 text-xs font-bold transition-colors ${
                   active ? 'pm-btn-primary' : 'pm-btn-secondary'
                 }`}
               >
@@ -2263,7 +2263,7 @@ export const LibraryScreen: React.FC = () => {
           placeholder="Filtrar en tu biblioteca..."
           value={libraryFilterQuery}
           onChange={(e) => setLibraryFilterQuery(e.target.value)}
-          className="pm-input rounded-full px-4 py-2 text-xs"
+          className="pm-input w-full rounded-full px-4 py-2 text-xs sm:w-56"
         />
       </div>
 
@@ -2279,7 +2279,7 @@ export const LibraryScreen: React.FC = () => {
             placeholder="Nueva playlist (ej. Sesión Canarias)..."
             value={newPlaylistName}
             onChange={(e) => setNewPlaylistName(e.target.value)}
-            className="pm-input flex-1 rounded-full px-4 py-2 text-xs"
+            className="pm-input min-w-0 flex-1 rounded-full px-4 py-2 text-xs"
           />
           <button
             type="button"
@@ -2289,7 +2289,7 @@ export const LibraryScreen: React.FC = () => {
               setNewPlaylistName('');
               showToast(`Playlist «${created.name}» creada`);
             }}
-            className="pm-btn-primary inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-bold"
+            className="pm-btn-primary inline-flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-xs font-bold"
           >
             <Plus className="h-4 w-4" />
             <span>Crear playlist</span>

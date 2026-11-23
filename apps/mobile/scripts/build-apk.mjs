@@ -3,6 +3,7 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
+  readFileSync,
   readdirSync,
   rmSync,
   statSync,
@@ -151,10 +152,10 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="1"
-    android:versionName="0.1.0">
+    android:versionCode="4"
+    android:versionName="0.4.0">
 
-    <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="35" />
+    <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -250,6 +251,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.Window;
+import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
@@ -257,6 +259,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayInputStream;
@@ -264,13 +267,19 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
 public class MainActivity extends Activity {
     private WebView webView;
     private byte[] syntheticWavBytes;
+    private final Object streamCacheLock = new Object();
+    private String lastStreamId;
+    private byte[] lastStreamBytes;
+    private String lastStreamMime;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -293,8 +302,13 @@ public class MainActivity extends Activity {
         settings.setDatabaseEnabled(true);
         settings.setAllowFileAccess(true);
         settings.setAllowContentAccess(true);
+        settings.setUseWideViewPort(true);
+        settings.setLoadWithOverviewMode(true);
         if (Build.VERSION.SDK_INT >= 17) {
             settings.setMediaPlaybackRequiresUserGesture(false);
+        }
+        if (Build.VERSION.SDK_INT >= 21) {
+            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         }
 
         webView.setWebChromeClient(new WebChromeClient());
@@ -312,6 +326,7 @@ public class MainActivity extends Activity {
                     corsHeaders.put("Access-Control-Allow-Origin", "*");
                     corsHeaders.put("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
                     corsHeaders.put("Access-Control-Allow-Headers", "Range, Content-Type, Accept");
+                    corsHeaders.put("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges");
 
                     if ("/api/dz-proxy".equals(path)) {
                         String dzPath = uri.getQueryParameter("path");
@@ -336,7 +351,19 @@ public class MainActivity extends Activity {
 
                     if (path.startsWith("/api/stream/")) {
                         String rawTrackId = Uri.decode(path.substring("/api/stream/".length()));
-                        if (rawTrackId != null && rawTrackId.startsWith("dz:")) {
+                        byte[] audioBytes = null;
+                        String audioMime = "audio/wav";
+
+                        if (rawTrackId != null) {
+                            synchronized (streamCacheLock) {
+                                if (rawTrackId.equals(lastStreamId) && lastStreamBytes != null) {
+                                    audioBytes = lastStreamBytes;
+                                    audioMime = lastStreamMime != null ? lastStreamMime : "audio/mpeg";
+                                }
+                            }
+                        }
+
+                        if (audioBytes == null && rawTrackId != null && rawTrackId.startsWith("dz:")) {
                             String dzId = rawTrackId.substring(3);
                             try {
                                 byte[] metaBytes = fetchRemoteBytes("https://api.deezer.com/track/" + dzId);
@@ -346,30 +373,60 @@ public class MainActivity extends Activity {
                                     if (previewUrl != null && previewUrl.startsWith("http")) {
                                         byte[] mp3Bytes = fetchRemoteBytes(previewUrl);
                                         if (mp3Bytes != null && mp3Bytes.length > 1024) {
-                                            corsHeaders.put("Accept-Ranges", "bytes");
-                                            return new WebResourceResponse(
-                                                    "audio/mpeg",
-                                                    "binary",
-                                                    200,
-                                                    "OK",
-                                                    corsHeaders,
-                                                    new ByteArrayInputStream(mp3Bytes)
-                                            );
+                                            audioBytes = mp3Bytes;
+                                            audioMime = "audio/mpeg";
+                                            synchronized (streamCacheLock) {
+                                                lastStreamId = rawTrackId;
+                                                lastStreamBytes = mp3Bytes;
+                                                lastStreamMime = "audio/mpeg";
+                                            }
                                         }
                                     }
                                 }
                             } catch (Exception ignored) {
                             }
                         }
-                        corsHeaders.put("Accept-Ranges", "bytes");
-                        return new WebResourceResponse(
-                                "audio/wav",
-                                "binary",
-                                200,
-                                "OK",
-                                corsHeaders,
-                                new ByteArrayInputStream(syntheticWavBytes)
-                        );
+
+                        if (audioBytes == null) {
+                            String qTitle = uri.getQueryParameter("title");
+                            String qArtist = uri.getQueryParameter("artist");
+                            if (qTitle != null && !qTitle.trim().isEmpty()) {
+                                try {
+                                    String rawQuery = (qArtist != null && !qArtist.trim().isEmpty() ? qArtist.trim() + " " : "") + qTitle.trim();
+                                    String encodedQ = URLEncoder.encode(rawQuery, "UTF-8");
+                                    byte[] searchBytes = fetchRemoteBytes("https://api.deezer.com/search?q=" + encodedQ + "&limit=1");
+                                    if (searchBytes != null) {
+                                        JSONObject sObj = new JSONObject(new String(searchBytes, StandardCharsets.UTF_8));
+                                        JSONArray dataArr = sObj.optJSONArray("data");
+                                        if (dataArr != null && dataArr.length() > 0) {
+                                            String previewUrl = dataArr.getJSONObject(0).optString("preview", "");
+                                            if (previewUrl != null && previewUrl.startsWith("http")) {
+                                                byte[] mp3Bytes = fetchRemoteBytes(previewUrl);
+                                                if (mp3Bytes != null && mp3Bytes.length > 1024) {
+                                                    audioBytes = mp3Bytes;
+                                                    audioMime = "audio/mpeg";
+                                                    if (rawTrackId != null) {
+                                                        synchronized (streamCacheLock) {
+                                                            lastStreamId = rawTrackId;
+                                                            lastStreamBytes = mp3Bytes;
+                                                            lastStreamMime = "audio/mpeg";
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                } catch (Exception ignored) {
+                                }
+                            }
+                        }
+
+                        if (audioBytes == null) {
+                            audioBytes = syntheticWavBytes;
+                            audioMime = "audio/wav";
+                        }
+
+                        return buildAudioStreamResponse(audioBytes, audioMime, corsHeaders, request.getRequestHeaders());
                     }
 
                     if (path.startsWith("/api/")) {
@@ -377,11 +434,13 @@ public class MainActivity extends Activity {
                         return new WebResourceResponse("application/json", "UTF-8", 404, "Not Found", corsHeaders, new ByteArrayInputStream(notFound));
                     }
 
-                    String assetPath = path.equals("/") ? "public/index.html" : "public" + path;
+                    String cleanPath = path.split("[?#]", 2)[0];
+                    String assetPath = cleanPath.equals("/") ? "public/index.html" : "public" + cleanPath;
                     try {
                         InputStream is = getAssets().open(assetPath);
                         String mime = guessMime(assetPath);
-                        return new WebResourceResponse(mime, "UTF-8", 200, "OK", corsHeaders, is);
+                        String enc = mime.startsWith("text/") || mime.contains("javascript") || mime.contains("json") || mime.contains("svg") ? "UTF-8" : null;
+                        return new WebResourceResponse(mime, enc, 200, "OK", corsHeaders, is);
                     } catch (Exception e) {
                         try {
                             InputStream indexIs = getAssets().open("public/index.html");
@@ -405,6 +464,63 @@ public class MainActivity extends Activity {
         webView.loadUrl("https://appassets.pmusic.local/index.html");
     }
 
+    private WebResourceResponse buildAudioStreamResponse(
+            byte[] audioBytes,
+            String mime,
+            Map<String, String> corsHeaders,
+            Map<String, String> reqHeaders
+    ) {
+        corsHeaders.put("Accept-Ranges", "bytes");
+        int total = audioBytes.length;
+        String rangeHeader = null;
+        if (reqHeaders != null) {
+            for (Map.Entry<String, String> entry : reqHeaders.entrySet()) {
+                if ("range".equalsIgnoreCase(entry.getKey())) {
+                    rangeHeader = entry.getValue();
+                    break;
+                }
+            }
+        }
+        if (rangeHeader != null && rangeHeader.startsWith("bytes=")) {
+            String spec = rangeHeader.substring("bytes=".length()).trim();
+            int commaIdx = spec.indexOf(',');
+            if (commaIdx >= 0) spec = spec.substring(0, commaIdx).trim();
+            String[] parts = spec.split("-", -1);
+            try {
+                int start = 0;
+                int end = total - 1;
+                boolean valid = false;
+                if (parts.length == 2 && total > 0) {
+                    if (!parts[0].isEmpty() && !parts[1].isEmpty()) {
+                        start = Integer.parseInt(parts[0]);
+                        end = Math.min(total - 1, Integer.parseInt(parts[1]));
+                        valid = start >= 0 && start <= end;
+                    } else if (!parts[0].isEmpty()) {
+                        start = Integer.parseInt(parts[0]);
+                        end = total - 1;
+                        valid = start >= 0 && start <= end;
+                    } else if (!parts[1].isEmpty()) {
+                        int suffix = Integer.parseInt(parts[1]);
+                        start = Math.max(0, total - suffix);
+                        end = total - 1;
+                        valid = suffix > 0 && start <= end;
+                    }
+                }
+                if (valid) {
+                    byte[] slice = Arrays.copyOfRange(audioBytes, start, end + 1);
+                    corsHeaders.put("Content-Range", "bytes " + start + "-" + end + "/" + total);
+                    corsHeaders.put("Content-Length", String.valueOf(slice.length));
+                    return new WebResourceResponse(mime, null, 206, "Partial Content", corsHeaders, new ByteArrayInputStream(slice));
+                }
+                corsHeaders.put("Content-Range", "bytes */" + total);
+                return new WebResourceResponse(mime, null, 416, "Range Not Satisfiable", corsHeaders, new ByteArrayInputStream(new byte[0]));
+            } catch (Exception ignored) {
+            }
+        }
+        corsHeaders.put("Content-Length", String.valueOf(total));
+        return new WebResourceResponse(mime, null, 200, "OK", corsHeaders, new ByteArrayInputStream(audioBytes));
+    }
+
     private byte[] fetchRemoteBytes(String urlStr) {
         HttpURLConnection conn = null;
         try {
@@ -413,7 +529,7 @@ public class MainActivity extends Activity {
             conn.setConnectTimeout(4500);
             conn.setReadTimeout(6500);
             conn.setInstanceFollowRedirects(true);
-            conn.setRequestProperty("User-Agent", "pMusic-Android/0.1.0");
+            conn.setRequestProperty("User-Agent", "pMusic-Android/0.4.0");
             int code = conn.getResponseCode();
             if (code >= 200 && code < 300) {
                 InputStream in = conn.getInputStream();
@@ -441,7 +557,11 @@ public class MainActivity extends Activity {
         if (lower.endsWith(".json")) return "application/json";
         if (lower.endsWith(".png")) return "image/png";
         if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+        if (lower.endsWith(".webp")) return "image/webp";
         if (lower.endsWith(".svg")) return "image/svg+xml";
+        if (lower.endsWith(".woff2")) return "font/woff2";
+        if (lower.endsWith(".woff")) return "font/woff";
+        if (lower.endsWith(".mp3")) return "audio/mpeg";
         if (lower.endsWith(".wav")) return "audio/wav";
         return "application/octet-stream";
     }
@@ -492,6 +612,25 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (webView != null && Build.VERSION.SDK_INT >= 19) {
+            webView.evaluateJavascript(
+                "(function(){ return Boolean(window.__pmusicHandleAndroidBack && window.__pmusicHandleAndroidBack()); })()",
+                new ValueCallback<String>() {
+                    @Override
+                    public void onReceiveValue(String value) {
+                        if ("true".equals(value)) {
+                            return;
+                        }
+                        if (webView.canGoBack()) {
+                            webView.goBack();
+                        } else if (!isFinishing()) {
+                            MainActivity.super.onBackPressed();
+                        }
+                    }
+                }
+            );
+            return;
+        }
         if (webView != null && webView.canGoBack()) {
             webView.goBack();
         } else {
@@ -503,7 +642,7 @@ public class MainActivity extends Activity {
   'utf-8'
 );
 
-// 6. Compile resources with aapt2 compile & link (generates binary AXML AndroidManifest.xml + resources.arsc + R.java)
+// 6. Compile resources with aapt2 compile & link (WITHOUT -A so Windows aapt2 never emits '\' ZIP entries)
 const compiledResZip = resolve(workDir, 'compiled_res.zip');
 const unalignedApk = resolve(workDir, 'unaligned.apk');
 const rJavaDir = resolve(workDir, 'r_java');
@@ -520,8 +659,6 @@ execFileSync(
     PLATFORM_JAR,
     '--manifest',
     manifestPath,
-    '-A',
-    resolve(workDir, 'assets'),
     '--java',
     rJavaDir,
     compiledResZip,
@@ -546,14 +683,20 @@ execFileSync(
   { stdio: 'inherit' }
 );
 
-const classFiles = [
-  resolve(classesDir, 'es/pmusic/app/R.class'),
-  resolve(classesDir, 'es/pmusic/app/R$drawable.class'),
-  resolve(classesDir, 'es/pmusic/app/R$string.class'),
-  resolve(classesDir, 'es/pmusic/app/PMusicPlaybackService.class'),
-  resolve(classesDir, 'es/pmusic/app/MainActivity.class'),
-  resolve(classesDir, 'es/pmusic/app/MainActivity$1.class'),
-].filter((f) => existsSync(f));
+function collectClassFiles(dir) {
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = resolve(dir, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...collectClassFiles(full));
+    } else if (entry.name.endsWith('.class')) {
+      out.push(full);
+    }
+  }
+  return out;
+}
+
+const classFiles = collectClassFiles(classesDir);
 
 execFileSync(
   'java',
@@ -561,39 +704,47 @@ execFileSync(
   { stdio: 'inherit' }
 );
 
-// 8. Add compiled classes.dex into unaligned.apk (using jar uf so it works on Windows & Linux)
-execFileSync('jar', ['uf', unalignedApk, '-C', dexDir, 'classes.dex'], { stdio: 'inherit' });
+// 8. Add assets/ and classes.dex into unalignedApk via jar uMf (POSIX '/' paths, no premature META-INF)
+execFileSync(
+  'jar',
+  ['uMf', unalignedApk, '-C', workDir, 'assets', '-C', dexDir, 'classes.dex'],
+  { stdio: 'inherit' }
+);
 
 // 9. Zipalign to 4-byte boundaries
 const alignedApk = resolve(workDir, 'aligned.apk');
 execFileSync(ZIPALIGN, ['-f', '-p', '4', unalignedApk, alignedApk], { stdio: 'inherit' });
 
-// 10. Generate Android debug keystore and sign APK with v1 + v2 + v3 signatures via apksigner
-const keystorePath = resolve(workDir, 'debug.keystore');
-execFileSync(
-  'keytool',
-  [
-    '-genkeypair',
-    '-v',
-    '-keystore',
-    keystorePath,
-    '-storepass',
-    'android',
-    '-alias',
-    'androiddebugkey',
-    '-keypass',
-    'android',
-    '-keyalg',
-    'RSA',
-    '-keysize',
-    '2048',
-    '-validity',
-    '10000',
-    '-dname',
-    'CN=Android Debug,O=Android,C=ES',
-  ],
-  { stdio: 'ignore' }
-);
+// 10. Reuse persistent debug keystore so future app upgrades preserve signing certificate
+const keystoreDir = resolve(process.env.USERPROFILE || process.env.HOME || mobileRoot, '.android');
+mkdirSync(keystoreDir, { recursive: true });
+const keystorePath = resolve(keystoreDir, 'pmusic-release-debug.keystore');
+if (!existsSync(keystorePath)) {
+  execFileSync(
+    'keytool',
+    [
+      '-genkeypair',
+      '-v',
+      '-keystore',
+      keystorePath,
+      '-storepass',
+      'android',
+      '-alias',
+      'androiddebugkey',
+      '-keypass',
+      'android',
+      '-keyalg',
+      'RSA',
+      '-keysize',
+      '2048',
+      '-validity',
+      '10000',
+      '-dname',
+      'CN=pMusic Android,O=pMusic,C=ES',
+    ],
+    { stdio: 'ignore' }
+  );
+}
 
 execFileSync(
   'java',
@@ -609,6 +760,8 @@ execFileSync(
     'pass:android',
     '--ks-key-alias',
     'androiddebugkey',
+    '--min-sdk-version',
+    '24',
     '--v1-signing-enabled',
     'true',
     '--v2-signing-enabled',
@@ -622,7 +775,94 @@ execFileSync(
   { stdio: 'inherit' }
 );
 
-execFileSync('java', ['-jar', APKSIGNER_JAR, 'verify', '--verbose', apkOutputPath], {
+function verifyApkZipStructure(apkFile) {
+  const buf = readFileSync(apkFile);
+  const localEntries = new Map();
+  let offset = 0;
+  while (offset + 30 <= buf.length && buf.readUInt32LE(offset) === 0x04034b50) {
+    const compressionMethod = buf.readUInt16LE(offset + 8);
+    const compressedSize = buf.readUInt32LE(offset + 18);
+    const flags = buf.readUInt16LE(offset + 6);
+    const nameLen = buf.readUInt16LE(offset + 26);
+    const extraLen = buf.readUInt16LE(offset + 28);
+    const nameBytes = buf.subarray(offset + 30, offset + 30 + nameLen);
+    const name = nameBytes.toString('utf8');
+    if (name.includes('\\') || nameBytes.includes(0x5c) || name.startsWith('/') || name.includes('..')) {
+      throw new Error(`Invalid ZIP local header entry name in APK: ${JSON.stringify(name)}`);
+    }
+    const dataOffset = offset + 30 + nameLen + extraLen;
+    localEntries.set(name, { compressionMethod, dataOffset, compressedSize, flags });
+    let nextOffset = dataOffset + compressedSize;
+    if ((flags & 0x08) !== 0) {
+      // Skip to data descriptor if bit 3 set
+      const sigPos = buf.indexOf(Buffer.from([0x50, 0x4b, 0x07, 0x08]), nextOffset);
+      if (sigPos >= 0) {
+        nextOffset = sigPos + 16;
+      } else {
+        break;
+      }
+    }
+    offset = nextOffset;
+  }
+
+  let eocdPos = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65558); i--) {
+    if (buf.readUInt32LE(i) === 0x06054b50) {
+      eocdPos = i;
+      break;
+    }
+  }
+  if (eocdPos < 0) {
+    throw new Error('EOCD record not found in signed APK');
+  }
+  const cdOffset = buf.readUInt32LE(eocdPos + 16);
+  const cdSize = buf.readUInt32LE(eocdPos + 12);
+  let cdCursor = cdOffset;
+  const cdEntries = new Map();
+  while (cdCursor + 46 <= cdOffset + cdSize) {
+    if (buf.readUInt32LE(cdCursor) !== 0x02014b50) {
+      throw new Error(`Corrupt central directory signature at offset ${cdCursor}`);
+    }
+    const compressionMethod = buf.readUInt16LE(cdCursor + 10);
+    const nameLen = buf.readUInt16LE(cdCursor + 28);
+    const extraLen = buf.readUInt16LE(cdCursor + 30);
+    const commentLen = buf.readUInt16LE(cdCursor + 32);
+    const localHeaderRelOffset = buf.readUInt32LE(cdCursor + 42);
+    const nameBytes = buf.subarray(cdCursor + 46, cdCursor + 46 + nameLen);
+    const name = nameBytes.toString('utf8');
+    if (name.includes('\\') || nameBytes.includes(0x5c) || name.startsWith('/') || name.includes('..')) {
+      throw new Error(`Invalid central directory entry name in APK: ${JSON.stringify(name)}`);
+    }
+    const lhNameLen = buf.readUInt16LE(localHeaderRelOffset + 26);
+    const lhExtraLen = buf.readUInt16LE(localHeaderRelOffset + 28);
+    cdEntries.set(name, {
+      compressionMethod,
+      dataOffset: localHeaderRelOffset + 30 + lhNameLen + lhExtraLen,
+    });
+    cdCursor += 46 + nameLen + extraLen + commentLen;
+  }
+
+  for (const required of ['AndroidManifest.xml', 'resources.arsc', 'classes.dex', 'assets/public/index.html']) {
+    if (!cdEntries.has(required)) {
+      throw new Error(`Required APK entry missing: ${required}`);
+    }
+  }
+  const arsc = cdEntries.get('resources.arsc');
+  if (arsc.compressionMethod !== 0) {
+    throw new Error(`resources.arsc must be STORED (method 0), got method ${arsc.compressionMethod}`);
+  }
+  if (arsc.dataOffset % 4 !== 0) {
+    throw new Error(`resources.arsc data offset ${arsc.dataOffset} is not 4-byte aligned`);
+  }
+  console.log(`ZIP structural check passed: ${cdEntries.size} POSIX entries, 0 backslashes, resources.arsc STORED & 4-byte aligned @${arsc.dataOffset}`);
+}
+
+verifyApkZipStructure(apkOutputPath);
+execFileSync(ZIPALIGN, ['-c', '-v', '4', apkOutputPath], { stdio: 'inherit' });
+execFileSync('java', ['-jar', APKSIGNER_JAR, 'verify', '--verbose', '--min-sdk-version', '24', apkOutputPath], {
+  stdio: 'inherit',
+});
+execFileSync('java', ['-jar', APKSIGNER_JAR, 'verify', '--verbose', '--min-sdk-version', '21', apkOutputPath], {
   stdio: 'inherit',
 });
 cpSync(apkOutputPath, apkNamedOutputPath);

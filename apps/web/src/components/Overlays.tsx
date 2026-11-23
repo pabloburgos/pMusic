@@ -394,6 +394,7 @@ export const NowPlayingSheet: React.FC = () => {
   useEffect(() => {
     if (sheetRootRef.current) {
       sheetRootRef.current.scrollTop = 0;
+      sheetRootRef.current.scrollLeft = 0;
     }
     if (
       nowPlayingOpen &&
@@ -451,6 +452,12 @@ export const NowPlayingSheet: React.FC = () => {
           )
         )
       : 0;
+  const unplayedCueStartPct =
+    cueStartPct !== null ? Math.max(cueStartPct, progressPct) : null;
+  const unplayedCueWidthPct =
+    cueStartPct !== null && unplayedCueStartPct !== null
+      ? Math.max(0, cueStartPct + cueWidthPct - unplayedCueStartPct)
+      : 0;
   const repeatLabel =
     repeatMode === 'one'
       ? 'Repetir esta canción (siguiente: desactivar)'
@@ -461,7 +468,7 @@ export const NowPlayingSheet: React.FC = () => {
   const PlayerDeckColumn = (compact = false) => (
     <div
       className={`flex flex-col items-center ${
-        compact ? 'w-full gap-5' : 'mx-auto w-full max-w-[420px] gap-6'
+        compact ? 'w-full gap-3.5 xl:gap-4' : 'mx-auto w-full max-w-[420px] gap-3.5 sm:gap-5'
       }`}
     >
       {/* Larger Centerpiece Artwork with smooth 3D directional slide */}
@@ -469,8 +476,10 @@ export const NowPlayingSheet: React.FC = () => {
         key={currentTrack.id}
         className={`${
           lastTrackDirection === 'prev' ? 'pm-cover-slide-prev' : 'pm-cover-slide-next'
-        } relative aspect-square overflow-hidden rounded-[24px] border border-white/15 bg-[#111115] shadow-[0_36px_90px_rgba(0,0,0,0.75)] transition-transform duration-300 ease-out ${
-          compact ? 'w-64 lg:w-[340px] xl:w-[368px]' : 'w-72 sm:w-[386px] xl:w-[410px]'
+        } relative aspect-square overflow-hidden rounded-[24px] border border-white/15 bg-[#111115] shadow-[0_24px_56px_rgba(0,0,0,0.58)] transition-transform duration-300 ease-out ${
+          compact
+            ? 'w-[min(68vw,320px,36dvh)] xl:w-[min(68vw,346px,38dvh)]'
+            : 'w-[min(74vw,296px,32dvh)] sm:w-[min(76vw,356px,38dvh)] xl:w-[min(76vw,386px,40dvh)]'
         } ${isPlaying ? 'scale-100' : 'scale-[0.95]'}`}
       >
         <img
@@ -483,19 +492,20 @@ export const NowPlayingSheet: React.FC = () => {
       {/* Title, Artist & Clean Quick Actions */}
       <div className="flex w-full items-center justify-between gap-4">
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-2xl font-bold tracking-tight text-[#F5F5F7]">
+          <h1 className="truncate text-2xl font-bold leading-snug tracking-tight text-[#F5F5F7]">
             {currentTrack.title}
           </h1>
-          <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[14.5px] text-[#C4C4CE]">
+          <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[13.5px] leading-normal text-[#C4C4CE]">
             <ArtistLinks
               artists={currentTrack.artists}
-              singleLine={false}
+              singleLine
+              className="min-w-0 shrink-0 max-w-[58%]"
               onBeforeNavigate={() => setNowPlayingOpen(false)}
               linkClassName="hover:text-white hover:underline"
             />
             {currentTrack.album && (
               <>
-                <span aria-hidden="true" className="opacity-60">
+                <span aria-hidden="true" className="shrink-0 opacity-60">
                   ·
                 </span>
                 <button
@@ -510,7 +520,7 @@ export const NowPlayingSheet: React.FC = () => {
                       });
                     }
                   }}
-                  className="max-w-full truncate text-left hover:text-white hover:underline"
+                  className="min-w-0 flex-1 truncate py-[1px] text-left leading-normal hover:text-white hover:underline"
                 >
                   {currentTrack.album.name}
                 </button>
@@ -602,13 +612,13 @@ export const NowPlayingSheet: React.FC = () => {
       {/* Smooth Pill Progress Bar WITHOUT Thumb Circle */}
       <div className="w-full space-y-1.5">
         <div className="relative flex w-full items-center">
-          {cueStartPct !== null && cueWidthPct > 0 && (
+          {unplayedCueStartPct !== null && unplayedCueWidthPct > 0 && (
             <span
               aria-hidden="true"
               className="pointer-events-none absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-[#C084FC]/75"
               style={{
-                left: `${cueStartPct}%`,
-                width: `${cueWidthPct}%`,
+                left: `${unplayedCueStartPct}%`,
+                width: `${unplayedCueWidthPct}%`,
               }}
             />
           )}
@@ -801,6 +811,7 @@ export const NowPlayingSheet: React.FC = () => {
       data-testid="now-playing-sheet"
       onScroll={(e) => {
         if (e.currentTarget.scrollTop !== 0) e.currentTarget.scrollTop = 0;
+        if (e.currentTarget.scrollLeft !== 0) e.currentTarget.scrollLeft = 0;
       }}
       className="pm-sheet-enter pm-dark-sliders fixed inset-0 z-50 flex h-dvh w-screen flex-col overflow-hidden bg-[#070709] text-[#F5F5F7]"
     >
@@ -874,7 +885,7 @@ export const NowPlayingSheet: React.FC = () => {
 
       {/* Static Unified Header (100% locked in place, matching soft matte translucent pills) */}
       <header
-        className={`pm-drag-region relative z-20 flex shrink-0 items-center justify-between border-b border-white/[0.08] px-4 py-3 md:px-8 ${
+        className={`pm-drag-region relative z-20 flex shrink-0 items-center justify-between border-b border-white/[0.08] px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-3 md:px-8 ${
           isElectronDesktop ? 'pr-[152px] md:pr-[152px]' : ''
         }`}
       >
@@ -925,10 +936,10 @@ export const NowPlayingSheet: React.FC = () => {
       <div
         className={`relative z-10 min-h-0 flex-1 px-4 md:px-10 ${
           nowPlayingTab === 'Portada'
-            ? 'overflow-y-auto py-6 md:py-8'
+            ? 'overflow-y-auto py-3 sm:py-5'
             : nowPlayingTab === 'Letras'
               ? 'overflow-hidden py-0'
-              : 'overflow-hidden py-4 md:py-6'
+              : 'overflow-hidden py-3 sm:py-5'
         }`}
       >
         {nowPlayingTab === 'Portada' && (
@@ -938,10 +949,10 @@ export const NowPlayingSheet: React.FC = () => {
         )}
 
         {nowPlayingTab === 'Letras' && (
-          <div className="pm-tab-enter mx-auto grid h-full min-h-0 max-w-6xl grid-cols-1 grid-rows-[minmax(0,1fr)] gap-8 overflow-hidden lg:grid-cols-12">
+          <div className="pm-tab-enter mx-auto grid h-full min-h-0 max-w-6xl grid-cols-1 grid-rows-[minmax(0,1fr)] gap-8 lg:grid-cols-12">
             <div
               data-testid="letras-left-deck"
-              className="hidden h-full min-h-0 lg:col-span-5 lg:flex lg:items-center lg:justify-center"
+              className="hidden h-full min-h-0 px-4 lg:col-span-5 lg:flex lg:items-center lg:justify-center"
             >
               {PlayerDeckColumn(true)}
             </div>
@@ -1154,14 +1165,16 @@ export const NowPlayingSheet: React.FC = () => {
                   })}
                 </div>
               ) : (
-                <div className="pm-surface-card rounded-[16px] p-10 text-center">
-                  <Mic2 className="mx-auto mb-3 h-8 w-8 text-[#B4B4BE]" />
-                  <p className="text-base font-semibold text-[#F5F5F7]">
-                    No hay letra disponible para esta canción
-                  </p>
-                  <p className="mt-1 text-xs text-[#8E8E98]">
-                    No se encontró letra sincronizada ni texto en LRCLIB ni Musixmatch para esta pista.
-                  </p>
+                <div className="flex h-full min-h-[280px] items-center justify-center px-2">
+                  <div className="w-full max-w-md rounded-[24px] bg-white/[0.06] px-8 py-10 text-center">
+                    <Mic2 className="mx-auto mb-3 h-8 w-8 text-[#B4B4BE]" />
+                    <p className="text-base font-semibold text-[#F5F5F7]">
+                      No hay letra disponible para esta canción
+                    </p>
+                    <p className="mt-1.5 text-xs leading-relaxed text-[#A1A1AE]">
+                      No se encontró letra sincronizada ni texto en LRCLIB ni Musixmatch para esta pista.
+                    </p>
+                  </div>
                 </div>
               )}
             </div>
@@ -1174,15 +1187,15 @@ export const NowPlayingSheet: React.FC = () => {
           const activeAna = trackAnalyses[activeQueueTrack.id];
           const activeLiked = likedTracks.some((l) => l.trackId === activeQueueTrack.id);
           return (
-          <div className="pm-tab-enter mx-auto grid h-full min-h-0 max-w-6xl grid-cols-1 grid-rows-[minmax(0,1fr)] gap-8 overflow-hidden lg:grid-cols-12">
-            <div className="hidden h-full min-h-0 lg:col-span-5 lg:flex lg:items-center lg:justify-center">
+          <div className="pm-tab-enter mx-auto grid h-full min-h-0 max-w-6xl grid-cols-1 grid-rows-[minmax(0,1fr)] gap-8 lg:grid-cols-12">
+            <div className="hidden h-full min-h-0 px-4 lg:col-span-5 lg:flex lg:items-center lg:justify-center">
               {PlayerDeckColumn(true)}
             </div>
 
             {/* Free-floating Borderless Two-Tier Queue */}
             <div
               data-testid="queue-view"
-              className="flex h-full max-h-[82vh] min-h-0 flex-col gap-3.5 self-center lg:col-span-7"
+              className="flex h-full max-h-[82vh] min-h-0 flex-col gap-3.5 self-center lg:col-span-7 lg:pb-12"
             >
               {/* Clean Borderless Header */}
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.12] pb-3">
@@ -1261,10 +1274,10 @@ export const NowPlayingSheet: React.FC = () => {
                             className="h-8 w-8 shrink-0 rounded-[6px] object-cover"
                           />
                           <div className="min-w-0 flex-1">
-                            <div className="truncate text-xs font-semibold text-white">
+                            <div className="truncate text-xs font-semibold leading-snug text-white">
                               {cand.title}
                             </div>
-                            <div className="truncate text-[11px] text-[#D4D4E0]">
+                            <div className="truncate text-xs leading-normal text-[#D4D4E0]">
                               <ArtistLinks
                                 artists={cand.artists}
                                 onBeforeNavigate={() => setNowPlayingOpen(false)}
@@ -1369,10 +1382,10 @@ export const NowPlayingSheet: React.FC = () => {
                       </button>
 
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-[14px] font-semibold text-[#F5F5F7]">
+                        <div className="truncate text-[14px] font-semibold leading-snug text-[#F5F5F7]">
                           {activeQueueTrack.title}
                         </div>
-                        <div className="truncate text-xs text-[#D4D4E0]">
+                        <div className="overflow-x-clip py-[1px] text-xs leading-normal text-[#D4D4E0]">
                           <ArtistLinks
                             artists={activeQueueTrack.artists}
                             onBeforeNavigate={() => setNowPlayingOpen(false)}
@@ -1536,11 +1549,11 @@ export const NowPlayingSheet: React.FC = () => {
                                 <button
                                   type="button"
                                   onClick={() => void playTrack(track, queue.slice(realIdx))}
-                                  className="block max-w-full truncate text-left text-[14px] font-semibold text-[#F5F5F7] hover:underline"
+                                  className="block max-w-full truncate text-left text-[14px] font-semibold leading-snug text-[#F5F5F7] hover:underline"
                                 >
                                   {track.title}
                                 </button>
-                                <div className="truncate text-xs text-[#D4D4E0]">
+                                <div className="overflow-x-clip py-[1px] text-xs leading-normal text-[#D4D4E0]">
                                   <ArtistLinks
                                     artists={track.artists}
                                     onBeforeNavigate={() => setNowPlayingOpen(false)}
@@ -1691,11 +1704,11 @@ export const NowPlayingSheet: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => void playTrack(rec, [rec])}
-                                className="block max-w-full truncate text-left text-[13.5px] font-semibold text-[#F5F5F7] hover:underline"
+                                className="block max-w-full truncate text-left text-[13.5px] font-semibold leading-snug text-[#F5F5F7] hover:underline"
                               >
                                 {rec.title}
                               </button>
-                              <div className="truncate text-xs text-[#D4D4E0]">
+                              <div className="overflow-x-clip py-[1px] text-xs leading-normal text-[#D4D4E0]">
                                 <ArtistLinks
                                   artists={rec.artists}
                                   onBeforeNavigate={() => setNowPlayingOpen(false)}
@@ -1762,8 +1775,8 @@ export const NowPlayingSheet: React.FC = () => {
         })()}
       </div>
 
-      {/* Unified Soft Matte Translucent DJ & EQ Micro-Controls in Bottom-Right of Now Playing */}
-      <div className="fixed right-3 bottom-3 z-20 flex items-center gap-2 sm:right-6 sm:bottom-5">
+      {/* Unified Soft Matte Translucent DJ & EQ Micro-Controls: dedicated mobile footer bar (< lg), floating bottom-right on desktop */}
+      <div className="relative z-20 flex shrink-0 items-center justify-center gap-2.5 border-t border-white/[0.06] bg-black/20 px-4 pt-2.5 pb-[max(0.75rem,env(safe-area-inset-bottom))] lg:fixed lg:right-6 lg:bottom-5 lg:border-0 lg:bg-transparent lg:p-0">
         <button
           type="button"
           data-testid="nowplaying-dj-btn"
@@ -1841,13 +1854,19 @@ export const EqAndCrossfadeSheet: React.FC = () => {
   const crossfadePct = Math.round((safeCrossfade.durationSec / 12) * 100);
 
   return (
-    <div
-      role="dialog"
-      aria-modal="false"
-      aria-label="Ecualizador y Crossfade"
-      data-testid="eq-sheet"
-        className={`pm-glass-liquid pm-popover-enter fixed right-4 z-[65] w-[364px] max-w-[calc(100vw-24px)] rounded-[22px] p-4 shadow-[0_28px_72px_rgba(0,0,0,0.62)] pm-text-primary ${
-          nowPlayingOpen ? 'bottom-[70px] right-6' : 'bottom-[102px]'
+    <>
+      <div
+        aria-hidden="true"
+        onClick={() => setEqSheetOpen(false)}
+        className="fixed inset-0 z-[64] bg-black/45 sm:hidden"
+      />
+      <div
+        role="dialog"
+        aria-modal="false"
+        aria-label="Ecualizador y Crossfade"
+        data-testid="eq-sheet"
+        className={`pm-glass-liquid pm-popover-enter fixed left-3 right-3 mx-auto z-[65] max-h-[76dvh] w-auto max-w-[calc(100vw-24px)] overflow-y-auto rounded-[22px] p-4 shadow-[0_28px_72px_rgba(0,0,0,0.62)] pm-no-scrollbar pm-text-primary sm:left-auto sm:mx-0 sm:w-[364px] ${
+          nowPlayingOpen ? 'bottom-[70px] sm:right-6' : 'bottom-[102px] sm:right-4'
         }`}
         style={{
           background:
@@ -1996,7 +2015,8 @@ export const EqAndCrossfadeSheet: React.FC = () => {
             className="pm-range-pill mt-2 w-full cursor-pointer"
           />
         </div>
-    </div>
+      </div>
+    </>
   );
 };
 
@@ -2043,13 +2063,19 @@ export const DjPopover: React.FC = () => {
       : null;
 
   return (
-    <div
-      role="dialog"
-      aria-modal="false"
-      aria-label="Modo Sesión DJ"
-      data-testid="dj-popover"
-        className={`pm-glass-liquid pm-popover-enter fixed right-4 z-[65] w-[320px] max-w-[calc(100vw-24px)] rounded-[22px] p-4 shadow-[0_28px_72px_rgba(0,0,0,0.62)] pm-text-primary ${
-          nowPlayingOpen ? 'bottom-[70px] right-6' : 'bottom-[102px]'
+    <>
+      <div
+        aria-hidden="true"
+        onClick={() => setDjPopoverOpen(false)}
+        className="fixed inset-0 z-[64] bg-black/45 sm:hidden"
+      />
+      <div
+        role="dialog"
+        aria-modal="false"
+        aria-label="Modo Sesión DJ"
+        data-testid="dj-popover"
+        className={`pm-glass-liquid pm-popover-enter fixed left-3 right-3 mx-auto z-[65] max-h-[76dvh] w-auto max-w-[calc(100vw-24px)] overflow-y-auto rounded-[22px] p-4 shadow-[0_28px_72px_rgba(0,0,0,0.62)] pm-no-scrollbar pm-text-primary sm:left-auto sm:mx-0 sm:w-[320px] ${
+          nowPlayingOpen ? 'bottom-[70px] sm:right-6' : 'bottom-[102px] sm:right-4'
         }`}
         style={{
           background:
@@ -2145,7 +2171,8 @@ export const DjPopover: React.FC = () => {
             </button>
           </div>
         )}
-    </div>
+      </div>
+    </>
   );
 };
 

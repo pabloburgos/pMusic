@@ -217,7 +217,30 @@ export interface DiscordRpcConfig {
 }
 
 const USER_PREFS_STORAGE_KEY = 'pmusic_user_prefs_v1';
-const HOME_HISTORY_MIGRATION_KEY = 'pmusic_home_history_clean_v2';
+const HOME_HISTORY_MIGRATION_KEY = 'pmusic_home_history_clean_v3';
+const validFallbackTrackMap = new Map(FALLBACK_TRACKS.map((t) => [t.id, t]));
+
+function isLegacySyntheticTrackId(id: string | undefined | null): boolean {
+  if (!id) return true;
+  if (
+    id.startsWith('dz:') ||
+    id.startsWith('yt:') ||
+    id.startsWith('local:') ||
+    id.startsWith('offline:')
+  ) {
+    return false;
+  }
+  return !validFallbackTrackMap.has(id);
+}
+
+function isLegacyOutdatedTrack(track: Track | undefined | null): boolean {
+  if (!track) return true;
+  if (isLegacySyntheticTrackId(track.id)) return true;
+  if (track.album?.name === 'Cayetano Remix') return true;
+  const fallback = validFallbackTrackMap.get(track.id);
+  if (fallback && fallback.title !== track.title) return true;
+  return false;
+}
 let sleepTimerInterval: ReturnType<typeof setInterval> | null = null;
 let seekAutoTriggerTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -1001,13 +1024,26 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
     await libraryStore.hydrate();
     await recommendationEngine.hydrate();
+    let ranV3Migration = false;
     try {
       const migrated = await defaultPlatformBridge.preferencesStorage.getItem(
         HOME_HISTORY_MIGRATION_KEY
       );
       if (migrated !== '1') {
+        ranV3Migration = true;
         await recommendationEngine.clearPlayHistory();
         await libraryStore.setPlayHistory([]);
+        for (const liked of libraryStore.getLikedTracks()) {
+          if (isLegacyOutdatedTrack(liked.track) || isLegacySyntheticTrackId(liked.trackId)) {
+            await libraryStore.toggleLikeTrack(liked.track);
+          }
+        }
+        for (const pl of libraryStore.getPlaylists()) {
+          const cleaned = pl.tracks.filter((t) => !isLegacyOutdatedTrack(t));
+          if (cleaned.length !== pl.tracks.length) {
+            await libraryStore.updatePlaylist(pl.id, { tracks: cleaned });
+          }
+        }
         await defaultPlatformBridge.preferencesStorage.setItem(HOME_HISTORY_MIGRATION_KEY, '1');
       }
     } catch {
@@ -1058,7 +1094,15 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       if (rawRecent !== null && rawRecent !== undefined) {
         const parsed = JSON.parse(rawRecent) as unknown;
         if (Array.isArray(parsed)) {
-          hydratedRecentItems = parsed as RecentSearchItem[];
+          const cast = parsed as RecentSearchItem[];
+          const cleaned = cast.filter(
+            (item) => item.kind !== 'track' || !isLegacyOutdatedTrack(item.track)
+          );
+          hydratedRecentItems =
+            cleaned.length > 0 ? cleaned : buildDefaultRecentSearchItems();
+          if (ranV3Migration || cleaned.length !== cast.length) {
+            persistRecentSearchItems(hydratedRecentItems);
+          }
         }
       }
     } catch {

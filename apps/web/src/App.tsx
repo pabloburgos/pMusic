@@ -267,6 +267,62 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    const win = window as Window & { __pmusicHandleAndroidBack?: () => boolean };
+    win.__pmusicHandleAndroidBack = () => {
+      const st = usePMusicStore.getState();
+      if (st.trackMenu) {
+        st.closeTrackMenu();
+        return true;
+      }
+      if (st.trackInfoModalTrack) {
+        st.setTrackInfoModalTrack(null);
+        return true;
+      }
+      if (st.djPopoverOpen) {
+        st.setDjPopoverOpen(false);
+        return true;
+      }
+      if (st.eqSheetOpen) {
+        st.setEqSheetOpen(false);
+        return true;
+      }
+      if (st.spotlightOpen) {
+        st.setSpotlightOpen(false);
+        return true;
+      }
+      if (st.settingsOpen) {
+        st.setSettingsOpen(false);
+        return true;
+      }
+      if (st.devicesSheetOpen) {
+        st.setDevicesSheetOpen(false);
+        return true;
+      }
+      if (st.importModalOpen) {
+        st.setImportModalOpen(false);
+        return true;
+      }
+      if (st.nowPlayingOpen) {
+        st.setNowPlayingOpen(false);
+        return true;
+      }
+      if (st.activeDetailView) {
+        st.closeDetailView();
+        return true;
+      }
+      if (st.activeTab !== 'Inicio') {
+        st.setActiveTab('Inicio');
+        return true;
+      }
+      return false;
+    };
+    return () => {
+      delete win.__pmusicHandleAndroidBack;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
     const handleResize = () => {
       setIsMobileViewport(window.innerWidth < 768);
     };
@@ -415,6 +471,12 @@ export const App: React.FC = () => {
             (activeTransitionPlan.transitionDurationSec / durationSec) * 100
           )
         )
+      : 0;
+  const unplayedDockCueStartPct =
+    cueStartPct !== null ? Math.max(cueStartPct, progressPct) : null;
+  const unplayedDockCueWidthPct =
+    cueStartPct !== null && unplayedDockCueStartPct !== null
+      ? Math.max(0, cueStartPct + cueWidthPct - unplayedDockCueStartPct)
       : 0;
   const djCueCountdownSec =
     djMode.enabled && activeTransitionPlan
@@ -941,7 +1003,7 @@ export const App: React.FC = () => {
           data-surface="content"
           className={
             isMobileViewport
-              ? 'min-w-0 flex-1 overflow-y-auto px-4 pb-44 pt-0'
+              ? 'min-w-0 flex-1 overflow-y-auto px-4 pb-48 pt-0'
               : `h-full min-w-0 flex-1 overflow-y-auto px-7 pt-3 ${
                   playerBarStyle === 'floating-island' ? 'pb-28' : 'pb-8'
                 }`
@@ -949,7 +1011,7 @@ export const App: React.FC = () => {
         >
           {/* Mobile Top Command Bar */}
           {isMobileViewport && (
-            <div className="pm-canvas sticky top-0 z-20 -mx-4 mb-5 flex items-center justify-between gap-3 border-b pm-border px-4 py-3">
+            <div className="pm-canvas sticky top-0 z-20 -mx-4 mb-5 flex items-center justify-between gap-3 border-b pm-border px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-3">
               <div className="flex items-center gap-2.5">
                 {activeDetailView ? (
                   <button
@@ -1660,13 +1722,13 @@ export const App: React.FC = () => {
                   {formatDurationSec(liveDockPosSec)}
                 </span>
                 <div className="relative flex flex-1 items-center">
-                  {cueStartPct !== null && cueWidthPct > 0 && (
+                  {unplayedDockCueStartPct !== null && unplayedDockCueWidthPct > 0 && (
                     <span
                       aria-hidden="true"
                       className="pointer-events-none absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-purple-500/75"
                       style={{
-                        left: `${cueStartPct}%`,
-                        width: `${cueWidthPct}%`,
+                        left: `${unplayedDockCueStartPct}%`,
+                        width: `${unplayedDockCueWidthPct}%`,
                       }}
                     />
                   )}
@@ -1816,6 +1878,10 @@ export const App: React.FC = () => {
       {isMobileViewport && (
         <>
           <div
+            aria-hidden="true"
+            className="pointer-events-none fixed inset-x-0 bottom-0 z-30 h-40 bg-gradient-to-t from-[#070709] via-[#070709]/85 to-transparent"
+          />
+          <div
             data-testid="mobile-mini-player"
             onTouchStart={(e) => {
               const t = e.touches[0];
@@ -1827,7 +1893,7 @@ export const App: React.FC = () => {
             }}
             onPointerDown={(e) => handleMiniPlayerSwipeStart(e.clientX)}
             onPointerUp={(e) => handleMiniPlayerSwipeEnd(e.clientX)}
-            className="pm-glass-regular fixed inset-x-3 bottom-21 z-40 overflow-hidden rounded-[18px] px-3 py-2"
+            className="pm-glass-regular fixed inset-x-3 bottom-[calc(5.25rem+env(safe-area-inset-bottom))] z-40 overflow-hidden rounded-[18px] px-3 py-2"
           >
             <div className="flex items-center justify-between gap-2">
               <div className="flex min-w-0 flex-1 items-center gap-2.5">
@@ -1847,11 +1913,11 @@ export const App: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setNowPlayingOpen(true)}
-                    className="block max-w-full truncate text-left text-[14px] font-semibold pm-text-primary hover:underline"
+                    className="block max-w-full truncate text-left text-[14px] font-semibold leading-snug pm-text-primary hover:underline"
                   >
                     {currentTrack.title}
                   </button>
-                  <div className="truncate text-xs pm-text-secondary">
+                  <div className="truncate text-xs leading-normal pm-text-secondary">
                     <ArtistLinks
                       artists={currentTrack.artists}
                       linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
@@ -1921,7 +1987,7 @@ export const App: React.FC = () => {
             role="tablist"
             aria-label="Navegación móvil"
             data-testid="mobile-tab-bar"
-            className="pm-glass-regular fixed inset-x-3 bottom-3 z-40 grid grid-cols-4 gap-1 rounded-[22px] p-1.5"
+            className="pm-glass-regular fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-40 grid grid-cols-4 gap-1 rounded-[22px] p-1.5"
           >
             {navTabs.map((item) => {
               const active = activeTab === item.id;

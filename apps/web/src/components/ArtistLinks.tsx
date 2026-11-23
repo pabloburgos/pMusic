@@ -29,8 +29,8 @@ export const ArtistLinks: React.FC<ArtistLinksProps> = ({
 
   return (
     <span
-      className={`inline-flex max-w-full items-center ${
-        singleLine ? 'flex-nowrap overflow-hidden whitespace-nowrap' : 'flex-wrap'
+      className={`inline-flex max-w-full items-center py-[1px] leading-normal ${
+        singleLine ? 'flex-nowrap overflow-x-clip whitespace-nowrap' : 'flex-wrap'
       } ${className}`}
     >
       {list.map((artist, idx) => {
