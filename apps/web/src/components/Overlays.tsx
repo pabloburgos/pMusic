@@ -118,6 +118,7 @@ export const NowPlayingSheet: React.FC = () => {
   const backdropBeatRef = useRef<HTMLDivElement | null>(null);
   const progressInputRef = useRef<HTMLInputElement | null>(null);
   const progressTimeRef = useRef<HTMLSpanElement | null>(null);
+  const coverSwipeStartRef = useRef<{ x: number; y: number } | null>(null);
   const lastWholeSecRef = useRef<number>(Math.floor(positionSec));
   const lastLyricStateSyncMsRef = useRef<number>(0);
   const [smoothPosSec, setSmoothPosSec] = useState(positionSec);
@@ -495,18 +496,41 @@ export const NowPlayingSheet: React.FC = () => {
   const PlayerDeckColumn = (compact = false) => (
     <div
       className={`flex flex-col items-center ${
-        compact ? 'w-full gap-3.5 xl:gap-4' : 'mx-auto w-full max-w-[420px] gap-3.5 sm:gap-5'
+        compact
+          ? 'w-full gap-3.5 xl:gap-4'
+          : 'mx-auto flex h-full w-full max-w-[420px] justify-between gap-3 py-1 md:h-auto md:justify-center md:gap-5 md:py-0'
       }`}
     >
-      {/* Larger Centerpiece Artwork with smooth 3D directional slide */}
+      {/* Larger Centerpiece Artwork with smooth 3D directional slide & mobile swipe skip */}
       <div
         key={currentTrack.id}
+        onTouchStart={(e) => {
+          const t = e.touches[0];
+          if (t) coverSwipeStartRef.current = { x: t.clientX, y: t.clientY };
+        }}
+        onTouchEnd={(e) => {
+          const start = coverSwipeStartRef.current;
+          coverSwipeStartRef.current = null;
+          const t = e.changedTouches[0];
+          if (!start || !t) return;
+          const dx = t.clientX - start.x;
+          const dy = t.clientY - start.y;
+          if (Math.abs(dx) > 52 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+            if (dx < 0) {
+              triggerTransportAnim('next');
+              void nextTrack();
+            } else {
+              triggerTransportAnim('prev');
+              void prevTrack();
+            }
+          }
+        }}
         className={`${
           lastTrackDirection === 'prev' ? 'pm-cover-slide-prev' : 'pm-cover-slide-next'
-        } relative aspect-square overflow-hidden rounded-[24px] border border-white/15 bg-[#111115] shadow-[0_24px_56px_rgba(0,0,0,0.58)] transition-transform duration-300 ease-out ${
+        } relative aspect-square overflow-hidden rounded-[22px] border border-white/15 bg-[#111115] shadow-[0_24px_56px_rgba(0,0,0,0.58)] transition-transform duration-300 ease-out md:rounded-[24px] ${
           compact
             ? 'w-[min(68vw,320px,36dvh)] xl:w-[min(68vw,346px,38dvh)]'
-            : 'w-[min(74vw,296px,32dvh)] sm:w-[min(76vw,356px,38dvh)] xl:w-[min(76vw,386px,40dvh)]'
+            : 'w-[min(86vw,356px,44dvh)] md:w-[min(76vw,356px,38dvh)] xl:w-[min(76vw,386px,40dvh)]'
         } ${isPlaying ? 'scale-100' : 'scale-[0.95]'}`}
       >
         <img
@@ -516,23 +540,145 @@ export const NowPlayingSheet: React.FC = () => {
         />
       </div>
 
-      {/* Title, Artist & Clean Quick Actions */}
-      <div className="flex w-full items-center justify-between gap-4">
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate text-2xl font-bold leading-snug tracking-tight text-[#F5F5F7]">
-            {currentTrack.title}
-          </h1>
-          <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[13.5px] leading-normal text-[#C4C4CE]">
+      {/* Title, Full-Width Multi-Artist Info on Mobile & Compact Quick Actions */}
+      <div className="flex w-full flex-col gap-1 md:flex-row md:items-center md:justify-between md:gap-4">
+        <div className="flex min-w-0 flex-1 items-center justify-between gap-2.5 md:block">
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-[21px] font-bold leading-snug tracking-tight text-[#F5F5F7] md:text-2xl">
+              {currentTrack.title}
+            </h1>
+            {/* Desktop single-line artist · album */}
+            <div className="mt-0.5 hidden min-w-0 items-center gap-1.5 text-[13.5px] leading-normal text-[#C4C4CE] md:flex">
+              <ArtistLinks
+                artists={currentTrack.artists}
+                singleLine
+                className="min-w-0 shrink-0 max-w-[58%]"
+                onBeforeNavigate={() => setNowPlayingOpen(false)}
+                linkClassName="hover:text-white hover:underline"
+              />
+              {currentTrack.album && (
+                <>
+                  <span aria-hidden="true" className="shrink-0 opacity-60">
+                    ·
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const album = currentTrack.album;
+                      setNowPlayingOpen(false);
+                      if (album?.id) {
+                        void openAlbumDetail(album.id, {
+                          title: album.name,
+                          artist: currentTrack.artists[0]?.name,
+                        });
+                      }
+                    }}
+                    className="min-w-0 flex-1 truncate py-[1px] text-left leading-normal hover:text-white hover:underline"
+                  >
+                    {currentTrack.album.name}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Action Buttons: compact 32px on mobile, 36px on desktop */}
+          <div className="flex shrink-0 items-center gap-1.5 md:hidden">
+            <button
+              type="button"
+              aria-label={isLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
+              aria-pressed={isLiked}
+              onClick={() => {
+                if (!isLiked && !reducedMotionPref) {
+                  setHeartBurstKey((k) => k + 1);
+                }
+                void toggleLike(currentTrack);
+              }}
+              className={`pm-pressable relative flex h-8 w-8 items-center justify-center overflow-visible rounded-full bg-white/[0.10] transition-colors hover:bg-white/[0.18] ${
+                isLiked ? 'text-[#FB7185]' : 'text-[#F5F5F7]'
+              }`}
+            >
+              <Heart
+                key={`deck-m-heart-${heartBurstKey}-${isLiked}`}
+                className={`h-3.5 w-3.5 ${isLiked ? 'fill-current' : ''} ${
+                  isLiked && heartBurstKey > 0 && !reducedMotionPref ? 'pm-heart-burst-epic' : ''
+                }`}
+              />
+            </button>
+            <button
+              type="button"
+              aria-label={
+                dlStatus === 'downloaded'
+                  ? 'Descargada offline'
+                  : 'Descargar para escuchar offline'
+              }
+              onClick={() => void downloadTrackOffline(currentTrack)}
+              className="pm-pressable flex h-8 w-8 items-center justify-center rounded-full bg-white/[0.10] text-[#F5F5F7] transition-colors hover:bg-white/[0.18]"
+            >
+              {dlStatus === 'downloading' ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-white" />
+              ) : dlStatus === 'downloaded' ? (
+                <Check className="h-3.5 w-3.5 text-[#34D399]" />
+              ) : (
+                <Download className="h-3.5 w-3.5" />
+              )}
+            </button>
+            <button
+              type="button"
+              aria-label={`Más opciones para ${currentTrack.title}`}
+              onClick={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                openTrackMenu(currentTrack, r.left - 210, r.bottom + 8);
+              }}
+              className="pm-pressable flex h-8 w-8 items-center justify-center rounded-full bg-white/[0.10] text-[#F5F5F7] transition-colors hover:bg-white/[0.18]"
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Mobile full-width multi-artist + album line so ALL featured artists are visible */}
+        {currentTrack.artists.length > 2 ? (
+          <div className="flex w-full flex-col gap-0.5 md:hidden">
+            <div className="text-[13px] leading-snug text-[#D1D1DC]">
+              <ArtistLinks
+                artists={currentTrack.artists}
+                className="flex-wrap"
+                onBeforeNavigate={() => setNowPlayingOpen(false)}
+                linkClassName="hover:text-white hover:underline"
+              />
+            </div>
+            {currentTrack.album && (
+              <button
+                type="button"
+                onClick={() => {
+                  const album = currentTrack.album;
+                  setNowPlayingOpen(false);
+                  if (album?.id) {
+                    void openAlbumDetail(album.id, {
+                      title: album.name,
+                      artist: currentTrack.artists[0]?.name,
+                    });
+                  }
+                }}
+                className="w-full truncate text-left text-[12px] text-[#B8B8C6]/85 hover:text-white hover:underline"
+              >
+                {currentTrack.album.name}
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="flex w-full min-w-0 items-center gap-1.5 text-[13.5px] leading-snug text-[#D1D1DC] md:hidden">
             <ArtistLinks
               artists={currentTrack.artists}
               singleLine
-              className="min-w-0 shrink-0 max-w-[58%]"
+              className="min-w-0 shrink-0 max-w-[60%]"
               onBeforeNavigate={() => setNowPlayingOpen(false)}
               linkClassName="hover:text-white hover:underline"
             />
             {currentTrack.album && (
               <>
-                <span aria-hidden="true" className="shrink-0 opacity-60">
+                <span aria-hidden="true" className="shrink-0 opacity-55">
                   ·
                 </span>
                 <button
@@ -547,16 +693,17 @@ export const NowPlayingSheet: React.FC = () => {
                       });
                     }
                   }}
-                  className="min-w-0 flex-1 truncate py-[1px] text-left leading-normal hover:text-white hover:underline"
+                  className="min-w-0 flex-1 truncate text-left text-[#B8B8C6] hover:text-white hover:underline"
                 >
                   {currentTrack.album.name}
                 </button>
               </>
             )}
           </div>
-        </div>
+        )}
 
-        <div className="flex items-center gap-1.5">
+        {/* Desktop Action Buttons (unchanged) */}
+        <div className="hidden items-center gap-1.5 md:flex">
           <button
             type="button"
             aria-label={isLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
@@ -685,7 +832,7 @@ export const NowPlayingSheet: React.FC = () => {
       </div>
 
       {/* Minimalist Iconic Transport Row (Borderless Controls + Fluid Play Morph) */}
-      <div className="flex items-center justify-center gap-6 sm:gap-7">
+      <div className="flex w-full items-center justify-between px-1 md:w-auto md:justify-center md:gap-7 md:px-0">
         <button
           type="button"
           aria-label={
@@ -724,10 +871,10 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('prev');
             void prevTrack();
           }}
-          className="pm-pressable flex h-11 w-11 items-center justify-center rounded-full text-white/90 transition-all hover:scale-110 hover:text-white active:scale-90"
+          className="pm-pressable flex h-12 w-12 items-center justify-center rounded-full text-white/90 transition-all hover:scale-110 hover:text-white active:scale-90 md:h-11 md:w-11"
         >
           <SkipBack
-            className={`h-6 w-6 fill-current ${
+            className={`h-7 w-7 fill-current md:h-6 md:w-6 ${
               transportAnim === 'prev' && !reducedMotionPref ? 'pm-skip-glide-prev' : ''
             }`}
           />
@@ -740,17 +887,17 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('play');
             void togglePlayPause();
           }}
-          className="pm-pressable relative flex h-[62px] w-[62px] items-center justify-center overflow-hidden rounded-full bg-white text-[#070709] shadow-[0_14px_38px_rgba(255,255,255,0.28)] transition-transform duration-200 hover:scale-105 active:scale-90"
+          className="pm-pressable relative flex h-16 w-16 items-center justify-center overflow-hidden rounded-full bg-white text-[#070709] shadow-[0_14px_38px_rgba(255,255,255,0.28)] transition-transform duration-200 hover:scale-105 active:scale-90 md:h-[62px] md:w-[62px]"
         >
           <Pause
-            className={`absolute h-6.5 w-6.5 fill-current transition-all duration-200 ease-out ${
+            className={`absolute h-7 w-7 fill-current transition-all duration-200 ease-out md:h-6.5 md:w-6.5 ${
               isPlaying
                 ? 'scale-100 rotate-0 opacity-100 blur-0'
                 : 'scale-50 rotate-90 opacity-0 blur-[1px]'
             }`}
           />
           <Play
-            className={`absolute h-6.5 w-6.5 translate-x-[1.5px] fill-current transition-all duration-200 ease-out ${
+            className={`absolute h-7 w-7 translate-x-[1.5px] fill-current transition-all duration-200 ease-out md:h-6.5 md:w-6.5 ${
               !isPlaying
                 ? 'scale-100 rotate-0 opacity-100 blur-0'
                 : 'scale-50 -rotate-90 opacity-0 blur-[1px]'
@@ -765,10 +912,10 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('next');
             void nextTrack();
           }}
-          className="pm-pressable flex h-11 w-11 items-center justify-center rounded-full text-white/90 transition-all hover:scale-110 hover:text-white active:scale-90"
+          className="pm-pressable flex h-12 w-12 items-center justify-center rounded-full text-white/90 transition-all hover:scale-110 hover:text-white active:scale-90 md:h-11 md:w-11"
         >
           <SkipForward
-            className={`h-6 w-6 fill-current ${
+            className={`h-7 w-7 fill-current md:h-6 md:w-6 ${
               transportAnim === 'next' && !reducedMotionPref ? 'pm-skip-glide-next' : ''
             }`}
           />
@@ -808,8 +955,8 @@ export const NowPlayingSheet: React.FC = () => {
         </button>
       </div>
 
-      {/* Smooth Pill Volume Bar WITHOUT Thumb Circle */}
-      <div className="flex w-full max-w-[300px] items-center gap-3 pt-1">
+      {/* Desktop-only Smooth Pill Volume Bar (mobile uses phone hardware volume at 100%) */}
+      <div className="hidden w-full max-w-[300px] items-center gap-3 pt-1 md:flex">
         <button
           type="button"
           aria-label={volume === 0 ? 'Activar sonido' : 'Silenciar'}
@@ -838,7 +985,7 @@ export const NowPlayingSheet: React.FC = () => {
         </span>
       </div>
 
-      {!compact && <AudioVisualizer className="mt-1" barClassName="bg-white/75" />}
+      {!compact && <AudioVisualizer className="mt-1 hidden md:flex" barClassName="bg-white/75" />}
     </div>
   );
 
@@ -922,9 +1069,9 @@ export const NowPlayingSheet: React.FC = () => {
         style={{ backgroundColor: 'rgba(8, 8, 12, 0.46)' }}
       />
 
-      {/* Static Unified Header (100% locked in place, matching soft matte translucent pills) */}
+      {/* Static Unified Header (seamless edge-to-edge on mobile, subtle divider on desktop) */}
       <header
-        className={`pm-drag-region relative z-20 flex shrink-0 items-center justify-between border-b border-white/[0.08] px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-3 md:px-8 ${
+        className={`pm-drag-region relative z-20 flex shrink-0 items-center justify-between px-4 pt-[max(0.75rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-2 md:border-b md:border-white/[0.08] md:px-8 md:pb-3 ${
           isElectronDesktop ? 'pr-[152px] md:pr-[152px]' : ''
         }`}
       >
@@ -932,7 +1079,7 @@ export const NowPlayingSheet: React.FC = () => {
           type="button"
           aria-label="Cerrar reproductor"
           onClick={() => setNowPlayingOpen(false)}
-          className="pm-pressable pm-no-drag inline-flex h-9 items-center gap-2 rounded-full bg-white/[0.08] px-4 text-xs font-semibold text-[#F5F5F7] transition-colors hover:bg-white/[0.16]"
+          className="pm-pressable pm-no-drag inline-flex h-9 w-9 items-center justify-center gap-2 rounded-full bg-white/[0.08] px-0 text-xs font-semibold text-[#F5F5F7] transition-colors hover:bg-white/[0.16] sm:w-auto sm:px-4"
         >
           <X className="h-4 w-4" />
           <span className="hidden sm:inline">Cerrar</span>
@@ -967,22 +1114,22 @@ export const NowPlayingSheet: React.FC = () => {
 
         <div
           aria-hidden="true"
-          className="hidden w-20 sm:block"
+          className="w-9 sm:w-20"
         />
       </header>
 
       {/* Main Content */}
       <div
-        className={`relative z-10 min-h-0 flex-1 px-4 md:px-10 ${
+        className={`relative z-10 min-h-0 flex-1 px-5 md:px-10 ${
           nowPlayingTab === 'Portada'
-            ? 'overflow-y-auto py-3 sm:py-5'
+            ? 'overflow-y-auto py-2 md:py-5'
             : nowPlayingTab === 'Letras'
               ? 'overflow-hidden py-0'
-              : 'overflow-hidden py-3 sm:py-5'
+              : 'overflow-hidden py-2 md:py-5'
         }`}
       >
         {nowPlayingTab === 'Portada' && (
-          <div className="pm-tab-enter flex min-h-full items-center justify-center">
+          <div className="pm-tab-enter flex h-full min-h-full items-center justify-center">
             {PlayerDeckColumn(false)}
           </div>
         )}
@@ -1234,12 +1381,12 @@ export const NowPlayingSheet: React.FC = () => {
             {/* Free-floating Borderless Two-Tier Queue */}
             <div
               data-testid="queue-view"
-              className="flex h-full max-h-[82vh] min-h-0 flex-col gap-3.5 self-center lg:col-span-7 lg:pb-12"
+              className="flex h-full min-h-0 flex-col gap-3 lg:col-span-7 lg:max-h-[82vh] lg:gap-3.5 lg:self-center lg:pb-12"
             >
               {/* Clean Borderless Header */}
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.12] pb-3">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.08] pb-2.5 md:border-white/[0.12] md:pb-3">
                 <div>
-                  <h2 className="text-xl font-bold tracking-tight text-white">
+                  <h2 className="text-[19px] font-bold tracking-tight text-white md:text-xl">
                     Cola de reproducción
                   </h2>
                   <p className="text-xs text-[#D4D4E0]">
@@ -1260,7 +1407,7 @@ export const NowPlayingSheet: React.FC = () => {
 
               {/* Quick Inline Search to Add Songs Directly to Queue */}
               <div className="space-y-2">
-                <div className="flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.08] px-3.5 py-2 focus-within:border-white/40 focus-within:bg-white/[0.12]">
+                <div className="flex items-center gap-2 rounded-full bg-white/[0.09] px-3.5 py-2.5 focus-within:bg-white/[0.14] md:border md:border-white/15 md:bg-white/[0.08] md:py-2 md:focus-within:border-white/40 md:focus-within:bg-white/[0.12]">
                   <Search className="h-3.5 w-3.5 shrink-0 text-[#D4D4E0]" />
                   <input
                     type="text"
@@ -1566,7 +1713,7 @@ export const NowPlayingSheet: React.FC = () => {
                             <div className="flex min-w-0 flex-1 items-center gap-2.5">
                               <span
                                 aria-hidden="true"
-                                className="cursor-grab text-[#D4D4E0]/50 opacity-50 transition-opacity group-hover:opacity-100"
+                                className="hidden cursor-grab text-[#D4D4E0]/50 opacity-50 transition-opacity group-hover:opacity-100 sm:inline-flex"
                               >
                                 <GripVertical className="h-4 w-4" />
                               </span>
@@ -1814,8 +1961,8 @@ export const NowPlayingSheet: React.FC = () => {
         })()}
       </div>
 
-      {/* Unified Soft Matte Translucent DJ & EQ Micro-Controls: dedicated mobile footer bar (< lg), floating bottom-right on desktop */}
-      <div className="relative z-20 flex shrink-0 items-center justify-center gap-2.5 border-t border-white/[0.06] bg-black/20 px-4 pt-2.5 pb-[max(0.75rem,env(safe-area-inset-bottom))] lg:fixed lg:right-6 lg:bottom-5 lg:border-0 lg:bg-transparent lg:p-0">
+      {/* Seamless Full-Bleed Translucent DJ & EQ Micro-Controls (no dark bar strip on mobile, floating bottom-right on desktop) */}
+      <div className="relative z-20 flex shrink-0 items-center justify-center gap-2.5 bg-transparent px-4 pt-2 pb-[max(0.9rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] lg:fixed lg:right-6 lg:bottom-5 lg:p-0">
         <button
           type="button"
           data-testid="nowplaying-dj-btn"

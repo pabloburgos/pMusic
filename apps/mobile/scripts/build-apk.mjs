@@ -152,8 +152,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="5"
-    android:versionName="0.5.0">
+    android:versionCode="6"
+    android:versionName="0.6.0">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -252,6 +252,8 @@ import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 import android.view.Window;
+import android.view.WindowInsets;
+import android.view.WindowManager;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -366,6 +368,8 @@ public class MainActivity extends Activity {
     }
 
     private WebView webView;
+    private int safeInsetTopDp = 0;
+    private int safeInsetBottomDp = 0;
     private byte[] syntheticWavBytes;
     private final Object streamCacheLock = new Object();
     private String lastStreamId;
@@ -385,8 +389,28 @@ public class MainActivity extends Activity {
 
         Window window = getWindow();
         if (window != null && Build.VERSION.SDK_INT >= 21) {
-            window.setStatusBarColor(Color.parseColor("#070709"));
-            window.setNavigationBarColor(Color.parseColor("#070709"));
+            window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS | WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);
+            window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+            window.setStatusBarColor(Color.TRANSPARENT);
+            window.setNavigationBarColor(Color.TRANSPARENT);
+            if (Build.VERSION.SDK_INT >= 28) {
+                WindowManager.LayoutParams lp = window.getAttributes();
+                lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+                window.setAttributes(lp);
+            }
+            if (Build.VERSION.SDK_INT >= 29) {
+                window.setStatusBarContrastEnforced(false);
+                window.setNavigationBarContrastEnforced(false);
+            }
+            if (Build.VERSION.SDK_INT >= 30) {
+                window.setDecorFitsSystemWindows(false);
+            } else {
+                window.getDecorView().setSystemUiVisibility(
+                        View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                );
+            }
         }
 
         syntheticWavBytes = buildDeterministicWav(12, 120);
@@ -394,6 +418,29 @@ public class MainActivity extends Activity {
         webView = new WebView(this);
         webView.setBackgroundColor(Color.parseColor("#070709"));
         webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        if (Build.VERSION.SDK_INT >= 20) {
+            webView.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
+                @Override
+                public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
+                    float density = getResources().getDisplayMetrics().density;
+                    if (density <= 0f) density = 1f;
+                    int topPx;
+                    int bottomPx;
+                    if (Build.VERSION.SDK_INT >= 30) {
+                        android.graphics.Insets sys = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+                        topPx = sys.top;
+                        bottomPx = sys.bottom;
+                    } else {
+                        topPx = insets.getSystemWindowInsetTop();
+                        bottomPx = insets.getSystemWindowInsetBottom();
+                    }
+                    safeInsetTopDp = Math.max(0, Math.round(topPx / density));
+                    safeInsetBottomDp = Math.max(0, Math.round(bottomPx / density));
+                    injectSafeAreaInsets();
+                    return insets;
+                }
+            });
+        }
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -413,6 +460,12 @@ public class MainActivity extends Activity {
 
         webView.setWebChromeClient(new WebChromeClient());
         webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                injectSafeAreaInsets();
+            }
+
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
@@ -588,6 +641,22 @@ public class MainActivity extends Activity {
         }
 
         webView.loadUrl("https://appassets.pmusic.local/index.html");
+    }
+
+    private void injectSafeAreaInsets() {
+        if (webView == null || Build.VERSION.SDK_INT < 19) return;
+        final int top = safeInsetTopDp;
+        final int bottom = safeInsetBottomDp;
+        webView.post(new Runnable() {
+            @Override
+            public void run() {
+                if (webView == null) return;
+                String js = "(function(){var r=document.documentElement;if(!r)return;"
+                        + "r.style.setProperty('--pm-safe-top','" + top + "px');"
+                        + "r.style.setProperty('--pm-safe-bottom','" + bottom + "px');})();";
+                webView.evaluateJavascript(js, null);
+            }
+        });
     }
 
     private Object lockForKey(String key) {
@@ -1234,7 +1303,7 @@ public class MainActivity extends Activity {
             conn.setConnectTimeout(4500);
             conn.setReadTimeout(6500);
             conn.setInstanceFollowRedirects(true);
-            conn.setRequestProperty("User-Agent", "pMusic-Android/0.5.0");
+            conn.setRequestProperty("User-Agent", "pMusic-Android/0.6.0");
             int code = conn.getResponseCode();
             if (code >= 200 && code < 300) {
                 InputStream in = conn.getInputStream();

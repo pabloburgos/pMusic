@@ -996,7 +996,7 @@ export const App: React.FC = () => {
         >
           {/* Mobile Top Command Bar */}
           {isMobileViewport && (
-            <div className="pm-canvas sticky top-0 z-20 -mx-4 mb-5 flex items-center justify-between gap-3 border-b pm-border px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-3">
+            <div className="pm-canvas sticky top-0 z-20 -mx-4 mb-5 flex items-center justify-between gap-3 border-b pm-border px-4 pt-[max(0.75rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3">
               <div className="flex items-center gap-2.5">
                 {activeDetailView ? (
                   <button
@@ -1878,7 +1878,7 @@ export const App: React.FC = () => {
             }}
             onPointerDown={(e) => handleMiniPlayerSwipeStart(e.clientX)}
             onPointerUp={(e) => handleMiniPlayerSwipeEnd(e.clientX)}
-            className="pm-glass-regular fixed inset-x-3 bottom-[calc(5.25rem+env(safe-area-inset-bottom))] z-40 overflow-hidden rounded-[18px] px-3 py-2"
+            className="pm-glass-regular fixed inset-x-3 bottom-[calc(5.25rem+var(--pm-safe-bottom,env(safe-area-inset-bottom)))] z-40 overflow-hidden rounded-[18px] px-3 py-2"
           >
             <div className="flex items-center justify-between gap-2">
               <div className="flex min-w-0 flex-1 items-center gap-2.5">
@@ -1972,7 +1972,7 @@ export const App: React.FC = () => {
             role="tablist"
             aria-label="Navegación móvil"
             data-testid="mobile-tab-bar"
-            className="pm-glass-regular fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-40 grid grid-cols-4 gap-1 rounded-[22px] p-1.5"
+            className="pm-glass-regular fixed inset-x-3 bottom-[max(0.75rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] z-40 grid grid-cols-4 gap-1 rounded-[22px] p-1.5"
           >
             {navTabs.map((item) => {
               const active = activeTab === item.id;

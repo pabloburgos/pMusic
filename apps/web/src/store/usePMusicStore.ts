@@ -207,6 +207,18 @@ function isLiveRuntime(): boolean {
   return proto.startsWith('http') || proto === 'file:' || isElectronDesktopRuntime();
 }
 
+function isMobileHardwareVolumeRuntime(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (window.location?.hostname === 'appassets.pmusic.local') return true;
+  if (
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(max-width: 767px), (hover: none) and (pointer: coarse)').matches
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export interface DiscordRpcConfig {
   clientId: string;
   showTimestamps: boolean;
@@ -1224,9 +1236,14 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       }
     }
 
+    if (isMobileHardwareVolumeRuntime()) {
+      audioEngine.setVolume(1.0);
+    }
+
     const rpcStatus = await defaultPlatformBridge.getDiscordRpcStatus?.();
 
     set((prev) => ({
+      ...(isMobileHardwareVolumeRuntime() ? { volume: 1.0 } : {}),
       playlists: libraryStore.getPlaylists(),
       likedTracks: libraryStore.getLikedTracks(),
       playHistory: libraryStore.getPlayHistory(),
@@ -2756,6 +2773,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   deletePlaylist: async (playlistId) => {
     await libraryStore.deletePlaylist(playlistId);
     set((prev) => ({
+      ...(isMobileHardwareVolumeRuntime() ? { volume: 1.0 } : {}),
       playlists: libraryStore.getPlaylists(),
       activeDetailView:
         prev.activeDetailView?.kind === 'local_playlist' &&
