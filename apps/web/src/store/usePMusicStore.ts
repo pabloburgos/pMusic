@@ -672,19 +672,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
       try {
         await audioEngine.preloadNextDeck(nextTrack, plan.cueInSec);
-        await audioEngine.executeTransition(plan);
-        if (!audioEngine.getState().isPlaying) {
-          await audioEngine.play();
-        }
       } catch {
         djAutoTransitionInFlight = false;
         await get().playTrack(nextTrack, get().queue, plan.cueInSec);
         return;
       }
-
-      const enginePos = audioEngine.getState().positionSec;
-      const landedPos =
-        Number.isFinite(enginePos) && enginePos > 0 ? enginePos : plan.cueInSec;
 
       const curState = get();
       const updatedPrevStack = [...curState.sessionPrevStack, prevTrack].slice(-20);
@@ -712,7 +704,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         recommendedQueue: nextRecommended,
         sessionPrevStack: updatedPrevStack,
         queueIndex: nextQueueIndex,
-        positionSec: landedPos,
+        positionSec: plan.cueInSec,
         durationSec: nextTrack.durationSec,
         isPlaying: true,
         activeTransitionPlan: null,
@@ -732,6 +724,35 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         track_title: `${nextTrack.title} — ${nextTrack.artists.map((a) => a.name).join(', ')}`,
       });
       syncDiscordPresenceState();
+
+      try {
+        await audioEngine.executeTransition(plan);
+        if (!audioEngine.getState().isPlaying) {
+          await audioEngine.play();
+        }
+      } catch {
+        djAutoTransitionInFlight = false;
+        await get().playTrack(nextTrack, get().queue, plan.cueInSec);
+        return;
+      }
+
+      const postEngineState = audioEngine.getState();
+      const landedPos =
+        Number.isFinite(postEngineState.positionSec) && postEngineState.positionSec >= 0
+          ? postEngineState.positionSec
+          : plan.cueInSec;
+      const landedDur =
+        Number.isFinite(postEngineState.durationSec) && postEngineState.durationSec > 10
+          ? postEngineState.durationSec
+          : nextTrack.durationSec;
+
+      if (get().currentTrack.id === nextTrack.id) {
+        set({
+          positionSec: landedPos,
+          durationSec: landedDur,
+          isPlaying: true,
+        });
+      }
 
       djPreloadedKey = '';
       void analyzeTrackAudioInBackground(nextTrack);
@@ -2072,14 +2093,20 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       nextQueue.findIndex((t) => t.id === st.currentTrack.id)
     );
 
+    const nextSafeCrossfade: SafeCrossfadeConfig = nextEnabled
+      ? { ...st.safeCrossfade, enabled: false }
+      : {
+          ...st.safeCrossfade,
+          enabled: st.safeCrossfade.durationSec > 0 ? true : st.safeCrossfade.enabled,
+        };
+    audioEngine.setSafeCrossfade(nextSafeCrossfade);
+
     set({
       djMode: nextDjMode,
       queue: nextQueue,
       queueIndex: nextIdx,
       // Safe crossfade is paused automatically while DJ Mode is active
-      safeCrossfade: nextEnabled
-        ? { ...st.safeCrossfade, enabled: false }
-        : st.safeCrossfade,
+      safeCrossfade: nextSafeCrossfade,
     });
     persistPrefsFromStore();
 
@@ -2209,15 +2236,32 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   setSafeCrossfade: (patch) => {
     const st = get();
+    const nextDuration = Math.max(
+      0,
+      Math.min(12, patch.durationSec ?? st.safeCrossfade.durationSec)
+    );
+    const nextEnabled =
+      patch.enabled !== undefined
+        ? patch.enabled
+        : patch.durationSec !== undefined
+          ? nextDuration > 0
+          : st.safeCrossfade.enabled;
     const next: SafeCrossfadeConfig = {
-      enabled: st.djMode.enabled ? false : (patch.enabled ?? st.safeCrossfade.enabled),
-      durationSec: Math.max(
-        0,
-        Math.min(12, patch.durationSec ?? st.safeCrossfade.durationSec)
-      ),
+      enabled: nextEnabled && nextDuration > 0,
+      durationSec: nextDuration,
     };
     audioEngine.setSafeCrossfade(next);
-    set({ safeCrossfade: next });
+    if (next.enabled && st.djMode.enabled) {
+      const nextDj: DjModeConfig = { ...st.djMode, enabled: false };
+      audioEngine.setDjMode(nextDj);
+      set({
+        safeCrossfade: next,
+        djMode: nextDj,
+        activeTransitionPlan: null,
+      });
+    } else {
+      set({ safeCrossfade: next });
+    }
     persistPrefsFromStore();
   },
 

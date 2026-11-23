@@ -295,9 +295,15 @@ export class DeezerCatalog {
       pushArtist(undefined, extraName);
     }
 
+    const rawTitle = String(t.title ?? t.title_short ?? '');
+    const shortTitle = String(t.title_short ?? t.title ?? '');
+    const hasRemixOrVersionInFullTitle =
+      rawTitle.length > shortTitle.length &&
+      /\b(?:remix|version|versión|live|en vivo|acústico|acoustic|edit|vip)\b/i.test(rawTitle);
+
     return {
       id: toTrackId(t.id),
-      title: String(t.title_short ?? t.title),
+      title: hasRemixOrVersionInFullTitle ? rawTitle : shortTitle,
       artists: rawList.length ? rawList : [{ name: 'Artista' }],
       album: album ? { id: String(album.id), name: String(album.title) } : undefined,
       durationSec: Number(t.duration) || 200,

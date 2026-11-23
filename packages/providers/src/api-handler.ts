@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { IMusicProvider, SearchFilter } from '@pmusic/core';
+import { normalizeSearchText, type IMusicProvider, type SearchFilter } from '@pmusic/core';
 import { FALLBACK_TRACKS, synthesizeDeterministicWavBuffer } from './catalog-fallback.ts';
+import { isAuthenticLyricsText } from './lrclib.ts';
 import {
   PlaylistImporter,
   parseSpotifyEmbedHtml,
@@ -153,15 +154,42 @@ export function createPMusicApiHandler(options: PMusicApiHandlerOptions = {}) {
           mxmTokenExpiresAt = 0;
           continue;
         }
-        const calls = json?.message?.body?.macro_calls;
+        const calls = json?.message?.body?.macro_calls as Record<string, any> | undefined;
+        const matchedTrack = calls?.['matcher.track.get']?.message?.body?.track;
+        if (matchedTrack) {
+          const reqTitle = normalizeSearchText(title);
+          const reqArtist = normalizeSearchText(artist);
+          const gotTitle = normalizeSearchText(String(matchedTrack.track_name ?? ''));
+          const gotArtist = normalizeSearchText(String(matchedTrack.artist_name ?? ''));
+          const titleOk =
+            !reqTitle ||
+            !gotTitle ||
+            gotTitle === reqTitle ||
+            gotTitle.includes(reqTitle) ||
+            reqTitle.includes(gotTitle);
+          const artistOk =
+            !reqArtist ||
+            !gotArtist ||
+            gotArtist === reqArtist ||
+            gotArtist.includes(reqArtist) ||
+            reqArtist.includes(gotArtist) ||
+            (reqArtist.includes('cruz cafune') && gotArtist.includes('cruzzi'));
+          if (!titleOk || !artistOk) {
+            return { syncedLyrics: null, plainLyrics: null };
+          }
+        }
         const subRaw =
           calls?.['track.subtitles.get']?.message?.body?.subtitle_list?.[0]?.subtitle
             ?.subtitle_body;
         const lyrRaw = calls?.['track.lyrics.get']?.message?.body?.lyrics?.lyrics_body;
-        const syncedLyrics =
+        const rawSynced =
           typeof subRaw === 'string' && subRaw.trim().length > 0 ? subRaw.trim() : null;
-        const cleanedPlain =
+        const rawPlain =
           typeof lyrRaw === 'string' && lyrRaw.trim().length > 0 ? cleanWatermark(lyrRaw) : '';
+        const syncedLyrics =
+          rawSynced && isAuthenticLyricsText(rawSynced) ? rawSynced : null;
+        const cleanedPlain =
+          rawPlain.length > 0 && isAuthenticLyricsText(rawPlain) ? rawPlain : '';
         return {
           syncedLyrics,
           plainLyrics: cleanedPlain.length > 0 ? cleanedPlain : null,

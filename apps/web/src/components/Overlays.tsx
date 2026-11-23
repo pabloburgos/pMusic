@@ -112,6 +112,8 @@ export const NowPlayingSheet: React.FC = () => {
   } = usePMusicStore();
 
   const isElectronDesktop = isElectronDesktopRuntime();
+  const sheetRootRef = useRef<HTMLDivElement | null>(null);
+  const lyricsContainerRef = useRef<HTMLDivElement | null>(null);
   const activeLyricRef = useRef<HTMLButtonElement | null>(null);
   const backdropBeatRef = useRef<HTMLDivElement | null>(null);
   const [smoothPosSec, setSmoothPosSec] = useState(positionSec);
@@ -121,6 +123,7 @@ export const NowPlayingSheet: React.FC = () => {
   const [queueSearchResults, setQueueSearchResults] = useState<Track[]>([]);
   const [isQueueSearching, setIsQueueSearching] = useState(false);
   const [recentlyMovedKey, setRecentlyMovedKey] = useState<string | null>(null);
+  const [recentlyDisplacedKey, setRecentlyDisplacedKey] = useState<string | null>(null);
   const [transportAnim, setTransportAnim] = useState<
     'prev' | 'next' | 'play' | 'shuffle' | 'repeat' | null
   >(null);
@@ -243,15 +246,24 @@ export const NowPlayingSheet: React.FC = () => {
     replenishRecommendedQueue,
   ]);
 
-  const moveWithFlip = (fromIdx: number, toIdx: number, movedKey: string) => {
+  const moveWithFlip = (
+    fromIdx: number,
+    toIdx: number,
+    movedKey: string,
+    displacedKey?: string | null
+  ) => {
     const snap = new Map<string, number>();
     queueRowRefs.current.forEach((el, k) => {
       snap.set(k, el.getBoundingClientRect().top);
     });
     prevRowTopsRef.current = snap;
     setRecentlyMovedKey(movedKey);
+    setRecentlyDisplacedKey(displacedKey ?? null);
     if (movedTimerRef.current) clearTimeout(movedTimerRef.current);
-    movedTimerRef.current = setTimeout(() => setRecentlyMovedKey(null), 460);
+    movedTimerRef.current = setTimeout(() => {
+      setRecentlyMovedKey(null);
+      setRecentlyDisplacedKey(null);
+    }, 480);
     moveQueueItem(fromIdx, toIdx);
   };
 
@@ -267,11 +279,18 @@ export const NowPlayingSheet: React.FC = () => {
       const newTop = el.getBoundingClientRect().top;
       const deltaY = oldTop - newTop;
       if (Math.abs(deltaY) < 1) return;
+      const isRising = deltaY > 0;
       el.style.transition = 'none';
-      el.style.transform = `translateY(${deltaY}px)`;
+      el.style.zIndex = isRising ? '30' : '10';
+      el.style.transform = isRising
+        ? `translateY(${deltaY}px) scale(1.045)`
+        : `translateY(${deltaY}px) scale(0.94)`;
       void el.offsetHeight;
-      el.style.transition = 'transform 300ms cubic-bezier(0.22, 1, 0.36, 1)';
-      el.style.transform = 'translateY(0)';
+      el.style.transition = 'transform 380ms cubic-bezier(0.22, 1, 0.36, 1)';
+      el.style.transform = 'translateY(0) scale(1)';
+      setTimeout(() => {
+        el.style.zIndex = '';
+      }, 400);
     });
     prevRowTopsRef.current = new Map();
   }, [queue, reducedMotionPref]);
@@ -373,19 +392,41 @@ export const NowPlayingSheet: React.FC = () => {
       : -1;
 
   useEffect(() => {
+    if (sheetRootRef.current) {
+      sheetRootRef.current.scrollTop = 0;
+    }
     if (
       nowPlayingOpen &&
       nowPlayingTab === 'Letras' &&
       !lyricsUserScrolled &&
-      activeLyricRef.current &&
-      typeof activeLyricRef.current.scrollIntoView === 'function'
+      lyricsContainerRef.current &&
+      activeLyricRef.current
     ) {
-      activeLyricRef.current.scrollIntoView({
-        behavior: 'smooth',
-        block: 'center',
-      });
+      const container = lyricsContainerRef.current;
+      const activeEl = activeLyricRef.current;
+      const containerRect = container.getBoundingClientRect();
+      const activeRect = activeEl.getBoundingClientRect();
+      const offsetWithinContainer = activeRect.top - containerRect.top + container.scrollTop;
+      const targetTop = Math.max(
+        0,
+        offsetWithinContainer - container.clientHeight * 0.42 + activeRect.height * 0.5
+      );
+      if (typeof container.scrollTo === 'function') {
+        container.scrollTo({
+          top: targetTop,
+          behavior: reducedMotionPref ? 'auto' : 'smooth',
+        });
+      } else {
+        container.scrollTop = targetTop;
+      }
     }
-  }, [nowPlayingOpen, nowPlayingTab, resolvedActiveLyricIdx, lyricsUserScrolled]);
+  }, [
+    nowPlayingOpen,
+    nowPlayingTab,
+    resolvedActiveLyricIdx,
+    lyricsUserScrolled,
+    reducedMotionPref,
+  ]);
 
   if (!nowPlayingOpen) return null;
 
@@ -637,7 +678,7 @@ export const NowPlayingSheet: React.FC = () => {
         >
           <SkipBack
             className={`h-6 w-6 fill-current ${
-              transportAnim === 'prev' && !reducedMotionPref ? 'pm-skip-prev-epic' : ''
+              transportAnim === 'prev' && !reducedMotionPref ? 'pm-skip-glide-prev' : ''
             }`}
           />
         </button>
@@ -649,21 +690,22 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('play');
             void togglePlayPause();
           }}
-          className={`pm-pressable relative flex h-[62px] w-[62px] items-center justify-center overflow-visible rounded-full bg-white text-[#070709] shadow-[0_14px_38px_rgba(255,255,255,0.28)] transition-all duration-200 hover:scale-105 active:scale-95 ${
-            transportAnim === 'play' && !reducedMotionPref ? 'pm-play-flip-epic' : ''
-          }`}
+          className="pm-pressable relative flex h-[62px] w-[62px] items-center justify-center overflow-hidden rounded-full bg-white text-[#070709] shadow-[0_14px_38px_rgba(255,255,255,0.28)] transition-transform duration-200 hover:scale-105 active:scale-90"
         >
-          {transportAnim === 'play' && !reducedMotionPref && (
-            <span
-              aria-hidden="true"
-              className="pm-play-ring-burst pointer-events-none absolute inset-0 rounded-full border-2 border-white/80"
-            />
-          )}
-          {isPlaying ? (
-            <Pause className="h-6.5 w-6.5 fill-current transition-transform duration-150" />
-          ) : (
-            <Play className="h-6.5 w-6.5 translate-x-[1.5px] fill-current transition-transform duration-150" />
-          )}
+          <Pause
+            className={`absolute h-6.5 w-6.5 fill-current transition-all duration-200 ease-out ${
+              isPlaying
+                ? 'scale-100 rotate-0 opacity-100 blur-0'
+                : 'scale-50 rotate-90 opacity-0 blur-[1px]'
+            }`}
+          />
+          <Play
+            className={`absolute h-6.5 w-6.5 translate-x-[1.5px] fill-current transition-all duration-200 ease-out ${
+              !isPlaying
+                ? 'scale-100 rotate-0 opacity-100 blur-0'
+                : 'scale-50 -rotate-90 opacity-0 blur-[1px]'
+            }`}
+          />
         </button>
 
         <button
@@ -677,7 +719,7 @@ export const NowPlayingSheet: React.FC = () => {
         >
           <SkipForward
             className={`h-6 w-6 fill-current ${
-              transportAnim === 'next' && !reducedMotionPref ? 'pm-skip-next-epic' : ''
+              transportAnim === 'next' && !reducedMotionPref ? 'pm-skip-glide-next' : ''
             }`}
           />
         </button>
@@ -752,18 +794,22 @@ export const NowPlayingSheet: React.FC = () => {
 
   return (
     <div
+      ref={sheetRootRef}
       role="dialog"
       aria-modal="true"
       aria-label="Reproduciendo ahora"
       data-testid="now-playing-sheet"
-      className="pm-sheet-enter pm-dark-sliders fixed inset-0 z-50 flex flex-col overflow-hidden bg-[#070709] text-[#F5F5F7]"
+      onScroll={(e) => {
+        if (e.currentTarget.scrollTop !== 0) e.currentTarget.scrollTop = 0;
+      }}
+      className="pm-sheet-enter pm-dark-sliders fixed inset-0 z-50 flex h-dvh w-screen flex-col overflow-hidden bg-[#070709] text-[#F5F5F7]"
     >
-      {/* Apple Music Style Living Fluid Cover Backdrop */}
+      {/* Apple Music Style Living Fluid Cover Backdrop (Fixed & Oversized so zero unfiltered edges ever appear) */}
       <div
         ref={backdropBeatRef}
         data-testid="live-backdrop-container"
         aria-hidden="true"
-        className={`pointer-events-none absolute inset-0 overflow-hidden transition-[transform,filter] duration-150 ${
+        className={`pointer-events-none fixed -inset-16 z-0 overflow-hidden transition-[transform,filter] duration-150 ${
           !ambientMotionEnabled || reducedMotionPref ? 'pm-backdrop-static' : ''
         }`}
         style={{
@@ -776,7 +822,7 @@ export const NowPlayingSheet: React.FC = () => {
         {prevBackdrop && (
           <div
             key={`out-${prevBackdrop.id}`}
-            className={`pointer-events-none absolute -inset-12 ${
+            className={`pointer-events-none absolute -inset-24 ${
               prevBackdrop.direction === 'prev'
                 ? 'pm-backdrop-out-prev'
                 : 'pm-backdrop-out-next'
@@ -793,7 +839,7 @@ export const NowPlayingSheet: React.FC = () => {
 
         <div
           key={`in-${currentTrack.id}`}
-          className={`pointer-events-none absolute -inset-12 ${
+          className={`pointer-events-none absolute -inset-24 ${
             prevBackdrop
               ? lastTrackDirection === 'prev'
                 ? 'pm-backdrop-in-prev'
@@ -822,13 +868,13 @@ export const NowPlayingSheet: React.FC = () => {
         data-testid="bright-media-scrim"
         data-scrim="true"
         data-scrim-alpha="0.46"
-        className="pointer-events-none absolute inset-0"
+        className="pointer-events-none fixed inset-0 z-0"
         style={{ backgroundColor: 'rgba(8, 8, 12, 0.46)' }}
       />
 
-      {/* Minimalist Full Liquid Glass Header (with Electron Windows drag & optical 50% tab centering) */}
+      {/* Static Unified Header (100% locked in place, matching soft matte translucent pills) */}
       <header
-        className={`pm-drag-region relative z-10 flex items-center justify-between border-b border-white/[0.10] px-4 py-3 md:px-8 ${
+        className={`pm-drag-region relative z-20 flex shrink-0 items-center justify-between border-b border-white/[0.08] px-4 py-3 md:px-8 ${
           isElectronDesktop ? 'pr-[152px] md:pr-[152px]' : ''
         }`}
       >
@@ -836,7 +882,7 @@ export const NowPlayingSheet: React.FC = () => {
           type="button"
           aria-label="Cerrar reproductor"
           onClick={() => setNowPlayingOpen(false)}
-          className="pm-glass-chip pm-no-drag inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-[#F5F5F7]"
+          className="pm-pressable pm-no-drag inline-flex h-9 items-center gap-2 rounded-full bg-white/[0.08] px-4 text-xs font-semibold text-[#F5F5F7] transition-colors hover:bg-white/[0.16]"
         >
           <X className="h-4 w-4" />
           <span className="hidden sm:inline">Cerrar</span>
@@ -846,7 +892,7 @@ export const NowPlayingSheet: React.FC = () => {
           role="tablist"
           aria-label="Vistas del reproductor"
           data-surface="glass"
-          className="pm-glass-liquid pm-no-drag flex items-center gap-1 rounded-full p-1 sm:absolute sm:left-1/2 sm:-translate-x-1/2"
+          className="pm-no-drag flex items-center gap-1 rounded-full bg-white/[0.08] p-1 sm:absolute sm:left-1/2 sm:-translate-x-1/2"
         >
           {(['Portada', 'Letras', 'Cola'] as const).map((tab) => {
             const active = nowPlayingTab === tab;
@@ -857,10 +903,10 @@ export const NowPlayingSheet: React.FC = () => {
                 role="tab"
                 aria-selected={active}
                 onClick={() => setNowPlayingTab(tab)}
-                className={`rounded-full px-4 py-1.5 text-xs font-bold ${
+                className={`rounded-full px-4 py-1.5 text-xs font-bold transition-colors ${
                   active
                     ? 'bg-white text-[#070709] shadow-sm'
-                    : 'text-[#E5E5EA] hover:bg-white/10 hover:text-white'
+                    : 'text-[#E5E5EA] hover:bg-white/[0.12] hover:text-white'
                 }`}
               >
                 {tab}
@@ -880,7 +926,9 @@ export const NowPlayingSheet: React.FC = () => {
         className={`relative z-10 min-h-0 flex-1 px-4 md:px-10 ${
           nowPlayingTab === 'Portada'
             ? 'overflow-y-auto py-6 md:py-8'
-            : 'overflow-hidden py-4 md:py-6'
+            : nowPlayingTab === 'Letras'
+              ? 'overflow-hidden py-0'
+              : 'overflow-hidden py-4 md:py-6'
         }`}
       >
         {nowPlayingTab === 'Portada' && (
@@ -890,19 +938,20 @@ export const NowPlayingSheet: React.FC = () => {
         )}
 
         {nowPlayingTab === 'Letras' && (
-          <div className="pm-tab-enter mx-auto grid h-full min-h-0 max-w-6xl grid-cols-1 gap-8 lg:grid-cols-12 lg:items-center">
+          <div className="pm-tab-enter mx-auto grid h-full min-h-0 max-w-6xl grid-cols-1 grid-rows-[minmax(0,1fr)] gap-8 overflow-hidden lg:grid-cols-12">
             <div
               data-testid="letras-left-deck"
-              className="hidden lg:col-span-5 lg:flex lg:items-center lg:justify-center"
+              className="hidden h-full min-h-0 lg:col-span-5 lg:flex lg:items-center lg:justify-center"
             >
               {PlayerDeckColumn(true)}
             </div>
 
             <div
+              ref={lyricsContainerRef}
               data-testid="synced-lyrics-view"
               onWheel={markLyricsUserScrolled}
               onTouchMove={markLyricsUserScrolled}
-              className="h-full min-h-0 space-y-6 overflow-y-auto py-8 pr-2 pm-no-scrollbar pm-lyrics-mask lg:col-span-7"
+              className="h-full min-h-0 space-y-6 overflow-y-auto py-10 pr-2 pm-no-scrollbar pm-lyrics-mask lg:col-span-7"
             >
               <div className="flex items-center justify-between lg:hidden">
                 <div className="flex items-center gap-3">
@@ -1125,15 +1174,15 @@ export const NowPlayingSheet: React.FC = () => {
           const activeAna = trackAnalyses[activeQueueTrack.id];
           const activeLiked = likedTracks.some((l) => l.trackId === activeQueueTrack.id);
           return (
-          <div className="pm-tab-enter mx-auto grid h-full min-h-0 max-w-6xl grid-cols-1 gap-8 lg:grid-cols-12 lg:items-center">
-            <div className="hidden lg:col-span-5 lg:flex lg:items-center lg:justify-center">
+          <div className="pm-tab-enter mx-auto grid h-full min-h-0 max-w-6xl grid-cols-1 grid-rows-[minmax(0,1fr)] gap-8 overflow-hidden lg:grid-cols-12">
+            <div className="hidden h-full min-h-0 lg:col-span-5 lg:flex lg:items-center lg:justify-center">
               {PlayerDeckColumn(true)}
             </div>
 
             {/* Free-floating Borderless Two-Tier Queue */}
             <div
               data-testid="queue-view"
-              className="flex h-full max-h-[82vh] min-h-0 flex-col gap-3.5 lg:col-span-7"
+              className="flex h-full max-h-[82vh] min-h-0 flex-col gap-3.5 self-center lg:col-span-7"
             >
               {/* Clean Borderless Header */}
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.12] pb-3">
@@ -1150,7 +1199,7 @@ export const NowPlayingSheet: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => clearUpNextQueue()}
-                    className="pm-pressable h-8 rounded-full border border-white/15 bg-white/[0.08] px-3.5 text-[11px] font-semibold text-[#E5E5EA] hover:bg-white/[0.18] hover:text-white"
+                    className="pm-pressable h-8 rounded-full bg-white/[0.08] px-3.5 text-[11px] font-semibold text-[#F5F5F7] transition-colors hover:bg-white/[0.16]"
                   >
                     Limpiar cola
                   </button>
@@ -1396,15 +1445,20 @@ export const NowPlayingSheet: React.FC = () => {
                   ) : (
                     (() => {
                       const occMap = new Map<string, number>();
+                      const rowKeys = upNextTracks.map((t) => {
+                        const occ = occMap.get(t.id) ?? 0;
+                        occMap.set(t.id, occ + 1);
+                        return `${t.id}#next#${occ}`;
+                      });
                       return upNextTracks.map((track, relIdx) => {
                         const realIdx = queueIndex + 1 + relIdx;
-                        const occ = occMap.get(track.id) ?? 0;
-                        occMap.set(track.id, occ + 1);
-                        const rowKey = `${track.id}#next#${occ}`;
+                        const rowKey = rowKeys[relIdx]!;
+                        const prevRowKey = relIdx > 0 ? rowKeys[relIdx - 1] ?? null : null;
                         const ana = trackAnalyses[track.id];
                         const trackLiked = likedTracks.some((l) => l.trackId === track.id);
                         const isDragOver = dragOverQueueIdx === realIdx;
                         const isMoved = recentlyMovedKey === rowKey;
+                        const isDisplaced = recentlyDisplacedKey === rowKey;
                         return (
                           <div
                             key={rowKey}
@@ -1454,7 +1508,7 @@ export const NowPlayingSheet: React.FC = () => {
                               openTrackMenu(track, e.clientX, e.clientY);
                             }}
                             className={`group flex h-15 items-center justify-between gap-2.5 overflow-hidden rounded-[12px] px-2.5 transition-colors hover:bg-white/[0.09] ${
-                              isMoved ? 'pm-queue-moved' : ''
+                              isMoved ? 'pm-queue-leap-over' : isDisplaced ? 'pm-queue-duck-under' : ''
                             } ${isDragOver ? 'border-t-2 border-white bg-white/[0.18]' : ''}`}
                           >
                             <div className="flex min-w-0 flex-1 items-center gap-2.5">
@@ -1530,10 +1584,12 @@ export const NowPlayingSheet: React.FC = () => {
                                 <button
                                   type="button"
                                   aria-label={`Subir ${track.title} en la cola`}
-                                  onClick={() => moveWithFlip(realIdx, realIdx - 1, rowKey)}
+                                  onClick={() =>
+                                    moveWithFlip(realIdx, realIdx - 1, rowKey, prevRowKey)
+                                  }
                                   className="pm-pressable rounded-full px-2 py-1 text-xs font-semibold text-[#E5E5EA] opacity-75 transition-all hover:bg-white/[0.14] hover:text-white group-hover:opacity-100"
                                 >
-                                  ↑
+                                  <span className={isMoved ? 'pm-arrow-grab-up' : ''}>↑</span>
                                 </button>
                               )}
 
@@ -1583,7 +1639,7 @@ export const NowPlayingSheet: React.FC = () => {
                       type="button"
                       aria-label="Renovar recomendaciones"
                       onClick={() => void replenishRecommendedQueue(true)}
-                      className="pm-pressable inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/[0.06] px-2.5 py-1 text-[10px] font-semibold text-[#E5E5EA] hover:bg-white/[0.14] hover:text-white"
+                      className="pm-pressable inline-flex items-center gap-1 rounded-full bg-white/[0.08] px-3 py-1 text-[10px] font-semibold text-[#F5F5F7] transition-colors hover:bg-white/[0.16]"
                     >
                       <RefreshCw
                         className={`h-3 w-3 ${isLoadingRecommendedQueue ? 'animate-spin' : ''}`}
@@ -1678,7 +1734,7 @@ export const NowPlayingSheet: React.FC = () => {
                                 promoteRecommendedTrack(rec.id);
                                 showToast(`«${rec.title}» subida a Tu cola`);
                               }}
-                              className="pm-pressable inline-flex h-7 w-7 items-center justify-center rounded-full border border-white/15 bg-white/[0.08] text-white hover:bg-white hover:text-[#070709]"
+                              className="pm-pressable inline-flex h-7 w-7 items-center justify-center rounded-full bg-white/[0.08] text-[#F5F5F7] transition-colors hover:bg-white/[0.16] hover:text-white"
                               title="Subir a Tu cola"
                             >
                               <Plus className="h-3.5 w-3.5" />
@@ -1706,7 +1762,7 @@ export const NowPlayingSheet: React.FC = () => {
         })()}
       </div>
 
-      {/* Unobtrusive Floating DJ & EQ Micro-Controls in Bottom-Right of Now Playing */}
+      {/* Unified Soft Matte Translucent DJ & EQ Micro-Controls in Bottom-Right of Now Playing */}
       <div className="fixed right-6 bottom-5 z-20 flex items-center gap-2">
         <button
           type="button"
@@ -1714,13 +1770,17 @@ export const NowPlayingSheet: React.FC = () => {
           aria-label="Sesión DJ"
           aria-pressed={djPopoverOpen}
           onClick={() => setDjPopoverOpen(!djPopoverOpen)}
-          className={`pm-pressable pm-glass-chip inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold backdrop-blur-md transition-all ${
-            djMode.enabled
-              ? 'border-purple-400/50 bg-purple-500/25 text-purple-200'
-              : 'text-[#E5E5EA] hover:text-white'
+          className={`pm-pressable inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-xs font-semibold transition-colors ${
+            djMode.enabled || djPopoverOpen
+              ? 'bg-white/[0.18] text-white'
+              : 'bg-white/[0.08] text-[#F5F5F7] hover:bg-white/[0.16]'
           }`}
         >
-          <Disc3 className="h-3.5 w-3.5 text-purple-300" />
+          <Disc3
+            className={`h-3.5 w-3.5 ${
+              djMode.enabled ? 'text-purple-300' : 'text-[#F5F5F7]'
+            }`}
+          />
           <span>{djMode.enabled ? `DJ ${djMode.style === 'quick' ? 'Rápida' : 'Completa'}` : 'Sesión DJ'}</span>
         </button>
 
@@ -1730,7 +1790,11 @@ export const NowPlayingSheet: React.FC = () => {
           aria-label="Ecualizador"
           aria-pressed={eqSheetOpen}
           onClick={() => setEqSheetOpen(!eqSheetOpen)}
-          className="pm-pressable pm-glass-chip inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold text-[#E5E5EA] backdrop-blur-md transition-all hover:text-white"
+          className={`pm-pressable inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-xs font-semibold transition-colors ${
+            eqSheetOpen
+              ? 'bg-white/[0.18] text-white'
+              : 'bg-white/[0.08] text-[#F5F5F7] hover:bg-white/[0.16]'
+          }`}
         >
           <Sliders className="h-3.5 w-3.5" />
           <span>EQ</span>
@@ -1899,16 +1963,19 @@ export const EqAndCrossfadeSheet: React.FC = () => {
             <button
               type="button"
               role="switch"
-              aria-checked={safeCrossfade.enabled}
+              aria-checked={safeCrossfade.enabled && !djMode.enabled}
               aria-label="Activar Crossfade seguro"
-              disabled={djMode.enabled}
               onClick={() =>
-                setSafeCrossfade({ enabled: !safeCrossfade.enabled })
+                setSafeCrossfade({
+                  enabled: djMode.enabled ? true : !safeCrossfade.enabled,
+                  durationSec:
+                    safeCrossfade.durationSec > 0 ? safeCrossfade.durationSec : 4,
+                })
               }
-              className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold transition-colors disabled:opacity-45 ${
+              className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold transition-colors ${
                 safeCrossfade.enabled && !djMode.enabled
                   ? 'pm-btn-primary'
-                  : 'bg-white/10 pm-text-secondary'
+                  : 'bg-white/10 pm-text-secondary hover:bg-white/15'
               }`}
             >
               {safeCrossfade.enabled && !djMode.enabled ? 'Activo' : 'Off'}

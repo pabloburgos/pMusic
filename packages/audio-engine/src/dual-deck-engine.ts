@@ -184,6 +184,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
   private transitionTimer: ReturnType<typeof setInterval> | null = null;
   private transitionRafId: number | null = null;
   private transitionResolve: (() => void) | null = null;
+  private watchdogTimer: ReturnType<typeof setInterval> | null = null;
 
   private userEqConfig: UserEqConfig = {
     enabled: true,
@@ -294,6 +295,38 @@ export class DualDeckAudioEngine implements IAudioEngine {
       const initGain = volumeToPerceptualGain(this.volume);
       this.deckA.audio.volume = initGain;
       this.deckB.audio.volume = initGain;
+    }
+
+    if (!this.watchdogTimer) {
+      this.watchdogTimer = setInterval(() => {
+        if (!this.isPlaying || this.isTransitioning || !this.deckA || !this.deckB) return;
+        const deck = this.getDeck(this.activeDeck);
+        const audio = deck.audio;
+        const isBrowserAudio = typeof (audio as { readyState?: unknown }).readyState === 'number';
+        if (!isBrowserAudio) return;
+
+        if (Number.isFinite(audio.currentTime) && audio.currentTime >= 0) {
+          this.positionSec = audio.currentTime;
+        }
+        if (Number.isFinite(audio.duration) && audio.duration > 1) {
+          this.durationSec = audio.duration;
+        }
+        const realDur =
+          Number.isFinite(audio.duration) && audio.duration > 10
+            ? audio.duration
+            : this.durationSec;
+
+        if (audio.ended || (realDur > 10 && audio.currentTime >= realDur - 0.35)) {
+          this.isPlaying = false;
+          this.emitState();
+          for (const listener of this.endedListeners) {
+            listener(this.activeDeck);
+          }
+          return;
+        }
+        this.emitState();
+      }, 380);
+      (this.watchdogTimer as { unref?: () => void }).unref?.();
     }
   }
 
@@ -637,12 +670,26 @@ export class DualDeckAudioEngine implements IAudioEngine {
   }
 
   public seek(positionSec: number): void {
+    if (this.isTransitioning) {
+      this.cancelActiveTransition();
+    }
     const safePos = Math.max(0, Math.min(this.durationSec || 3600, positionSec));
     this.positionSec = safePos;
     if (this.deckA && this.deckB) {
       const deck = this.getDeck(this.activeDeck);
       try {
-        deck.audio.currentTime = safePos;
+        const isBrowserAudio = typeof (deck.audio as { readyState?: unknown }).readyState === 'number';
+        const realDur =
+          Number.isFinite(deck.audio.duration) && deck.audio.duration > 10
+            ? deck.audio.duration
+            : this.durationSec;
+        if (isBrowserAudio && realDur > 10 && safePos >= realDur - 0.8) {
+          const clampedEndPos = Math.max(0, realDur - 1.4);
+          this.positionSec = clampedEndPos;
+          deck.audio.currentTime = clampedEndPos;
+        } else {
+          deck.audio.currentTime = safePos;
+        }
       } catch {
         // ignore
       }
@@ -1076,32 +1123,20 @@ export class DualDeckAudioEngine implements IAudioEngine {
         resolve();
       };
 
-      if (typeof requestAnimationFrame === 'function' && totalMs >= 500) {
-        const startedAt = performance.now();
-        const tick = (now: number) => {
-          if (settled) return;
-          const p = Math.min(1, (now - startedAt) / totalMs);
-          applyCurve(p);
-          if (p >= 1) {
-            finish();
-          } else {
-            this.transitionRafId = requestAnimationFrame(tick);
+      const startedAt = Date.now();
+      const stepMs = Math.max(15, Math.min(25, Math.floor(totalMs / 16)));
+      this.transitionTimer = setInterval(() => {
+        if (settled) return;
+        const p = Math.min(1, (Date.now() - startedAt) / totalMs);
+        applyCurve(p);
+        if (p >= 1) {
+          if (this.transitionTimer) {
+            clearInterval(this.transitionTimer);
+            this.transitionTimer = null;
           }
-        };
-        this.transitionRafId = requestAnimationFrame(tick);
-      } else {
-        const steps = 12;
-        const stepMs = Math.max(20, Math.floor(totalMs / steps));
-        let currentStep = 0;
-        this.transitionTimer = setInterval(() => {
-          currentStep++;
-          const p = Math.min(1, currentStep / steps);
-          applyCurve(p);
-          if (currentStep >= steps) {
-            finish();
-          }
-        }, stepMs);
-      }
+          finish();
+        }
+      }, stepMs);
     });
   }
 
@@ -1208,6 +1243,10 @@ export class DualDeckAudioEngine implements IAudioEngine {
   }
 
   public async dispose(): Promise<void> {
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
     this.cancelActiveTransition();
     this.pause();
     this.deckA?.audio.remove?.();

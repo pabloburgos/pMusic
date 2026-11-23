@@ -49,6 +49,85 @@ interface LrclibApiRecord {
 
 const LRCLIB_CLIENT_HEADER = 'pMusic/0.1.0 (https://github.com/pmusic/pmusic)';
 
+const LYRIC_ARTIST_ALIASES: Record<string, string[]> = {
+  'cruz cafune': ['cruzzi'],
+  cruzzi: ['cruz cafune'],
+  'la pantera': ['lapantera'],
+  lapantera: ['la pantera'],
+  'c tangana': ['pucho', 'el madrileno'],
+  'd valentino': ['dvalentino'],
+  dvalentino: ['d valentino'],
+  'lucho rk': ['luchork'],
+  'bad bunny': ['benito'],
+};
+
+const COMMON_LYRIC_WORDS = new Set([
+  'de', 'la', 'que', 'el', 'en', 'y', 'a', 'no', 'me', 'te', 'se', 'lo', 'un', 'por',
+  'con', 'mi', 'tu', 'es', 'para', 'como', 'pero', 'si', 'yo', 'ya', 'mas', 'del', 'al',
+  'las', 'los', 'una', 'su', 'le', 'sin', 'pa', 'to', 'todo', 'nada', 'vida', 'noche',
+  'solo', 'bien', 'amor', 'cuando', 'esta', 'este', 'eso', 'esa', 'son', 'fue', 'ha',
+  'nos', 'ni', 'o', 'u', 'e', 'soy', 'eres', 'voy', 'va', 'van', 'ven', 'ver', 'vez',
+  'the', 'and', 'to', 'you', 'in', 'it', 'is', 'of', 'for', 'on', 'my', 'that', 'with',
+  'be', 'so', 'all', 'we', 'know', 'love', 'like', 'yeah', 'oh', 'ey', 'eh', 'baby',
+  'i', 'im', 'dont', 'up', 'down', 'out', 'get', 'go', 'now', 'what', 'when', 'just',
+  'can', 'but', 'not', 'are', 'was', 'have', 'from', 'they', 'she', 'he', 'her', 'his',
+]);
+
+/**
+ * Rejects Musixmatch anti-bot scrambled CVC cipher ("Kahe rorew vip / Vuqew qazaqo kimi")
+ * and non-Latin foreign script mismatches so pMusic only shows authentic lyrics.
+ */
+export function isAuthenticLyricsText(rawText: string): boolean {
+  if (!rawText || typeof rawText !== 'string') return false;
+  const stripped = rawText
+    .replace(/\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\]/g, ' ')
+    .replace(/<\d{1,3}:\d{2}(?:[.:]\d{1,3})?>/g, ' ')
+    .replace(/^\[[a-z]{2,8}:[^\]]*\]$/gim, ' ')
+    .trim();
+  if (stripped.length < 10) return false;
+
+  const nonSpaceChars = stripped.replace(/\s+/g, '');
+  if (nonSpaceChars.length === 0) return false;
+  const nonLatinChars = nonSpaceChars.replace(
+    /[a-zA-Z0-9áéíóúüñÁÉÍÓÚÜÑàèìòùÀÈÌÒÙâêîôûÂÊÎÔÛäëïöüÄËÏÖÜçÇãõÃÕ.,!?'":;()\-¡¿♪♫’‘“”—–…/\[\]]/g,
+    ''
+  );
+  if (nonLatinChars.length / nonSpaceChars.length > 0.18) {
+    return false;
+  }
+
+  const lettersOnly = stripped
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z]/g, '');
+  if (lettersOnly.length >= 28) {
+    const rareLetters = lettersOnly.replace(/[^qxzkwjv]/g, '');
+    if (rareLetters.length / lettersOnly.length > 0.115) {
+      return false;
+    }
+  }
+
+  const words = stripped
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .split(/[^a-z]+/)
+    .filter((w) => w.length >= 1);
+
+  if (words.length >= 12) {
+    let commonHits = 0;
+    for (const w of words) {
+      if (COMMON_LYRIC_WORDS.has(w)) commonHits++;
+    }
+    if (commonHits / words.length < 0.045) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 export class LrclibLyricsProvider implements ILyricsProvider {
   private readonly baseUrl: string;
   private readonly parser: ILrcParser;
@@ -249,6 +328,10 @@ export class LrclibLyricsProvider implements ILyricsProvider {
 
     const normTitle = normalizeSearchText(title);
     const normArtist = normalizeSearchText(artist);
+    const artistVariants = [
+      normArtist,
+      ...(LYRIC_ARTIST_ALIASES[normArtist] ?? []),
+    ].filter(Boolean);
 
     let best: LrclibApiRecord | null = null;
     let bestScore = -Infinity;
@@ -256,13 +339,24 @@ export class LrclibLyricsProvider implements ILyricsProvider {
     for (const candidate of list) {
       const candTitle = normalizeSearchText(candidate.trackName ?? '');
       const candArtist = normalizeSearchText(candidate.artistName ?? '');
-      let score = 0;
+      if (!candTitle || !candArtist) continue;
 
-      if (candTitle === normTitle) score += 5;
-      else if (candTitle.includes(normTitle) || normTitle.includes(candTitle)) score += 3;
+      let titleScore = 0;
+      if (candTitle === normTitle) titleScore = 5;
+      else if (candTitle.includes(normTitle) || normTitle.includes(candTitle)) titleScore = 3;
 
-      if (candArtist === normArtist) score += 4;
-      else if (candArtist.includes(normArtist) || normArtist.includes(candArtist)) score += 2.5;
+      let artistScore = 0;
+      if (artistVariants.some((v) => candArtist === v)) artistScore = 4;
+      else if (artistVariants.some((v) => candArtist.includes(v) || v.includes(candArtist))) {
+        artistScore = 2.5;
+      }
+
+      // Require BOTH title and artist match so we never show unrelated foreign song lyrics
+      if (titleScore === 0 || artistScore === 0) {
+        continue;
+      }
+
+      let score = titleScore + artistScore;
 
       if (typeof candidate.syncedLyrics === 'string' && candidate.syncedLyrics.trim().length > 0) {
         score += 3;
@@ -283,7 +377,7 @@ export class LrclibLyricsProvider implements ILyricsProvider {
       }
     }
 
-    return bestScore >= 2 ? best : null;
+    return bestScore >= 5 ? best : null;
   }
 
   private async fetchMusixmatchDocument(
@@ -343,11 +437,17 @@ export class LrclibLyricsProvider implements ILyricsProvider {
       };
     }
 
-    if (typeof record.syncedLyrics === 'string' && record.syncedLyrics.trim().length > 0) {
+    if (
+      typeof record.syncedLyrics === 'string' &&
+      record.syncedLyrics.trim().length > 0 &&
+      isAuthenticLyricsText(record.syncedLyrics)
+    ) {
       const parsed = this.parser.parse(record.syncedLyrics);
       if (parsed.lines.length > 0) {
         const plainLines =
-          typeof record.plainLyrics === 'string' && record.plainLyrics.trim().length > 0
+          typeof record.plainLyrics === 'string' &&
+          record.plainLyrics.trim().length > 0 &&
+          isAuthenticLyricsText(record.plainLyrics)
             ? record.plainLyrics
                 .replace(/\r\n?/g, '\n')
                 .split('\n')
@@ -367,7 +467,11 @@ export class LrclibLyricsProvider implements ILyricsProvider {
       }
     }
 
-    if (typeof record.plainLyrics === 'string' && record.plainLyrics.trim().length > 0) {
+    if (
+      typeof record.plainLyrics === 'string' &&
+      record.plainLyrics.trim().length > 0 &&
+      isAuthenticLyricsText(record.plainLyrics)
+    ) {
       const plainLines = record.plainLyrics
         .replace(/\r\n?/g, '\n')
         .split('\n')

@@ -133,31 +133,54 @@ export function scoreAudioCandidate(
   const artistMatched = rawArtistParts.length === 0 || artistMatchCount > 0;
   const targetDur = target.durationSec;
   const durDiff = targetDur > 0 ? Math.abs(cand.candidateDurationSec - targetDur) : 0;
+  const candArtistPartsCount = (cand.candidateArtists ?? '')
+    .split(/,|&|\bfeat\.?\b|\bft\.?\b/i)
+    .map((p) => p.trim())
+    .filter(Boolean).length;
+  const candHasExtraCredits =
+    candArtistPartsCount > rawArtistParts.length + 1 ||
+    (candTitle !== rawNormTitle &&
+      candTitle !== cleanTitle &&
+      (candTitle.includes('feat') ||
+        candTitle.includes('ft ') ||
+        candTitle.includes('remix') ||
+        candTitle.length > rawNormTitle.length + 10));
+
   if (targetDur > 45 && !wantsSpecial) {
-    const maxDurDiff = cand.isYtMusicSong && exactTitle && artistMatched ? 240 : 45;
+    // Reject music videos or posse-cut remixes that deviate significantly from the real song duration.
+    // Only allow a wider fallback tolerance on official YTMusic songs when the unstripped title is identical.
+    const maxDurDiff =
+      cand.isYtMusicSong && exactTitle && artistMatched && !candHasExtraCredits ? 180 : 28;
     if (durDiff > maxDurDiff) {
       return -Infinity;
     }
   }
 
-  if (!artistMatched && !(exactTitle && durDiff <= 8)) {
+  if (!artistMatched && !(exactTitle && durDiff <= 6)) {
     return -Infinity;
   }
 
   let score = cand.isYtMusicSong ? 4 : 0;
-  if (exactTitle) score += 8;
-  else if (candTitle.includes(cleanTitle) || cleanTitle.includes(candStrippedTitle)) score += 5;
+  if (candTitle === rawNormTitle || candTitle === cleanTitle) score += 10;
+  else if (exactTitle) score += 6;
+  else if (candTitle.includes(cleanTitle) || cleanTitle.includes(candStrippedTitle)) score += 4;
   score += Math.round(titleOverlap * 4);
 
   if (rawArtistParts.length > 0) {
     score += artistMatchCount > 0 ? 6 + Math.min(3, artistMatchCount) : 0;
   }
   if (/topic|vevo|official|oficial/.test(candArtistBlob)) score += 2;
-  if (/audio/.test(candTitle)) score += 1;
+  if (/audio|visualizer/.test(candTitle)) score += 2;
+  if (!wantsSpecial && /video oficial|official video|music video|videoclip/.test(candTitle) && durDiff > 10) {
+    score -= 10;
+  }
   if (targetDur > 0) {
-    if (durDiff <= 3) score += 3;
-    else if (durDiff <= 10) score += 1.5;
-    else score -= Math.min(5, durDiff / 6);
+    if (durDiff <= 2) score += 16;
+    else if (durDiff <= 5) score += 12;
+    else if (durDiff <= 10) score += 6;
+    else if (durDiff <= 18) score += 1;
+    else if (durDiff <= 35) score -= Math.round(durDiff * 0.25);
+    else score -= Math.round(9 + (durDiff - 35) * 0.01);
   }
 
   return score;
@@ -328,9 +351,11 @@ export class AudioStreamResolver {
           const id = item?.id ?? item?.video_id;
           const dur = Number(item?.duration?.seconds ?? 0);
           if (typeof id !== 'string' || !YOUTUBE_ID_RE.test(id) || dur < 40) continue;
-          const itemArtists = Array.isArray(item?.artists)
-            ? item.artists.map((a: any) => a?.name ?? '').join(' ')
-            : '';
+          const artistArr = Array.isArray(item?.artists) ? item.artists : [];
+          const itemArtists = artistArr
+            .map((a: any) => a?.name ?? '')
+            .filter(Boolean)
+            .join(', ');
           const score = scoreAudioCandidate(info, {
             candidateTitle: String(item?.title ?? item?.name ?? ''),
             candidateArtists: itemArtists,

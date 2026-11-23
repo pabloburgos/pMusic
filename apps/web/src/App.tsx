@@ -1550,11 +1550,11 @@ export const App: React.FC = () => {
                   triggerDockTransportAnim('prev');
                   void prevTrack();
                 }}
-                className="pm-pressable pm-hover inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-primary"
+                className="pm-pressable pm-hover inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-primary active:scale-90"
               >
                 <SkipBack
                   className={`h-4 w-4 ${
-                    dockTransportAnim === 'prev' && !reducedMotionPref ? 'pm-skip-prev-epic' : ''
+                    dockTransportAnim === 'prev' && !reducedMotionPref ? 'pm-skip-glide-prev' : ''
                   }`}
                 />
               </button>
@@ -1566,21 +1566,22 @@ export const App: React.FC = () => {
                   triggerDockTransportAnim('play');
                   void togglePlayPause();
                 }}
-                className={`pm-btn-primary pm-pressable relative flex h-10 w-10 items-center justify-center overflow-visible rounded-full shadow-lg hover:scale-105 ${
-                  dockTransportAnim === 'play' && !reducedMotionPref ? 'pm-play-flip-epic' : ''
-                }`}
+                className="pm-btn-primary pm-pressable relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-full shadow-lg transition-transform duration-200 hover:scale-105 active:scale-90"
               >
-                {dockTransportAnim === 'play' && !reducedMotionPref && (
-                  <span
-                    aria-hidden="true"
-                    className="pm-play-ring-burst pointer-events-none absolute inset-0 rounded-full border-2 border-current opacity-70"
-                  />
-                )}
-                {isPlaying ? (
-                  <Pause className="h-4.5 w-4.5 fill-current" />
-                ) : (
-                  <Play className="h-4.5 w-4.5 translate-x-[1px] fill-current" />
-                )}
+                <Pause
+                  className={`absolute h-4.5 w-4.5 fill-current transition-all duration-200 ease-out ${
+                    isPlaying
+                      ? 'scale-100 rotate-0 opacity-100 blur-0'
+                      : 'scale-50 rotate-90 opacity-0 blur-[1px]'
+                  }`}
+                />
+                <Play
+                  className={`absolute h-4.5 w-4.5 translate-x-[1px] fill-current transition-all duration-200 ease-out ${
+                    !isPlaying
+                      ? 'scale-100 rotate-0 opacity-100 blur-0'
+                      : 'scale-50 -rotate-90 opacity-0 blur-[1px]'
+                  }`}
+                />
               </button>
 
               <button
@@ -1590,11 +1591,11 @@ export const App: React.FC = () => {
                   triggerDockTransportAnim('next');
                   void nextTrack();
                 }}
-                className="pm-pressable pm-hover inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-primary"
+                className="pm-pressable pm-hover inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-primary active:scale-90"
               >
                 <SkipForward
                   className={`h-4 w-4 ${
-                    dockTransportAnim === 'next' && !reducedMotionPref ? 'pm-skip-next-epic' : ''
+                    dockTransportAnim === 'next' && !reducedMotionPref ? 'pm-skip-glide-next' : ''
                   }`}
                 />
               </button>
@@ -1689,22 +1690,26 @@ export const App: React.FC = () => {
             )}
           </div>
 
-          {/* Right: Balanced Frosted Utility Capsule */}
+          {/* Right: Unified Soft Matte Translucent Utility Capsule */}
           <div className="pointer-events-none relative z-10 flex items-center justify-end">
-            <div className="pm-dock-interactive pm-dock-cluster pm-elevated pointer-events-auto flex items-center gap-0.5 rounded-[14px] border pm-border p-1">
+            <div className="pm-dock-interactive pm-dock-cluster pointer-events-auto flex items-center gap-1 rounded-full px-2 py-1">
               <button
                 type="button"
                 data-testid="dock-dj-btn"
                 aria-label="Modo Sesión DJ"
                 aria-pressed={djMode.enabled || djPopoverOpen}
                 onClick={() => setDjPopoverOpen(!djPopoverOpen)}
-                className={`pm-pressable inline-flex h-8 items-center justify-center gap-1 rounded-[10px] px-2 text-[11px] font-bold ${
+                className={`pm-pressable inline-flex h-8 items-center justify-center gap-1.5 rounded-full px-2.5 text-[11px] font-bold transition-colors ${
                   djMode.enabled || djPopoverOpen
-                    ? 'bg-purple-500/25 text-purple-300'
-                    : 'pm-text-secondary pm-hover hover:text-[var(--pm-text-primary)]'
+                    ? 'bg-white/[0.16] pm-text-primary'
+                    : 'pm-text-secondary hover:bg-white/[0.10] hover:text-[var(--pm-text-primary)]'
                 }`}
               >
-                <Disc3 className="h-3.5 w-3.5 text-purple-400" />
+                <Disc3
+                  className={`h-3.5 w-3.5 ${
+                    djMode.enabled ? 'text-purple-400' : 'pm-text-secondary'
+                  }`}
+                />
                 <span className="hidden xl:inline">DJ</span>
               </button>
 
@@ -1714,10 +1719,10 @@ export const App: React.FC = () => {
                 aria-label="Ecualizador"
                 aria-pressed={eqSheetOpen}
                 onClick={() => setEqSheetOpen(!eqSheetOpen)}
-                className={`pm-pressable inline-flex h-8 w-8 items-center justify-center rounded-[10px] ${
+                className={`pm-pressable inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
                   eqSheetOpen
-                    ? 'bg-white/15 text-[var(--pm-text-primary)]'
-                    : 'pm-text-secondary pm-hover hover:text-[var(--pm-text-primary)]'
+                    ? 'bg-white/[0.16] text-[var(--pm-text-primary)]'
+                    : 'pm-text-secondary hover:bg-white/[0.10] hover:text-[var(--pm-text-primary)]'
                 }`}
               >
                 <Sliders className="h-3.5 w-3.5" />
@@ -1730,7 +1735,7 @@ export const App: React.FC = () => {
                   setNowPlayingOpen(true);
                   setNowPlayingTab('Letras');
                 }}
-                className="pm-pressable pm-hover inline-flex h-8 w-8 items-center justify-center rounded-[10px] pm-text-secondary hover:text-[var(--pm-text-primary)]"
+                className="pm-pressable inline-flex h-8 w-8 items-center justify-center rounded-full pm-text-secondary transition-colors hover:bg-white/[0.10] hover:text-[var(--pm-text-primary)]"
               >
                 <Mic2 className="h-3.5 w-3.5" />
               </button>
@@ -1739,7 +1744,7 @@ export const App: React.FC = () => {
                 type="button"
                 aria-label={volume === 0 ? 'Activar sonido' : 'Silenciar'}
                 onClick={() => toggleMute()}
-                className="pm-pressable pm-hover inline-flex h-8 w-8 items-center justify-center rounded-[10px] pm-text-secondary hover:text-[var(--pm-text-primary)]"
+                className="pm-pressable inline-flex h-8 w-8 items-center justify-center rounded-full pm-text-secondary transition-colors hover:bg-white/[0.10] hover:text-[var(--pm-text-primary)]"
               >
                 {volume === 0 ? (
                   <VolumeX className="h-3.5 w-3.5" />
@@ -1760,13 +1765,13 @@ export const App: React.FC = () => {
                 className="pm-range-subtle mx-1 hidden w-16 lg:block xl:w-20"
               />
 
-              <span aria-hidden="true" className="mx-0.5 h-4 w-px bg-[var(--pm-border-strong)]" />
+              <span aria-hidden="true" className="mx-0.5 h-3.5 w-px bg-white/10" />
 
               <button
                 type="button"
                 aria-label="Expandir reproductor"
                 onClick={() => setNowPlayingOpen(true)}
-                className="pm-pressable pm-hover inline-flex h-8 w-8 items-center justify-center rounded-[10px] pm-text-secondary hover:text-[var(--pm-text-primary)]"
+                className="pm-pressable inline-flex h-8 w-8 items-center justify-center rounded-full pm-text-secondary transition-colors hover:bg-white/[0.10] hover:text-[var(--pm-text-primary)]"
               >
                 <Maximize2 className="h-3.5 w-3.5" />
               </button>
@@ -1777,7 +1782,7 @@ export const App: React.FC = () => {
                   rightPanelOpen ? 'Ocultar panel de cola' : 'Mostrar panel de cola'
                 }
                 onClick={() => setRightPanelOpen(!rightPanelOpen)}
-                className="pm-pressable pm-hover hidden h-8 w-8 items-center justify-center rounded-[10px] pm-text-secondary hover:text-[var(--pm-text-primary)] xl:inline-flex"
+                className="pm-pressable hidden h-8 w-8 items-center justify-center rounded-full pm-text-secondary transition-colors hover:bg-white/[0.10] hover:text-[var(--pm-text-primary)] xl:inline-flex"
               >
                 {rightPanelOpen ? (
                   <PanelRightClose className="h-3.5 w-3.5" />

@@ -5,6 +5,7 @@ import {
   LrclibLyricsProvider,
   PlaylistImporter,
   YouTubeMusicProvider,
+  isAuthenticLyricsText,
   parseFeaturedArtistsFromTitle,
   parseSpotifyEmbedHtml,
   scoreAudioCandidate,
@@ -435,5 +436,45 @@ describe('@pmusic/providers', () => {
       }
     );
     expect(cangriScore).toBeGreaterThanOrEqual(20);
+  });
+
+  it('rejects scrambled gibberish or foreign cipher lyrics and returns not_found instead of fake lines', async () => {
+    const scrambled = [
+      '[00:10.00]Kahe rorew vip',
+      '[00:14.00]Vuqew qazaqo kimi',
+      '[00:18.00]Qaxu xur cutox',
+      '[00:22.00]Ger tiwuk gejun',
+      '[00:26.00]Yanufo zisan sen',
+      '[00:30.00]Poj hesu qanu',
+      '[00:34.00]Kij viki manex',
+      '[00:38.00]Yited foc weti',
+      '[00:42.00]Dumufu bav hebijo',
+      '[00:46.00]Xipihe wihe yigog',
+      '[00:50.00]Sogu qud seyoz',
+      '[00:54.00]Boj weq yec',
+    ].join('\n');
+
+    expect(isAuthenticLyricsText(scrambled)).toBe(false);
+    expect(
+      isAuthenticLyricsText('[00:05.00]Me muevo con Dios por la noche en la isla sin mirar atrás')
+    ).toBe(true);
+
+    const mock404 = (async () => new Response('Not found', { status: 404 })) as typeof fetch;
+    const provider = new LrclibLyricsProvider({
+      fetchFn: mock404,
+      musixmatchFetcher: async () => ({
+        syncedLyrics: scrambled,
+        plainLyrics: scrambled,
+        source: 'musixmatch',
+      }),
+    });
+    const doc = await provider.getLyrics({
+      trackId: 'tr_gibberish',
+      title: 'LAMINE YAMAL',
+      artist: 'Nemzzz',
+      durationSec: 133,
+    });
+    expect(doc.status).toBe('not_found');
+    expect(doc.lines).toHaveLength(0);
   });
 });

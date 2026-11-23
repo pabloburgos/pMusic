@@ -284,17 +284,10 @@ export class YouTubeMusicProvider implements IMusicProvider {
   }
 
   public async getPlainLyricsFallback(
-    videoId: string,
+    _videoId: string,
     _signal?: AbortSignal
   ): Promise<string | null> {
-    const track = FALLBACK_TRACKS.find((t) => t.id === videoId) ?? FALLBACK_TRACKS[0]!;
-    return [
-      `${track.title} — ${track.artists.map((a) => a.name).join(', ')}`,
-      'Subiendo desde las islas hasta Madrid',
-      'La noche brilla en el estudio sin parar',
-      'Este ritmo suena limpio en pMusic',
-      'Toda la calle cantando el estribillo',
-    ].join('\n');
+    return null;
   }
 
   public async resolveAudioStream(
