@@ -193,13 +193,12 @@ export function getLivePlaybackPosition(): {
   positionSec: number;
   durationSec: number;
   isPlaying: boolean;
+  isPaused: boolean;
+  isEnded: boolean;
+  isSeeking: boolean;
+  isTransitioning: boolean;
 } {
-  const st = audioEngine.getState();
-  return {
-    positionSec: audioEngine.getLivePositionSec(),
-    durationSec: st.durationSec,
-    isPlaying: st.isPlaying,
-  };
+  return audioEngine.getLivePlaybackSnapshot();
 }
 
 function isLiveRuntime(): boolean {
@@ -254,6 +253,8 @@ let importAbortController: AbortController | null = null;
 let searchTicket = 0;
 let lyricsTicket = 0;
 let djAutoTransitionInFlight = false;
+let djAutoTransitionStartedAtMs = 0;
+let autoAdvanceInFlight = false;
 let djPreloadedKey = '';
 const decodedAudioAnalyzedIds = new Set<string>();
 const decodedAudioInFlightIds = new Set<string>();
@@ -584,11 +585,18 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   function getUpcomingDjTarget(
     st: PMusicStoreState
   ): { track: Track; nextIdx: number; fromRecommended: boolean } | null {
-    if (st.queueIndex + 1 < st.queue.length) {
-      const next = st.queue[st.queueIndex + 1];
+    for (let i = st.queueIndex + 1; i < st.queue.length; i++) {
+      const next = st.queue[i];
       if (next && next.id !== st.currentTrack.id) {
-        return { track: next, nextIdx: st.queueIndex + 1, fromRecommended: false };
+        return { track: next, nextIdx: i, fromRecommended: false };
       }
+    }
+    if (st.queueIndex + 1 < st.queue.length && st.queue[st.queueIndex + 1]) {
+      return {
+        track: st.queue[st.queueIndex + 1]!,
+        nextIdx: st.queueIndex + 1,
+        fromRecommended: false,
+      };
     }
     if (st.repeatMode === 'all' && st.queue.length > 1) {
       const wrap = st.queue[0];
@@ -597,8 +605,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       }
     }
     if (st.autoplayEnabled && st.recommendedQueue.length > 0) {
-      const rec = st.recommendedQueue[0];
-      if (rec && rec.id !== st.currentTrack.id) {
+      const rec =
+        st.recommendedQueue.find((t) => t.id !== st.currentTrack.id) ??
+        st.recommendedQueue[0];
+      if (rec) {
         return { track: rec, nextIdx: 0, fromRecommended: true };
       }
     }
@@ -676,6 +686,21 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     return plan;
   }
 
+  async function runWithTimeout(promise: Promise<void>, timeoutMs: number): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const outcome = await Promise.race([
+        promise.then(() => true),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), timeoutMs);
+        }),
+      ]);
+      return outcome;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
   async function executeDjTransition(
     plan: DeckTransitionPlan,
     nextTrack: Track,
@@ -683,6 +708,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   ): Promise<void> {
     if (djAutoTransitionInFlight) return;
     djAutoTransitionInFlight = true;
+    djAutoTransitionStartedAtMs = Date.now();
     try {
       const prevTrack = get().currentTrack;
       void recommendationEngine.recordSignal(prevTrack, 'complete_listen', {
@@ -690,9 +716,19 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       });
 
       try {
-        await audioEngine.preloadNextDeck(nextTrack, plan.cueInSec);
+        const preloadedOk = await runWithTimeout(
+          audioEngine.preloadNextDeck(nextTrack, plan.cueInSec),
+          3500
+        );
+        if (!preloadedOk) {
+          djAutoTransitionInFlight = false;
+          djAutoTransitionStartedAtMs = 0;
+          await get().playTrack(nextTrack, get().queue, plan.cueInSec);
+          return;
+        }
       } catch {
         djAutoTransitionInFlight = false;
+        djAutoTransitionStartedAtMs = 0;
         await get().playTrack(nextTrack, get().queue, plan.cueInSec);
         return;
       }
@@ -745,25 +781,38 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       syncDiscordPresenceState();
 
       try {
-        await audioEngine.executeTransition(plan);
+        const transTimeoutMs = Math.max(6000, Math.round(plan.transitionDurationSec * 1000) + 5000);
+        const transitionedOk = await runWithTimeout(
+          audioEngine.executeTransition(plan),
+          transTimeoutMs
+        );
+        if (!transitionedOk) {
+          audioEngine.cancelActiveTransition();
+          djAutoTransitionInFlight = false;
+          djAutoTransitionStartedAtMs = 0;
+          await get().playTrack(nextTrack, get().queue, plan.cueInSec);
+          return;
+        }
         if (!audioEngine.getState().isPlaying) {
           await audioEngine.play();
         }
       } catch {
+        audioEngine.cancelActiveTransition();
         djAutoTransitionInFlight = false;
+        djAutoTransitionStartedAtMs = 0;
         await get().playTrack(nextTrack, get().queue, plan.cueInSec);
         return;
       }
 
       const postEngineState = audioEngine.getState();
-      const landedPos =
-        Number.isFinite(postEngineState.positionSec) && postEngineState.positionSec >= 0
-          ? postEngineState.positionSec
-          : plan.cueInSec;
       const landedDur =
         Number.isFinite(postEngineState.durationSec) && postEngineState.durationSec > 10
           ? postEngineState.durationSec
           : nextTrack.durationSec;
+      const landedPos =
+        Number.isFinite(postEngineState.positionSec) && postEngineState.positionSec >= 0
+          ? Math.min(landedDur > 0 ? landedDur : postEngineState.positionSec, postEngineState.positionSec)
+          : plan.cueInSec;
 
       if (get().currentTrack.id === nextTrack.id) {
         set({
@@ -785,6 +834,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       }
     } finally {
       djAutoTransitionInFlight = false;
+      djAutoTransitionStartedAtMs = 0;
     }
   }
 
@@ -1285,17 +1335,33 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     });
 
     audioEngine.onStateChange((engineState) => {
+      if (
+        djAutoTransitionInFlight &&
+        djAutoTransitionStartedAtMs > 0 &&
+        Date.now() - djAutoTransitionStartedAtMs > 20_000
+      ) {
+        djAutoTransitionInFlight = false;
+        djAutoTransitionStartedAtMs = 0;
+        audioEngine.cancelActiveTransition();
+      }
+
+      const safeDur = engineState.durationSec || get().currentTrack.durationSec;
+      const safePos =
+        safeDur > 0
+          ? Math.max(0, Math.min(safeDur, engineState.positionSec))
+          : Math.max(0, engineState.positionSec);
+
       const lyrics = get().currentLyrics;
       const activeIdx =
         lyrics && lyrics.status === 'synced'
-          ? lrcParser.findActiveLineIndex(lyrics.lines, engineState.positionSec * 1000)
+          ? lrcParser.findActiveLineIndex(lyrics.lines, safePos * 1000)
           : -1;
 
       set({
         activeDeck: engineState.activeDeck,
         isPlaying: engineState.isPlaying,
-        positionSec: engineState.positionSec,
-        durationSec: engineState.durationSec || get().currentTrack.durationSec,
+        positionSec: safePos,
+        durationSec: safeDur,
         volume: engineState.volume,
         isTransitioning: engineState.isTransitioning,
         activeTransitionType: engineState.activeTransitionType,
@@ -1306,8 +1372,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       void mediaController.updateSession({
         track: get().currentTrack,
         isPlaying: engineState.isPlaying,
-        positionSec: engineState.positionSec,
-        durationSec: engineState.durationSec || get().currentTrack.durationSec,
+        positionSec: safePos,
+        durationSec: safeDur,
       });
 
       const liveState = get();
@@ -1723,69 +1789,75 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   },
 
   nextTrack: async (isAutoAdvance = false) => {
-    const st = get();
-    if (!isAutoAdvance) {
-      if (st.positionSec > 0 && st.positionSec < 20) {
-        void recommendationEngine.recordSignal(st.currentTrack, 'skip_early', {
-          actualPlayedSec: st.positionSec,
-        });
-      } else if (st.durationSec > 0 && st.positionSec / st.durationSec >= 0.8) {
-        void recommendationEngine.recordSignal(st.currentTrack, 'complete_listen', {
-          completionRatio: st.positionSec / st.durationSec,
-        });
+    if (isAutoAdvance && autoAdvanceInFlight) return;
+    if (isAutoAdvance) autoAdvanceInFlight = true;
+    try {
+      const st = get();
+      if (!isAutoAdvance) {
+        if (st.positionSec > 0 && st.positionSec < 20) {
+          void recommendationEngine.recordSignal(st.currentTrack, 'skip_early', {
+            actualPlayedSec: st.positionSec,
+          });
+        } else if (st.durationSec > 0 && st.positionSec / st.durationSec >= 0.8) {
+          void recommendationEngine.recordSignal(st.currentTrack, 'complete_listen', {
+            completionRatio: st.positionSec / st.durationSec,
+          });
+        }
       }
-    }
 
-    if (isAutoAdvance && st.repeatMode === 'one') {
-      await st.playTrack(st.currentTrack, st.queue, 0);
-      return;
-    }
-
-    let target = getUpcomingDjTarget(st);
-    if (!target && st.autoplayEnabled) {
-      await st.replenishRecommendedQueue(true);
-      target = getUpcomingDjTarget(get());
-    }
-
-    if (!target) {
-      if (isAutoAdvance && st.repeatMode === 'off') {
-        audioEngine.pause();
-        set({ isPlaying: false });
+      if (isAutoAdvance && st.repeatMode === 'one') {
+        await st.playTrack(st.currentTrack, st.queue, 0);
+        return;
       }
-      return;
+
+      let target = getUpcomingDjTarget(st);
+      if (!target && st.autoplayEnabled) {
+        await st.replenishRecommendedQueue(true);
+        target = getUpcomingDjTarget(get());
+      }
+
+      if (!target) {
+        if (isAutoAdvance && st.repeatMode === 'off') {
+          audioEngine.pause();
+          set({ isPlaying: false });
+        }
+        return;
+      }
+
+      const latest = get();
+      const next = target.track;
+
+      if (!isAutoAdvance && latest.djMode.enabled && latest.isPlaying && next.id !== latest.currentTrack.id) {
+        await latest.triggerDjMixNow();
+        return;
+      }
+
+      const nextPrevStack = [...latest.sessionPrevStack, latest.currentTrack].slice(-20);
+      let nextQueue: Track[];
+      let nextRecommended = latest.recommendedQueue;
+
+      if (target.fromRecommended) {
+        nextQueue = [next];
+        nextRecommended = latest.recommendedQueue.filter((t) => t.id !== next.id);
+      } else if (latest.repeatMode === 'all' && target.nextIdx === 0 && latest.queue.length > 1) {
+        nextQueue = latest.queue;
+      } else {
+        // Consumed tracks before nextIdx drop off from active queue automatically
+        nextQueue = latest.queue.slice(Math.max(0, target.nextIdx));
+      }
+
+      set({
+        sessionPrevStack: nextPrevStack,
+        recommendedQueue: nextRecommended,
+      });
+      await get().playTrack(next, nextQueue, undefined, 'next');
+      set({
+        affinityProfile: recommendationEngine.getAffinityProfile(),
+        playHistory: libraryStore.getPlayHistory(),
+      });
+    } finally {
+      if (isAutoAdvance) autoAdvanceInFlight = false;
     }
-
-    const latest = get();
-    const next = target.track;
-
-    if (latest.djMode.enabled && latest.isPlaying && next.id !== latest.currentTrack.id) {
-      await latest.triggerDjMixNow();
-      return;
-    }
-
-    const nextPrevStack = [...latest.sessionPrevStack, latest.currentTrack].slice(-20);
-    let nextQueue: Track[];
-    let nextRecommended = latest.recommendedQueue;
-
-    if (target.fromRecommended) {
-      nextQueue = [next];
-      nextRecommended = latest.recommendedQueue.filter((t) => t.id !== next.id);
-    } else if (latest.repeatMode === 'all' && target.nextIdx === 0 && latest.queue.length > 1) {
-      nextQueue = latest.queue;
-    } else {
-      // Consumed tracks before nextIdx drop off from active queue automatically
-      nextQueue = latest.queue.slice(Math.max(0, target.nextIdx));
-    }
-
-    set({
-      sessionPrevStack: nextPrevStack,
-      recommendedQueue: nextRecommended,
-    });
-    await get().playTrack(next, nextQueue, undefined, 'next');
-    set({
-      affinityProfile: recommendationEngine.getAffinityProfile(),
-      playHistory: libraryStore.getPlayHistory(),
-    });
   },
 
   prevTrack: async () => {

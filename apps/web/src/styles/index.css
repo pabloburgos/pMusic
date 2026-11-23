@@ -533,6 +533,35 @@ html.pm-liquid-glass-all .pm-surface-card {
   }
 }
 
+.pm-quick-tile {
+  background-color: rgba(255, 255, 255, 0.068);
+  color: var(--pm-text-primary);
+  border: 1px solid rgba(255, 255, 255, 0.045);
+  transition:
+    background-color 160ms var(--ease-out),
+    border-color 160ms var(--ease-out),
+    transform 140ms var(--ease-out);
+}
+.pm-quick-tile:hover {
+  background-color: rgba(255, 255, 255, 0.125);
+  border-color: rgba(255, 255, 255, 0.10);
+}
+[data-theme="nordic-light"] .pm-quick-tile {
+  background-color: rgba(20, 20, 26, 0.055);
+  border-color: rgba(20, 20, 26, 0.07);
+}
+[data-theme="nordic-light"] .pm-quick-tile:hover {
+  background-color: rgba(20, 20, 26, 0.10);
+}
+
+@media (max-width: 639px) {
+  .pm-cover-card.pm-surface-card {
+    background: transparent;
+    border-color: transparent;
+    padding: 0;
+  }
+}
+
 /* Emil Kowalski tactile button press */
 button,
 [role="button"] {
@@ -560,13 +589,6 @@ button:active:not(:disabled),
 @media (hover: hover) and (pointer: fine) {
   .pm-cover-card:hover .pm-cover-play,
   .group:hover .pm-cover-play {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@media (hover: none) {
-  .pm-cover-card .pm-cover-play {
     opacity: 1;
     transform: translateY(0);
   }
@@ -634,7 +656,7 @@ input[type="range"].pm-range-pill::-webkit-slider-runnable-track {
     rgba(255, 255, 255, 0.92) var(--pm-fill, 0%),
     rgba(255, 255, 255, 0.18) var(--pm-fill, 0%)
   );
-  transition: height 160ms var(--ease-out), background 140ms var(--ease-out);
+  transition: height 160ms var(--ease-out);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -1234,44 +1256,55 @@ html.pm-solid-modern .pm-spotlight-backdrop {
 @keyframes pmFluidCoverA {
   0%, 100% {
     transform: translate3d(-4%, -3%, 0) scale(1.28) rotate(0deg);
-    filter: blur(58px) saturate(1.22) contrast(1.06);
   }
   50% {
     transform: translate3d(5%, 4%, 0) scale(1.42) rotate(5deg);
-    filter: blur(82px) saturate(1.36) contrast(1.08);
   }
 }
 
 @keyframes pmFluidCoverB {
   0%, 100% {
     transform: translate3d(5%, 3%, 0) scale(1.34) rotate(0deg);
-    filter: blur(78px) saturate(1.30);
   }
   50% {
     transform: translate3d(-5%, -4%, 0) scale(1.24) rotate(-6deg);
-    filter: blur(58px) saturate(1.18);
   }
 }
 
 .pm-fluid-cover-a {
   transform: translate3d(-2%, -2%, 0) scale(1.32);
-  filter: blur(64px) saturate(1.24) contrast(1.06);
+  filter: blur(60px) saturate(1.25) contrast(1.06);
   animation: pmFluidCoverA 16s ease-in-out infinite;
-  will-change: transform, filter;
+  will-change: transform;
+  backface-visibility: hidden;
 }
 
 .pm-fluid-cover-b {
   transform: translate3d(3%, 2%, 0) scale(1.34);
-  filter: blur(74px) saturate(1.26);
+  filter: blur(70px) saturate(1.25);
   animation: pmFluidCoverB 22s ease-in-out infinite;
-  will-change: transform, filter;
+  will-change: transform;
+  backface-visibility: hidden;
 }
 
 .pm-backdrop-static .pm-fluid-cover-a,
 .pm-backdrop-static .pm-fluid-cover-b {
   animation: none !important;
   transform: scale(1.28) !important;
-  filter: blur(66px) saturate(1.18) !important;
+  filter: blur(64px) saturate(1.18) !important;
+}
+
+@media (max-width: 767px), (hover: none) and (pointer: coarse) {
+  .pm-fluid-cover-a {
+    animation: none !important;
+    filter: blur(36px) saturate(1.22) !important;
+    transform: translate3d(0, 0, 0) scale(1.24) !important;
+    will-change: auto;
+    backface-visibility: hidden;
+  }
+  .pm-fluid-cover-b {
+    display: none !important;
+  }
 }
 
 @keyframes pmBackdropInNext {

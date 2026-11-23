@@ -165,14 +165,15 @@ export const App: React.FC = () => {
     const now = typeof performance !== 'undefined' ? performance.now() : 0;
     const trackChanged = dockClockRef.current.trackId !== currentTrack.id;
     const seekJumped = Math.abs(positionSec - dockClockRef.current.renderedPosSec) > 0.85;
-    dockClockRef.current.posSec = positionSec;
+    const effDur = Math.max(1, durationSec);
+    const clampedPos = Math.max(0, Math.min(effDur, positionSec));
+    dockClockRef.current.posSec = clampedPos;
     dockClockRef.current.atMs = now;
     dockClockRef.current.trackId = currentTrack.id;
     if (trackChanged || seekJumped || !isPlaying) {
-      dockClockRef.current.renderedPosSec = positionSec;
-      setSmoothDockPosSec(positionSec);
-      const effDur = Math.max(1, durationSec, positionSec);
-      const pctStr = `${Math.max(0, Math.min(100, (positionSec / effDur) * 100)).toFixed(4)}%`;
+      dockClockRef.current.renderedPosSec = clampedPos;
+      setSmoothDockPosSec(clampedPos);
+      const pctStr = `${Math.max(0, Math.min(100, (clampedPos / effDur) * 100)).toFixed(4)}%`;
       if (ambientFillRef.current) ambientFillRef.current.style.width = pctStr;
       if (islandFillRef.current) islandFillRef.current.style.width = pctStr;
       if (waveFillRef.current) waveFillRef.current.style.width = pctStr;
@@ -184,32 +185,16 @@ export const App: React.FC = () => {
       return;
     }
     let rafId = 0;
-    let lastFrameMs = typeof performance !== 'undefined' ? performance.now() : 0;
-    let lastStateSyncMs = lastFrameMs;
+    let lastStateSyncMs = typeof performance !== 'undefined' ? performance.now() : 0;
     let lastIntSec = Math.floor(dockClockRef.current.renderedPosSec);
 
     const step = (now: number) => {
-      const dt = Math.min(0.1, Math.max(0, (now - lastFrameMs) / 1000));
-      lastFrameMs = now;
-
       const live = getLivePlaybackPosition();
-      const clockTarget =
-        dockClockRef.current.posSec + Math.max(0, (now - dockClockRef.current.atMs) / 1000);
-      const rawTarget =
-        live.positionSec > 0 && Math.abs(live.positionSec - clockTarget) < 2.5
-          ? live.positionSec
-          : clockTarget;
-
-      let rendered = dockClockRef.current.renderedPosSec;
-      const diff = rawTarget - rendered;
-      if (Math.abs(diff) > 1.2) {
-        rendered = rawTarget;
-      } else {
-        const rate = Math.max(0.82, Math.min(1.18, 1 + diff * 2.2));
-        rendered = Math.max(rendered, rendered + dt * rate);
-      }
-      const effDur = Math.max(1, live.durationSec || durationSec, rendered);
-      rendered = Math.min(effDur, rendered);
+      const effDur = Math.max(1, live.durationSec || durationSec);
+      const rawPos = Number.isFinite(live.positionSec)
+        ? live.positionSec
+        : dockClockRef.current.posSec;
+      const rendered = Math.max(0, Math.min(effDur, rawPos));
       dockClockRef.current.renderedPosSec = rendered;
 
       const pctStr = `${Math.max(0, Math.min(100, (rendered / effDur) * 100)).toFixed(4)}%`;

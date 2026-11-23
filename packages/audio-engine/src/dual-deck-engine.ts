@@ -155,6 +155,45 @@ export async function waitForAudioReady(
   });
 }
 
+async function playAudioWithTimeout(audio: HTMLAudioElement, timeoutMs = 3500): Promise<void> {
+  let p: unknown;
+  try {
+    p = audio.play();
+  } catch {
+    return;
+  }
+  if (!p || typeof (p as Promise<unknown>).then !== 'function') {
+    return;
+  }
+  const playPromise = p as Promise<unknown>;
+  playPromise.catch(() => {});
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    await Promise.race([
+      playPromise.then(
+        () => undefined,
+        () => undefined
+      ),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+        (timer as { unref?: () => void }).unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+export interface LivePlaybackSnapshot {
+  positionSec: number;
+  durationSec: number;
+  isPlaying: boolean;
+  isPaused: boolean;
+  isEnded: boolean;
+  isSeeking: boolean;
+  isTransitioning: boolean;
+}
+
 export class DualDeckAudioEngine implements IAudioEngine {
   private readonly resolveStreamUrlFn: (track: Track) => Promise<string>;
   private audioCtx: AudioContext | null = null;
@@ -182,9 +221,14 @@ export class DualDeckAudioEngine implements IAudioEngine {
   private activeTransitionType?: DjTransitionType;
   private transitionProgress01 = 0;
   private transitionTimer: ReturnType<typeof setInterval> | null = null;
+  private transitionSafetyTimer: ReturnType<typeof setTimeout> | null = null;
   private transitionRafId: number | null = null;
   private transitionResolve: (() => void) | null = null;
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
+  private eofFiredKey = '';
+  private lastObservedSrc = '';
+  private lastObservedTime = -1;
+  private lastProgressWallMs = 0;
 
   private userEqConfig: UserEqConfig = {
     enabled: true,
@@ -305,28 +349,71 @@ export class DualDeckAudioEngine implements IAudioEngine {
         const isBrowserAudio = typeof (audio as { readyState?: unknown }).readyState === 'number';
         if (!isBrowserAudio) return;
 
-        if (!audio.seeking && Number.isFinite(audio.currentTime) && audio.currentTime >= 0) {
-          this.positionSec = audio.currentTime;
-        }
         if (Number.isFinite(audio.duration) && audio.duration > 1) {
           this.durationSec = audio.duration;
         }
         const realDur =
-          Number.isFinite(audio.duration) && audio.duration > 10
+          Number.isFinite(audio.duration) && audio.duration > 1
             ? audio.duration
             : this.durationSec;
 
-        if (audio.ended || (realDur > 10 && this.positionSec >= realDur - 0.35)) {
-          this.isPlaying = false;
-          this.emitState();
-          for (const listener of this.endedListeners) {
-            listener(this.activeDeck);
-          }
+        const rawTime =
+          !audio.seeking && Number.isFinite(audio.currentTime) && audio.currentTime >= 0
+            ? audio.currentTime
+            : this.positionSec;
+        const curTime = realDur > 0 ? Math.min(rawTime, realDur) : rawTime;
+        this.positionSec = curTime;
+
+        const curSrc = audio.src || deck.track?.id || '';
+        const nowMs = Date.now();
+        if (curSrc !== this.lastObservedSrc || Math.abs(curTime - this.lastObservedTime) >= 0.04) {
+          this.lastObservedSrc = curSrc;
+          this.lastObservedTime = curTime;
+          this.lastProgressWallMs = nowMs;
+        }
+        const stalledMs = this.lastProgressWallMs > 0 ? nowMs - this.lastProgressWallMs : 0;
+
+        if (
+          audio.ended === true ||
+          (realDur > 4 && curTime >= realDur - 0.35) ||
+          (realDur > 8 &&
+            !audio.seeking &&
+            curTime >= realDur - 3.5 &&
+            (stalledMs >= 1600 || (audio.paused && stalledMs >= 650)))
+        ) {
+          this.triggerTrackEnded(this.activeDeck);
           return;
         }
         this.emitState();
-      }, 380);
+      }, 250);
       (this.watchdogTimer as { unref?: () => void }).unref?.();
+    }
+  }
+
+  private resetEofTracking(posSec = 0): void {
+    this.eofFiredKey = '';
+    this.lastObservedSrc = '';
+    this.lastObservedTime = posSec;
+    this.lastProgressWallMs = Date.now();
+  }
+
+  private triggerTrackEnded(deckId: DeckId): void {
+    if (this.activeDeck !== deckId || this.isTransitioning || !this.deckA || !this.deckB) {
+      return;
+    }
+    const deck = this.getDeck(deckId);
+    const key = `${deckId}::${deck.audio.src || deck.track?.id || ''}`;
+    if (this.eofFiredKey === key) {
+      return;
+    }
+    this.eofFiredKey = key;
+    this.isPlaying = false;
+    if (this.durationSec > 0 && this.positionSec > this.durationSec) {
+      this.positionSec = this.durationSec;
+    }
+    this.emitState();
+    for (const listener of this.endedListeners) {
+      listener(deckId);
     }
   }
 
@@ -364,27 +451,13 @@ export class DualDeckAudioEngine implements IAudioEngine {
       } as unknown as HTMLAudioElement;
     }
 
-    let eofFiredForSrc = '';
-    const fireEndedIfActive = () => {
-      if (this.activeDeck !== id || this.isTransitioning) {
-        return;
-      }
-      const curSrc = audio.src || id;
-      if (eofFiredForSrc === curSrc && !this.isPlaying) {
-        return;
-      }
-      eofFiredForSrc = curSrc;
-      this.isPlaying = false;
-      this.emitState();
-      for (const listener of this.endedListeners) {
-        listener(id);
-      }
-    };
-
     const syncDuration = () => {
       if (this.activeDeck !== id) return;
       if (Number.isFinite(audio.duration) && audio.duration > 1) {
         this.durationSec = audio.duration;
+        if (this.positionSec > this.durationSec) {
+          this.positionSec = this.durationSec;
+        }
         this.emitState();
       }
     };
@@ -394,32 +467,43 @@ export class DualDeckAudioEngine implements IAudioEngine {
 
     audio.addEventListener('timeupdate', () => {
       if (this.activeDeck === id) {
-        if (!audio.seeking && Number.isFinite(audio.currentTime)) {
-          this.positionSec = audio.currentTime;
-        }
         if (Number.isFinite(audio.duration) && audio.duration > 1) {
           this.durationSec = audio.duration;
-        } else if (this.positionSec + 0.5 > this.durationSec) {
-          this.durationSec = Math.ceil(this.positionSec + 12);
+        }
+        const realDur =
+          Number.isFinite(audio.duration) && audio.duration > 1
+            ? audio.duration
+            : this.durationSec;
+        if (!audio.seeking && Number.isFinite(audio.currentTime) && audio.currentTime >= 0) {
+          this.positionSec = realDur > 0 ? Math.min(audio.currentTime, realDur) : audio.currentTime;
         }
         this.emitState();
 
         if (
           !this.isTransitioning &&
           this.isPlaying &&
-          (audio.ended ||
-            (Number.isFinite(audio.duration) &&
-              audio.duration > 10 &&
-              this.positionSec >= audio.duration - 0.15 &&
-              audio.paused))
+          (audio.ended || (realDur > 4 && this.positionSec >= realDur - 0.25))
         ) {
-          fireEndedIfActive();
+          this.triggerTrackEnded(id);
         }
       }
     });
 
     audio.addEventListener('ended', () => {
-      fireEndedIfActive();
+      this.triggerTrackEnded(id);
+    });
+
+    audio.addEventListener('error', () => {
+      if (this.activeDeck === id && this.isPlaying && !this.isTransitioning) {
+        const realDur =
+          Number.isFinite(audio.duration) && audio.duration > 1
+            ? audio.duration
+            : this.durationSec;
+        const curPos = Number.isFinite(audio.currentTime) ? audio.currentTime : this.positionSec;
+        if (realDur > 4 && curPos >= realDur - 5) {
+          this.triggerTrackEnded(id);
+        }
+      }
     });
 
     return {
@@ -569,6 +653,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
     deck.audio.src = streamUrl;
     this.durationSec = track.durationSec > 0 ? track.durationSec : 195;
     this.positionSec = Math.max(0, startSec);
+    this.resetEofTracking(this.positionSec);
 
     try {
       deck.audio.currentTime = this.positionSec;
@@ -654,11 +739,8 @@ export class DualDeckAudioEngine implements IAudioEngine {
       }
     }
     const deck = this.getDeck(this.activeDeck);
-    try {
-      await deck.audio.play();
-    } catch {
-      // In headless/synthetic environments without audio device, still update state
-    }
+    await playAudioWithTimeout(deck.audio, 3500);
+    this.resetEofTracking(this.positionSec);
     this.isPlaying = true;
     this.emitState();
   }
@@ -677,6 +759,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
     }
     const safePos = Math.max(0, Math.min(this.durationSec || 3600, positionSec));
     this.positionSec = safePos;
+    this.resetEofTracking(safePos);
     if (this.deckA && this.deckB) {
       const deck = this.getDeck(this.activeDeck);
       try {
@@ -688,6 +771,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
         if (isBrowserAudio && realDur > 10 && safePos >= realDur - 0.8) {
           const clampedEndPos = Math.max(0, realDur - 1.4);
           this.positionSec = clampedEndPos;
+          this.resetEofTracking(clampedEndPos);
           deck.audio.currentTime = clampedEndPos;
         } else {
           deck.audio.currentTime = safePos;
@@ -833,319 +917,332 @@ export class DualDeckAudioEngine implements IAudioEngine {
     this.activeTransitionType = plan.transitionType;
     this.transitionProgress01 = 0;
 
-    const startRate = this.djModeConfig.tempoMatching
-      ? Math.max(0.96, Math.min(1.04, plan.tempoNudgeRate))
-      : 1.0;
-    incoming.audio.playbackRate = startRate;
-
-    const ch = plan.choreography;
-    const incomingTrimLinear = ch
-      ? Math.pow(10, Math.max(-5, Math.min(5, ch.loudnessTrimDb)) / 20)
-      : 1.0;
-
-    // Reset incoming DSP cleanly before fading in
-    this.resetDeckDsp(incoming, 0);
-    incoming.audio.playbackRate = startRate;
-    setAudioParamSmooth(incoming.trimGainNode?.gain, this.audioCtx, incomingTrimLinear, 0.01);
-    if (ch) {
-      setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -24, 0.01);
-      setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, ch.incomingVocalHoldDb, 0.01);
-      if (incoming.sweepFilterNode && ch.inLowPassStartHz < 11000) {
-        incoming.sweepFilterNode.type = 'lowpass';
-        incoming.sweepFilterNode.Q.value = 1.2;
-        setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, ch.inLowPassStartHz, 0.01);
-      }
-    } else if (plan.transitionType === 'eq_swap') {
-      setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -24, 0.01);
-      setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, -3, 0.01);
-    } else if (plan.transitionType === 'filter_sweep' && incoming.sweepFilterNode) {
-      incoming.sweepFilterNode.type = 'lowpass';
-      incoming.sweepFilterNode.Q.value = 1.25;
-      setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, 260, 0.01);
-    }
-
-    await waitForAudioReady(incoming.audio, Math.max(0, plan.cueInSec), 4200);
-
-    const ensureIncomingPlaying = () => {
-      if (!incoming.audio.paused) return;
-      try {
-        const p = incoming.audio.play();
-        if (p && typeof p.catch === 'function') {
-          p.catch(() => {});
-        }
-      } catch {
-        // ignore in headless tests
-      }
-    };
-
     try {
-      await incoming.audio.play();
-    } catch {
-      incoming.audio.addEventListener?.('canplay', ensureIncomingPlaying, { once: true });
-    }
-    if (incoming.audio.paused) {
-      incoming.audio.addEventListener?.('canplay', ensureIncomingPlaying, { once: true });
-    }
+      const startRate = this.djModeConfig.tempoMatching
+        ? Math.max(0.96, Math.min(1.04, plan.tempoNudgeRate))
+        : 1.0;
+      incoming.audio.playbackRate = startRate;
 
-    const outDur =
-      Number.isFinite(outgoing.audio.duration) && outgoing.audio.duration > 10
-        ? outgoing.audio.duration
-        : this.durationSec;
-    const outPos =
-      Number.isFinite(outgoing.audio.currentTime) && outgoing.audio.currentTime > 0
-        ? outgoing.audio.currentTime
-        : this.positionSec;
-    const outRemainingSec =
-      outDur > 10 && outPos > 0
-        ? Math.max(1.2, outDur - outPos + 0.6)
-        : plan.transitionDurationSec;
-    const effectiveTransSec = Math.max(
-      1.2,
-      Math.min(plan.transitionDurationSec, outRemainingSec)
-    );
+      const ch = plan.choreography;
+      const incomingTrimLinear = ch
+        ? Math.pow(10, Math.max(-5, Math.min(5, ch.loudnessTrimDb)) / 20)
+        : 1.0;
 
-    const totalMs = Math.max(250, Math.min(14_000, Math.round(effectiveTransSec * 1000)));
-    const estFromBpm = Math.max(
-      65,
-      Math.min(175, (240 * plan.transitionBars) / Math.max(2, plan.transitionDurationSec))
-    );
-    const beatDelaySec = Math.max(
-      0.16,
-      Math.min(0.85, (60 / estFromBpm) * (plan.echoSubdivision === 0.75 ? 0.75 : 0.5))
-    );
-
-    if (outgoing.delayNode) {
-      outgoing.delayNode.delayTime.value = beatDelaySec;
-    }
-
-    const applyCurve = (pRaw: number) => {
-      const p = Math.max(0, Math.min(1, pRaw));
-      this.transitionProgress01 = Number(p.toFixed(2));
-
-      let outGain = Math.cos(p * 0.5 * Math.PI);
-      let inGain = Math.sin(p * 0.5 * Math.PI);
-
+      // Reset incoming DSP cleanly before fading in
+      this.resetDeckDsp(incoming, 0);
+      incoming.audio.playbackRate = startRate;
+      setAudioParamSmooth(incoming.trimGainNode?.gain, this.audioCtx, incomingTrimLinear, 0.01);
       if (ch) {
-        // Continuous adaptive 3-stem DJ sculpting tailored specifically for this song pair
-        const swapStart = Math.max(0.15, ch.bassSwapPoint01 - ch.bassSwapWidth01 * 0.5);
-        const swapEnd = Math.min(0.88, ch.bassSwapPoint01 + ch.bassSwapWidth01 * 0.5);
-        const swapU =
-          p <= swapStart
-            ? 0
-            : p >= swapEnd
-              ? 1
-              : (p - swapStart) / Math.max(0.05, swapEnd - swapStart);
-
-        // Low-stem swap (sub-bass / kick clean handover with zero phase mud)
-        setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -24 * swapU);
-        setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -24 * (1 - swapU));
-
-        // High-stem percussion / hi-hat entry
-        const hiLeadU = Math.min(1, p / Math.max(0.2, 0.65 - ch.highStemLead01 * 0.5));
-        setAudioParamSmooth(incoming.highEqNode?.gain, this.audioCtx, -6 * (1 - hiLeadU));
-        setAudioParamSmooth(outgoing.highEqNode?.gain, this.audioCtx, -8 * Math.pow(p, 1.4));
-
-        // Mid vocal-pocket sculpting (carves outgoing vocal presence while lifting incoming lead after bass swap)
-        const midCarveFactor = Math.sin(Math.min(1, p / 0.85) * Math.PI * 0.7);
-        setAudioParamSmooth(
-          outgoing.midEqNode?.gain,
-          this.audioCtx,
-          ch.vocalCarveDb * midCarveFactor
-        );
-        const inVocalOpen = p < swapStart ? 0 : Math.min(1, (p - swapStart) / (1 - swapStart));
-        setAudioParamSmooth(
-          incoming.midEqNode?.gain,
-          this.audioCtx,
-          ch.incomingVocalHoldDb * (1 - inVocalOpen)
-        );
-
-        // Filter choreography
-        if (outgoing.sweepFilterNode && ch.outHighPassPeakHz > 80) {
-          outgoing.sweepFilterNode.type = 'highpass';
-          outgoing.sweepFilterNode.Q.value = plan.transitionType === 'filter_sweep' ? 1.45 : 0.9;
-          const hpFreq = 32 * Math.pow(ch.outHighPassPeakHz / 32, Math.pow(p, 1.25));
-          setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, hpFreq);
-        }
+        setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -24, 0.01);
+        setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, ch.incomingVocalHoldDb, 0.01);
         if (incoming.sweepFilterNode && ch.inLowPassStartHz < 11000) {
           incoming.sweepFilterNode.type = 'lowpass';
           incoming.sweepFilterNode.Q.value = 1.2;
-          const lpRatio = Math.min(1, p / 0.78);
-          const lpFreq =
-            ch.inLowPassStartHz * Math.pow(20000 / Math.max(120, ch.inLowPassStartHz), lpRatio);
-          setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, lpFreq);
-        }
-
-        // Bandpassed BPM dub echo send (strictly <= 0.78 feedback)
-        if (plan.transitionType === 'echo_out' || ch.vocalClashAvoided) {
-          const sendCurve = p < 0.45 ? (p / 0.45) * ch.echoSendPeak : Math.max(0, ch.echoSendPeak * (1 - (p - 0.45) / 0.35));
-          const fbCurve = Math.min(0.75, ch.echoFeedbackPeak * (1 - Math.max(0, p - 0.5) / 0.5));
-          setAudioParamSmooth(outgoing.delaySendNode?.gain, this.audioCtx, sendCurve, 0.025);
-          setAudioParamSmooth(outgoing.delayFeedbackNode?.gain, this.audioCtx, fbCurve, 0.025);
-        }
-
-        // Gain curve adapts smoothly between harmonic club blend vs crisp echo-out cut
-        if (plan.transitionType === 'echo_out') {
-          outGain = p < 0.62 ? Math.cos((p / 0.62) * 0.5 * Math.PI) : 0;
-          inGain = p < 0.2 ? 0 : Math.min(1, Math.sin(Math.min(1, (p - 0.2) / 0.52) * 0.5 * Math.PI));
-        } else {
-          outGain = p < 0.55 ? 1 - 0.18 * (p / 0.55) : 0.82 * Math.cos(((p - 0.55) / 0.45) * 0.5 * Math.PI);
-          inGain = p < 0.55 ? Math.sin((p / 0.55) * 0.5 * Math.PI) * 0.92 : 0.92 + 0.08 * ((p - 0.55) / 0.45);
+          setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, ch.inLowPassStartHz, 0.01);
         }
       } else if (plan.transitionType === 'eq_swap') {
-        // Phase-locked club blend: gradual bring-in -> punchy midpoint bass swap -> clean exit
-        if (p < 0.44) {
-          const u = p / 0.44;
-          outGain = 1 - u * 0.1;
-          inGain = Math.sin(u * 0.5 * Math.PI) * 0.88;
-          setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -2 * u);
-          setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -24);
-          setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, -3 * (1 - u * 0.4));
-        } else if (p < 0.62) {
-          const u = (p - 0.44) / 0.18;
-          outGain = 0.9 - u * 0.12;
-          inGain = 0.88 + u * 0.12;
-          setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -2 - u * 22);
-          setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -24 + u * 24);
-          setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, -1.8 * (1 - u));
-        } else {
-          const u = (p - 0.62) / 0.38;
-          outGain = 0.78 * Math.cos(u * 0.5 * Math.PI);
-          inGain = 1.0;
-          setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -24);
-          setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, 0);
-          setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, 0);
+        setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -24, 0.01);
+        setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, -3, 0.01);
+      } else if (plan.transitionType === 'filter_sweep' && incoming.sweepFilterNode) {
+        incoming.sweepFilterNode.type = 'lowpass';
+        incoming.sweepFilterNode.Q.value = 1.25;
+        setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, 260, 0.01);
+      }
+
+      await waitForAudioReady(incoming.audio, Math.max(0, plan.cueInSec), 4200);
+      if (!this.isTransitioning) return;
+
+      const ensureIncomingPlaying = () => {
+        if (!incoming.audio.paused) return;
+        try {
+          const p = incoming.audio.play();
+          if (p && typeof p.catch === 'function') {
+            p.catch(() => {});
+          }
+        } catch {
+          // ignore in headless tests
+        }
+      };
+
+      await playAudioWithTimeout(incoming.audio, 3500);
+      if (!this.isTransitioning) return;
+      if (incoming.audio.paused) {
+        incoming.audio.addEventListener?.('canplay', ensureIncomingPlaying, { once: true });
+      }
+
+      const outDur =
+        Number.isFinite(outgoing.audio.duration) && outgoing.audio.duration > 10
+          ? outgoing.audio.duration
+          : this.durationSec;
+      const outPos =
+        Number.isFinite(outgoing.audio.currentTime) && outgoing.audio.currentTime > 0
+          ? outgoing.audio.currentTime
+          : this.positionSec;
+      const outRemainingSec =
+        outDur > 10 && outPos > 0
+          ? Math.max(1.2, outDur - outPos + 0.6)
+          : plan.transitionDurationSec;
+      const effectiveTransSec = Math.max(
+        1.2,
+        Math.min(plan.transitionDurationSec, outRemainingSec)
+      );
+
+      const totalMs = Math.max(250, Math.min(14_000, Math.round(effectiveTransSec * 1000)));
+      const estFromBpm = Math.max(
+        65,
+        Math.min(175, (240 * plan.transitionBars) / Math.max(2, plan.transitionDurationSec))
+      );
+      const beatDelaySec = Math.max(
+        0.16,
+        Math.min(0.85, (60 / estFromBpm) * (plan.echoSubdivision === 0.75 ? 0.75 : 0.5))
+      );
+
+      if (outgoing.delayNode) {
+        outgoing.delayNode.delayTime.value = beatDelaySec;
+      }
+
+      const applyCurve = (pRaw: number) => {
+        const p = Math.max(0, Math.min(1, pRaw));
+        this.transitionProgress01 = Number(p.toFixed(2));
+
+        let outGain = Math.cos(p * 0.5 * Math.PI);
+        let inGain = Math.sin(p * 0.5 * Math.PI);
+
+        if (ch) {
+          // Continuous adaptive 3-stem DJ sculpting tailored specifically for this song pair
+          const swapStart = Math.max(0.15, ch.bassSwapPoint01 - ch.bassSwapWidth01 * 0.5);
+          const swapEnd = Math.min(0.88, ch.bassSwapPoint01 + ch.bassSwapWidth01 * 0.5);
+          const swapU =
+            p <= swapStart
+              ? 0
+              : p >= swapEnd
+                ? 1
+                : (p - swapStart) / Math.max(0.05, swapEnd - swapStart);
+
+          // Low-stem swap (sub-bass / kick clean handover with zero phase mud)
+          setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -24 * swapU);
+          setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -24 * (1 - swapU));
+
+          // High-stem percussion / hi-hat entry
+          const hiLeadU = Math.min(1, p / Math.max(0.2, 0.65 - ch.highStemLead01 * 0.5));
+          setAudioParamSmooth(incoming.highEqNode?.gain, this.audioCtx, -6 * (1 - hiLeadU));
+          setAudioParamSmooth(outgoing.highEqNode?.gain, this.audioCtx, -8 * Math.pow(p, 1.4));
+
+          // Mid vocal-pocket sculpting (carves outgoing vocal presence while lifting incoming lead after bass swap)
+          const midCarveFactor = Math.sin(Math.min(1, p / 0.85) * Math.PI * 0.7);
+          setAudioParamSmooth(
+            outgoing.midEqNode?.gain,
+            this.audioCtx,
+            ch.vocalCarveDb * midCarveFactor
+          );
+          const inVocalOpen = p < swapStart ? 0 : Math.min(1, (p - swapStart) / (1 - swapStart));
+          setAudioParamSmooth(
+            incoming.midEqNode?.gain,
+            this.audioCtx,
+            ch.incomingVocalHoldDb * (1 - inVocalOpen)
+          );
+
+          // Filter choreography
+          if (outgoing.sweepFilterNode && ch.outHighPassPeakHz > 80) {
+            outgoing.sweepFilterNode.type = 'highpass';
+            outgoing.sweepFilterNode.Q.value = plan.transitionType === 'filter_sweep' ? 1.45 : 0.9;
+            const hpFreq = 32 * Math.pow(ch.outHighPassPeakHz / 32, Math.pow(p, 1.25));
+            setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, hpFreq);
+          }
+          if (incoming.sweepFilterNode && ch.inLowPassStartHz < 11000) {
+            incoming.sweepFilterNode.type = 'lowpass';
+            incoming.sweepFilterNode.Q.value = 1.2;
+            const lpRatio = Math.min(1, p / 0.78);
+            const lpFreq =
+              ch.inLowPassStartHz * Math.pow(20000 / Math.max(120, ch.inLowPassStartHz), lpRatio);
+            setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, lpFreq);
+          }
+
+          // Bandpassed BPM dub echo send (strictly <= 0.78 feedback)
+          if (plan.transitionType === 'echo_out' || ch.vocalClashAvoided) {
+            const sendCurve = p < 0.45 ? (p / 0.45) * ch.echoSendPeak : Math.max(0, ch.echoSendPeak * (1 - (p - 0.45) / 0.35));
+            const fbCurve = Math.min(0.75, ch.echoFeedbackPeak * (1 - Math.max(0, p - 0.5) / 0.5));
+            setAudioParamSmooth(outgoing.delaySendNode?.gain, this.audioCtx, sendCurve, 0.025);
+            setAudioParamSmooth(outgoing.delayFeedbackNode?.gain, this.audioCtx, fbCurve, 0.025);
+          }
+
+          // Gain curve adapts smoothly between harmonic club blend vs crisp echo-out cut
+          if (plan.transitionType === 'echo_out') {
+            outGain = p < 0.62 ? Math.cos((p / 0.62) * 0.5 * Math.PI) : 0;
+            inGain = p < 0.2 ? 0 : Math.min(1, Math.sin(Math.min(1, (p - 0.2) / 0.52) * 0.5 * Math.PI));
+          } else {
+            outGain = p < 0.55 ? 1 - 0.18 * (p / 0.55) : 0.82 * Math.cos(((p - 0.55) / 0.45) * 0.5 * Math.PI);
+            inGain = p < 0.55 ? Math.sin((p / 0.55) * 0.5 * Math.PI) * 0.92 : 0.92 + 0.08 * ((p - 0.55) / 0.45);
+          }
+        } else if (plan.transitionType === 'eq_swap') {
+          // Phase-locked club blend: gradual bring-in -> punchy midpoint bass swap -> clean exit
+          if (p < 0.44) {
+            const u = p / 0.44;
+            outGain = 1 - u * 0.1;
+            inGain = Math.sin(u * 0.5 * Math.PI) * 0.88;
+            setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -2 * u);
+            setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -24);
+            setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, -3 * (1 - u * 0.4));
+          } else if (p < 0.62) {
+            const u = (p - 0.44) / 0.18;
+            outGain = 0.9 - u * 0.12;
+            inGain = 0.88 + u * 0.12;
+            setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -2 - u * 22);
+            setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -24 + u * 24);
+            setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, -1.8 * (1 - u));
+          } else {
+            const u = (p - 0.62) / 0.38;
+            outGain = 0.78 * Math.cos(u * 0.5 * Math.PI);
+            inGain = 1.0;
+            setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -24);
+            setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, 0);
+            setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, 0);
+            if (outgoing.sweepFilterNode) {
+              outgoing.sweepFilterNode.type = 'highpass';
+              outgoing.sweepFilterNode.Q.value = 0.9;
+              setAudioParamSmooth(
+                outgoing.sweepFilterNode.frequency,
+                this.audioCtx,
+                35 + u * 340
+              );
+            }
+          }
+        } else if (plan.transitionType === 'filter_sweep') {
+          // Smooth exponential high-pass exit & low-pass warm reveal
           if (outgoing.sweepFilterNode) {
             outgoing.sweepFilterNode.type = 'highpass';
-            outgoing.sweepFilterNode.Q.value = 0.9;
-            setAudioParamSmooth(
-              outgoing.sweepFilterNode.frequency,
-              this.audioCtx,
-              35 + u * 340
-            );
+            outgoing.sweepFilterNode.Q.value = 1.5;
+            const outFreq = 35 * Math.pow(2400 / 35, Math.pow(p, 1.35));
+            setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, outFreq);
           }
-        }
-      } else if (plan.transitionType === 'filter_sweep') {
-        // Smooth exponential high-pass exit & low-pass warm reveal
-        if (outgoing.sweepFilterNode) {
-          outgoing.sweepFilterNode.type = 'highpass';
-          outgoing.sweepFilterNode.Q.value = 1.5;
-          const outFreq = 35 * Math.pow(2400 / 35, Math.pow(p, 1.35));
-          setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, outFreq);
-        }
-        setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -12 * p);
-        if (incoming.sweepFilterNode) {
-          incoming.sweepFilterNode.type = 'lowpass';
-          incoming.sweepFilterNode.Q.value = 1.25;
-          const openRatio = Math.min(1, p / 0.78);
-          const inFreq = 260 * Math.pow(20000 / 260, openRatio);
-          setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, inFreq);
-        }
-      } else if (plan.transitionType === 'echo_out') {
-        // BPM-synced dub echo wash on outgoing phrase while incoming track drops cleanly
-        outGain = p < 0.6 ? Math.cos((p / 0.6) * 0.5 * Math.PI) : 0;
-        inGain = p < 0.25 ? 0 : Math.min(1, Math.sin(Math.min(1, (p - 0.25) / 0.5) * 0.5 * Math.PI));
-
-        const sendVal =
-          p < 0.42 ? (p / 0.42) * 0.58 : Math.max(0, 0.58 * (1 - (p - 0.42) / 0.2));
-        // Feedback strictly capped <= 0.78 invariant
-        const fbVal =
-          p < 0.48
-            ? 0.28 + (p / 0.48) * 0.34
-            : Math.max(0, 0.62 * (1 - (p - 0.48) / 0.52));
-
-        setAudioParamSmooth(outgoing.delaySendNode?.gain, this.audioCtx, sendVal, 0.025);
-        setAudioParamSmooth(outgoing.delayFeedbackNode?.gain, this.audioCtx, Math.min(0.75, fbVal), 0.025);
-      }
-
-      setAudioParamSmooth(outgoing.gainNode?.gain, this.audioCtx, outGain);
-      setAudioParamSmooth(incoming.gainNode?.gain, this.audioCtx, inGain);
-      if (!this.audioCtx) {
-        const masterGain = volumeToPerceptualGain(this.volume);
-        outgoing.audio.volume = masterGain * outGain;
-        incoming.audio.volume = masterGain * inGain;
-      }
-
-      if (this.djModeConfig.tempoMatching && Math.abs(startRate - 1.0) > 0.001) {
-        const glide = p <= 0.5 ? 0 : (p - 0.5) * 2;
-        incoming.audio.playbackRate = Number((startRate + (1.0 - startRate) * glide).toFixed(3));
-      }
-
-      this.emitState();
-    };
-
-    await new Promise<void>((resolve) => {
-      let settled = false;
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-        if (this.transitionTimer) {
-          clearInterval(this.transitionTimer);
-          this.transitionTimer = null;
-        }
-        if (this.transitionRafId !== null && typeof cancelAnimationFrame === 'function') {
-          cancelAnimationFrame(this.transitionRafId);
-          this.transitionRafId = null;
-        }
-        this.transitionResolve = null;
-
-        outgoing.audio.pause();
-        this.resetDeckDsp(outgoing, 0);
-        this.resetDeckDsp(incoming, 1.0);
-        this.activeDeck = incomingId;
-        this.isTransitioning = false;
-        this.activeTransitionType = undefined;
-        this.transitionProgress01 = 1;
-        this.isPlaying = true;
-        if (incoming.audio.paused && typeof incoming.audio.play === 'function') {
-          try {
-            void incoming.audio.play().catch(() => {});
-          } catch {
-            // ignore
+          setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -12 * p);
+          if (incoming.sweepFilterNode) {
+            incoming.sweepFilterNode.type = 'lowpass';
+            incoming.sweepFilterNode.Q.value = 1.25;
+            const openRatio = Math.min(1, p / 0.78);
+            const inFreq = 260 * Math.pow(20000 / 260, openRatio);
+            setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, inFreq);
           }
+        } else if (plan.transitionType === 'echo_out') {
+          // BPM-synced dub echo wash on outgoing phrase while incoming track drops cleanly
+          outGain = p < 0.6 ? Math.cos((p / 0.6) * 0.5 * Math.PI) : 0;
+          inGain = p < 0.25 ? 0 : Math.min(1, Math.sin(Math.min(1, (p - 0.25) / 0.5) * 0.5 * Math.PI));
+
+          const sendVal =
+            p < 0.42 ? (p / 0.42) * 0.58 : Math.max(0, 0.58 * (1 - (p - 0.42) / 0.2));
+          // Feedback strictly capped <= 0.78 invariant
+          const fbVal =
+            p < 0.48
+              ? 0.28 + (p / 0.48) * 0.34
+              : Math.max(0, 0.62 * (1 - (p - 0.48) / 0.52));
+
+          setAudioParamSmooth(outgoing.delaySendNode?.gain, this.audioCtx, sendVal, 0.025);
+          setAudioParamSmooth(outgoing.delayFeedbackNode?.gain, this.audioCtx, Math.min(0.75, fbVal), 0.025);
         }
-        if (incoming.track) {
-          this.durationSec =
-            Number.isFinite(incoming.audio.duration) && incoming.audio.duration > 10
-              ? incoming.audio.duration
-              : incoming.track.durationSec;
+
+        setAudioParamSmooth(outgoing.gainNode?.gain, this.audioCtx, outGain);
+        setAudioParamSmooth(incoming.gainNode?.gain, this.audioCtx, inGain);
+        if (!this.audioCtx) {
+          const masterGain = volumeToPerceptualGain(this.volume);
+          outgoing.audio.volume = masterGain * outGain;
+          incoming.audio.volume = masterGain * inGain;
         }
-        const livePos =
-          Number.isFinite(incoming.audio.currentTime) && incoming.audio.currentTime > 0
-            ? incoming.audio.currentTime
-            : plan.cueInSec + plan.transitionDurationSec;
-        this.positionSec = livePos;
+
+        if (this.djModeConfig.tempoMatching && Math.abs(startRate - 1.0) > 0.001) {
+          const glide = p <= 0.5 ? 0 : (p - 0.5) * 2;
+          incoming.audio.playbackRate = Number((startRate + (1.0 - startRate) * glide).toFixed(3));
+        }
+
         this.emitState();
-        resolve();
       };
 
-      this.transitionResolve = () => {
-        if (settled) return;
-        settled = true;
-        this.transitionResolve = null;
-        resolve();
-      };
-
-      const startedAt = Date.now();
-      const stepMs = Math.max(15, Math.min(25, Math.floor(totalMs / 16)));
-      this.transitionTimer = setInterval(() => {
-        if (settled) return;
-        const p = Math.min(1, (Date.now() - startedAt) / totalMs);
-        applyCurve(p);
-        if (p >= 1) {
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
           if (this.transitionTimer) {
             clearInterval(this.transitionTimer);
             this.transitionTimer = null;
           }
+          if (this.transitionSafetyTimer) {
+            clearTimeout(this.transitionSafetyTimer);
+            this.transitionSafetyTimer = null;
+          }
+          if (this.transitionRafId !== null && typeof cancelAnimationFrame === 'function') {
+            cancelAnimationFrame(this.transitionRafId);
+            this.transitionRafId = null;
+          }
+          this.transitionResolve = null;
+
+          outgoing.audio.pause();
+          this.resetDeckDsp(outgoing, 0);
+          this.resetDeckDsp(incoming, 1.0);
+          this.activeDeck = incomingId;
+          this.isTransitioning = false;
+          this.activeTransitionType = undefined;
+          this.transitionProgress01 = 1;
+          this.isPlaying = true;
+          if (incoming.audio.paused && typeof incoming.audio.play === 'function') {
+            void playAudioWithTimeout(incoming.audio, 2500);
+          }
+          if (incoming.track) {
+            this.durationSec =
+              Number.isFinite(incoming.audio.duration) && incoming.audio.duration > 10
+                ? incoming.audio.duration
+                : incoming.track.durationSec;
+          }
+          const livePos =
+            Number.isFinite(incoming.audio.currentTime) && incoming.audio.currentTime > 0
+              ? incoming.audio.currentTime
+              : plan.cueInSec + plan.transitionDurationSec;
+          this.positionSec = this.durationSec > 0 ? Math.min(this.durationSec, livePos) : livePos;
+          this.resetEofTracking(this.positionSec);
+          this.emitState();
+          resolve();
+        };
+
+        this.transitionResolve = () => {
+          if (settled) return;
+          settled = true;
+          this.transitionResolve = null;
+          resolve();
+        };
+
+        this.transitionSafetyTimer = setTimeout(() => {
           finish();
-        }
-      }, stepMs);
-    });
+        }, totalMs + 1200);
+        (this.transitionSafetyTimer as { unref?: () => void }).unref?.();
+
+        const startedAt = Date.now();
+        const stepMs = Math.max(15, Math.min(25, Math.floor(totalMs / 16)));
+        this.transitionTimer = setInterval(() => {
+          if (settled) return;
+          const p = Math.min(1, (Date.now() - startedAt) / totalMs);
+          applyCurve(p);
+          if (p >= 1) {
+            if (this.transitionTimer) {
+              clearInterval(this.transitionTimer);
+              this.transitionTimer = null;
+            }
+            finish();
+          }
+        }, stepMs);
+      });
+    } catch (err) {
+      this.cancelActiveTransition();
+      throw err;
+    }
   }
 
   public cancelActiveTransition(): void {
     if (this.transitionTimer) {
       clearInterval(this.transitionTimer);
       this.transitionTimer = null;
+    }
+    if (this.transitionSafetyTimer) {
+      clearTimeout(this.transitionSafetyTimer);
+      this.transitionSafetyTimer = null;
     }
     if (this.transitionRafId !== null && typeof cancelAnimationFrame === 'function') {
       cancelAnimationFrame(this.transitionRafId);
@@ -1193,14 +1290,37 @@ export class DualDeckAudioEngine implements IAudioEngine {
   }
 
   public getLivePositionSec(): number {
+    let raw = this.positionSec;
     if (this.deckA && this.deckB) {
       const deck = this.getDeck(this.activeDeck);
       const t = deck.audio.currentTime;
       if (!deck.audio.seeking && Number.isFinite(t) && t >= 0) {
-        return t;
+        raw = t;
       }
     }
-    return this.positionSec;
+    return this.durationSec > 0 ? Math.max(0, Math.min(this.durationSec, raw)) : Math.max(0, raw);
+  }
+
+  public getLivePlaybackSnapshot(): LivePlaybackSnapshot {
+    const deck = this.deckA && this.deckB ? this.getDeck(this.activeDeck) : null;
+    const audio = deck?.audio;
+    const audioDur =
+      audio && Number.isFinite(audio.duration) && audio.duration > 1 ? audio.duration : 0;
+    const dur = audioDur > 0 ? audioDur : this.durationSec;
+    let rawPos = this.positionSec;
+    if (audio && !audio.seeking && Number.isFinite(audio.currentTime) && audio.currentTime >= 0) {
+      rawPos = audio.currentTime;
+    }
+    const clampedPos = dur > 0 ? Math.max(0, Math.min(dur, rawPos)) : Math.max(0, rawPos);
+    return {
+      positionSec: clampedPos,
+      durationSec: dur,
+      isPlaying: this.isPlaying,
+      isPaused: audio ? Boolean(audio.paused) : !this.isPlaying,
+      isEnded: audio ? Boolean(audio.ended) : false,
+      isSeeking: audio ? Boolean(audio.seeking) : false,
+      isTransitioning: this.isTransitioning,
+    };
   }
 
   public getState(): AudioEngineState {

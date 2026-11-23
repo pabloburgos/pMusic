@@ -152,8 +152,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="4"
-    android:versionName="0.4.0">
+    android:versionCode="5"
+    android:versionName="0.5.0">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -250,6 +250,7 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.View;
 import android.view.Window;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -264,22 +265,119 @@ import org.json.JSONObject;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.text.Normalizer;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class MainActivity extends Activity {
+    private static final String YT_IOS_UA = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)";
+    private static final String YT_WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+    private static final long STREAM_CACHE_TTL_MS = 90L * 60L * 1000L;
+    private static final Pattern YT_ID_PATTERN = Pattern.compile("^[a-zA-Z0-9_-]{11}$");
+    private static final Pattern BAD_VERSION_PATTERN = Pattern.compile("(karaoke|remix|live|en vivo|cover|reaction|sped up|slowed|nightcore|instrumental|letra|lyrics|tutorial|8d audio|reverb)");
+    private static final Pattern TITLE_NOISE_PATTERN = Pattern.compile("\\\\((?:feat\\\\.|ft\\\\.|with|prod\\\\.|official|video|audio|lyric|remix|en vivo|live).*?\\\\)|\\\\[(?:official|video|audio|lyric|remix|hd|4k).*?\\\\]", Pattern.CASE_INSENSITIVE);
+    private static final Pattern DURATION_TOKEN_PATTERN = Pattern.compile("^\\\\d{1,2}:\\\\d{2}(?::\\\\d{2})?$");
+
+    private static final class ResolvedStream {
+        final String url;
+        final String mime;
+        final String userAgent;
+        final long expiresAtMs;
+
+        ResolvedStream(String url, String mime, String userAgent, long expiresAtMs) {
+            this.url = url;
+            this.mime = mime;
+            this.userAgent = userAgent;
+            this.expiresAtMs = expiresAtMs;
+        }
+    }
+
+    private static final class Candidate {
+        final String videoId;
+        final int score;
+
+        Candidate(String videoId, int score) {
+            this.videoId = videoId;
+            this.score = score;
+        }
+    }
+
+    private static final class HttpStreamWrapper extends InputStream {
+        private final HttpURLConnection conn;
+        private final InputStream delegate;
+
+        HttpStreamWrapper(HttpURLConnection conn, InputStream delegate) {
+            this.conn = conn;
+            this.delegate = delegate;
+        }
+
+        @Override
+        public int read() throws IOException {
+            return delegate.read();
+        }
+
+        @Override
+        public int read(byte[] b) throws IOException {
+            return delegate.read(b);
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws IOException {
+            return delegate.read(b, off, len);
+        }
+
+        @Override
+        public long skip(long n) throws IOException {
+            return delegate.skip(n);
+        }
+
+        @Override
+        public int available() throws IOException {
+            return delegate.available();
+        }
+
+        @Override
+        public void close() throws IOException {
+            try {
+                delegate.close();
+            } finally {
+                conn.disconnect();
+            }
+        }
+    }
+
     private WebView webView;
     private byte[] syntheticWavBytes;
     private final Object streamCacheLock = new Object();
     private String lastStreamId;
     private byte[] lastStreamBytes;
     private String lastStreamMime;
+    private final Map<String, ResolvedStream> fullStreamCache = new LinkedHashMap<String, ResolvedStream>(32, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, ResolvedStream> eldest) {
+            return size() > 24;
+        }
+    };
+    private final Map<String, Object> keyLocks = new HashMap<String, Object>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -295,6 +393,7 @@ public class MainActivity extends Activity {
 
         webView = new WebView(this);
         webView.setBackgroundColor(Color.parseColor("#070709"));
+        webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -304,6 +403,7 @@ public class MainActivity extends Activity {
         settings.setAllowContentAccess(true);
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(true);
+        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
         if (Build.VERSION.SDK_INT >= 17) {
             settings.setMediaPlaybackRequiresUserGesture(false);
         }
@@ -351,6 +451,34 @@ public class MainActivity extends Activity {
 
                     if (path.startsWith("/api/stream/")) {
                         String rawTrackId = Uri.decode(path.substring("/api/stream/".length()));
+                        String qTitle = uri.getQueryParameter("title");
+                        String qArtist = uri.getQueryParameter("artist");
+                        String qDurStr = uri.getQueryParameter("durationSec");
+                        int qDurSec = 0;
+                        if (qDurStr != null && !qDurStr.trim().isEmpty()) {
+                            try {
+                                qDurSec = Math.round(Float.parseFloat(qDurStr.trim()));
+                            } catch (Exception ignored) {
+                            }
+                        }
+
+                        String cacheKey = (rawTrackId != null ? rawTrackId : "") + "::" + (qTitle != null ? qTitle.trim() : "");
+                        ResolvedStream fullStream = getOrResolveFullStream(cacheKey, rawTrackId, qTitle, qArtist, qDurSec);
+                        if (fullStream != null) {
+                            WebResourceResponse ytResp = proxyStreamResponse(
+                                    fullStream,
+                                    cacheKey,
+                                    rawTrackId,
+                                    qTitle,
+                                    qArtist,
+                                    qDurSec,
+                                    corsHeaders,
+                                    request.getRequestHeaders(),
+                                    Build.VERSION.SDK_INT >= 21 ? request.getMethod() : "GET"
+                            );
+                            if (ytResp != null) return ytResp;
+                        }
+
                         byte[] audioBytes = null;
                         String audioMime = "audio/wav";
 
@@ -388,8 +516,6 @@ public class MainActivity extends Activity {
                         }
 
                         if (audioBytes == null) {
-                            String qTitle = uri.getQueryParameter("title");
-                            String qArtist = uri.getQueryParameter("artist");
                             if (qTitle != null && !qTitle.trim().isEmpty()) {
                                 try {
                                     String rawQuery = (qArtist != null && !qArtist.trim().isEmpty() ? qArtist.trim() + " " : "") + qTitle.trim();
@@ -464,6 +590,585 @@ public class MainActivity extends Activity {
         webView.loadUrl("https://appassets.pmusic.local/index.html");
     }
 
+    private Object lockForKey(String key) {
+        synchronized (keyLocks) {
+            Object lock = keyLocks.get(key);
+            if (lock == null) {
+                lock = new Object();
+                if (keyLocks.size() > 128) keyLocks.clear();
+                keyLocks.put(key, lock);
+            }
+            return lock;
+        }
+    }
+
+    private ResolvedStream getOrResolveFullStream(String cacheKey, String rawTrackId, String qTitle, String qArtist, int qDurationSec) {
+        long now = System.currentTimeMillis();
+        synchronized (fullStreamCache) {
+            ResolvedStream cached = fullStreamCache.get(cacheKey);
+            if (cached != null && cached.expiresAtMs > now + 60000L) {
+                return cached;
+            }
+        }
+        synchronized (lockForKey(cacheKey)) {
+            long now2 = System.currentTimeMillis();
+            synchronized (fullStreamCache) {
+                ResolvedStream cached = fullStreamCache.get(cacheKey);
+                if (cached != null && cached.expiresAtMs > now2 + 60000L) {
+                    return cached;
+                }
+            }
+            ResolvedStream resolved = resolveFullLengthStream(rawTrackId, qTitle, qArtist, qDurationSec);
+            if (resolved != null) {
+                synchronized (fullStreamCache) {
+                    fullStreamCache.put(cacheKey, resolved);
+                }
+            }
+            return resolved;
+        }
+    }
+
+    private ResolvedStream resolveFullLengthStream(String rawTrackId, String qTitle, String qArtist, int qDurationSec) {
+        try {
+            if (rawTrackId != null && YT_ID_PATTERN.matcher(rawTrackId).matches()) {
+                ResolvedStream direct = fetchYoutubeIosPlayerStream(rawTrackId);
+                if (direct != null) return direct;
+            }
+
+            String title = qTitle != null ? qTitle.trim() : "";
+            String artist = qArtist != null ? qArtist.trim() : "";
+            int targetDur = qDurationSec;
+
+            if (title.isEmpty() && rawTrackId != null && rawTrackId.startsWith("dz:")) {
+                String dzId = rawTrackId.substring(3);
+                byte[] metaBytes = fetchRemoteBytes("https://api.deezer.com/track/" + dzId);
+                if (metaBytes != null) {
+                    JSONObject obj = new JSONObject(new String(metaBytes, StandardCharsets.UTF_8));
+                    title = obj.optString("title", "").trim();
+                    if (targetDur <= 0) targetDur = obj.optInt("duration", 0);
+                    JSONObject artObj = obj.optJSONObject("artist");
+                    if (artObj != null && artist.isEmpty()) {
+                        artist = artObj.optString("name", "").trim();
+                    }
+                }
+            }
+            if (title.isEmpty()) return null;
+            if (targetDur <= 0) targetDur = 200;
+
+            String strippedTitle = TITLE_NOISE_PATTERN.matcher(title).replaceAll(" ").replaceAll("\\\\s+", " ").trim();
+            if (strippedTitle.isEmpty()) strippedTitle = title;
+            String primaryArtist = artist.split("(?i),|&|\\\\bfeat\\\\.?\\\\b|\\\\bft\\\\.?\\\\b")[0].trim();
+            String focusedQuery = (primaryArtist.isEmpty() ? strippedTitle : primaryArtist + " " + strippedTitle).trim();
+
+            // 1) Primary: YouTube Music Songs search (WEB_REMIX)
+            List<Candidate> ytmCandidates = searchYtMusicSongs(focusedQuery, strippedTitle, primaryArtist, targetDur);
+            for (int i = 0; i < Math.min(3, ytmCandidates.size()); i++) {
+                ResolvedStream rs = fetchYoutubeIosPlayerStream(ytmCandidates.get(i).videoId);
+                if (rs != null) return rs;
+            }
+
+            // 2) Fallback: Standard YouTube search (WEB)
+            List<Candidate> ytCandidates = searchStandardYoutube(focusedQuery + " audio", strippedTitle, primaryArtist, targetDur);
+            for (int i = 0; i < Math.min(3, ytCandidates.size()); i++) {
+                ResolvedStream rs = fetchYoutubeIosPlayerStream(ytCandidates.get(i).videoId);
+                if (rs != null) return rs;
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    private List<Candidate> searchYtMusicSongs(String query, String targetTitle, String targetArtist, int targetDurSec) {
+        List<Candidate> results = new ArrayList<Candidate>();
+        try {
+            JSONObject client = new JSONObject();
+            client.put("clientName", "WEB_REMIX");
+            client.put("clientVersion", "1.20250310.01.00");
+            client.put("hl", "es");
+            client.put("gl", "ES");
+            JSONObject context = new JSONObject();
+            context.put("client", client);
+            JSONObject payload = new JSONObject();
+            payload.put("context", context);
+            payload.put("query", query);
+            payload.put("params", "EgWKAQIIAWoMEAMQBBAJEAoQBRAV");
+
+            byte[] resp = postJsonBytes("https://music.youtube.com/youtubei/v1/search?prettyPrint=false", YT_WEB_UA, "https://music.youtube.com", payload.toString());
+            if (resp == null) return results;
+            JSONObject root = new JSONObject(new String(resp, StandardCharsets.UTF_8));
+            List<JSONObject> renderers = new ArrayList<JSONObject>();
+            collectObjectsByKey(root, "musicResponsiveListItemRenderer", renderers);
+
+            for (int i = 0; i < renderers.size(); i++) {
+                JSONObject r = renderers.get(i);
+                String vid = findFirstStringByKey(r, "videoId");
+                if (vid == null || !YT_ID_PATTERN.matcher(vid).matches()) continue;
+                JSONArray flex = r.optJSONArray("flexColumns");
+                if (flex == null || flex.length() == 0) continue;
+
+                String candTitle = extractFlexColumnText(flex.optJSONObject(0));
+                String subRaw = flex.length() > 1 ? extractFlexColumnText(flex.optJSONObject(1)) : "";
+                int durSec = 0;
+                StringBuilder subText = new StringBuilder();
+                String[] segs = subRaw.split("\\\\s*[\\\\u2022\\\\u00b7|]\\\\s*");
+                for (int s = 0; s < segs.length; s++) {
+                    String part = segs[s].trim();
+                    int parsed = parseDurationSec(part);
+                    if (parsed > 0) {
+                        durSec = parsed;
+                    } else if (!part.isEmpty()) {
+                        if (subText.length() > 0) subText.append(" ");
+                        subText.append(part);
+                    }
+                }
+                if (durSec == 0) {
+                    JSONArray fixed = r.optJSONArray("fixedColumns");
+                    if (fixed != null && fixed.length() > 0) {
+                        durSec = parseDurationSec(extractFlexColumnText(fixed.optJSONObject(0)));
+                    }
+                }
+                if (durSec < 40) continue;
+                int score = scoreAudioCandidate(targetTitle, targetArtist, targetDurSec, candTitle, subText.toString(), durSec, true);
+                if (score >= 6) {
+                    results.add(new Candidate(vid, score));
+                }
+            }
+            Collections.sort(results, new Comparator<Candidate>() {
+                @Override
+                public int compare(Candidate a, Candidate b) {
+                    return Integer.compare(b.score, a.score);
+                }
+            });
+        } catch (Exception ignored) {
+        }
+        return results;
+    }
+
+    private List<Candidate> searchStandardYoutube(String query, String targetTitle, String targetArtist, int targetDurSec) {
+        List<Candidate> results = new ArrayList<Candidate>();
+        try {
+            JSONObject client = new JSONObject();
+            client.put("clientName", "WEB");
+            client.put("clientVersion", "2.20250310.01.00");
+            client.put("hl", "es");
+            client.put("gl", "ES");
+            JSONObject context = new JSONObject();
+            context.put("client", client);
+            JSONObject payload = new JSONObject();
+            payload.put("context", context);
+            payload.put("query", query);
+
+            byte[] resp = postJsonBytes("https://www.youtube.com/youtubei/v1/search?prettyPrint=false", YT_WEB_UA, "https://www.youtube.com", payload.toString());
+            if (resp == null) return results;
+            JSONObject root = new JSONObject(new String(resp, StandardCharsets.UTF_8));
+            List<JSONObject> renderers = new ArrayList<JSONObject>();
+            collectObjectsByKey(root, "videoRenderer", renderers);
+
+            for (int i = 0; i < renderers.size(); i++) {
+                JSONObject r = renderers.get(i);
+                String vid = r.optString("videoId", "").trim();
+                if (!YT_ID_PATTERN.matcher(vid).matches()) continue;
+                String candTitle = extractRunsText(r.optJSONObject("title"));
+                String candAuthor = extractRunsText(r.optJSONObject("ownerText"));
+                if (candAuthor.isEmpty()) candAuthor = extractRunsText(r.optJSONObject("longBylineText"));
+                String lenText = extractRunsText(r.optJSONObject("lengthText"));
+                int durSec = parseDurationSec(lenText);
+                if (durSec < 40) continue;
+                int score = scoreAudioCandidate(targetTitle, targetArtist, targetDurSec, candTitle, candAuthor, durSec, false);
+                if (score >= 6) {
+                    results.add(new Candidate(vid, score));
+                }
+            }
+            Collections.sort(results, new Comparator<Candidate>() {
+                @Override
+                public int compare(Candidate a, Candidate b) {
+                    return Integer.compare(b.score, a.score);
+                }
+            });
+        } catch (Exception ignored) {
+        }
+        return results;
+    }
+
+    private ResolvedStream fetchYoutubeIosPlayerStream(String videoId) {
+        try {
+            JSONObject client = new JSONObject();
+            client.put("clientName", "IOS");
+            client.put("clientVersion", "20.10.4");
+            client.put("deviceMake", "Apple");
+            client.put("deviceModel", "iPhone16,2");
+            client.put("osName", "iPhone");
+            client.put("osVersion", "18.3.2.22D82");
+            client.put("hl", "es");
+            client.put("gl", "ES");
+            JSONObject context = new JSONObject();
+            context.put("client", client);
+            JSONObject payload = new JSONObject();
+            payload.put("videoId", videoId);
+            payload.put("context", context);
+
+            byte[] resp = postJsonBytes("https://www.youtube.com/youtubei/v1/player?prettyPrint=false", YT_IOS_UA, "https://www.youtube.com", payload.toString());
+            if (resp == null) return null;
+            JSONObject root = new JSONObject(new String(resp, StandardCharsets.UTF_8));
+            JSONObject statusObj = root.optJSONObject("playabilityStatus");
+            if (statusObj == null || !"OK".equalsIgnoreCase(statusObj.optString("status", ""))) {
+                return null;
+            }
+            JSONObject streamingData = root.optJSONObject("streamingData");
+            if (streamingData == null) return null;
+
+            String bestUrl = null;
+            String bestMime = null;
+            long bestScore = -1;
+
+            JSONArray adaptive = streamingData.optJSONArray("adaptiveFormats");
+            if (adaptive != null) {
+                for (int i = 0; i < adaptive.length(); i++) {
+                    JSONObject f = adaptive.optJSONObject(i);
+                    if (f == null) continue;
+                    String url = f.optString("url", "");
+                    String mimeRaw = f.optString("mimeType", "").toLowerCase(Locale.ROOT);
+                    if (!url.startsWith("http") || !mimeRaw.startsWith("audio/")) continue;
+                    long tier = mimeRaw.contains("mp4") ? 2000000000L : 1000000000L;
+                    long bitrate = f.optLong("bitrate", 0);
+                    long sc = tier + bitrate;
+                    if (sc > bestScore) {
+                        bestScore = sc;
+                        bestUrl = url;
+                        bestMime = mimeRaw.split(";")[0].trim();
+                    }
+                }
+            }
+
+            if (bestUrl == null) {
+                JSONArray progressive = streamingData.optJSONArray("formats");
+                if (progressive != null) {
+                    for (int i = 0; i < progressive.length(); i++) {
+                        JSONObject f = progressive.optJSONObject(i);
+                        if (f == null) continue;
+                        String url = f.optString("url", "");
+                        String mimeRaw = f.optString("mimeType", "").toLowerCase(Locale.ROOT);
+                        if (!url.startsWith("http")) continue;
+                        long tier = mimeRaw.contains("mp4") ? 500000000L : 100000000L;
+                        long sc = tier + f.optLong("bitrate", 0);
+                        if (sc > bestScore) {
+                            bestScore = sc;
+                            bestUrl = url;
+                            bestMime = mimeRaw.isEmpty() ? "video/mp4" : mimeRaw.split(";")[0].trim();
+                        }
+                    }
+                }
+            }
+
+            if (bestUrl != null) {
+                return new ResolvedStream(bestUrl, bestMime != null ? bestMime : "audio/mp4", YT_IOS_UA, System.currentTimeMillis() + STREAM_CACHE_TTL_MS);
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    private WebResourceResponse proxyStreamResponse(
+            ResolvedStream stream,
+            String cacheKey,
+            String rawTrackId,
+            String qTitle,
+            String qArtist,
+            int qDurSec,
+            Map<String, String> baseCorsHeaders,
+            Map<String, String> reqHeaders,
+            String method
+    ) {
+        String clientRange = getHeaderIgnoreCase(reqHeaders, "range");
+        boolean hasClientRange = clientRange != null && !clientRange.trim().isEmpty();
+        String rangeToSend = hasClientRange ? clientRange.trim() : "bytes=0-";
+        boolean isHead = "HEAD".equalsIgnoreCase(method);
+
+        ResolvedStream active = stream;
+        for (int attempt = 0; attempt < 2; attempt++) {
+            HttpURLConnection conn = null;
+            try {
+                URL url = new URL(active.url);
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod(isHead ? "HEAD" : "GET");
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(25000);
+                conn.setInstanceFollowRedirects(true);
+                conn.setRequestProperty("User-Agent", active.userAgent);
+                conn.setRequestProperty("Range", rangeToSend);
+                conn.setRequestProperty("Accept", "*/*");
+                conn.setRequestProperty("Connection", "close");
+
+                int code = conn.getResponseCode();
+                if (code == 200 || code == 206) {
+                    Map<String, String> respHeaders = new HashMap<String, String>(baseCorsHeaders);
+                    respHeaders.put("Accept-Ranges", "bytes");
+                    respHeaders.put("Cache-Control", "no-cache");
+                    respHeaders.put("X-PMusic-Stream-Source", "youtube-full-android");
+
+                    String upstreamLen = conn.getHeaderField("Content-Length");
+                    String upstreamRange = conn.getHeaderField("Content-Range");
+                    int outStatus = code;
+                    String outReason = code == 206 ? "Partial Content" : "OK";
+
+                    if (!hasClientRange && code == 206) {
+                        outStatus = 200;
+                        outReason = "OK";
+                        if (upstreamLen != null) respHeaders.put("Content-Length", upstreamLen);
+                    } else {
+                        if (upstreamLen != null) respHeaders.put("Content-Length", upstreamLen);
+                        if (upstreamRange != null) respHeaders.put("Content-Range", upstreamRange);
+                    }
+
+                    if (isHead) {
+                        conn.disconnect();
+                        return new WebResourceResponse(active.mime, null, outStatus, outReason, respHeaders, new ByteArrayInputStream(new byte[0]));
+                    }
+                    InputStream wrapped = new HttpStreamWrapper(conn, conn.getInputStream());
+                    return new WebResourceResponse(active.mime, null, outStatus, outReason, respHeaders, wrapped);
+                }
+                conn.disconnect();
+                if ((code == 403 || code == 410) && attempt == 0) {
+                    synchronized (fullStreamCache) {
+                        fullStreamCache.remove(cacheKey);
+                    }
+                    ResolvedStream refreshed = getOrResolveFullStream(cacheKey, rawTrackId, qTitle, qArtist, qDurSec);
+                    if (refreshed == null) return null;
+                    active = refreshed;
+                } else {
+                    return null;
+                }
+            } catch (Exception ignored) {
+                if (conn != null) {
+                    try {
+                        conn.disconnect();
+                    } catch (Exception ignored2) {
+                    }
+                }
+                if (attempt == 0) {
+                    synchronized (fullStreamCache) {
+                        fullStreamCache.remove(cacheKey);
+                    }
+                    ResolvedStream refreshed = getOrResolveFullStream(cacheKey, rawTrackId, qTitle, qArtist, qDurSec);
+                    if (refreshed == null) return null;
+                    active = refreshed;
+                }
+            }
+        }
+        return null;
+    }
+
+    private String getHeaderIgnoreCase(Map<String, String> headers, String targetKey) {
+        if (headers == null) return null;
+        for (Map.Entry<String, String> entry : headers.entrySet()) {
+            if (targetKey.equalsIgnoreCase(entry.getKey())) {
+                return entry.getValue();
+            }
+        }
+        return null;
+    }
+
+    private static String normText(String s) {
+        if (s == null) return "";
+        String n = Normalizer.normalize(s.toLowerCase(Locale.ROOT), Normalizer.Form.NFD);
+        return n.replaceAll("[\\\\p{InCombiningDiacriticalMarks}]+", "")
+                .replaceAll("[^a-z0-9\\\\s]+", " ")
+                .replaceAll("\\\\s+", " ")
+                .trim();
+    }
+
+    private static List<String> tokenizeNorm(String s) {
+        String n = normText(s);
+        if (n.isEmpty()) return Collections.emptyList();
+        return Arrays.asList(n.split(" "));
+    }
+
+    private static int parseDurationSec(String text) {
+        if (text == null) return 0;
+        String clean = text.trim();
+        if (!DURATION_TOKEN_PATTERN.matcher(clean).matches()) return 0;
+        String[] parts = clean.split(":");
+        try {
+            if (parts.length == 2) {
+                return Integer.parseInt(parts[0]) * 60 + Integer.parseInt(parts[1]);
+            }
+            if (parts.length == 3) {
+                return Integer.parseInt(parts[0]) * 3600 + Integer.parseInt(parts[1]) * 60 + Integer.parseInt(parts[2]);
+            }
+        } catch (Exception ignored) {
+        }
+        return 0;
+    }
+
+    private static int scoreAudioCandidate(
+            String targetTitle,
+            String targetArtist,
+            int targetDurSec,
+            String candTitle,
+            String candSubtext,
+            int candDurSec,
+            boolean isYtMusicSong
+    ) {
+        String rawNormTitle = normText(targetTitle);
+        String candNorm = normText(candTitle);
+        if (candNorm.isEmpty() || candDurSec < 40) return -100;
+        if (BAD_VERSION_PATTERN.matcher(candNorm).find() && !BAD_VERSION_PATTERN.matcher(rawNormTitle).find()) {
+            return -50;
+        }
+
+        List<String> tTokens = new ArrayList<String>();
+        for (String tok : tokenizeNorm(targetTitle)) {
+            if (tok.length() > 1) tTokens.add(tok);
+        }
+        if (tTokens.isEmpty()) tTokens = tokenizeNorm(targetTitle);
+
+        int titleHits = 0;
+        for (int i = 0; i < tTokens.size(); i++) {
+            if (candNorm.contains(tTokens.get(i))) titleHits++;
+        }
+        double titleRatio = tTokens.isEmpty() ? 0.0 : (double) titleHits / (double) tTokens.size();
+
+        int score = 0;
+        if (candNorm.equals(rawNormTitle) || (!rawNormTitle.isEmpty() && candNorm.contains(rawNormTitle))) {
+            score += 10;
+        } else if (titleRatio >= 0.6) {
+            score += 8;
+        } else if (titleRatio >= 0.35) {
+            score += 4;
+        } else {
+            score -= 8;
+        }
+
+        String combined = normText(candTitle + " " + candSubtext);
+        List<String> aTokens = new ArrayList<String>();
+        for (String tok : tokenizeNorm(targetArtist)) {
+            if (tok.length() > 1) aTokens.add(tok);
+        }
+        boolean artistHit = false;
+        for (int i = 0; i < aTokens.size(); i++) {
+            if (combined.contains(aTokens.get(i))) {
+                artistHit = true;
+                break;
+            }
+        }
+        if (artistHit) {
+            score += 6;
+        } else if (!aTokens.isEmpty()) {
+            score -= 6;
+        }
+
+        int diff = Math.abs(candDurSec - targetDurSec);
+        if (diff <= 8) score += 6;
+        else if (diff <= 18) score += 3;
+        else if (diff > 45) score -= 6;
+
+        if (isYtMusicSong) score += 2;
+        return score;
+    }
+
+    private static void collectObjectsByKey(Object node, String targetKey, List<JSONObject> out) {
+        if (out.size() >= 25 || node == null) return;
+        if (node instanceof JSONObject) {
+            JSONObject obj = (JSONObject) node;
+            if (obj.has(targetKey)) {
+                JSONObject hit = obj.optJSONObject(targetKey);
+                if (hit != null) out.add(hit);
+            }
+            Iterator<String> keys = obj.keys();
+            while (keys.hasNext()) {
+                collectObjectsByKey(obj.opt(keys.next()), targetKey, out);
+            }
+        } else if (node instanceof JSONArray) {
+            JSONArray arr = (JSONArray) node;
+            for (int i = 0; i < arr.length(); i++) {
+                collectObjectsByKey(arr.opt(i), targetKey, out);
+            }
+        }
+    }
+
+    private static String findFirstStringByKey(Object node, String targetKey) {
+        if (node == null) return null;
+        if (node instanceof JSONObject) {
+            JSONObject obj = (JSONObject) node;
+            String v = obj.optString(targetKey, null);
+            if (v != null && !v.isEmpty()) return v;
+            Iterator<String> keys = obj.keys();
+            while (keys.hasNext()) {
+                String found = findFirstStringByKey(obj.opt(keys.next()), targetKey);
+                if (found != null) return found;
+            }
+        } else if (node instanceof JSONArray) {
+            JSONArray arr = (JSONArray) node;
+            for (int i = 0; i < arr.length(); i++) {
+                String found = findFirstStringByKey(arr.opt(i), targetKey);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    private static String extractFlexColumnText(JSONObject col) {
+        if (col == null) return "";
+        JSONObject inner = col.optJSONObject("musicResponsiveListItemFlexColumnRenderer");
+        if (inner == null) inner = col.optJSONObject("musicResponsiveListItemFixedColumnRenderer");
+        if (inner != null) return extractRunsText(inner);
+        return extractRunsText(col);
+    }
+
+    private static String extractRunsText(JSONObject container) {
+        if (container == null) return "";
+        JSONObject textObj = container.optJSONObject("text");
+        if (textObj == null) textObj = container;
+        String simple = textObj.optString("simpleText", "");
+        if (!simple.isEmpty()) return simple.trim();
+        JSONArray runs = textObj.optJSONArray("runs");
+        if (runs == null) return "";
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < runs.length(); i++) {
+            JSONObject r = runs.optJSONObject(i);
+            if (r != null) sb.append(r.optString("text", ""));
+        }
+        return sb.toString().trim();
+    }
+
+    private byte[] postJsonBytes(String urlStr, String userAgent, String origin, String jsonBody) {
+        HttpURLConnection conn = null;
+        try {
+            URL url = new URL(urlStr);
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(6500);
+            conn.setReadTimeout(9500);
+            conn.setInstanceFollowRedirects(true);
+            conn.setRequestProperty("User-Agent", userAgent);
+            conn.setRequestProperty("Origin", origin);
+            conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+            byte[] bodyBytes = jsonBody.getBytes(StandardCharsets.UTF_8);
+            conn.setRequestProperty("Content-Length", String.valueOf(bodyBytes.length));
+            OutputStream os = conn.getOutputStream();
+            os.write(bodyBytes);
+            os.flush();
+            os.close();
+            int code = conn.getResponseCode();
+            if (code >= 200 && code < 300) {
+                InputStream in = conn.getInputStream();
+                ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                int r;
+                while ((r = in.read(buf)) != -1) {
+                    bos.write(buf, 0, r);
+                }
+                in.close();
+                return bos.toByteArray();
+            }
+        } catch (Exception ignored) {
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+        return null;
+    }
+
     private WebResourceResponse buildAudioStreamResponse(
             byte[] audioBytes,
             String mime,
@@ -529,7 +1234,7 @@ public class MainActivity extends Activity {
             conn.setConnectTimeout(4500);
             conn.setReadTimeout(6500);
             conn.setInstanceFollowRedirects(true);
-            conn.setRequestProperty("User-Agent", "pMusic-Android/0.4.0");
+            conn.setRequestProperty("User-Agent", "pMusic-Android/0.5.0");
             int code = conn.getResponseCode();
             if (code >= 200 && code < 300) {
                 InputStream in = conn.getInputStream();
@@ -672,6 +1377,8 @@ execFileSync(
   [
     '--release',
     '11',
+    '-encoding',
+    'UTF-8',
     '-classpath',
     PLATFORM_JAR,
     '-d',

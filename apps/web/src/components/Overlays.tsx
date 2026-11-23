@@ -116,6 +116,10 @@ export const NowPlayingSheet: React.FC = () => {
   const lyricsContainerRef = useRef<HTMLDivElement | null>(null);
   const activeLyricRef = useRef<HTMLButtonElement | null>(null);
   const backdropBeatRef = useRef<HTMLDivElement | null>(null);
+  const progressInputRef = useRef<HTMLInputElement | null>(null);
+  const progressTimeRef = useRef<HTMLSpanElement | null>(null);
+  const lastWholeSecRef = useRef<number>(Math.floor(positionSec));
+  const lastLyricStateSyncMsRef = useRef<number>(0);
   const [smoothPosSec, setSmoothPosSec] = useState(positionSec);
   const [dragQueueIdx, setDragQueueIdx] = useState<number | null>(null);
   const [dragOverQueueIdx, setDragOverQueueIdx] = useState<number | null>(null);
@@ -188,16 +192,20 @@ export const NowPlayingSheet: React.FC = () => {
   }, [currentTrack.id, currentTrack.thumbnailHighUrl, currentTrack.thumbnailUrl, lastTrackDirection]);
 
   useEffect(() => {
+    const isTouchOrSmall =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(max-width: 767px), (hover: none) and (pointer: coarse)').matches;
     if (
       !nowPlayingOpen ||
       !isPlaying ||
       !ambientMotionEnabled ||
       reducedMotionPref ||
+      isTouchOrSmall ||
       typeof requestAnimationFrame !== 'function'
     ) {
       if (backdropBeatRef.current) {
         backdropBeatRef.current.style.setProperty('--pm-beat-scale', '1');
-        backdropBeatRef.current.style.setProperty('--pm-beat-brightness', '1');
       }
       return;
     }
@@ -215,7 +223,6 @@ export const NowPlayingSheet: React.FC = () => {
       const el = backdropBeatRef.current;
       if (el) {
         el.style.setProperty('--pm-beat-scale', (1 + smoothBass * 0.045).toFixed(4));
-        el.style.setProperty('--pm-beat-brightness', (1 + smoothBass * 0.14).toFixed(4));
       }
       rafId = requestAnimationFrame(pulse);
     };
@@ -224,7 +231,6 @@ export const NowPlayingSheet: React.FC = () => {
       cancelAnimationFrame(rafId);
       if (backdropBeatRef.current) {
         backdropBeatRef.current.style.setProperty('--pm-beat-scale', '1');
-        backdropBeatRef.current.style.setProperty('--pm-beat-brightness', '1');
       }
     };
   }, [nowPlayingOpen, isPlaying, ambientMotionEnabled, reducedMotionPref]);
@@ -306,14 +312,25 @@ export const NowPlayingSheet: React.FC = () => {
     const now = typeof performance !== 'undefined' ? performance.now() : 0;
     const trackChanged = syncClockRef.current.trackId !== currentTrack.id;
     const seekJumped = Math.abs(positionSec - syncClockRef.current.renderedPosSec) > 0.85;
-    syncClockRef.current.posSec = positionSec;
+    const effDur = Math.max(1, durationSec);
+    const clampedPos = Math.max(0, Math.min(effDur, positionSec));
+    syncClockRef.current.posSec = clampedPos;
     syncClockRef.current.atMs = now;
     syncClockRef.current.trackId = currentTrack.id;
     if (trackChanged || seekJumped || !isPlaying) {
-      syncClockRef.current.renderedPosSec = positionSec;
-      setSmoothPosSec(positionSec);
+      syncClockRef.current.renderedPosSec = clampedPos;
+      lastWholeSecRef.current = Math.floor(clampedPos);
+      setSmoothPosSec(clampedPos);
+      const pct = Math.min(100, Math.max(0, (clampedPos / effDur) * 100));
+      if (progressInputRef.current) {
+        progressInputRef.current.style.setProperty('--pm-fill', `${pct.toFixed(2)}%`);
+        progressInputRef.current.value = String(Math.min(Math.round(effDur), Math.round(clampedPos)));
+      }
+      if (progressTimeRef.current) {
+        progressTimeRef.current.textContent = formatDurationSec(clampedPos);
+      }
     }
-  }, [positionSec, currentTrack.id, isPlaying]);
+  }, [positionSec, currentTrack.id, isPlaying, durationSec]);
 
   useEffect(() => {
     if (
@@ -324,35 +341,45 @@ export const NowPlayingSheet: React.FC = () => {
       return;
     }
     let rafId = 0;
-    let lastFrameMs = typeof performance !== 'undefined' ? performance.now() : 0;
     const step = (now: number) => {
-      const dt = Math.min(0.1, Math.max(0, (now - lastFrameMs) / 1000));
-      lastFrameMs = now;
       const live = getLivePlaybackPosition();
-      const clockTarget =
-        syncClockRef.current.posSec + Math.max(0, (now - syncClockRef.current.atMs) / 1000);
-      const rawTarget =
-        live.positionSec > 0 && Math.abs(live.positionSec - clockTarget) < 2.5
-          ? live.positionSec
-          : clockTarget;
+      const effDur = Math.max(1, live.durationSec || durationSec);
+      const rawPos = Number.isFinite(live.positionSec)
+        ? live.positionSec
+        : syncClockRef.current.posSec;
+      const rendered = Math.max(0, Math.min(effDur, rawPos));
 
-      let rendered = syncClockRef.current.renderedPosSec;
-      const diff = rawTarget - rendered;
-      if (Math.abs(diff) > 1.2) {
-        rendered = rawTarget;
-      } else {
-        const rate = Math.max(0.82, Math.min(1.18, 1 + diff * 2.2));
-        rendered = Math.max(rendered, rendered + dt * rate);
-      }
-      const effDur = Math.max(1, live.durationSec || durationSec, rendered);
-      rendered = Math.min(effDur, rendered);
       syncClockRef.current.renderedPosSec = rendered;
-      setSmoothPosSec(rendered);
+      const pct = Math.min(100, Math.max(0, (rendered / effDur) * 100));
+      if (progressInputRef.current) {
+        progressInputRef.current.style.setProperty('--pm-fill', `${pct.toFixed(2)}%`);
+        progressInputRef.current.value = String(Math.min(Math.round(effDur), Math.round(rendered)));
+      }
+      if (progressTimeRef.current) {
+        const txt = formatDurationSec(rendered);
+        if (progressTimeRef.current.textContent !== txt) {
+          progressTimeRef.current.textContent = txt;
+        }
+      }
+
+      if (nowPlayingTab === 'Letras') {
+        if (now - lastLyricStateSyncMsRef.current >= 66) {
+          lastLyricStateSyncMsRef.current = now;
+          lastWholeSecRef.current = Math.floor(rendered);
+          setSmoothPosSec(rendered);
+        }
+      } else {
+        const whole = Math.floor(rendered);
+        if (whole !== lastWholeSecRef.current) {
+          lastWholeSecRef.current = whole;
+          setSmoothPosSec(rendered);
+        }
+      }
       rafId = requestAnimationFrame(step);
     };
     rafId = requestAnimationFrame(step);
     return () => cancelAnimationFrame(rafId);
-  }, [nowPlayingOpen, isPlaying, durationSec]);
+  }, [nowPlayingOpen, isPlaying, durationSec, nowPlayingTab]);
 
   useEffect(() => {
     if (!isElectronDesktop) return;
@@ -623,6 +650,7 @@ export const NowPlayingSheet: React.FC = () => {
             />
           )}
           <input
+            ref={progressInputRef}
             type="range"
             role="slider"
             aria-label="Progreso de la canción"
@@ -630,7 +658,19 @@ export const NowPlayingSheet: React.FC = () => {
             max={Math.max(1, Math.round(durationSec))}
             value={Math.min(Math.round(durationSec), Math.round(smoothPosSec))}
             onChange={(e) => {
-              const next = Number(e.target.value);
+              const effDur = Math.max(1, durationSec);
+              const next = Math.max(0, Math.min(effDur, Number(e.target.value)));
+              const pct = Math.min(100, Math.max(0, (next / effDur) * 100));
+              if (progressInputRef.current) {
+                progressInputRef.current.style.setProperty('--pm-fill', `${pct.toFixed(2)}%`);
+                progressInputRef.current.value = String(Math.round(next));
+              }
+              if (progressTimeRef.current) {
+                progressTimeRef.current.textContent = formatDurationSec(next);
+              }
+              lastWholeSecRef.current = Math.floor(next);
+              syncClockRef.current.renderedPosSec = next;
+              syncClockRef.current.posSec = next;
               setSmoothPosSec(next);
               seekTo(next);
             }}
@@ -639,7 +679,7 @@ export const NowPlayingSheet: React.FC = () => {
           />
         </div>
         <div className="tabular-nums flex justify-between text-xs font-medium text-[#C4C4CE]">
-          <span>{formatDurationSec(smoothPosSec)}</span>
+          <span ref={progressTimeRef}>{formatDurationSec(smoothPosSec)}</span>
           <span>{formatDurationSec(durationSec)}</span>
         </div>
       </div>
@@ -820,14 +860,13 @@ export const NowPlayingSheet: React.FC = () => {
         ref={backdropBeatRef}
         data-testid="live-backdrop-container"
         aria-hidden="true"
-        className={`pointer-events-none fixed -inset-16 z-0 overflow-hidden transition-[transform,filter] duration-150 ${
+        className={`pointer-events-none fixed -inset-16 z-0 overflow-hidden ${
           !ambientMotionEnabled || reducedMotionPref ? 'pm-backdrop-static' : ''
         }`}
         style={{
           background:
             'radial-gradient(circle at 20% 24%, var(--pm-ambient-1), transparent 58%), radial-gradient(circle at 80% 76%, var(--pm-ambient-2), transparent 60%), linear-gradient(180deg, var(--pm-ambient-3) 0%, #070709 100%)',
           transform: 'scale(var(--pm-beat-scale, 1))',
-          filter: 'brightness(var(--pm-beat-brightness, 1))',
         }}
       >
         {prevBackdrop && (

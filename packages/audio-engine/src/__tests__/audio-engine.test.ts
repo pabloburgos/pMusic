@@ -236,4 +236,173 @@ describe('@pmusic/audio-engine', () => {
     expect(plan.choreography?.loudnessTrimDb).toBeGreaterThan(0);
     expect(plan.choreography?.echoFeedbackPeak).toBeLessThanOrEqual(0.78);
   });
+
+  function createFakeBrowserAudioElement() {
+    const listeners = new Map<string, Set<() => void>>();
+    const el: Record<string, any> = {
+      crossOrigin: 'anonymous',
+      preload: 'auto',
+      src: '',
+      readyState: 4,
+      currentTime: 0,
+      duration: 107,
+      volume: 1,
+      playbackRate: 1,
+      paused: true,
+      ended: false,
+      seeking: false,
+      dataset: {},
+      style: {},
+      play: async () => {
+        el.paused = false;
+      },
+      pause: () => {
+        el.paused = true;
+      },
+      load: () => {},
+      remove: () => {},
+      addEventListener: (ev: string, fn: () => void, opts?: { once?: boolean }) => {
+        const set = listeners.get(ev) ?? new Set<() => void>();
+        if (opts?.once) {
+          const wrapped = () => {
+            set.delete(wrapped);
+            fn();
+          };
+          set.add(wrapped);
+        } else {
+          set.add(fn);
+        }
+        listeners.set(ev, set);
+      },
+      removeEventListener: (ev: string, fn: () => void) => {
+        listeners.get(ev)?.delete(fn);
+      },
+      dispatch: (ev: string) => {
+        for (const fn of Array.from(listeners.get(ev) ?? [])) {
+          fn();
+        }
+      },
+    };
+    return el;
+  }
+
+  it('triggers onTrackEnded on natural EOF and never lets positionSec exceed durationSec', async () => {
+    const created: ReturnType<typeof createFakeBrowserAudioElement>[] = [];
+    const prevDoc = (globalThis as { document?: unknown }).document;
+    (globalThis as { document?: unknown }).document = {
+      createElement: () => {
+        const el = createFakeBrowserAudioElement();
+        created.push(el);
+        return el;
+      },
+      body: { appendChild: () => {} },
+    };
+
+    const engine = new DualDeckAudioEngine();
+    try {
+      let endedCalls = 0;
+      engine.onTrackEnded(() => {
+        endedCalls += 1;
+      });
+      await engine.init();
+      await engine.loadAndPlay(SAMPLE_TRACKS[0]!, 0);
+
+      const deckAEl = created[0]!;
+      deckAEl.duration = 107;
+      deckAEl.currentTime = 112;
+      deckAEl.ended = true;
+      deckAEl.dispatch('timeupdate');
+      deckAEl.dispatch('ended');
+
+      expect(endedCalls).toBe(1);
+      expect(engine.getLivePositionSec()).toBeLessThanOrEqual(107);
+      expect(engine.getLivePlaybackSnapshot().positionSec).toBeLessThanOrEqual(107);
+      expect(engine.getState().positionSec).toBeLessThanOrEqual(107);
+      expect(engine.getState().isPlaying).toBe(false);
+    } finally {
+      await engine.dispose();
+      (globalThis as { document?: unknown }).document = prevDoc;
+    }
+  });
+
+  it('recovers via watchdog when stream stalls silently just before EOF', async () => {
+    const created: ReturnType<typeof createFakeBrowserAudioElement>[] = [];
+    const prevDoc = (globalThis as { document?: unknown }).document;
+    (globalThis as { document?: unknown }).document = {
+      createElement: () => {
+        const el = createFakeBrowserAudioElement();
+        created.push(el);
+        return el;
+      },
+      body: { appendChild: () => {} },
+    };
+
+    const engine = new DualDeckAudioEngine();
+    try {
+      let endedCalls = 0;
+      engine.onTrackEnded(() => {
+        endedCalls += 1;
+      });
+      await engine.init();
+      await engine.loadAndPlay(SAMPLE_TRACKS[0]!, 0);
+
+      const deckAEl = created[0]!;
+      deckAEl.duration = 107;
+      deckAEl.readyState = 2;
+      deckAEl.ended = false;
+      deckAEl.paused = false;
+      deckAEl.currentTime = 105.5;
+      deckAEl.dispatch('timeupdate');
+
+      await new Promise((r) => setTimeout(r, 2100));
+      expect(endedCalls).toBe(1);
+      expect(engine.getState().isPlaying).toBe(false);
+    } finally {
+      await engine.dispose();
+      (globalThis as { document?: unknown }).document = prevDoc;
+    }
+  }, 10_000);
+
+  it('never deadlocks isTransitioning if incoming audio.play() hangs', async () => {
+    const created: ReturnType<typeof createFakeBrowserAudioElement>[] = [];
+    const prevDoc = (globalThis as { document?: unknown }).document;
+    (globalThis as { document?: unknown }).document = {
+      createElement: () => {
+        const el = createFakeBrowserAudioElement();
+        created.push(el);
+        return el;
+      },
+      body: { appendChild: () => {} },
+    };
+
+    const engine = new DualDeckAudioEngine();
+    try {
+      await engine.init();
+      await engine.loadAndPlay(SAMPLE_TRACKS[0]!, 10);
+      await engine.preloadNextDeck(SAMPLE_TRACKS[1]!, 16);
+
+      const deckBEl = created[1]!;
+      deckBEl.play = () => new Promise<void>(() => {});
+
+      await engine.executeTransition({
+        fromTrackId: 'trk_1',
+        toTrackId: 'trk_2',
+        cueInSec: 16,
+        cueOutSec: 70,
+        transitionDurationSec: 0.4,
+        transitionBars: 4,
+        transitionType: 'eq_swap',
+        tempoNudgeRate: 1.0,
+        echoSubdivision: 0.5,
+        compatibilityScore: 0.9,
+      });
+
+      expect(engine.getState().activeDeck).toBe('B');
+      expect(engine.getState().isTransitioning).toBe(false);
+      expect(engine.getState().isPlaying).toBe(true);
+    } finally {
+      await engine.dispose();
+      (globalThis as { document?: unknown }).document = prevDoc;
+    }
+  }, 12_000);
 });

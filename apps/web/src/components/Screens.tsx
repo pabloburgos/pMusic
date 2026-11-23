@@ -341,7 +341,7 @@ const CoverCard: React.FC<{
         e.preventDefault();
         openTrackMenu(dragTrack, e.clientX, e.clientY);
       }}
-      className="pm-cover-card pm-card-lift pm-surface-card group w-[152px] shrink-0 snap-start rounded-[12px] p-2.5 md:w-[178px]"
+      className="pm-cover-card pm-card-lift pm-surface-card group w-[144px] shrink-0 snap-start rounded-[14px] p-2.5 sm:w-[166px] sm:rounded-[12px] md:w-[178px]"
     >
       <div className="relative">
         <button
@@ -349,20 +349,20 @@ const CoverCard: React.FC<{
           aria-label={`Abrir ${title}`}
           onClick={onOpen}
           className={`block w-full overflow-hidden text-left ${
-            round ? 'rounded-full' : 'rounded-[8px]'
+            round ? 'rounded-full' : 'rounded-[12px] sm:rounded-[8px]'
           }`}
         >
           <img
             src={image}
             alt={title}
             loading="lazy"
-            className={`pm-elevated aspect-square w-full object-cover shadow-[0_8px_24px_rgba(0,0,0,0.45)] transition-transform duration-300 ease-out group-hover:scale-[1.04] ${
-              round ? 'rounded-full' : 'rounded-[8px]'
+            className={`pm-elevated aspect-square w-full object-cover shadow-[0_10px_24px_rgba(0,0,0,0.42)] ring-1 ring-white/[0.08] transition-transform duration-300 ease-out group-hover:scale-[1.04] ${
+              round ? 'rounded-full' : 'rounded-[12px] sm:rounded-[8px]'
             }`}
           />
         </button>
         {badge && (
-          <span className="pointer-events-none absolute top-2 left-2 rounded bg-[#070709]/85 px-2 py-0.5 text-[11px] font-bold tracking-wider text-white">
+          <span className="pointer-events-none absolute top-2 left-2 rounded-full bg-black/60 backdrop-blur-md px-2 py-0.5 text-[10px] font-bold tracking-wider text-white">
             {badge}
           </span>
         )}
@@ -371,13 +371,13 @@ const CoverCard: React.FC<{
             type="button"
             aria-label={`Reproducir ${title}`}
             onClick={onPlay}
-            className="pm-cover-play pm-btn-primary absolute right-2 bottom-2 flex h-11 w-11 items-center justify-center rounded-full shadow-xl hover:scale-105"
+            className="pm-cover-play pm-btn-primary absolute right-2 bottom-2 hidden h-11 w-11 items-center justify-center rounded-full shadow-xl hover:scale-105 sm:flex"
           >
             <Play className="h-5 w-5 translate-x-[1px] fill-current" />
           </button>
         )}
       </div>
-      <div className={`mt-2.5 ${round ? 'text-center' : ''}`}>
+      <div className={`mt-2 sm:mt-2.5 ${round ? 'text-center' : ''}`}>
         <button
           type="button"
           onClick={onOpen}
@@ -451,7 +451,7 @@ const CarouselSection: React.FC<{
 
       <div
         ref={scrollerRef}
-        className="pm-no-scrollbar flex snap-x scroll-pl-3 gap-4 overflow-x-auto px-3 py-2"
+        className="pm-no-scrollbar -mx-4 flex snap-x scroll-pl-4 gap-3.5 overflow-x-auto px-4 py-1.5 sm:mx-0 sm:scroll-pl-1 sm:gap-4 sm:px-1 sm:py-2"
       >
         {children}
       </div>
@@ -1218,6 +1218,8 @@ const HOME_CHIPS = ['Todo', 'Música', 'Mixes', 'Álbumes'] as const;
 
 export const HomeScreen: React.FC = () => {
   const {
+    currentTrack,
+    isPlaying,
     homeShelves,
     isOfflineNetwork,
     playTrack,
@@ -1250,9 +1252,9 @@ export const HomeScreen: React.FC = () => {
   );
 
   return (
-    <div className="pm-page-enter space-y-8">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-[26px] font-bold tracking-tight pm-text-primary md:text-[32px]">
+    <div className="pm-page-enter space-y-6 sm:space-y-8">
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-[24px] font-bold tracking-tight pm-text-primary sm:text-[28px] md:text-[32px]">
           {getSpanishGreeting()}
         </h1>
         <button
@@ -1265,15 +1267,19 @@ export const HomeScreen: React.FC = () => {
             await refreshHomeRecommendations(true);
             setIsRefreshingHome(false);
           }}
-          className="pm-pressable inline-flex h-9 items-center gap-2 rounded-full bg-white/[0.08] px-3.5 text-xs font-semibold pm-text-secondary transition-colors hover:bg-white/[0.16] hover:text-[var(--pm-text-primary)] disabled:opacity-50"
+          className="pm-pressable inline-flex h-9 w-9 shrink-0 items-center justify-center gap-2 rounded-full bg-white/[0.08] px-0 text-xs font-semibold pm-text-secondary transition-colors hover:bg-white/[0.16] hover:text-[var(--pm-text-primary)] disabled:opacity-50 sm:w-auto sm:px-3.5"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${isRefreshingHome ? 'animate-spin' : ''}`} />
-          <span>Reiniciar inicio</span>
+          <span className="hidden sm:inline">Reiniciar inicio</span>
         </button>
       </div>
 
-      {/* Spotify-style Filter Pills */}
-      <div role="tablist" aria-label="Filtros de inicio" className="flex flex-wrap gap-2">
+      {/* Filter Pills */}
+      <div
+        role="tablist"
+        aria-label="Filtros de inicio"
+        className="pm-no-scrollbar flex flex-nowrap gap-2 overflow-x-auto pb-0.5 sm:flex-wrap"
+      >
         {HOME_CHIPS.map((c) => (
           <button
             key={c}
@@ -1281,7 +1287,7 @@ export const HomeScreen: React.FC = () => {
             role="tab"
             aria-selected={chip === c}
             onClick={() => setChip(c)}
-            className={`rounded-full px-4 py-1.5 text-[13px] font-semibold transition-colors ${
+            className={`shrink-0 rounded-full px-4 py-1.5 text-[13px] font-semibold transition-colors ${
               chip === c ? 'pm-btn-primary' : 'pm-btn-secondary'
             }`}
           >
@@ -1299,45 +1305,55 @@ export const HomeScreen: React.FC = () => {
         </div>
       )}
 
-      {/* 2x3 Quick-Access Grid */}
+      {/* 2x3 Compact Quick-Access Grid */}
       {chip === 'Todo' && quick.length > 0 && (
         <section aria-label="Escuchar de nuevo">
-          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
-            {quick.map((t) => (
-              <div
-                key={t.id}
-                data-surface="content"
-                draggable
-                onDragStart={(e) => setDraggedTrack(e, t)}
-                onDragEnd={() => clearDraggedTrack()}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  openTrackMenu(t, e.clientX, e.clientY);
-                }}
-                className="pm-surface-card pm-card-lift group flex items-center gap-3 overflow-hidden rounded-[8px] pr-2"
-              >
-                <div className="flex min-w-0 flex-1 items-center gap-3">
-                  <button
-                    type="button"
-                    aria-label={`Reproducir ${t.title}`}
-                    onClick={() => void playTrack(t, listen?.tracks)}
-                    className="h-14 w-14 shrink-0 overflow-hidden"
-                  >
+          <div className="grid grid-cols-2 gap-2 sm:gap-2.5 lg:grid-cols-3">
+            {quick.map((t) => {
+              const isTilePlaying = currentTrack.id === t.id;
+              return (
+                <div
+                  key={t.id}
+                  data-surface="content"
+                  data-playing={isTilePlaying ? 'true' : undefined}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Reproducir ${t.title}`}
+                  draggable
+                  onDragStart={(e) => setDraggedTrack(e, t)}
+                  onDragEnd={() => clearDraggedTrack()}
+                  onClick={() => void playTrack(t, listen?.tracks)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      void playTrack(t, listen?.tracks);
+                    }
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    openTrackMenu(t, e.clientX, e.clientY);
+                  }}
+                  className="pm-quick-tile pm-card-lift group flex cursor-pointer items-center gap-2.5 overflow-hidden rounded-[10px] pr-2.5 sm:gap-3 sm:rounded-[8px]"
+                >
+                  <div className="h-[52px] w-[52px] shrink-0 overflow-hidden sm:h-14 sm:w-14">
                     <img
                       src={t.thumbnailUrl}
                       alt={t.title}
                       className="h-full w-full object-cover"
                     />
-                  </button>
+                  </div>
                   <div className="min-w-0 flex-1 py-1">
-                    <button
-                      type="button"
-                      onClick={() => void playTrack(t, listen?.tracks)}
-                      className="block max-w-full truncate text-left text-[14px] font-semibold pm-text-primary hover:underline"
-                    >
+                    <div className="line-clamp-2 text-left text-[12.5px] font-semibold leading-[1.2] pm-text-primary sm:truncate sm:text-[14px]">
                       {t.title}
-                    </button>
-                    <div className="truncate text-[12px] leading-normal pm-text-tertiary">
+                    </div>
+                    <div
+                      onClick={(e) => {
+                        if ((e.target as HTMLElement).closest('button, a')) {
+                          e.stopPropagation();
+                        }
+                      }}
+                      className="hidden truncate text-[12px] leading-normal pm-text-tertiary sm:block"
+                    >
                       <ArtistLinks
                         artists={t.artists}
                         className="!flex-nowrap whitespace-nowrap"
@@ -1345,28 +1361,37 @@ export const HomeScreen: React.FC = () => {
                       />
                     </div>
                   </div>
+                  {isTilePlaying && isPlaying && (
+                    <span className="shrink-0 sm:hidden">
+                      <PlayingEqBars />
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    aria-label={`Más opciones para ${t.title}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const r = e.currentTarget.getBoundingClientRect();
+                      openTrackMenu(t, r.left - 180, r.bottom + 6);
+                    }}
+                    className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-full pm-text-tertiary opacity-0 transition-opacity hover:bg-[var(--pm-hover-tint)] hover:text-[var(--pm-text-primary)] group-hover:opacity-100 sm:flex"
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Play ${t.title}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void playTrack(t, listen?.tracks);
+                    }}
+                    className="pm-cover-play pm-btn-primary hidden h-9 w-9 shrink-0 items-center justify-center rounded-full shadow-md sm:flex"
+                  >
+                    <Play className="h-4 w-4 translate-x-[1px] fill-current" />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  aria-label={`Más opciones para ${t.title}`}
-                  onClick={(e) => {
-                    const r = e.currentTarget.getBoundingClientRect();
-                    openTrackMenu(t, r.left - 180, r.bottom + 6);
-                  }}
-                  className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-full pm-text-tertiary opacity-0 transition-opacity hover:bg-[var(--pm-hover-tint)] hover:text-[var(--pm-text-primary)] group-hover:opacity-100 sm:flex"
-                >
-                  <MoreHorizontal className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Play ${t.title}`}
-                  onClick={() => void playTrack(t, listen?.tracks)}
-                  className="pm-cover-play pm-btn-primary flex h-9 w-9 shrink-0 items-center justify-center rounded-full shadow-md"
-                >
-                  <Play className="h-4 w-4 translate-x-[1px] fill-current" />
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       )}
