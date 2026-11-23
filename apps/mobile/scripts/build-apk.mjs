@@ -152,8 +152,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="10"
-    android:versionName="0.10.0">
+    android:versionCode="11"
+    android:versionName="0.10.1">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -1166,9 +1166,13 @@ public class MainActivity extends Activity {
         }
 
         int diff = Math.abs(candDurSec - targetDurSec);
+        if (targetDurSec >= 45) {
+            int maxAllowedDiff = Math.max(40, (int) Math.round(targetDurSec * 0.45));
+            if (diff > maxAllowedDiff) return -100;
+        }
         if (diff <= 8) score += 6;
         else if (diff <= 18) score += 3;
-        else if (diff > 45) score -= 6;
+        else if (diff > 45) score -= 12;
 
         if (isYtMusicSong) score += 2;
         return score;
@@ -1342,7 +1346,7 @@ public class MainActivity extends Activity {
             conn.setConnectTimeout(4500);
             conn.setReadTimeout(6500);
             conn.setInstanceFollowRedirects(true);
-            conn.setRequestProperty("User-Agent", "pMusic-Android/0.10.0");
+            conn.setRequestProperty("User-Agent", "pMusic-Android/0.10.1");
             int code = conn.getResponseCode();
             if (code >= 200 && code < 300) {
                 InputStream in = conn.getInputStream();

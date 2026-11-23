@@ -225,11 +225,11 @@ export const App: React.FC = () => {
     if (typeof requestAnimationFrame === 'function') {
       requestAnimationFrame(() => {
         setDockTransportAnim(kind);
-        dockAnimTimerRef.current = setTimeout(() => setDockTransportAnim(null), 520);
+        dockAnimTimerRef.current = setTimeout(() => setDockTransportAnim(null), 660);
       });
     } else {
       setDockTransportAnim(kind);
-      dockAnimTimerRef.current = setTimeout(() => setDockTransportAnim(null), 520);
+      dockAnimTimerRef.current = setTimeout(() => setDockTransportAnim(null), 660);
     }
   };
 
@@ -1600,16 +1600,36 @@ export const App: React.FC = () => {
                   triggerDockTransportAnim('shuffle');
                   toggleShuffle();
                 }}
-                className={`pm-pressable pm-hover relative inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
+                className={`pm-pressable pm-hover relative inline-flex h-8 w-8 items-center justify-center overflow-visible rounded-full transition-colors ${
                   shuffleEnabled
                     ? 'pm-text-primary'
                     : 'pm-text-tertiary hover:text-[var(--pm-text-primary)]'
                 }`}
               >
+                {dockTransportAnim === 'shuffle' && !reducedMotionPref && (
+                  <span aria-hidden="true" className="pointer-events-none absolute inset-0">
+                    <span
+                      className="pm-shuffle-spark absolute left-1/2 top-1/2 h-1 w-1 rounded-full bg-current"
+                      style={{ '--sx': '-13px', '--sy': '-11px' } as React.CSSProperties}
+                    />
+                    <span
+                      className="pm-shuffle-spark absolute left-1/2 top-1/2 h-1 w-1 rounded-full bg-current"
+                      style={{ '--sx': '13px', '--sy': '-11px' } as React.CSSProperties}
+                    />
+                    <span
+                      className="pm-shuffle-spark absolute left-1/2 top-1/2 h-1 w-1 rounded-full bg-current"
+                      style={{ '--sx': '-13px', '--sy': '11px' } as React.CSSProperties}
+                    />
+                    <span
+                      className="pm-shuffle-spark absolute left-1/2 top-1/2 h-1 w-1 rounded-full bg-current"
+                      style={{ '--sx': '13px', '--sy': '11px' } as React.CSSProperties}
+                    />
+                  </span>
+                )}
                 <Shuffle
                   className={`h-3.5 w-3.5 ${
                     dockTransportAnim === 'shuffle' && !reducedMotionPref
-                      ? 'pm-shuffle-flip-epic'
+                      ? 'pm-shuffle-chaos-epic'
                       : ''
                   }`}
                 />
@@ -1629,38 +1649,57 @@ export const App: React.FC = () => {
                   triggerDockTransportAnim('prev');
                   void prevTrack();
                 }}
-                className="pm-pressable pm-hover inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-primary active:scale-90"
+                className="pm-pressable pm-hover relative inline-flex h-9 w-9 items-center justify-center overflow-visible rounded-full pm-text-primary active:scale-90"
               >
+                {dockTransportAnim === 'prev' && !reducedMotionPref && (
+                  <span
+                    aria-hidden="true"
+                    className="pm-skip-trail-prev pointer-events-none absolute left-1/2 top-1/2 h-4 w-5 -translate-x-1/2 rounded-full bg-current opacity-25 blur-[2px]"
+                  />
+                )}
                 <SkipBack
                   className={`h-4 w-4 ${
-                    dockTransportAnim === 'prev' && !reducedMotionPref ? 'pm-skip-glide-prev' : ''
+                    dockTransportAnim === 'prev' && !reducedMotionPref ? 'pm-skip-prev-hyper' : ''
                   }`}
                 />
               </button>
 
               <button
                 type="button"
-                aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
+                data-testid="dock-play-btn"
+                aria-label={isBuffering ? 'Cargando canción' : isPlaying ? 'Pausar' : 'Reproducir'}
                 onClick={() => {
                   triggerDockTransportAnim('play');
                   void togglePlayPause();
                 }}
-                className="pm-btn-primary pm-pressable relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-full shadow-lg transition-transform duration-200 hover:scale-105 active:scale-90"
+                className="pm-btn-primary pm-pressable relative flex h-10 w-10 items-center justify-center overflow-visible rounded-full shadow-lg transition-transform duration-200 hover:scale-105 active:scale-90"
               >
-                <Pause
-                  className={`absolute h-4.5 w-4.5 fill-current transition-all duration-200 ease-out ${
-                    isPlaying
-                      ? 'scale-100 rotate-0 opacity-100 blur-0'
-                      : 'scale-50 rotate-90 opacity-0 blur-[1px]'
-                  }`}
-                />
-                <Play
-                  className={`absolute h-4.5 w-4.5 translate-x-[1px] fill-current transition-all duration-200 ease-out ${
-                    !isPlaying
-                      ? 'scale-100 rotate-0 opacity-100 blur-0'
-                      : 'scale-50 -rotate-90 opacity-0 blur-[1px]'
-                  }`}
-                />
+                {isBuffering ? (
+                  <>
+                    <span
+                      aria-hidden="true"
+                      className="pm-play-loading-ring pointer-events-none absolute -inset-1 rounded-full border-2 border-[var(--pm-accent-primary)]/45"
+                    />
+                    <Loader2 data-testid="dock-play-loader" className="h-4.5 w-4.5 animate-spin" />
+                  </>
+                ) : (
+                  <>
+                    <Pause
+                      className={`absolute h-4.5 w-4.5 fill-current transition-all duration-200 ease-out ${
+                        isPlaying
+                          ? 'scale-100 rotate-0 opacity-100 blur-0'
+                          : 'scale-50 rotate-90 opacity-0 blur-[1px]'
+                      }`}
+                    />
+                    <Play
+                      className={`absolute h-4.5 w-4.5 translate-x-[1px] fill-current transition-all duration-200 ease-out ${
+                        !isPlaying
+                          ? 'scale-100 rotate-0 opacity-100 blur-0'
+                          : 'scale-50 -rotate-90 opacity-0 blur-[1px]'
+                      }`}
+                    />
+                  </>
+                )}
               </button>
 
               <button
@@ -1670,11 +1709,17 @@ export const App: React.FC = () => {
                   triggerDockTransportAnim('next');
                   void nextTrack();
                 }}
-                className="pm-pressable pm-hover inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-primary active:scale-90"
+                className="pm-pressable pm-hover relative inline-flex h-9 w-9 items-center justify-center overflow-visible rounded-full pm-text-primary active:scale-90"
               >
+                {dockTransportAnim === 'next' && !reducedMotionPref && (
+                  <span
+                    aria-hidden="true"
+                    className="pm-skip-trail-next pointer-events-none absolute left-1/2 top-1/2 h-4 w-5 -translate-x-1/2 rounded-full bg-current opacity-25 blur-[2px]"
+                  />
+                )}
                 <SkipForward
                   className={`h-4 w-4 ${
-                    dockTransportAnim === 'next' && !reducedMotionPref ? 'pm-skip-glide-next' : ''
+                    dockTransportAnim === 'next' && !reducedMotionPref ? 'pm-skip-next-hyper' : ''
                   }`}
                 />
               </button>
@@ -1940,12 +1985,19 @@ export const App: React.FC = () => {
 
                 <button
                   type="button"
+                  data-testid="mobile-play-btn"
                   aria-label={isBuffering ? 'Cargando canción' : isPlaying ? 'Pausar' : 'Reproducir'}
                   onClick={() => void togglePlayPause()}
-                  className="pm-btn-primary pm-pressable relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-full shadow-md"
+                  className="pm-btn-primary pm-pressable relative flex h-10 w-10 items-center justify-center overflow-visible rounded-full shadow-md"
                 >
                   {isBuffering ? (
-                    <Loader2 className="h-4.5 w-4.5 animate-spin" />
+                    <>
+                      <span
+                        aria-hidden="true"
+                        className="pm-play-loading-ring pointer-events-none absolute -inset-1 rounded-full border-2 border-[var(--pm-accent-primary)]/45"
+                      />
+                      <Loader2 data-testid="mobile-play-loader" className="h-4.5 w-4.5 animate-spin" />
+                    </>
                   ) : (
                     <>
                       <Pause
@@ -1969,10 +2021,23 @@ export const App: React.FC = () => {
                 <button
                   type="button"
                   aria-label="Siguiente canción"
-                  onClick={() => void nextTrack()}
-                  className="pm-pressable flex h-10 w-10 items-center justify-center rounded-full pm-text-primary"
+                  onClick={() => {
+                    triggerDockTransportAnim('next');
+                    void nextTrack();
+                  }}
+                  className="pm-pressable relative flex h-10 w-10 items-center justify-center overflow-visible rounded-full pm-text-primary"
                 >
-                  <SkipForward className="h-4.5 w-4.5" />
+                  {dockTransportAnim === 'next' && !reducedMotionPref && (
+                    <span
+                      aria-hidden="true"
+                      className="pm-skip-trail-next pointer-events-none absolute left-1/2 top-1/2 h-4 w-5 -translate-x-1/2 rounded-full bg-current opacity-25 blur-[2px]"
+                    />
+                  )}
+                  <SkipForward
+                    className={`h-4.5 w-4.5 ${
+                      dockTransportAnim === 'next' && !reducedMotionPref ? 'pm-skip-next-hyper' : ''
+                    }`}
+                  />
                 </button>
               </div>
             </div>

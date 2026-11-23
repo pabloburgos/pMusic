@@ -175,12 +175,22 @@ export function scoreAudioCandidate(
     score -= 10;
   }
   if (targetDur > 0) {
+    const isVerifiedYtmExact = Boolean(cand.isYtMusicSong && exactTitle && artistMatched);
+    if (
+      targetDur >= 45 &&
+      durDiff > Math.max(40, Math.round(targetDur * 0.45)) &&
+      !isVerifiedYtmExact
+    ) {
+      return -Infinity;
+    }
     if (durDiff <= 2) score += 16;
     else if (durDiff <= 5) score += 12;
     else if (durDiff <= 10) score += 6;
     else if (durDiff <= 18) score += 1;
     else if (durDiff <= 35) score -= Math.round(durDiff * 0.25);
-    else score -= Math.round(9 + (durDiff - 35) * 0.01);
+    else score -= isVerifiedYtmExact
+      ? Math.round(9 + (durDiff - 35) * 0.01)
+      : Math.min(40, Math.round(9 + (durDiff - 35) * 0.25));
   }
 
   return score;
@@ -199,9 +209,14 @@ export class AudioStreamResolver {
   private readonly cache = new Map<string, Resolved>();
   private readonly inflight = new Map<string, Promise<Resolved | null>>();
   private readonly catalog: DeezerCatalog;
+  private lastFailureReason: 'bot_check' | 'not_found' | null = null;
 
   public constructor(catalog: DeezerCatalog) {
     this.catalog = catalog;
+  }
+
+  public getLastFailureReason(): 'bot_check' | 'not_found' | null {
+    return this.lastFailureReason;
   }
 
   private async yt(): Promise<any> {
@@ -242,12 +257,33 @@ export class AudioStreamResolver {
     }
   }
 
-  private async decipherVideo(yt: any, videoId: string): Promise<Resolved | null> {
+  private async decipherVideo(
+    yt: any,
+    videoId: string,
+    expectedDurationSec?: number
+  ): Promise<Resolved | null> {
+    const formatMatchesDuration = (f: any): boolean => {
+      if (!expectedDurationSec || expectedDurationSec < 45) return true;
+      const approxSec = Number(f?.approx_duration_ms ?? 0) / 1000;
+      if (!Number.isFinite(approxSec) || approxSec <= 10) return true;
+      return Math.abs(approxSec - expectedDurationSec) <= Math.max(35, expectedDurationSec * 0.4);
+    };
+
     for (const client of AUDIO_CLIENTS) {
       try {
         const info = await yt.getBasicInfo(videoId, { client });
+        const statusStr = String(info?.playability_status?.status ?? '');
+        const reasonStr = String(info?.playability_status?.reason ?? '').toLowerCase();
+        if (
+          statusStr === 'LOGIN_REQUIRED' &&
+          (reasonStr.includes('bot') || reasonStr.includes('inicia sesi') || reasonStr.includes('sign in'))
+        ) {
+          this.lastFailureReason = 'bot_check';
+          return null;
+        }
+
         const progressive = (info.streaming_data?.formats ?? [])
-          .filter((f: any) => Boolean(f?.has_audio))
+          .filter((f: any) => Boolean(f?.has_audio) && formatMatchesDuration(f))
           .sort((a: any, b: any) => {
             const aPref = a?.itag === 18 || String(a?.mime_type ?? '').includes('mp4') ? 1 : 0;
             const bPref = b?.itag === 18 || String(b?.mime_type ?? '').includes('mp4') ? 1 : 0;
@@ -256,7 +292,7 @@ export class AudioStreamResolver {
           });
 
         const adaptiveAudio = (info.streaming_data?.adaptive_formats ?? [])
-          .filter((f: any) => Boolean(f?.has_audio) && !f?.has_video)
+          .filter((f: any) => Boolean(f?.has_audio) && !f?.has_video && formatMatchesDuration(f))
           .sort((a: any, b: any) => {
             const aMp4 = String(a?.mime_type ?? '').includes('mp4') ? 1 : 0;
             const bMp4 = String(b?.mime_type ?? '').includes('mp4') ? 1 : 0;
@@ -264,7 +300,7 @@ export class AudioStreamResolver {
             return Number(b?.bitrate ?? 0) - Number(a?.bitrate ?? 0);
           });
 
-        for (const fmt of [...adaptiveAudio, ...progressive]) {
+        for (const fmt of [...progressive, ...adaptiveAudio]) {
           try {
             const url = await fmt?.decipher(yt.session.player);
             if (!url) continue;
@@ -332,20 +368,31 @@ export class AudioStreamResolver {
   }
 
   private async resolveYoutube(trackId: string, meta?: AudioStreamMeta): Promise<Resolved | null> {
+    this.lastFailureReason = null;
     const yt = await this.yt();
 
     if (YOUTUBE_ID_RE.test(trackId)) {
-      const direct = await this.decipherVideo(yt, trackId);
+      const direct = await this.decipherVideo(yt, trackId, meta?.durationSec);
       if (direct) return direct;
+      if (this.lastFailureReason === 'bot_check') return null;
     }
 
     const info = await this.lookupTrackInfo(trackId, meta);
-    if (!info) return null;
+    if (!info) {
+      this.lastFailureReason = 'not_found';
+      return null;
+    }
 
     const strippedTitle = stripTrackTitleNoise(info.title) || info.title.trim();
     const primaryArtist =
       info.artist.split(/,|&|\bfeat\.?\b|\bft\.?\b/i)[0]?.trim() || info.artist.trim();
     const focusedQuery = `${primaryArtist} ${strippedTitle}`.trim();
+    const maxRelaxDelta =
+      info.durationSec >= 45 ? Math.max(25, Math.round(info.durationSec * 0.25)) : 120;
+    const isRelaxDurationOk = (dur: number): boolean =>
+      info.durationSec >= 45
+        ? Math.abs(dur - info.durationSec) <= maxRelaxDelta
+        : dur >= 45 && dur <= 600;
 
     // 1) Priority: YouTube Music official songs search (strict then relaxed for underground tracks)
     const relaxedYtm: Array<{ id: string; score: number }> = [];
@@ -371,7 +418,7 @@ export class AudioStreamResolver {
           });
           if (score >= 6) {
             musicCandidates.push({ id, score });
-          } else if (dur >= 45 && dur <= 900) {
+          } else if (isRelaxDurationOk(dur)) {
             const normCand = normText(candTitleStr);
             const normTok = tokenize(strippedTitle).filter((t) => t.length >= 3);
             if (normTok.some((t) => normCand.includes(t)) && !BAD_VERSION_RE.test(normCand)) {
@@ -382,8 +429,9 @@ export class AudioStreamResolver {
       }
       musicCandidates.sort((a, b) => b.score - a.score);
       for (const c of musicCandidates.slice(0, 3)) {
-        const resolved = await this.decipherVideo(yt, c.id);
+        const resolved = await this.decipherVideo(yt, c.id, info.durationSec);
         if (resolved) return resolved;
+        if (this.lastFailureReason === 'bot_check') return null;
       }
     } catch {
       // fall through to standard YouTube video search
@@ -417,7 +465,7 @@ export class AudioStreamResolver {
           });
           if (sc >= 6) {
             candidates.push({ id: vid, score: sc });
-          } else if (dur >= 45 && dur <= 900) {
+          } else if (isRelaxDurationOk(dur)) {
             const normCand = normText(candTitleStr);
             const normTok = tokenize(strippedTitle).filter((t) => t.length >= 3);
             if (normTok.some((t) => normCand.includes(t)) && !BAD_VERSION_RE.test(normCand)) {
@@ -428,25 +476,28 @@ export class AudioStreamResolver {
         candidates.sort((a, b) => b.score - a.score);
 
         for (const c of candidates.slice(0, 3)) {
-          const resolved = await this.decipherVideo(yt, c.id);
+          const resolved = await this.decipherVideo(yt, c.id, info.durationSec);
           if (resolved) return resolved;
+          if (this.lastFailureReason === 'bot_check') return null;
         }
       } catch {
         // try next query
       }
     }
 
-    // 3) Underground / obscure rescue pass (strict title token matched, duration >= 45s)
+    // 3) Underground / obscure rescue pass (strict title token & duration matched)
     const allRelaxed = [...relaxedYtm, ...relaxedYt].sort((a, b) => b.score - a.score);
     const seenIds = new Set<string>();
     for (const c of allRelaxed) {
       if (seenIds.has(c.id)) continue;
       seenIds.add(c.id);
-      const resolved = await this.decipherVideo(yt, c.id);
+      const resolved = await this.decipherVideo(yt, c.id, info.durationSec);
       if (resolved) return resolved;
+      if (this.lastFailureReason === 'bot_check') return null;
       if (seenIds.size >= 4) break;
     }
 
+    this.lastFailureReason = 'not_found';
     return null;
   }
 

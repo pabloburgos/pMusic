@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render, screen, fireEvent } from '@testing-library/react';
+import { act, cleanup, render, screen, fireEvent } from '@testing-library/react';
 import { App } from '../App.tsx';
 import { ArtistLinks } from '../components/ArtistLinks.tsx';
 import { usePMusicStore } from '../store/usePMusicStore.ts';
@@ -200,5 +200,43 @@ describe('@pmusic/web UI', () => {
     await usePMusicStore.getState().prevTrack();
     expect(usePMusicStore.getState().currentTrack.id).toBe(t1.id);
     expect(usePMusicStore.getState().queue[0]?.id).toBe(t1.id);
+  });
+
+  it('shows Play/Pause loading indicator when isBuffering is active and triggers epic skip/prev/shuffle animations', async () => {
+    act(() => {
+      usePMusicStore.setState({ isBuffering: false, isPlaying: false });
+    });
+    render(<App />);
+    const playBtn = screen.getByTestId('dock-play-btn');
+    expect(screen.queryByTestId('dock-play-loader')).toBeNull();
+
+    act(() => {
+      usePMusicStore.setState({ isBuffering: true });
+    });
+    expect(screen.getByTestId('dock-play-loader')).toBeDefined();
+    expect(playBtn.getAttribute('aria-label')).toBe('Cargando canción');
+
+    act(() => {
+      usePMusicStore.setState({ isBuffering: false });
+    });
+    expect(screen.queryByTestId('dock-play-loader')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /Activar reproducción aleatoria/i }));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30));
+    });
+    expect(document.querySelector('.pm-shuffle-chaos-epic')).not.toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Siguiente' }));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30));
+    });
+    expect(document.querySelector('.pm-skip-next-hyper')).not.toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Anterior' }));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30));
+    });
+    expect(document.querySelector('.pm-skip-prev-hyper')).not.toBeNull();
   });
 });

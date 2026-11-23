@@ -271,11 +271,11 @@ export const NowPlayingSheet: React.FC = () => {
     if (typeof requestAnimationFrame === 'function') {
       requestAnimationFrame(() => {
         setTransportAnim(kind);
-        transportTimerRef.current = setTimeout(() => setTransportAnim(null), 520);
+        transportTimerRef.current = setTimeout(() => setTransportAnim(null), 660);
       });
     } else {
       setTransportAnim(kind);
-      transportTimerRef.current = setTimeout(() => setTransportAnim(null), 520);
+      transportTimerRef.current = setTimeout(() => setTransportAnim(null), 660);
     }
   };
 
@@ -932,15 +932,35 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('shuffle');
             toggleShuffle();
           }}
-          className={`pm-pressable relative flex h-9 w-9 items-center justify-center bg-transparent transition-transform duration-150 hover:scale-110 focus:outline-none ${
+          className={`pm-pressable relative flex h-9 w-9 items-center justify-center overflow-visible bg-transparent transition-transform duration-150 hover:scale-110 focus:outline-none ${
             shuffleEnabled
               ? 'text-white'
               : 'text-white/55 hover:text-white'
           }`}
         >
+          {transportAnim === 'shuffle' && !reducedMotionPref && (
+            <span aria-hidden="true" className="pointer-events-none absolute inset-0">
+              <span
+                className="pm-shuffle-spark absolute left-1/2 top-1/2 h-1.5 w-1.5 rounded-full bg-white"
+                style={{ '--sx': '-16px', '--sy': '-13px' } as React.CSSProperties}
+              />
+              <span
+                className="pm-shuffle-spark absolute left-1/2 top-1/2 h-1.5 w-1.5 rounded-full bg-white"
+                style={{ '--sx': '16px', '--sy': '-13px' } as React.CSSProperties}
+              />
+              <span
+                className="pm-shuffle-spark absolute left-1/2 top-1/2 h-1.5 w-1.5 rounded-full bg-white"
+                style={{ '--sx': '-16px', '--sy': '13px' } as React.CSSProperties}
+              />
+              <span
+                className="pm-shuffle-spark absolute left-1/2 top-1/2 h-1.5 w-1.5 rounded-full bg-white"
+                style={{ '--sx': '16px', '--sy': '13px' } as React.CSSProperties}
+              />
+            </span>
+          )}
           <Shuffle
             className={`h-4 w-4 ${
-              transportAnim === 'shuffle' && !reducedMotionPref ? 'pm-shuffle-flip-epic' : ''
+              transportAnim === 'shuffle' && !reducedMotionPref ? 'pm-shuffle-chaos-epic' : ''
             }`}
           />
           {shuffleEnabled && (
@@ -958,26 +978,39 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('prev');
             void prevTrack();
           }}
-          className="pm-pressable flex h-12 w-12 items-center justify-center bg-transparent text-white/90 transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none"
+          className="pm-pressable relative flex h-12 w-12 items-center justify-center overflow-visible bg-transparent text-white/90 transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none"
         >
+          {transportAnim === 'prev' && !reducedMotionPref && (
+            <span
+              aria-hidden="true"
+              className="pm-skip-trail-prev pointer-events-none absolute left-1/2 top-1/2 h-6 w-7 -translate-x-1/2 rounded-full bg-white/35 blur-[3px]"
+            />
+          )}
           <SkipBack
             className={`h-7 w-7 fill-current ${
-              transportAnim === 'prev' && !reducedMotionPref ? 'pm-skip-glide-prev' : ''
+              transportAnim === 'prev' && !reducedMotionPref ? 'pm-skip-prev-hyper' : ''
             }`}
           />
         </button>
 
         <button
           type="button"
+          data-testid="nowplaying-play-btn"
           aria-label={isBuffering ? 'Cargando canción' : isPlaying ? 'Pausar' : 'Reproducir'}
           onClick={() => {
             triggerTransportAnim('play');
             void togglePlayPause();
           }}
-          className="pm-pressable relative flex h-16 w-16 items-center justify-center bg-transparent text-white outline-none ring-0 transition-transform duration-200 hover:scale-105 active:scale-90 focus:outline-none"
+          className="pm-pressable relative flex h-16 w-16 items-center justify-center overflow-visible bg-transparent text-white outline-none ring-0 transition-transform duration-200 hover:scale-105 active:scale-90 focus:outline-none"
         >
           {isBuffering ? (
-            <Loader2 className="h-10 w-10 animate-spin text-white/95" />
+            <>
+              <span
+                aria-hidden="true"
+                className="pm-play-loading-ring pointer-events-none absolute inset-1 rounded-full border-2 border-white/40"
+              />
+              <Loader2 data-testid="nowplaying-play-loader" className="h-10 w-10 animate-spin text-white/95" />
+            </>
           ) : (
             <>
               <Pause
@@ -1005,11 +1038,17 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('next');
             void nextTrack();
           }}
-          className="pm-pressable flex h-12 w-12 items-center justify-center bg-transparent text-white/90 transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none"
+          className="pm-pressable relative flex h-12 w-12 items-center justify-center overflow-visible bg-transparent text-white/90 transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none"
         >
+          {transportAnim === 'next' && !reducedMotionPref && (
+            <span
+              aria-hidden="true"
+              className="pm-skip-trail-next pointer-events-none absolute left-1/2 top-1/2 h-6 w-7 -translate-x-1/2 rounded-full bg-white/35 blur-[3px]"
+            />
+          )}
           <SkipForward
             className={`h-7 w-7 fill-current ${
-              transportAnim === 'next' && !reducedMotionPref ? 'pm-skip-glide-next' : ''
+              transportAnim === 'next' && !reducedMotionPref ? 'pm-skip-next-hyper' : ''
             }`}
           />
         </button>

@@ -443,7 +443,11 @@ export function createPMusicApiHandler(options: PMusicApiHandlerOptions = {}) {
         ) {
           return true;
         }
-        sendJson(res, 503, { error: 'No se pudo cargar el audio completo de esta pista' });
+        const errMsg =
+          streamResolver.getLastFailureReason() === 'bot_check'
+            ? 'YouTube bloqueó esta IP con verificación anti-bot. Cambia de red o reintenta en unos minutos.'
+            : 'No se pudo cargar el audio completo de esta pista';
+        sendJson(res, 503, { error: errMsg });
         return true;
       }
 

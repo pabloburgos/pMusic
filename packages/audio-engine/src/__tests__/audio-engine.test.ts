@@ -694,4 +694,39 @@ describe('@pmusic/audio-engine', () => {
     expect(engine.getState().isPlaying).toBe(true);
     await engine.dispose();
   });
+
+  it('ignores implausible 2x audio.duration glitches and preserves track metadata durationSec', async () => {
+    const created: ReturnType<typeof createFakeBrowserAudioElement>[] = [];
+    const prevDoc = (globalThis as { document?: unknown }).document;
+    (globalThis as { document?: unknown }).document = {
+      createElement: () => {
+        const el = createFakeBrowserAudioElement();
+        el.duration = 368;
+        el.readyState = 4;
+        created.push(el);
+        return el;
+      },
+      body: { appendChild: () => {} },
+    };
+
+    const engine = new DualDeckAudioEngine();
+    try {
+      await engine.init();
+      await engine.loadAndPlay(
+        { ...SAMPLE_TRACKS[0]!, durationSec: 184 },
+        0
+      );
+      created[0]!.duration = 368;
+      created[0]!.dispatch('loadedmetadata');
+      created[0]!.dispatch('durationchange');
+      created[0]!.currentTime = 12;
+      created[0]!.paused = false;
+      created[0]!.dispatch('timeupdate');
+
+      expect(engine.getState().durationSec).toBe(184);
+    } finally {
+      await engine.dispose();
+      (globalThis as { document?: unknown }).document = prevDoc;
+    }
+  });
 });

@@ -636,9 +636,20 @@ export class DualDeckAudioEngine implements IAudioEngine {
       } as unknown as HTMLAudioElement;
     }
 
+    const isPlausibleDuration = (rawDur: number): boolean => {
+      if (!Number.isFinite(rawDur) || rawDur <= 1) return false;
+      const metaDur = this.getDeck(id).track?.durationSec ?? 0;
+      if (metaDur < 45) return true;
+      const ratio = rawDur / metaDur;
+      return (
+        (ratio >= 0.3 && ratio <= 1.45) ||
+        (Number.isFinite(audio.currentTime) && audio.currentTime > metaDur * 1.15)
+      );
+    };
+
     const syncDuration = () => {
       if (this.activeDeck !== id) return;
-      if (Number.isFinite(audio.duration) && audio.duration > 1) {
+      if (isPlausibleDuration(audio.duration)) {
         this.durationSec = audio.duration;
         if (this.positionSec > this.durationSec) {
           this.positionSec = this.durationSec;
@@ -703,13 +714,12 @@ export class DualDeckAudioEngine implements IAudioEngine {
 
     audio.addEventListener('timeupdate', () => {
       if (this.activeDeck === id) {
-        if (Number.isFinite(audio.duration) && audio.duration > 1) {
+        if (isPlausibleDuration(audio.duration)) {
           this.durationSec = audio.duration;
         }
-        const realDur =
-          Number.isFinite(audio.duration) && audio.duration > 1
-            ? audio.duration
-            : this.durationSec;
+        const realDur = isPlausibleDuration(audio.duration)
+          ? audio.duration
+          : this.durationSec;
         if (!audio.seeking && Number.isFinite(audio.currentTime) && audio.currentTime >= 0) {
           this.positionSec = realDur > 0 ? Math.min(audio.currentTime, realDur) : audio.currentTime;
         }

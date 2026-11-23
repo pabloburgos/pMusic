@@ -612,4 +612,17 @@ describe('@pmusic/providers', () => {
       globalThis.fetch = prevFetch;
     }
   });
+
+  it('rejects 6-minute YouTube video candidates for 3-minute tracks in scoreAudioCandidate', () => {
+    const score = scoreAudioCandidate(
+      { title: 'NUEVAYoL', artist: 'Bad Bunny', durationSec: 180 },
+      {
+        candidateTitle: 'NUEVAYoL',
+        candidateAuthor: 'Bad Bunny',
+        candidateDurationSec: 360,
+        isYtMusicSong: false,
+      }
+    );
+    expect(score).toBe(-Infinity);
+  });
 });
