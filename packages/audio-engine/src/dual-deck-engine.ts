@@ -478,6 +478,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
 
     audio.addEventListener('loadedmetadata', syncDuration);
     audio.addEventListener('durationchange', syncDuration);
+    audio.addEventListener('canplay', syncDuration);
 
     audio.addEventListener('timeupdate', () => {
       if (this.activeDeck === id) {
@@ -761,6 +762,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
 
   public pause(): void {
     if (!this.deckA || !this.deckB) return;
+    this.positionSec = this.getLivePositionSec();
     this.deckA.audio.pause();
     this.deckB.audio.pause();
     this.isPlaying = false;
@@ -908,6 +910,9 @@ export class DualDeckAudioEngine implements IAudioEngine {
         eq_swap: config.enabledTransitions?.eq_swap ?? true,
         filter_sweep: config.enabledTransitions?.filter_sweep ?? true,
         echo_out: config.enabledTransitions?.echo_out ?? true,
+        vocal_over_beat: config.enabledTransitions?.vocal_over_beat ?? true,
+        instrumental_bed: config.enabledTransitions?.instrumental_bed ?? true,
+        loop_build: config.enabledTransitions?.loop_build ?? true,
       },
     };
     if (config.enabled) {
@@ -1006,9 +1011,15 @@ export class DualDeckAudioEngine implements IAudioEngine {
         65,
         Math.min(175, (240 * plan.transitionBars) / Math.max(2, plan.transitionDurationSec))
       );
+      const beatSub =
+        plan.transitionType === 'loop_build'
+          ? (ch?.loopSubdivision ?? 0.25)
+          : plan.echoSubdivision === 0.75
+            ? 0.75
+            : 0.5;
       const beatDelaySec = Math.max(
-        0.16,
-        Math.min(0.85, (60 / estFromBpm) * (plan.echoSubdivision === 0.75 ? 0.75 : 0.5))
+        plan.transitionType === 'loop_build' ? 0.10 : 0.16,
+        Math.min(0.85, (60 / estFromBpm) * beatSub)
       );
 
       if (outgoing.delayNode) {
@@ -1022,7 +1033,72 @@ export class DualDeckAudioEngine implements IAudioEngine {
         let outGain = Math.cos(p * 0.5 * Math.PI);
         let inGain = Math.sin(p * 0.5 * Math.PI);
 
-        if (ch) {
+        if (ch && ch.techniqueMode === 'vocal_over_beat') {
+          // Outgoing vocal floats clean while outgoing bass cuts early and incoming beat takes over
+          const outLowDrop = Math.min(1, p / 0.3);
+          const inLowRise = p < 0.16 ? 0 : Math.min(1, (p - 0.16) / 0.22);
+          const inMidRelease = p < 0.5 ? 0 : Math.min(1, (p - 0.5) / 0.36);
+
+          setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -24 * outLowDrop);
+          setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -24 * (1 - inLowRise));
+          setAudioParamSmooth(
+            outgoing.midEqNode?.gain,
+            this.audioCtx,
+            p < 0.55 ? 1.5 : 1.5 - ((p - 0.55) / 0.45) * 14
+          );
+          setAudioParamSmooth(
+            incoming.midEqNode?.gain,
+            this.audioCtx,
+            ch.incomingVocalHoldDb * (1 - inMidRelease)
+          );
+          setAudioParamSmooth(incoming.highEqNode?.gain, this.audioCtx, -4 * (1 - Math.min(1, p / 0.35)));
+          if (outgoing.sweepFilterNode) {
+            outgoing.sweepFilterNode.type = 'highpass';
+            outgoing.sweepFilterNode.Q.value = 0.85;
+            setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, 180 + p * 650);
+          }
+          const sendCurve = p < 0.48 ? 0 : p < 0.78 ? ((p - 0.48) / 0.3) * 0.46 : Math.max(0, 0.46 * (1 - (p - 0.78) / 0.22));
+          setAudioParamSmooth(outgoing.delaySendNode?.gain, this.audioCtx, sendCurve, 0.025);
+          setAudioParamSmooth(outgoing.delayFeedbackNode?.gain, this.audioCtx, 0.5, 0.025);
+
+          outGain = p < 0.62 ? 0.94 - p * 0.12 : 0.86 * Math.cos(((p - 0.62) / 0.38) * 0.5 * Math.PI);
+          inGain = p < 0.35 ? Math.sin((p / 0.35) * 0.5 * Math.PI) * 0.94 : 0.94 + 0.06 * ((p - 0.35) / 0.65);
+        } else if (ch && ch.techniqueMode === 'instrumental_bed') {
+          // Carve outgoing vocals deeply to leave instrumental groove while incoming vocal glides in cleanly
+          const carveU = Math.min(1, p / 0.25);
+          const swapStart = 0.5;
+          const swapEnd = 0.76;
+          const swapU = p <= swapStart ? 0 : p >= swapEnd ? 1 : (p - swapStart) / (swapEnd - swapStart);
+
+          setAudioParamSmooth(outgoing.midEqNode?.gain, this.audioCtx, -18.5 * carveU);
+          setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, -2 * (1 - Math.min(1, p / 0.32)));
+          setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -24 * swapU);
+          setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -24 * (1 - swapU));
+          setAudioParamSmooth(outgoing.highEqNode?.gain, this.audioCtx, -6 * Math.pow(p, 1.3));
+          setAudioParamSmooth(incoming.highEqNode?.gain, this.audioCtx, -5 * (1 - Math.min(1, p / 0.45)));
+
+          outGain = p < 0.64 ? 0.96 - p * 0.14 : 0.87 * Math.cos(((p - 0.64) / 0.36) * 0.5 * Math.PI);
+          inGain = p < 0.3 ? Math.sin((p / 0.3) * 0.5 * Math.PI) * 0.92 : 0.92 + 0.08 * ((p - 0.3) / 0.7);
+        } else if (ch && ch.techniqueMode === 'loop_build') {
+          // Tight rhythmic loop repeat + resonant HPF build into crisp incoming drop
+          const buildU = Math.min(1, p / 0.68);
+          if (outgoing.sweepFilterNode) {
+            outgoing.sweepFilterNode.type = 'highpass';
+            outgoing.sweepFilterNode.Q.value = 2.3;
+            const hpFreq = 90 * Math.pow(2400 / 90, Math.pow(buildU, 1.2));
+            setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, hpFreq);
+          }
+          setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -24 * Math.min(1, p / 0.5));
+          setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, p < 0.66 ? -24 : 0, 0.02);
+
+          const loopSend = p < 0.66 ? 0.18 + buildU * 0.46 : Math.max(0, 0.64 * (1 - (p - 0.66) / 0.25));
+          const loopFb = p < 0.66 ? 0.42 + buildU * 0.31 : Math.max(0, 0.72 * (1 - (p - 0.66) / 0.34));
+          setAudioParamSmooth(outgoing.delaySendNode?.gain, this.audioCtx, loopSend, 0.02);
+          setAudioParamSmooth(outgoing.delayFeedbackNode?.gain, this.audioCtx, Math.min(0.75, loopFb), 0.02);
+
+          outGain = p < 0.68 ? 1 - buildU * 0.22 : 0.78 * Math.max(0, 1 - (p - 0.68) / 0.16);
+          inGain = p < 0.4 ? Math.sin((p / 0.4) * 0.5 * Math.PI) * 0.65 : p < 0.68 ? 0.65 + ((p - 0.4) / 0.28) * 0.35 : 1.0;
+        } else if (ch) {
           // Continuous adaptive 3-stem DJ sculpting tailored specifically for this song pair
           const swapStart = Math.max(0.15, ch.bassSwapPoint01 - ch.bassSwapWidth01 * 0.5);
           const swapEnd = Math.min(0.88, ch.bassSwapPoint01 + ch.bassSwapWidth01 * 0.5);

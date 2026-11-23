@@ -399,13 +399,69 @@ code {
   color: var(--pm-text-primary);
 }
 
+.pm-glass-frosted-neutral {
+  background: rgba(20, 20, 26, 0.52);
+  -webkit-backdrop-filter: blur(38px) saturate(165%);
+  backdrop-filter: blur(38px) saturate(165%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow:
+    0 28px 72px rgba(0, 0, 0, 0.56),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+  color: #f5f5f7;
+}
+
+html.light .pm-glass-frosted-neutral {
+  background: rgba(252, 252, 255, 0.72);
+  border: 1px solid rgba(15, 15, 24, 0.12);
+  box-shadow:
+    0 24px 64px rgba(15, 15, 24, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  color: #111116;
+}
+
+html.pm-reduced-transparency .pm-glass-frosted-neutral,
+html.pm-solid-modern .pm-glass-frosted-neutral {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  background: var(--pm-bg-elevated);
+}
+
 .pm-glass-surface {
   background-color: var(--pm-bg-surface);
   color: var(--pm-text-primary);
   border: 1px solid var(--pm-border-subtle);
 }
 
-html.pm-liquid-glass-all .pm-glass-surface {
+html.pm-liquid-glass-all .pm-glass-frosted-neutral {
+  background: rgba(20, 20, 26, 0.52);
+  -webkit-backdrop-filter: blur(38px) saturate(165%);
+  backdrop-filter: blur(38px) saturate(165%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow:
+    0 28px 72px rgba(0, 0, 0, 0.56),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+  color: #f5f5f7;
+}
+
+html.light .pm-glass-frosted-neutral {
+  background: rgba(252, 252, 255, 0.72);
+  border: 1px solid rgba(15, 15, 24, 0.12);
+  box-shadow:
+    0 24px 64px rgba(15, 15, 24, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  color: #111116;
+}
+
+html.pm-reduced-transparency .pm-glass-frosted-neutral,
+html.pm-solid-modern .pm-glass-frosted-neutral {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  background: var(--pm-bg-elevated);
+}
+
+.pm-glass-surface {
   background: linear-gradient(
     160deg,
     color-mix(in srgb, var(--pm-glass-regular-bg) 86%, var(--pm-glass-sheen)) 0%,
@@ -421,7 +477,35 @@ html.pm-liquid-glass-all .pm-glass-surface {
 }
 
 /* Keep active backdrop-filter surfaces <= 4 whenever a full-screen dialog is open */
-html.pm-liquid-glass-all:has([role="dialog"]) .pm-glass-surface {
+html.pm-liquid-glass-all:has([role="dialog"]) .pm-glass-frosted-neutral {
+  background: rgba(20, 20, 26, 0.52);
+  -webkit-backdrop-filter: blur(38px) saturate(165%);
+  backdrop-filter: blur(38px) saturate(165%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow:
+    0 28px 72px rgba(0, 0, 0, 0.56),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+  color: #f5f5f7;
+}
+
+html.light .pm-glass-frosted-neutral {
+  background: rgba(252, 252, 255, 0.72);
+  border: 1px solid rgba(15, 15, 24, 0.12);
+  box-shadow:
+    0 24px 64px rgba(15, 15, 24, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  color: #111116;
+}
+
+html.pm-reduced-transparency .pm-glass-frosted-neutral,
+html.pm-solid-modern .pm-glass-frosted-neutral {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  background: var(--pm-bg-elevated);
+}
+
+.pm-glass-surface {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
@@ -1126,7 +1210,35 @@ html.pm-reduced-transparency .pm-glass-clear,
 html.pm-reduced-transparency .pm-glass-surface,
 html.pm-solid-modern .pm-glass-regular,
 html.pm-solid-modern .pm-glass-clear,
-html.pm-solid-modern .pm-glass-surface {
+html.pm-solid-modern .pm-glass-frosted-neutral {
+  background: rgba(20, 20, 26, 0.52);
+  -webkit-backdrop-filter: blur(38px) saturate(165%);
+  backdrop-filter: blur(38px) saturate(165%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow:
+    0 28px 72px rgba(0, 0, 0, 0.56),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+  color: #f5f5f7;
+}
+
+html.light .pm-glass-frosted-neutral {
+  background: rgba(252, 252, 255, 0.72);
+  border: 1px solid rgba(15, 15, 24, 0.12);
+  box-shadow:
+    0 24px 64px rgba(15, 15, 24, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  color: #111116;
+}
+
+html.pm-reduced-transparency .pm-glass-frosted-neutral,
+html.pm-solid-modern .pm-glass-frosted-neutral {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  background: var(--pm-bg-elevated);
+}
+
+.pm-glass-surface {
   background: var(--pm-bg-surface) !important;
   background-color: var(--pm-bg-surface) !important;
   -webkit-backdrop-filter: none !important;
@@ -1310,53 +1422,53 @@ html.pm-solid-modern .pm-spotlight-backdrop {
 /* ── Living GPU-Composited Fluid Color Orbs (Zero filter:blur, 60fps silky on Android WebView & Desktop) ── */
 @keyframes pmOrbDrift1 {
   0%, 100% {
-    transform: translate3d(-14%, -12%, 0) scale(1.05) rotate(0deg);
-    opacity: 0.72;
+    transform: translate3d(-18%, -14%, 0) scale(1.06) rotate(0deg);
+    opacity: 0.78;
   }
   33% {
-    transform: translate3d(16%, 6%, 0) scale(1.26) rotate(42deg);
-    opacity: 0.88;
+    transform: translate3d(20%, 10%, 0) scale(1.32) rotate(48deg);
+    opacity: 0.94;
   }
   66% {
-    transform: translate3d(-4%, 18%, 0) scale(0.96) rotate(-24deg);
-    opacity: 0.68;
+    transform: translate3d(-6%, 22%, 0) scale(0.96) rotate(-32deg);
+    opacity: 0.72;
   }
 }
 
 @keyframes pmOrbDrift2 {
   0%, 100% {
-    transform: translate3d(16%, 14%, 0) scale(1.12) rotate(0deg);
-    opacity: 0.66;
+    transform: translate3d(20%, 16%, 0) scale(1.14) rotate(0deg);
+    opacity: 0.72;
   }
   40% {
-    transform: translate3d(-15%, -8%, 0) scale(1.3) rotate(-48deg);
-    opacity: 0.84;
+    transform: translate3d(-18%, -12%, 0) scale(1.34) rotate(-54deg);
+    opacity: 0.9;
   }
   75% {
-    transform: translate3d(8%, -16%, 0) scale(0.98) rotate(30deg);
-    opacity: 0.62;
+    transform: translate3d(10%, -20%, 0) scale(0.98) rotate(36deg);
+    opacity: 0.68;
   }
 }
 
 @keyframes pmOrbDrift3 {
   0%, 100% {
-    transform: translate3d(0%, 18%, 0) scale(1.0) rotate(0deg);
-    opacity: 0.54;
+    transform: translate3d(-6%, 20%, 0) scale(1.02) rotate(0deg);
+    opacity: 0.62;
   }
   50% {
-    transform: translate3d(12%, -16%, 0) scale(1.28) rotate(55deg);
-    opacity: 0.78;
+    transform: translate3d(18%, -18%, 0) scale(1.32) rotate(62deg);
+    opacity: 0.86;
   }
 }
 
 @keyframes pmOrbSheen {
   0%, 100% {
-    transform: translate3d(-12%, -8%, 0) rotate(-14deg) scale(1.04);
-    opacity: 0.24;
+    transform: translate3d(-16%, -10%, 0) rotate(-18deg) scale(1.06);
+    opacity: 0.28;
   }
   50% {
-    transform: translate3d(12%, 10%, 0) rotate(12deg) scale(1.18);
-    opacity: 0.42;
+    transform: translate3d(16%, 12%, 0) rotate(16deg) scale(1.22);
+    opacity: 0.46;
   }
 }
 
@@ -1364,10 +1476,10 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   background: radial-gradient(
     circle closest-side at 50% 50%,
     var(--pm-ambient-1) 0%,
-    color-mix(in srgb, var(--pm-ambient-1) 44%, transparent) 54%,
+    color-mix(in srgb, var(--pm-ambient-1) 46%, transparent) 54%,
     transparent 98%
   );
-  animation: pmOrbDrift1 13s ease-in-out infinite;
+  animation: pmOrbDrift1 10s ease-in-out infinite;
   will-change: transform, opacity;
   backface-visibility: hidden;
 }
@@ -1376,10 +1488,10 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   background: radial-gradient(
     circle closest-side at 50% 50%,
     var(--pm-ambient-2) 0%,
-    color-mix(in srgb, var(--pm-ambient-2) 44%, transparent) 54%,
+    color-mix(in srgb, var(--pm-ambient-2) 46%, transparent) 54%,
     transparent 98%
   );
-  animation: pmOrbDrift2 17s ease-in-out infinite;
+  animation: pmOrbDrift2 13s ease-in-out infinite;
   will-change: transform, opacity;
   backface-visibility: hidden;
 }
@@ -1388,10 +1500,10 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   background: radial-gradient(
     circle closest-side at 50% 50%,
     var(--pm-ambient-3) 0%,
-    color-mix(in srgb, var(--pm-ambient-3) 40%, transparent) 52%,
+    color-mix(in srgb, var(--pm-ambient-3) 42%, transparent) 52%,
     transparent 98%
   );
-  animation: pmOrbDrift3 21s ease-in-out infinite;
+  animation: pmOrbDrift3 16s ease-in-out infinite;
   will-change: transform, opacity;
   backface-visibility: hidden;
 }
@@ -1399,13 +1511,46 @@ html.pm-solid-modern .pm-spotlight-backdrop {
 .pm-orb-sheen {
   background: radial-gradient(
     closest-side at 50% 50%,
-    rgba(255, 255, 255, 0.2) 0%,
-    rgba(255, 255, 255, 0.05) 52%,
+    rgba(255, 255, 255, 0.22) 0%,
+    rgba(255, 255, 255, 0.06) 52%,
     transparent 98%
   );
-  animation: pmOrbSheen 15s ease-in-out infinite;
+  animation: pmOrbSheen 12s ease-in-out infinite;
   will-change: transform, opacity;
   backface-visibility: hidden;
+}
+
+/* Choreographed DJ / Track Handoff Animations */
+@keyframes pmTrackMetaIn {
+  from {
+    opacity: 0;
+    transform: translate3d(16px, 0, 0);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+    filter: blur(0);
+  }
+}
+
+.pm-track-meta-in {
+  animation: pmTrackMetaIn 380ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes pmDockTakeoverIn {
+  from {
+    opacity: 0;
+    transform: translate3d(-24px, 0, 0) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+.pm-dock-takeover-in {
+  animation: pmDockTakeoverIn 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .pm-backdrop-static .pm-orb-1,

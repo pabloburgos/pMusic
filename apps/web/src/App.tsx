@@ -92,6 +92,8 @@ export const App: React.FC = () => {
     nowPlayingOpen,
     eqSheetOpen,
     djPopoverOpen,
+    audioPanelTab,
+    incomingTransitionTrack,
     devicesSheetOpen,
     importModalOpen,
     settingsOpen,
@@ -408,6 +410,8 @@ export const App: React.FC = () => {
     nowPlayingOpen,
     eqSheetOpen,
     djPopoverOpen,
+    audioPanelTab,
+    incomingTransitionTrack,
     devicesSheetOpen,
     importModalOpen,
     settingsOpen,
@@ -525,9 +529,9 @@ export const App: React.FC = () => {
         isMobileViewport ? 'min-h-dvh' : 'h-dvh overflow-hidden'
       }`}
     >
-      {/* Unified Desktop Header & Integrated Frameless Windows Drag Bar */}
+      {/* Unified Desktop Header & Integrated Frameless Windows Drag Bar (borderless unified canvas) */}
       {!isMobileViewport && (
-        <header className="pm-drag-region pm-canvas relative z-30 flex h-12 w-full shrink-0 items-center justify-between gap-3 border-b pm-border px-3">
+        <header className="pm-drag-region pm-canvas relative z-30 flex h-12 w-full shrink-0 items-center justify-between gap-3 px-3">
           <div className="pm-no-drag relative z-10 flex items-center gap-2">
             <button
               type="button"
@@ -1464,8 +1468,28 @@ export const App: React.FC = () => {
             </>
           )}
 
-          {/* Left: Artwork + Title & Clickable ArtistLinks + Heart */}
+          {/* Left: Artwork + Title & Clickable ArtistLinks + Heart (+ Incoming DJ Dock Takeover) */}
           <div className="pointer-events-none relative z-10 flex min-w-0 items-center">
+            {isTransitioning &&
+              incomingTransitionTrack &&
+              incomingTransitionTrack.id !== currentTrack.id && (
+                <div className="pm-dock-takeover-in pointer-events-auto mr-3 flex max-w-[230px] items-center gap-2 rounded-[12px] border border-white/15 bg-white/[0.1] px-2.5 py-1.5 backdrop-blur-xl">
+                  <img
+                    src={incomingTransitionTrack.thumbnailUrl}
+                    alt={incomingTransitionTrack.title}
+                    className="h-8 w-8 shrink-0 rounded-[7px] object-cover"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-white/75">
+                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
+                      <span>Entrando · {Math.round(transitionProgress01 * 100)}%</span>
+                    </div>
+                    <div className="truncate text-xs font-semibold pm-text-primary">
+                      {incomingTransitionTrack.title}
+                    </div>
+                  </div>
+                </div>
+              )}
             <div className="pm-dock-interactive pointer-events-auto inline-flex min-w-0 max-w-full items-center gap-3">
               <button
                 type="button"

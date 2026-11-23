@@ -295,6 +295,8 @@ export interface PMusicStoreState {
   nowPlayingTab: NowPlayingSubTab;
   eqSheetOpen: boolean;
   djPopoverOpen: boolean;
+  audioPanelTab: 'dj' | 'eq';
+  incomingTransitionTrack: Track | null;
   devicesSheetOpen: boolean;
   importModalOpen: boolean;
   settingsOpen: boolean;
@@ -412,6 +414,7 @@ export interface PMusicStoreState {
   setNowPlayingTab: (tab: NowPlayingSubTab) => void;
   setEqSheetOpen: (open: boolean) => void;
   setDjPopoverOpen: (open: boolean) => void;
+  setAudioPanelTab: (tab: 'dj' | 'eq') => void;
   setDevicesSheetOpen: (open: boolean) => void;
   setImportModalOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
@@ -452,6 +455,7 @@ export interface PMusicStoreState {
   promoteRecommendedTrack: (trackId: string) => void;
   dismissRecommendedTrack: (trackId: string) => void;
   startTrackRadio: (track: Track, withDj?: boolean) => Promise<void>;
+  startFullDjRadio: () => Promise<void>;
   setAutoplayEnabled: (enabled: boolean) => void;
   setAmbientMotionEnabled: (enabled: boolean) => void;
 
@@ -643,14 +647,23 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       return null;
     }
 
-    const fromAna =
-      st.trackAnalyses[st.currentTrack.id] ??
-      (await djPlanner.analyzeTrack(st.currentTrack.id, null, st.currentTrack.durationSec));
+    const engineDur = audioEngine.getState().durationSec;
+    const effDuration =
+      engineDur > 2 ? engineDur : st.durationSec > 2 ? st.durationSec : st.currentTrack.durationSec;
+
+    const cachedFrom = st.trackAnalyses[st.currentTrack.id];
+    const needDurationRefresh =
+      !cachedFrom || Math.abs(cachedFrom.durationSec - effDuration) >= 1.5;
+    const fromAna = needDurationRefresh
+      ? await djPlanner.analyzeTrack(st.currentTrack.id, null, effDuration)
+      : cachedFrom;
+
+    const cachedTo = st.trackAnalyses[nextTrack.id];
     const toAna =
-      st.trackAnalyses[nextTrack.id] ??
+      cachedTo ??
       (await djPlanner.analyzeTrack(nextTrack.id, null, nextTrack.durationSec));
 
-    if (!st.trackAnalyses[st.currentTrack.id] || !st.trackAnalyses[nextTrack.id]) {
+    if (needDurationRefresh || !cachedTo) {
       set((prev) => ({
         trackAnalyses: {
           ...prev.trackAnalyses,
@@ -669,14 +682,13 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     );
 
     const latest = get();
-    const engineDur = audioEngine.getState().durationSec;
-    const effDuration =
-      engineDur > 10 ? engineDur : latest.durationSec > 10 ? latest.durationSec : fromAna.durationSec;
-    const safeTransDur = Math.min(plan.transitionDurationSec, Math.max(2, effDuration * 0.35));
-    const maxSafeCueOut = Math.max(4, Math.floor(effDuration - safeTransDur - 1));
+    const latestDurRaw = audioEngine.getState().durationSec;
+    const latestEffDuration =
+      latestDurRaw > 2 ? latestDurRaw : latest.durationSec > 2 ? latest.durationSec : fromAna.durationSec;
+    const safeTransDur = Math.min(plan.transitionDurationSec, Math.max(2, latestEffDuration * 0.35));
+    const maxSafeCueOut = Math.max(4, Math.floor(latestEffDuration - safeTransDur - 1.4));
     let nextCueOut = Math.max(4, Math.min(plan.cueOutSec, maxSafeCueOut));
 
-    // Keep armed cueOutSec stable for the current pair unless the user seeked past it
     const existingPlan = latest.activeTransitionPlan;
     const samePair =
       existingPlan &&
@@ -685,6 +697,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
     if (
       samePair &&
+      !needDurationRefresh &&
       existingPlan.cueOutSec <= maxSafeCueOut &&
       latest.positionSec < existingPlan.cueOutSec - 0.2
     ) {
@@ -724,33 +737,23 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     if (djAutoTransitionInFlight) return;
     djAutoTransitionInFlight = true;
     djAutoTransitionStartedAtMs = Date.now();
-    try {
-      const prevTrack = get().currentTrack;
-      void recommendationEngine.recordSignal(prevTrack, 'complete_listen', {
-        completionRatio: 1.0,
-      });
+    let handoffTimer: ReturnType<typeof setTimeout> | null = null;
+    let swapped = false;
 
-      try {
-        const preloadedOk = await runWithTimeout(
-          audioEngine.preloadNextDeck(nextTrack, plan.cueInSec),
-          3500
-        );
-        if (!preloadedOk) {
-          djAutoTransitionInFlight = false;
-          djAutoTransitionStartedAtMs = 0;
-          await get().playTrack(nextTrack, get().queue, plan.cueInSec);
-          return;
-        }
-      } catch {
-        djAutoTransitionInFlight = false;
-        djAutoTransitionStartedAtMs = 0;
-        await get().playTrack(nextTrack, get().queue, plan.cueInSec);
-        return;
+    const prevTrack = get().currentTrack;
+    const commitTrackSwap = () => {
+      if (swapped) return;
+      swapped = true;
+      if (handoffTimer) {
+        clearTimeout(handoffTimer);
+        handoffTimer = null;
       }
-
       const curState = get();
+      if (curState.currentTrack.id === nextTrack.id) return;
       const updatedPrevStack = [...curState.sessionPrevStack, prevTrack].slice(-20);
-      const fromRecommended = !curState.queue.some((t, idx) => idx === nextIdx && t.id === nextTrack.id);
+      const fromRecommended = !curState.queue.some(
+        (t, idx) => idx === nextIdx && t.id === nextTrack.id
+      );
       let nextQueue: Track[];
       let nextQueueIndex = 0;
       let nextRecommended = curState.recommendedQueue;
@@ -783,7 +786,6 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         lyricsUserScrolled: false,
       });
 
-      applyAmbientPaletteForTrack(nextTrack);
       void get().loadLyricsForTrack(nextTrack);
       if (nextRecommended.length < 6) {
         void get().replenishRecommendedQueue();
@@ -794,34 +796,81 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         track_title: `${nextTrack.title} — ${nextTrack.artists.map((a) => a.name).join(', ')}`,
       });
       syncDiscordPresenceState();
+    };
+
+    try {
+      void recommendationEngine.recordSignal(prevTrack, 'complete_listen', {
+        completionRatio: 1.0,
+      });
 
       try {
-        const transTimeoutMs = Math.max(6000, Math.round(plan.transitionDurationSec * 1000) + 5000);
+        const preloadedOk = await runWithTimeout(
+          audioEngine.preloadNextDeck(nextTrack, plan.cueInSec),
+          5000
+        );
+        if (!preloadedOk) {
+          djAutoTransitionInFlight = false;
+          djAutoTransitionStartedAtMs = 0;
+          set({ incomingTransitionTrack: null });
+          await get().playTrack(nextTrack, get().queue, plan.cueInSec);
+          return;
+        }
+      } catch {
+        djAutoTransitionInFlight = false;
+        djAutoTransitionStartedAtMs = 0;
+        set({ incomingTransitionTrack: null });
+        await get().playTrack(nextTrack, get().queue, plan.cueInSec);
+        return;
+      }
+
+      // Act 1: Morph fluid backdrop & reveal incoming track banner/dock before swapping title & cover at deck handoff (~48%)
+      set({ incomingTransitionTrack: nextTrack });
+      applyAmbientPaletteForTrack(nextTrack);
+
+      const handoffDelayMs = Math.max(
+        380,
+        Math.round(plan.transitionDurationSec * 480)
+      );
+      handoffTimer = setTimeout(commitTrackSwap, handoffDelayMs);
+
+      try {
+        const transTimeoutMs = Math.max(7000, Math.round(plan.transitionDurationSec * 1000) + 5500);
         const transitionedOk = await runWithTimeout(
           audioEngine.executeTransition(plan),
           transTimeoutMs
         );
         if (!transitionedOk) {
+          if (handoffTimer) {
+            clearTimeout(handoffTimer);
+            handoffTimer = null;
+          }
           audioEngine.cancelActiveTransition();
           djAutoTransitionInFlight = false;
           djAutoTransitionStartedAtMs = 0;
+          set({ incomingTransitionTrack: null });
           await get().playTrack(nextTrack, get().queue, plan.cueInSec);
           return;
         }
+        commitTrackSwap();
         if (!audioEngine.getState().isPlaying) {
           await audioEngine.play();
         }
       } catch {
+        if (handoffTimer) {
+          clearTimeout(handoffTimer);
+          handoffTimer = null;
+        }
         audioEngine.cancelActiveTransition();
         djAutoTransitionInFlight = false;
         djAutoTransitionStartedAtMs = 0;
+        set({ incomingTransitionTrack: null });
         await get().playTrack(nextTrack, get().queue, plan.cueInSec);
         return;
       }
 
       const postEngineState = audioEngine.getState();
       const landedDur =
-        Number.isFinite(postEngineState.durationSec) && postEngineState.durationSec > 10
+        Number.isFinite(postEngineState.durationSec) && postEngineState.durationSec > 2
           ? postEngineState.durationSec
           : nextTrack.durationSec;
       const landedPos =
@@ -834,6 +883,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           positionSec: landedPos,
           durationSec: landedDur,
           isPlaying: true,
+          incomingTransitionTrack: null,
         });
       }
 
@@ -848,8 +898,15 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         void audioEngine.preloadNextDeck(upcoming, nextPlan?.cueInSec ?? 0);
       }
     } finally {
+      if (handoffTimer) {
+        clearTimeout(handoffTimer);
+        handoffTimer = null;
+      }
       djAutoTransitionInFlight = false;
       djAutoTransitionStartedAtMs = 0;
+      if (get().incomingTransitionTrack) {
+        set({ incomingTransitionTrack: null });
+      }
     }
   }
 
@@ -976,10 +1033,19 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   djMode: {
     ...DEFAULT_DJ_MODE_CONFIG,
-    enabledTransitions: { eq_swap: true, filter_sweep: true, echo_out: true },
+    enabledTransitions: {
+      eq_swap: true,
+      filter_sweep: true,
+      echo_out: true,
+      vocal_over_beat: true,
+      instrumental_bed: true,
+      loop_build: true,
+    },
     stemSculpting: true,
     vocalClashProtection: true,
   },
+  audioPanelTab: 'dj',
+  incomingTransitionTrack: null,
   safeCrossfade: { ...DEFAULT_SAFE_CROSSFADE_CONFIG },
   userEq: {
     ...DEFAULT_USER_EQ_CONFIG,
@@ -1374,11 +1440,19 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         audioEngine.cancelActiveTransition();
       }
 
-      const safeDur = engineState.durationSec || get().currentTrack.durationSec;
+      const safeDur =
+        Number.isFinite(engineState.durationSec) && engineState.durationSec > 2
+          ? engineState.durationSec
+          : get().currentTrack.durationSec;
+      const liveEnginePos = audioEngine.getLivePositionSec();
+      const rawPos =
+        liveEnginePos > 0 || engineState.positionSec === 0
+          ? liveEnginePos
+          : engineState.positionSec;
       const safePos =
         safeDur > 0
-          ? Math.max(0, Math.min(safeDur, engineState.positionSec))
-          : Math.max(0, engineState.positionSec);
+          ? Math.max(0, Math.min(safeDur, rawPos))
+          : Math.max(0, rawPos);
 
       const lyrics = get().currentLyrics;
       const activeIdx =
@@ -1386,7 +1460,14 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           ? lrcParser.findActiveLineIndex(lyrics.lines, safePos * 1000)
           : -1;
 
-      set({
+      const curBeforeUpdate = get();
+      const durationChanged =
+        !engineState.isTransitioning &&
+        Number.isFinite(engineState.durationSec) &&
+        engineState.durationSec > 2 &&
+        Math.abs(engineState.durationSec - curBeforeUpdate.currentTrack.durationSec) >= 1.5;
+
+      set((prev) => ({
         activeDeck: engineState.activeDeck,
         isPlaying: engineState.isPlaying,
         positionSec: safePos,
@@ -1396,7 +1477,24 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         activeTransitionType: engineState.activeTransitionType,
         transitionProgress01: engineState.transitionProgress01,
         activeLyricIndex: activeIdx,
-      });
+        ...(durationChanged
+          ? {
+              currentTrack: {
+                ...prev.currentTrack,
+                durationSec: Math.round(safeDur),
+              },
+              queue: prev.queue.map((qItem) =>
+                qItem.id === prev.currentTrack.id
+                  ? { ...qItem, durationSec: Math.round(safeDur) }
+                  : qItem
+              ),
+            }
+          : {}),
+      }));
+
+      if (durationChanged && get().djMode.enabled && !engineState.isTransitioning) {
+        void recomputeActiveDjPlan();
+      }
 
       void mediaController.updateSession({
         track: get().currentTrack,
@@ -1430,7 +1528,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         const nextIdx = target?.nextIdx ?? 0;
         if (nextTrack && nextTrack.id !== liveState.currentTrack.id) {
           const plan = liveState.activeTransitionPlan;
-          const liveDur = engineState.durationSec || liveState.durationSec;
+          const liveDur = safeDur;
           if (
             !plan ||
             plan.fromTrackId !== liveState.currentTrack.id ||
@@ -1439,8 +1537,14 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
             void recomputeActiveDjPlan();
           } else {
             const effectiveCueOut =
-              liveDur > 15
-                ? Math.max(4, Math.min(plan.cueOutSec, Math.floor(liveDur - Math.min(plan.transitionDurationSec, liveDur * 0.35) - 0.5)))
+              liveDur > 6
+                ? Math.max(
+                    4,
+                    Math.min(
+                      plan.cueOutSec,
+                      Math.max(4, liveDur - Math.min(plan.transitionDurationSec, liveDur * 0.42) - 1.0)
+                    )
+                  )
                 : plan.cueOutSec;
             const preloadKey = `${liveState.currentTrack.id}->${nextTrack.id}@${plan.cueInSec}`;
             if (djPreloadedKey !== preloadKey) {
@@ -1448,7 +1552,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
               void analyzeTrackAudioInBackground(nextTrack);
               void audioEngine.preloadNextDeck(nextTrack, plan.cueInSec);
             }
-            if (engineState.positionSec >= effectiveCueOut) {
+            if (safePos >= effectiveCueOut - 0.15) {
               void executeDjTransition(
                 effectiveCueOut !== plan.cueOutSec ? { ...plan, cueOutSec: effectiveCueOut } : plan,
                 nextTrack,
@@ -1597,13 +1701,22 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   setEqSheetOpen: (open) =>
     set({
       eqSheetOpen: open,
-      ...(open ? { djPopoverOpen: false } : {}),
+      djPopoverOpen: false,
+      ...(open ? { audioPanelTab: 'eq' as const } : {}),
     }),
   setDjPopoverOpen: (open) =>
     set({
       djPopoverOpen: open,
-      ...(open ? { eqSheetOpen: false } : {}),
+      eqSheetOpen: false,
+      ...(open ? { audioPanelTab: 'dj' as const } : {}),
     }),
+  setAudioPanelTab: (tab) =>
+    set((st) => ({
+      audioPanelTab: tab,
+      ...(st.eqSheetOpen || st.djPopoverOpen
+        ? { eqSheetOpen: tab === 'eq', djPopoverOpen: tab === 'dj' }
+        : {}),
+    })),
   setDevicesSheetOpen: (open) => set({ devicesSheetOpen: open }),
   setImportModalOpen: (open) => set({ importModalOpen: open, importError: null }),
   setSettingsOpen: (open) => set({ settingsOpen: open }),
@@ -1796,8 +1909,21 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   togglePlayPause: async () => {
     const st = get();
     if (st.isPlaying) {
+      const livePos = audioEngine.getLivePositionSec();
+      const dur = audioEngine.getState().durationSec || st.durationSec;
+      const clampedLivePos =
+        dur > 0 ? Math.max(0, Math.min(dur, livePos || st.positionSec)) : livePos || st.positionSec;
+      const lyrics = st.currentLyrics;
+      const liveLyricIdx =
+        lyrics && lyrics.status === 'synced'
+          ? lrcParser.findActiveLineIndex(lyrics.lines, clampedLivePos * 1000)
+          : st.activeLyricIndex;
       audioEngine.pause();
-      set({ isPlaying: false });
+      set({
+        isPlaying: false,
+        positionSec: clampedLivePos,
+        activeLyricIndex: liveLyricIdx,
+      });
       void syncEngine.updatePresence({ is_playing: false });
       syncDiscordPresenceState();
     } else {
@@ -1856,9 +1982,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       const latest = get();
       const next = target.track;
 
-      if (!isAutoAdvance && latest.djMode.enabled && latest.isPlaying && next.id !== latest.currentTrack.id) {
-        await latest.triggerDjMixNow();
-        return;
+      if (!isAutoAdvance && (djAutoTransitionInFlight || latest.isTransitioning)) {
+        audioEngine.cancelActiveTransition();
+        djAutoTransitionInFlight = false;
+        djAutoTransitionStartedAtMs = 0;
+        set({ incomingTransitionTrack: null });
       }
 
       const nextPrevStack = [...latest.sessionPrevStack, latest.currentTrack].slice(-20);
@@ -2269,6 +2397,85 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     get().showToast(`Radio de «${track.title}» iniciada`);
   },
 
+  startFullDjRadio: async () => {
+    const st = get();
+    const candidates: Track[] = [
+      ...st.likedTracks.map((l) => l.track),
+      ...st.exploreSimilarTracks,
+      ...st.homeShelves.flatMap((s) => s.tracks ?? []),
+      ...st.playHistory.map((h) => h.track),
+      ...FALLBACK_TRACKS,
+    ];
+
+    const topAffinity = st.affinityProfile[0]?.artistName ?? st.seedArtists[0]?.displayName;
+    if (isLiveRuntime() && topAffinity) {
+      try {
+        const res = await musicProvider.search(topAffinity, 'song');
+        candidates.push(...res.songs);
+      } catch {
+        // fallback to existing personalized pool
+      }
+    }
+
+    const deduped: Track[] = [];
+    const seen = new Set<string>();
+    for (const item of candidates) {
+      if (!item?.id || seen.has(item.id)) continue;
+      seen.add(item.id);
+      deduped.push(item);
+    }
+
+    const ranked = recommendationEngine.rerankTracks(deduped, {
+      maxPerArtistInWindow: 2,
+      limit: 18,
+    });
+    const sessionPool = ranked.length > 0 ? ranked : [...FALLBACK_TRACKS];
+    const analysesMap = new Map<string, TrackAnalysis>();
+    for (const t of sessionPool) {
+      const ana =
+        st.trackAnalyses[t.id] ?? (await djPlanner.analyzeTrack(t.id, null, t.durationSec));
+      analysesMap.set(t.id, ana);
+    }
+    const orderedQueue = djPlanner.reorderQueueForSession(
+      sessionPool,
+      analysesMap,
+      sessionPool[0]?.id
+    );
+
+    const nextDjMode: DjModeConfig = {
+      ...st.djMode,
+      enabled: true,
+      autoReorderQueue: true,
+      preferredTransition: 'auto',
+      enabledTransitions: {
+        eq_swap: true,
+        filter_sweep: true,
+        echo_out: true,
+        vocal_over_beat: true,
+        instrumental_bed: true,
+        loop_build: true,
+        ...st.djMode.enabledTransitions,
+      },
+    };
+    audioEngine.setDjMode(nextDjMode);
+    audioEngine.setSafeCrossfade({ ...st.safeCrossfade, enabled: false });
+    set({
+      djMode: nextDjMode,
+      safeCrossfade: { ...st.safeCrossfade, enabled: false },
+      trackAnalyses: {
+        ...st.trackAnalyses,
+        ...Object.fromEntries(analysesMap.entries()),
+      },
+    });
+    persistPrefsFromStore();
+
+    const first = orderedQueue[0];
+    if (first) {
+      await get().playTrack(first, orderedQueue);
+    }
+    get().showToast('Radio Full DJ activada · sesión ordenada por BPM y armonía');
+  },
+
   setAutoplayEnabled: (enabled) => {
     set({ autoplayEnabled: enabled });
     persistPrefsFromStore();
@@ -2408,17 +2615,26 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   toggleDjFx: (fx) => {
     const st = get();
-    const currentToggles: DjFxToggles = st.djMode.enabledTransitions ?? {
-      eq_swap: true,
-      filter_sweep: true,
-      echo_out: true,
+    const currentToggles: DjFxToggles = {
+      eq_swap: st.djMode.enabledTransitions?.eq_swap ?? true,
+      filter_sweep: st.djMode.enabledTransitions?.filter_sweep ?? true,
+      echo_out: st.djMode.enabledTransitions?.echo_out ?? true,
+      vocal_over_beat: st.djMode.enabledTransitions?.vocal_over_beat ?? true,
+      instrumental_bed: st.djMode.enabledTransitions?.instrumental_bed ?? true,
+      loop_build: st.djMode.enabledTransitions?.loop_build ?? true,
     };
     const updated: DjFxToggles = {
       ...currentToggles,
       [fx]: !currentToggles[fx],
     };
-    // Ensure at least one FX transition stays active
-    if (!updated.eq_swap && !updated.filter_sweep && !updated.echo_out) {
+    if (
+      !updated.eq_swap &&
+      !updated.filter_sweep &&
+      !updated.echo_out &&
+      !updated.vocal_over_beat &&
+      !updated.instrumental_bed &&
+      !updated.loop_build
+    ) {
       updated.eq_swap = true;
     }
     const nextDjMode: DjModeConfig = {

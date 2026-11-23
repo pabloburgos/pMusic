@@ -91,6 +91,96 @@ describe('@pmusic/audio-engine', () => {
     expect(fullPlan.transitionDurationSec).toBeLessThanOrEqual(14.0);
   });
 
+  it('chooses dynamic Pro-DJ choreography (vocal_over_beat, instrumental_bed, loop_build) and preserves exact pause time', async () => {
+    const planner = new DjCuePlanner();
+    const a1 = await planner.analyzeTrack('trk_1', null, 214);
+    const a2 = await planner.analyzeTrack('trk_2', null, 224);
+
+    const vocalOver = planner.planTransition(
+      {
+        ...a1,
+        bpm: 120,
+        vocalEnvelope: new Array(214).fill(0.82),
+        bassEnvelope: new Array(214).fill(0.5),
+      },
+      {
+        ...a2,
+        bpm: 122,
+        vocalEnvelope: new Array(224).fill(0.22),
+        bassEnvelope: new Array(224).fill(0.84),
+      },
+      'full',
+      'auto'
+    );
+    expect(vocalOver.transitionType).toBe('vocal_over_beat');
+    expect(vocalOver.choreography?.techniqueMode).toBe('vocal_over_beat');
+
+    const instBed = planner.planTransition(
+      {
+        ...a1,
+        bpm: 118,
+        vocalEnvelope: new Array(214).fill(0.25),
+        bassEnvelope: new Array(214).fill(0.82),
+      },
+      {
+        ...a2,
+        bpm: 120,
+        vocalEnvelope: new Array(224).fill(0.82),
+        bassEnvelope: new Array(224).fill(0.52),
+      },
+      'full',
+      'auto'
+    );
+    expect(instBed.transitionType).toBe('instrumental_bed');
+    expect(instBed.choreography?.techniqueMode).toBe('instrumental_bed');
+
+    const loopBuild = planner.planTransition(
+      {
+        ...a1,
+        bpm: 96,
+        vocalEnvelope: new Array(214).fill(0.2),
+        bassEnvelope: new Array(214).fill(0.25),
+        rmsEnvelope: new Array(214).fill(0.32),
+      },
+      {
+        ...a2,
+        bpm: 108,
+        vocalEnvelope: new Array(224).fill(0.35),
+        bassEnvelope: new Array(224).fill(0.45),
+        rmsEnvelope: new Array(224).fill(0.75),
+      },
+      'full',
+      'auto'
+    );
+    expect(loopBuild.transitionType).toBe('loop_build');
+    expect(loopBuild.choreography?.techniqueMode).toBe('loop_build');
+
+    const created: ReturnType<typeof createFakeBrowserAudioElement>[] = [];
+    const prevDoc = (globalThis as { document?: unknown }).document;
+    (globalThis as { document?: unknown }).document = {
+      createElement: () => {
+        const el = createFakeBrowserAudioElement();
+        created.push(el);
+        return el;
+      },
+      body: { appendChild: () => {} },
+    };
+    const engine = new DualDeckAudioEngine();
+    try {
+      await engine.init();
+      await engine.loadAndPlay(SAMPLE_TRACKS[0]!, 0);
+      const deckAEl = created[0]!;
+      deckAEl.duration = 214;
+      deckAEl.currentTime = 73.4;
+      engine.pause();
+      expect(engine.getState().isPlaying).toBe(false);
+      expect(engine.getState().positionSec).toBeCloseTo(73.4, 1);
+    } finally {
+      await engine.dispose();
+      (globalThis as { document?: unknown }).document = prevDoc;
+    }
+  });
+
   it('loads tracks into DualDeckAudioEngine, switches decks on transition, and clamps EQ gains', async () => {
     const engine = new DualDeckAudioEngine();
     await engine.init();

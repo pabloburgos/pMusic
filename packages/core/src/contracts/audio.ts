@@ -4,13 +4,22 @@ import type { Unsubscribe } from '../types/utility.ts';
 
 export type DeckId = 'A' | 'B';
 export type DjSessionStyle = 'quick' | 'full';
-export type DjTransitionType = 'eq_swap' | 'filter_sweep' | 'echo_out';
+export type DjTransitionType =
+  | 'eq_swap'
+  | 'filter_sweep'
+  | 'echo_out'
+  | 'vocal_over_beat'
+  | 'instrumental_bed'
+  | 'loop_build';
 
 /** Individual DJ transition FX toggles exposed in the Sesión DJ UI */
 export interface DjFxToggles {
   eq_swap: boolean;
   filter_sweep: boolean;
   echo_out: boolean;
+  vocal_over_beat?: boolean;
+  instrumental_bed?: boolean;
+  loop_build?: boolean;
 }
 
 export type TrackAnalysisSource = 'pcm' | 'heuristic';
@@ -75,6 +84,16 @@ export interface DjStemChoreography {
   vocalClashAvoided: boolean;
   /** Concise Spanish human-readable description of what the DJ is sculpting */
   summary: string;
+  /** Choreography DSP mode executed by DualDeckAudioEngine */
+  techniqueMode?:
+    | 'bass_swap'
+    | 'vocal_over_beat'
+    | 'instrumental_bed'
+    | 'filter_sweep'
+    | 'dub_echo'
+    | 'loop_build';
+  /** Beat loop subdivision when techniqueMode === 'loop_build' */
+  loopSubdivision?: 0.25 | 0.5;
 }
 
 export interface DeckTransitionPlan {
@@ -84,9 +103,9 @@ export interface DeckTransitionPlan {
   cueInSec: number;
   /** Outgoing track timestamp to launch incoming deck in seconds */
   cueOutSec: number;
-  /** Quantized to 4 or 8 bars, clamped [4.5, 14.0] */
+  /** Quantized to 2, 4, 8 or 12 bars depending on musical fit */
   transitionDurationSec: number;
-  transitionBars: 4 | 8;
+  transitionBars: 2 | 4 | 8 | 12;
   transitionType: DjTransitionType;
   /** Incoming playbackRate clamped [0.96, 1.04] if |ΔBPM| <= 6%, else 1.0 */
   tempoNudgeRate: number;

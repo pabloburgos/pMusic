@@ -31,6 +31,7 @@ export const TrackContextMenu: React.FC = () => {
     createPlaylist,
     toggleLike,
     startTrackRadio,
+    startFullDjRadio,
     openArtistDetail,
     openAlbumDetail,
     downloadTrackOffline,
@@ -40,6 +41,9 @@ export const TrackContextMenu: React.FC = () => {
   } = usePMusicStore();
 
   const [showPlaylistPicker, setShowPlaylistPicker] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState<number>(() =>
+    typeof window !== 'undefined' ? window.innerWidth : 1280
+  );
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -47,8 +51,18 @@ export const TrackContextMenu: React.FC = () => {
   }, [trackMenu]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  useEffect(() => {
     if (!trackMenu || typeof window === 'undefined') return;
+    const openedAt = Date.now();
+    const isMobile = window.innerWidth < 640;
     const handlePointerDown = (e: MouseEvent) => {
+      if (Date.now() - openedAt < 120) return;
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         closeTrackMenu();
       }
@@ -59,6 +73,7 @@ export const TrackContextMenu: React.FC = () => {
       }
     };
     const handleScroll = (e: Event) => {
+      if (isMobile || Date.now() - openedAt < 180) return;
       if (menuRef.current && menuRef.current.contains(e.target as Node)) return;
       closeTrackMenu();
     };
@@ -75,7 +90,8 @@ export const TrackContextMenu: React.FC = () => {
   if (!trackMenu) return null;
 
   const { track, x, y, playlistId } = trackMenu;
-  const winW = typeof window !== 'undefined' ? window.innerWidth : 1280;
+  const isMobileSheet = viewportWidth < 640;
+  const winW = viewportWidth;
   const winH = typeof window !== 'undefined' ? window.innerHeight : 800;
   const left = Math.max(12, Math.min(x, winW - 276));
   const top = Math.max(12, Math.min(y, winH - 420));
@@ -87,30 +103,45 @@ export const TrackContextMenu: React.FC = () => {
     track.artists.length > 0 ? track.artists : [{ name: 'Artista' }];
 
   return (
-    <div
-      ref={menuRef}
-      role="menu"
-      aria-label={`Opciones para ${track.title}`}
-      data-testid="track-context-menu"
-      style={{ left, top }}
-      className="pm-glass-liquid pm-menu-pop fixed z-[70] w-66 max-h-[78vh] overflow-y-auto rounded-[18px] p-1.5 pm-no-scrollbar"
-    >
-      {/* Mini Track Header */}
-      <div className="mb-1 flex items-center gap-2.5 border-b pm-border px-2.5 py-2">
-        <img
-          src={track.thumbnailUrl}
-          alt=""
-          className="h-9 w-9 shrink-0 rounded-[7px] object-cover"
+    <>
+      {isMobileSheet && (
+        <div
+          aria-hidden="true"
+          onClick={() => closeTrackMenu()}
+          className="fixed inset-0 z-[74] bg-black/55"
         />
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[13px] font-bold pm-text-primary">
-            {track.title}
-          </div>
-          <div className="truncate text-[11px] pm-text-secondary">
-            {artistName}
+      )}
+      <div
+        ref={menuRef}
+        role="menu"
+        aria-label={`Opciones para ${track.title}`}
+        data-testid="track-context-menu"
+        style={isMobileSheet ? undefined : { left, top }}
+        className={
+          isMobileSheet
+            ? 'pm-glass-frosted-neutral pm-popover-enter fixed inset-x-0 bottom-0 z-[75] max-h-[84dvh] overflow-y-auto rounded-t-[28px] px-4 pt-3 pb-[max(1.5rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] pm-no-scrollbar'
+            : 'pm-glass-frosted-neutral pm-menu-pop fixed z-[75] w-66 max-h-[78vh] overflow-y-auto rounded-[18px] p-1.5 pm-no-scrollbar'
+        }
+      >
+        {isMobileSheet && (
+          <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-white/30" />
+        )}
+        {/* Mini Track Header */}
+        <div className="mb-1.5 flex items-center gap-3 border-b border-white/10 px-2.5 py-2.5">
+          <img
+            src={track.thumbnailUrl}
+            alt=""
+            className="h-11 w-11 shrink-0 rounded-[9px] object-cover sm:h-9 sm:w-9 sm:rounded-[7px]"
+          />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[14px] font-bold sm:text-[13px]">
+              {track.title}
+            </div>
+            <div className="truncate text-xs opacity-70 sm:text-[11px]">
+              {artistName}
+            </div>
           </div>
         </div>
-      </div>
 
       <button
         type="button"
@@ -251,10 +282,23 @@ export const TrackContextMenu: React.FC = () => {
           closeTrackMenu();
           await startTrackRadio(track, true);
         }}
-        className="pm-hover pm-text-primary flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left text-xs font-medium"
+        className="pm-hover flex w-full items-center gap-3 rounded-[12px] px-3 py-2.5 text-left text-[13px] font-medium sm:gap-2.5 sm:rounded-[10px] sm:px-2.5 sm:py-2 sm:text-xs"
       >
-        <Disc3 className="h-4 w-4 text-[#C084FC]" />
-        <span>Ir a la radio · Sesión DJ</span>
+        <Disc3 className="h-4 w-4 opacity-90" />
+        <span>Radio desde esta canción · DJ</span>
+      </button>
+
+      <button
+        type="button"
+        role="menuitem"
+        onClick={async () => {
+          closeTrackMenu();
+          await startFullDjRadio();
+        }}
+        className="pm-hover flex w-full items-center gap-3 rounded-[12px] px-3 py-2.5 text-left text-[13px] font-medium sm:gap-2.5 sm:rounded-[10px] sm:px-2.5 sm:py-2 sm:text-xs"
+      >
+        <Plus className="h-4 w-4 opacity-90" />
+        <span>Radio Full DJ (tus gustos mezclados)</span>
       </button>
 
       {trackArtists.map((ar, idx) => (
@@ -340,12 +384,13 @@ export const TrackContextMenu: React.FC = () => {
           showToast('Copiado al portapapeles');
           closeTrackMenu();
         }}
-        className="pm-hover pm-text-primary flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left text-xs font-medium"
+        className="pm-hover flex w-full items-center gap-3 rounded-[12px] px-3 py-2.5 text-left text-[13px] font-medium sm:gap-2.5 sm:rounded-[10px] sm:px-2.5 sm:py-2 sm:text-xs"
       >
-        <Copy className="h-4 w-4 pm-text-secondary" />
+        <Copy className="h-4 w-4 opacity-80" />
         <span>Copiar título y artista</span>
       </button>
-    </div>
+      </div>
+    </>
   );
 };
 

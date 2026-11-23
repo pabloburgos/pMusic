@@ -16,6 +16,7 @@ import {
   Pause,
   Play,
   Plus,
+  Radio,
   RefreshCw,
   Repeat,
   Repeat1,
@@ -36,6 +37,7 @@ import {
   USER_EQ_FREQUENCIES_HZ,
   USER_EQ_PRESETS,
   formatDurationSec,
+  type DjFxToggles,
   type LyricLine,
   type Track,
 } from '@pmusic/core';
@@ -110,11 +112,12 @@ function analyzeKineticWords(
 const LYRICS_STYLE_OPTIONS: readonly {
   id: LyricsVisualStyle;
   label: string;
+  desc: string;
 }[] = [
-  { id: 'classic', label: 'Clásico' },
-  { id: 'kinetic', label: 'Cinético' },
-  { id: 'focus', label: 'Enfoque' },
-  { id: 'editorial', label: 'Editorial' },
+  { id: 'classic', label: 'Clásico', desc: 'Sincronizado palabra a palabra' },
+  { id: 'kinetic', label: 'Cinético', desc: 'Rimas y frases clave destacan al ritmo' },
+  { id: 'focus', label: 'Enfoque', desc: 'Verso protagonista limpio y centrado' },
+  { id: 'editorial', label: 'Editorial', desc: 'Tipografía serif cálida de revista' },
 ];
 
 export const NowPlayingSheet: React.FC = () => {
@@ -127,6 +130,9 @@ export const NowPlayingSheet: React.FC = () => {
     setEqSheetOpen,
     djPopoverOpen,
     setDjPopoverOpen,
+    audioPanelTab,
+    setAudioPanelTab,
+    incomingTransitionTrack,
     themeId,
     reducedMotionPref,
     lyricsSize,
@@ -196,7 +202,30 @@ export const NowPlayingSheet: React.FC = () => {
   const sheetSwipeDownRef = useRef<{ y: number; x: number } | null>(null);
   const lastWholeSecRef = useRef<number>(Math.floor(positionSec));
   const lastLyricStateSyncMsRef = useRef<number>(0);
+  const lastRenderedLyricIdxRef = useRef<number>(-1);
+  const currentLyricsRef = useRef(currentLyrics);
+  currentLyricsRef.current = currentLyrics;
+  const lyricsStyleRef = useRef(lyricsStyle);
+  lyricsStyleRef.current = lyricsStyle;
+  const [lyricsStyleModalOpen, setLyricsStyleModalOpen] = useState(false);
+  const prevTabForModalRef = useRef<string>(nowPlayingTab);
+  const lyricsLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lyricsPointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const [smoothPosSec, setSmoothPosSec] = useState(positionSec);
+
+  useEffect(() => {
+    if (!nowPlayingOpen) {
+      setLyricsStyleModalOpen(false);
+      prevTabForModalRef.current = nowPlayingTab;
+      return;
+    }
+    if (nowPlayingTab === 'Letras' && prevTabForModalRef.current !== 'Letras') {
+      setLyricsStyleModalOpen(true);
+    } else if (nowPlayingTab !== 'Letras') {
+      setLyricsStyleModalOpen(false);
+    }
+    prevTabForModalRef.current = nowPlayingTab;
+  }, [nowPlayingTab, nowPlayingOpen]);
   const [dragQueueIdx, setDragQueueIdx] = useState<number | null>(null);
   const [dragOverQueueIdx, setDragOverQueueIdx] = useState<number | null>(null);
   const [queueSearchQuery, setQueueSearchQuery] = useState('');
@@ -389,7 +418,12 @@ export const NowPlayingSheet: React.FC = () => {
     const trackChanged = syncClockRef.current.trackId !== currentTrack.id;
     const seekJumped = Math.abs(positionSec - syncClockRef.current.renderedPosSec) > 0.85;
     const effDur = Math.max(1, durationSec);
-    const clampedPos = Math.max(0, Math.min(effDur, positionSec));
+    const liveSnap = !isPlaying && !trackChanged && !seekJumped ? getLivePlaybackPosition() : null;
+    const basePos =
+      liveSnap && Number.isFinite(liveSnap.positionSec) && liveSnap.positionSec > 0
+        ? Math.max(positionSec, liveSnap.positionSec)
+        : positionSec;
+    const clampedPos = Math.max(0, Math.min(effDur, basePos));
     syncClockRef.current.posSec = clampedPos;
     syncClockRef.current.atMs = now;
     syncClockRef.current.trackId = currentTrack.id;
@@ -463,7 +497,22 @@ export const NowPlayingSheet: React.FC = () => {
       }
 
       if (nowPlayingTab === 'Letras') {
-        if (now - lastLyricStateSyncMsRef.current >= 66) {
+        const docs = currentLyricsRef.current;
+        let curLineIdx = -1;
+        if (docs && docs.status === 'synced' && docs.lines.length > 0) {
+          const targetMs = rendered * 1000 + 120;
+          for (let i = 0; i < docs.lines.length; i++) {
+            if (docs.lines[i]!.timeMs <= targetMs) curLineIdx = i;
+            else break;
+          }
+        }
+        const lineChanged = curLineIdx !== lastRenderedLyricIdxRef.current;
+        const wholeChanged = Math.floor(rendered) !== lastWholeSecRef.current;
+        const isClassicSweepDue =
+          lyricsStyleRef.current === 'classic' && now - lastLyricStateSyncMsRef.current >= 165;
+
+        if (lineChanged || isClassicSweepDue || wholeChanged) {
+          lastRenderedLyricIdxRef.current = curLineIdx;
           lastLyricStateSyncMsRef.current = now;
           lastWholeSecRef.current = Math.floor(rendered);
           setSmoothPosSec(rendered);
@@ -593,11 +642,10 @@ export const NowPlayingSheet: React.FC = () => {
         : 'Activar repetición de playlist';
 
   const remainingSec = Math.max(0, durationSec - smoothPosSec);
-  const trackStatusLabel = isTransitioning
-    ? 'MEZCLANDO · DJ'
-    : isPlaying
-      ? 'REPRODUCIENDO'
-      : 'PAUSADO';
+  const incomingPreviewTrack =
+    isTransitioning && incomingTransitionTrack && incomingTransitionTrack.id !== currentTrack.id
+      ? incomingTransitionTrack
+      : null;
 
   const PlayerDeckColumn = (compact = false) => (
     <div
@@ -607,7 +655,7 @@ export const NowPlayingSheet: React.FC = () => {
           : 'mx-auto flex h-full w-full max-w-[420px] justify-between gap-2.5 py-1 md:h-auto md:justify-center md:gap-5 md:py-0'
       }`}
     >
-      {/* Large Borderless Centerpiece Artwork with smooth 3D slide & swipe skip */}
+      {/* Large Borderless Centerpiece Artwork with smooth 3D slide, DJ crossfade preview & swipe skip */}
       <div
         key={currentTrack.id}
         onTouchStart={(e) => {
@@ -642,12 +690,28 @@ export const NowPlayingSheet: React.FC = () => {
         <img
           src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
           alt={currentTrack.title}
-          className="h-full w-full object-cover"
+          className={`h-full w-full object-cover transition-all duration-500 ${
+            incomingPreviewTrack ? 'scale-[0.94] opacity-40 blur-[2px]' : 'scale-100 opacity-100'
+          }`}
         />
+        {incomingPreviewTrack && (
+          <img
+            key={`in-cover-${incomingPreviewTrack.id}`}
+            src={incomingPreviewTrack.thumbnailHighUrl ?? incomingPreviewTrack.thumbnailUrl}
+            alt={incomingPreviewTrack.title}
+            className="pm-track-meta-in absolute inset-0 h-full w-full object-cover transition-opacity duration-500"
+            style={{
+              opacity: Math.max(0.28, Math.min(1, transitionProgress01 * 1.45)),
+            }}
+          />
+        )}
       </div>
 
       {/* Minimalist Title, Full Multi-Artist Line & Borderless Actions */}
-      <div className="flex w-full flex-col gap-0.5 md:gap-1">
+      <div
+        key={`meta-${incomingPreviewTrack?.id ?? currentTrack.id}`}
+        className="pm-track-meta-in flex w-full flex-col gap-0.5 md:gap-1"
+      >
         <div className="flex w-full items-center justify-between gap-2">
           <h1 className="min-w-0 flex-1 truncate text-[21px] font-bold leading-snug tracking-tight text-white md:text-[23px]">
             {currentTrack.title}
@@ -816,9 +880,11 @@ export const NowPlayingSheet: React.FC = () => {
         </div>
         <div className="tabular-nums flex items-center justify-between text-[11px] font-medium text-white/60">
           <span ref={progressTimeRef}>{formatDurationSec(smoothPosSec)}</span>
-          <span className="font-sans text-[10px] font-semibold tracking-[0.14em] text-white/45">
-            {trackStatusLabel}
-          </span>
+          {isTransitioning && (
+            <span className="font-sans text-[10px] font-semibold tracking-[0.14em] text-purple-300/90 animate-pulse">
+              MEZCLANDO · DJ
+            </span>
+          )}
           <button
             type="button"
             aria-label="Alternar tiempo restante y duración total"
@@ -834,8 +900,8 @@ export const NowPlayingSheet: React.FC = () => {
         </div>
       </div>
 
-      {/* Pure Minimalist Borderless Transport Row (No heavy circle behind Play/Pause) */}
-      <div className="flex w-full items-center justify-around px-2 py-0.5 md:w-auto md:justify-center md:gap-7 md:px-0">
+      {/* Pure Minimalist Centered Borderless Transport Row (Zero halo/ring around Play/Pause) */}
+      <div className="mx-auto grid w-full max-w-[360px] grid-cols-5 place-items-center py-0.5 md:max-w-[380px]">
         <button
           type="button"
           aria-label={
@@ -848,7 +914,7 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('shuffle');
             toggleShuffle();
           }}
-          className={`pm-pressable relative hidden h-10 w-10 items-center justify-center rounded-full transition-all hover:scale-110 md:flex ${
+          className={`pm-pressable relative flex h-10 w-10 items-center justify-center bg-transparent transition-transform duration-150 hover:scale-110 focus:outline-none ${
             shuffleEnabled
               ? 'text-white'
               : 'text-white/55 hover:text-white'
@@ -874,7 +940,7 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('prev');
             void prevTrack();
           }}
-          className="pm-pressable flex h-12 w-12 items-center justify-center rounded-full text-white/90 transition-all hover:scale-110 hover:text-white active:scale-90"
+          className="pm-pressable flex h-12 w-12 items-center justify-center bg-transparent text-white/90 transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none"
         >
           <SkipBack
             className={`h-7 w-7 fill-current ${
@@ -890,17 +956,17 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('play');
             void togglePlayPause();
           }}
-          className="pm-pressable relative flex h-16 w-16 items-center justify-center overflow-hidden rounded-full bg-transparent text-white transition-transform duration-200 hover:bg-white/[0.08] hover:scale-105 active:scale-90"
+          className="pm-pressable relative flex h-14 w-14 items-center justify-center bg-transparent text-white outline-none ring-0 transition-transform duration-200 hover:scale-105 active:scale-90 focus:outline-none"
         >
           <Pause
-            className={`absolute h-10 w-10 fill-current drop-shadow-[0_4px_16px_rgba(0,0,0,0.45)] transition-all duration-200 ease-out ${
+            className={`absolute h-10 w-10 fill-current drop-shadow-[0_4px_12px_rgba(0,0,0,0.32)] transition-all duration-200 ease-out ${
               isPlaying
                 ? 'scale-100 rotate-0 opacity-100 blur-0'
                 : 'scale-50 rotate-90 opacity-0 blur-[1px]'
             }`}
           />
           <Play
-            className={`absolute h-10 w-10 translate-x-[2px] fill-current drop-shadow-[0_4px_16px_rgba(0,0,0,0.45)] transition-all duration-200 ease-out ${
+            className={`absolute h-10 w-10 translate-x-[2px] fill-current drop-shadow-[0_4px_12px_rgba(0,0,0,0.32)] transition-all duration-200 ease-out ${
               !isPlaying
                 ? 'scale-100 rotate-0 opacity-100 blur-0'
                 : 'scale-50 -rotate-90 opacity-0 blur-[1px]'
@@ -915,7 +981,7 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('next');
             void nextTrack();
           }}
-          className="pm-pressable flex h-12 w-12 items-center justify-center rounded-full text-white/90 transition-all hover:scale-110 hover:text-white active:scale-90"
+          className="pm-pressable flex h-12 w-12 items-center justify-center bg-transparent text-white/90 transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none"
         >
           <SkipForward
             className={`h-7 w-7 fill-current ${
@@ -932,7 +998,7 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('repeat');
             cycleRepeatMode();
           }}
-          className={`pm-pressable relative hidden h-10 w-10 items-center justify-center rounded-full transition-all hover:scale-110 md:flex ${
+          className={`pm-pressable relative flex h-10 w-10 items-center justify-center bg-transparent transition-transform duration-150 hover:scale-110 focus:outline-none ${
             repeatMode !== 'off'
               ? 'text-white'
               : 'text-white/55 hover:text-white'
@@ -1196,38 +1262,39 @@ export const NowPlayingSheet: React.FC = () => {
               data-testid="synced-lyrics-view"
               onWheel={markLyricsUserScrolled}
               onTouchMove={markLyricsUserScrolled}
-              className="flex h-full min-h-0 flex-col overflow-y-auto pt-3 pb-10 pr-1 pm-no-scrollbar lg:col-span-7 lg:py-8 lg:pr-2"
+              onPointerDown={(e) => {
+                lyricsPointerStartRef.current = { x: e.clientX, y: e.clientY };
+                if (lyricsLongPressTimerRef.current) clearTimeout(lyricsLongPressTimerRef.current);
+                lyricsLongPressTimerRef.current = setTimeout(() => {
+                  setLyricsStyleModalOpen(true);
+                }, 420);
+              }}
+              onPointerMove={(e) => {
+                const orig = lyricsPointerStartRef.current;
+                if (!orig || !lyricsLongPressTimerRef.current) return;
+                if (Math.hypot(e.clientX - orig.x, e.clientY - orig.y) > 10) {
+                  clearTimeout(lyricsLongPressTimerRef.current);
+                  lyricsLongPressTimerRef.current = null;
+                }
+              }}
+              onPointerUp={() => {
+                lyricsPointerStartRef.current = null;
+                if (lyricsLongPressTimerRef.current) {
+                  clearTimeout(lyricsLongPressTimerRef.current);
+                  lyricsLongPressTimerRef.current = null;
+                }
+              }}
+              onPointerCancel={() => {
+                lyricsPointerStartRef.current = null;
+                if (lyricsLongPressTimerRef.current) {
+                  clearTimeout(lyricsLongPressTimerRef.current);
+                  lyricsLongPressTimerRef.current = null;
+                }
+              }}
+              className="relative flex h-full min-h-0 flex-col overflow-y-auto pt-4 pb-12 pr-1 pm-no-scrollbar lg:col-span-7 lg:py-8 lg:pr-2"
             >
-              {/* Expressive Lyrics Style Switcher */}
-              <div className="sticky top-0 z-20 mb-4 flex shrink-0 items-center justify-between gap-2 pb-1">
-                <div
-                  role="group"
-                  aria-label="Estilo de visualización de letras"
-                  data-testid="lyrics-style-switcher"
-                  className="inline-flex items-center gap-1 rounded-full bg-black/30 p-1 backdrop-blur-md"
-                >
-                  {LYRICS_STYLE_OPTIONS.map((opt) => {
-                    const selected = lyricsStyle === opt.id;
-                    return (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        data-testid={`lyrics-style-${opt.id}`}
-                        aria-pressed={selected}
-                        onClick={() => setLyricsStyle(opt.id)}
-                        className={`rounded-full px-3 py-1 text-[11px] font-bold transition-colors ${
-                          selected
-                            ? 'bg-white text-[#070709] shadow-sm'
-                            : 'text-white/75 hover:bg-white/[0.12] hover:text-white'
-                        }`}
-                      >
-                        {opt.label}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {lyricsUserScrolled && lyricsStyle !== 'focus' && (
+              {lyricsUserScrolled && lyricsStyle !== 'focus' && (
+                <div className="sticky top-2 z-20 mb-2 flex justify-end">
                   <button
                     type="button"
                     onClick={() => {
@@ -1240,8 +1307,73 @@ export const NowPlayingSheet: React.FC = () => {
                   >
                     Sincronizar
                   </button>
-                )}
-              </div>
+                </div>
+              )}
+
+              {/* Quick Frosted Modal for Switching Lyrics Visual Mode */}
+              {lyricsStyleModalOpen && (
+                <div
+                  className="fixed inset-0 z-40 flex items-end justify-center p-4 sm:items-center"
+                  onClick={() => setLyricsStyleModalOpen(false)}
+                >
+                  <div
+                    role="dialog"
+                    aria-modal="false"
+                    aria-label="Estilo de visualización de letras"
+                    data-testid="lyrics-style-switcher"
+                    onClick={(e) => e.stopPropagation()}
+                    className="pm-glass-frosted-neutral pm-modal-pop w-full max-w-[360px] rounded-[24px] p-4 shadow-2xl"
+                  >
+                    <div className="mb-3 flex items-center justify-between">
+                      <div>
+                        <h3 className="text-sm font-bold text-white">Estilo de letras</h3>
+                        <p className="text-[11px] text-white/60">
+                          Toca Letras o mantén pulsado para cambiar
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        aria-label="Cerrar selector de letras"
+                        onClick={() => setLyricsStyleModalOpen(false)}
+                        className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white/75 hover:bg-white/20 hover:text-white"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {LYRICS_STYLE_OPTIONS.map((opt) => {
+                        const selected = lyricsStyle === opt.id;
+                        return (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            data-testid={`lyrics-style-${opt.id}`}
+                            aria-pressed={selected}
+                            onClick={() => {
+                              setLyricsStyle(opt.id);
+                              setLyricsStyleModalOpen(false);
+                            }}
+                            className={`pm-pressable flex flex-col items-start gap-1 rounded-[16px] border p-3 text-left transition-all ${
+                              selected
+                                ? 'border-white/70 bg-white text-[#070709] shadow-sm'
+                                : 'border-white/12 bg-white/[0.06] text-white/85 hover:bg-white/[0.12]'
+                            }`}
+                          >
+                            <span className="text-xs font-bold">{opt.label}</span>
+                            <span
+                              className={`text-[11px] leading-snug ${
+                                selected ? 'text-[#070709]/75' : 'text-white/55'
+                              }`}
+                            >
+                              {opt.desc}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {currentLyrics && currentLyrics.lines.length > 0 ? (
                 lyricsStyle === 'focus' ? (
@@ -2142,12 +2274,12 @@ export const NowPlayingSheet: React.FC = () => {
         })()}
       </div>
 
-      {/* Unified Bottom Minimalist Navigation Bar (5 clean icons on Mobile, clean icon+label pills on PC) */}
+      {/* Unified Bottom Minimalist Navigation Bar (3 crisp icons on Mobile, clean pills on PC) */}
       <nav
         aria-label="Controles inferiores del reproductor"
-        className="relative z-20 flex shrink-0 items-center justify-center bg-transparent px-4 pt-1 pb-[max(0.95rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] md:pb-5"
+        className="relative z-20 flex shrink-0 items-center justify-center bg-transparent px-6 pt-1 pb-[max(0.95rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] md:pb-5"
       >
-        <div className="flex w-full max-w-[420px] items-center justify-between md:w-auto md:max-w-none md:justify-center md:gap-2">
+        <div className="flex w-full max-w-[300px] items-center justify-around md:w-auto md:max-w-none md:justify-center md:gap-2">
           <button
             type="button"
             aria-label="Portada"
@@ -2167,11 +2299,13 @@ export const NowPlayingSheet: React.FC = () => {
             type="button"
             aria-label="Letras"
             aria-pressed={nowPlayingTab === 'Letras'}
-            onClick={() =>
-              setNowPlayingTab(
-                nowPlayingTab === 'Letras' ? 'Portada' : 'Letras'
-              )
-            }
+            onClick={() => {
+              if (nowPlayingTab === 'Letras') {
+                setLyricsStyleModalOpen((v) => !v);
+              } else {
+                setNowPlayingTab('Letras');
+              }
+            }}
             className={`pm-pressable inline-flex h-10 w-10 items-center justify-center gap-1.5 rounded-full transition-colors md:h-9 md:w-auto md:px-3.5 md:text-xs md:font-semibold ${
               nowPlayingTab === 'Letras'
                 ? 'bg-white/[0.22] text-white md:bg-white md:text-[#070709] md:shadow-sm'
@@ -2185,12 +2319,21 @@ export const NowPlayingSheet: React.FC = () => {
           <button
             type="button"
             data-testid="nowplaying-dj-btn"
-            aria-label="Sesión DJ"
-            aria-pressed={djPopoverOpen}
-            onClick={() => setDjPopoverOpen(!djPopoverOpen)}
+            aria-label="Estudio DJ y Ecualizador"
+            aria-pressed={djPopoverOpen || eqSheetOpen}
+            onClick={() => {
+              if (djPopoverOpen || eqSheetOpen) {
+                setDjPopoverOpen(false);
+                setEqSheetOpen(false);
+              } else if (audioPanelTab === 'eq') {
+                setEqSheetOpen(true);
+              } else {
+                setDjPopoverOpen(true);
+              }
+            }}
             className={`pm-pressable inline-flex h-10 w-10 items-center justify-center gap-1.5 rounded-full transition-colors md:h-9 md:w-auto md:px-3.5 md:text-xs md:font-semibold ${
-              djMode.enabled || djPopoverOpen
-                ? 'bg-white/[0.18] text-white'
+              djMode.enabled || djPopoverOpen || eqSheetOpen
+                ? 'bg-white/[0.2] text-white'
                 : 'text-white/70 hover:bg-white/[0.10] hover:text-white'
             }`}
           >
@@ -2200,7 +2343,7 @@ export const NowPlayingSheet: React.FC = () => {
               }`}
             />
             <span className="hidden md:inline">
-              {djMode.enabled ? `DJ ${djMode.style === 'quick' ? 'Rápida' : 'Completa'}` : 'Sesión DJ'}
+              {djMode.enabled ? 'DJ & EQ · Activo' : 'DJ & EQ'}
             </span>
           </button>
 
@@ -2220,288 +2363,73 @@ export const NowPlayingSheet: React.FC = () => {
             <ListMusic className="h-5 w-5 md:h-3.5 md:w-3.5" />
             <span className="hidden md:inline">Cola</span>
           </button>
-
-          <button
-            type="button"
-            data-testid="nowplaying-eq-btn"
-            aria-label="Ecualizador"
-            aria-pressed={eqSheetOpen}
-            onClick={() => setEqSheetOpen(!eqSheetOpen)}
-            className={`pm-pressable inline-flex h-10 w-10 items-center justify-center gap-1.5 rounded-full transition-colors md:h-9 md:w-auto md:px-3.5 md:text-xs md:font-semibold ${
-              eqSheetOpen
-                ? 'bg-white/[0.18] text-white'
-                : 'text-white/70 hover:bg-white/[0.10] hover:text-white'
-            }`}
-          >
-            <Sliders className="h-5 w-5 md:h-3.5 md:w-3.5" />
-            <span className="hidden md:inline">EQ</span>
-          </button>
-
-          <button
-            type="button"
-            aria-label={repeatLabel}
-            aria-pressed={repeatMode !== 'off'}
-            onClick={() => {
-              triggerTransportAnim('repeat');
-              cycleRepeatMode();
-            }}
-            className={`pm-pressable relative inline-flex h-10 w-10 items-center justify-center rounded-full transition-colors md:hidden ${
-              repeatMode !== 'off'
-                ? 'bg-white/[0.18] text-white'
-                : 'text-white/70 hover:bg-white/[0.10] hover:text-white'
-            }`}
-          >
-            {repeatMode === 'one' ? (
-              <Repeat1 className="h-5 w-5" />
-            ) : (
-              <Repeat className="h-5 w-5" />
-            )}
-          </button>
         </div>
       </nav>
     </div>
   );
 };
 
-export const EqAndCrossfadeSheet: React.FC = () => {
+const DJ_FX_ITEMS: readonly { key: keyof DjFxToggles; label: string }[] = [
+  { key: 'vocal_over_beat', label: 'Voz / Base' },
+  { key: 'instrumental_bed', label: 'Base / Voz' },
+  { key: 'loop_build', label: 'Bucles' },
+  { key: 'eq_swap', label: 'EQ Swap' },
+  { key: 'filter_sweep', label: 'Filter Sweep' },
+  { key: 'echo_out', label: 'Echo Out' },
+];
+
+export const AudioStudioSheet: React.FC = () => {
   const {
     eqSheetOpen,
+    djPopoverOpen,
+    audioPanelTab,
+    setAudioPanelTab,
     setEqSheetOpen,
+    setDjPopoverOpen,
     nowPlayingOpen,
     userEq,
     safeCrossfade,
-    djMode,
-    setEqPreset,
-    setEqBandGain,
-    setEqEnabled,
-    setSafeCrossfade,
-  } = usePMusicStore();
-
-  React.useEffect(() => {
-    if (!eqSheetOpen) return;
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (
-        target instanceof Element &&
-        target.closest(
-          '[data-testid="eq-sheet"], [data-testid="dock-eq-btn"], [data-testid="nowplaying-eq-btn"], [data-testid="mobile-eq-btn"]',
-        )
-      ) {
-        return;
-      }
-      setEqSheetOpen(false);
-    };
-    document.addEventListener('pointerdown', handlePointerDown);
-    return () => document.removeEventListener('pointerdown', handlePointerDown);
-  }, [eqSheetOpen, setEqSheetOpen]);
-
-  if (!eqSheetOpen) return null;
-
-  const crossfadePct = Math.round((safeCrossfade.durationSec / 12) * 100);
-
-  return (
-    <>
-      <div
-        aria-hidden="true"
-        onClick={() => setEqSheetOpen(false)}
-        className="fixed inset-0 z-[64] bg-black/45 sm:hidden"
-      />
-      <div
-        role="dialog"
-        aria-modal="false"
-        aria-label="Ecualizador y Crossfade"
-        data-testid="eq-sheet"
-        className={`pm-glass-liquid pm-popover-enter fixed left-3 right-3 mx-auto z-[65] max-h-[76dvh] w-auto max-w-[calc(100vw-24px)] overflow-y-auto rounded-[22px] p-4 shadow-[0_28px_72px_rgba(0,0,0,0.62)] pm-no-scrollbar pm-text-primary sm:left-auto sm:mx-0 sm:w-[364px] ${
-          nowPlayingOpen ? 'bottom-[70px] sm:right-6' : 'bottom-[102px] sm:right-4'
-        }`}
-        style={{
-          background:
-            'radial-gradient(circle at 18% 82%, color-mix(in srgb, var(--pm-ambient-1) 34%, transparent), transparent 62%), radial-gradient(circle at 86% 24%, color-mix(in srgb, var(--pm-ambient-2) 32%, transparent), transparent 60%), var(--pm-glass-regular-bg)',
-        }}
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-[15px] font-bold leading-tight pm-text-primary">
-              Ecualizador
-            </h2>
-            <p className="mt-0.5 text-[11.5px] pm-text-secondary">
-              Moldea el sonido banda por banda
-            </p>
-          </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={userEq.enabled}
-            aria-label="Activar ecualizador"
-            onClick={() => setEqEnabled(!userEq.enabled)}
-            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 transition-colors ${
-              userEq.enabled ? 'bg-white' : 'bg-white/20'
-            }`}
-          >
-            <span
-              className={`h-5 w-5 rounded-full shadow-sm transition-transform duration-200 ${
-                userEq.enabled
-                  ? 'translate-x-5 bg-[#0A0A0F]'
-                  : 'translate-x-0 bg-white'
-              }`}
-            />
-          </button>
-        </div>
-
-        {/* Presets Grid */}
-        <div className="mt-3.5 grid grid-cols-3 gap-1.5">
-          {USER_EQ_PRESETS.map((preset) => {
-            const active = userEq.preset === preset.id;
-            return (
-              <button
-                key={preset.id}
-                type="button"
-                aria-pressed={active}
-                onClick={() => setEqPreset(preset.id)}
-                className={`rounded-[10px] py-1.5 text-[11.5px] font-bold transition-all ${
-                  active
-                    ? 'bg-white text-[#070709] shadow-sm'
-                    : 'bg-white/[0.08] text-[var(--pm-text-secondary)] hover:bg-white/[0.15] hover:text-[var(--pm-text-primary)]'
-                }`}
-              >
-                {preset.label}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Interactive Vertical Band Sliders */}
-        <div className="mt-4 grid grid-cols-5 gap-2">
-          {USER_EQ_FREQUENCIES_HZ.map((freq, idx) => {
-            const label = freq >= 1000 ? `${freq / 1000}k` : `${freq}`;
-            const ariaFreq = freq >= 1000 ? `${freq / 1000} kHz` : `${freq} Hz`;
-            const val = userEq.bandsDb[idx] ?? 0;
-            const pct = Math.max(0, Math.min(100, ((val + 12) / 24) * 100));
-            return (
-              <div key={freq} className="flex flex-col items-center gap-1.5">
-                <span className="tabular-nums text-[11px] font-semibold pm-text-primary">
-                  {val > 0 ? `+${val}` : val}
-                </span>
-                <div className="relative flex h-28 w-7 items-center justify-center">
-                  <div className="pointer-events-none relative h-24 w-1.5 overflow-hidden rounded-full bg-white/18">
-                    <div
-                      className="absolute inset-x-0 bottom-0 rounded-full bg-white/75"
-                      style={{ height: `${pct}%` }}
-                    />
-                  </div>
-                  <div
-                    aria-hidden="true"
-                    className="pointer-events-none absolute left-1/2 h-3 w-4 -translate-x-1/2 translate-y-1/2 rounded-full bg-white shadow-md"
-                    style={{ bottom: `calc(${pct * 0.86}% + 7px)` }}
-                  />
-                  <input
-                    type="range"
-                    role="slider"
-                    aria-label={`Banda EQ ${ariaFreq}`}
-                    min={-12}
-                    max={12}
-                    step={0.5}
-                    value={val}
-                    onChange={(e) => setEqBandGain(idx, Number(e.target.value))}
-                    className="pm-eq-vertical absolute inset-0 h-full w-full opacity-0"
-                  />
-                </div>
-                <span className="tabular-nums text-[11px] font-medium pm-text-tertiary">
-                  {label}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Compact Safe Crossfade Row */}
-        <div className="mt-3.5 border-t border-white/10 pt-3">
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <span className="text-xs font-bold pm-text-primary">Crossfade</span>
-              <span className="ml-2 text-[11px] pm-text-tertiary">
-                {djMode.enabled
-                  ? 'En pausa con DJ'
-                  : `${safeCrossfade.durationSec} s`}
-              </span>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={safeCrossfade.enabled && !djMode.enabled}
-              aria-label="Activar Crossfade seguro"
-              onClick={() =>
-                setSafeCrossfade({
-                  enabled: djMode.enabled ? true : !safeCrossfade.enabled,
-                  durationSec:
-                    safeCrossfade.durationSec > 0 ? safeCrossfade.durationSec : 4,
-                })
-              }
-              className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold transition-colors ${
-                safeCrossfade.enabled && !djMode.enabled
-                  ? 'pm-btn-primary'
-                  : 'bg-white/10 pm-text-secondary hover:bg-white/15'
-              }`}
-            >
-              {safeCrossfade.enabled && !djMode.enabled ? 'Activo' : 'Off'}
-            </button>
-          </div>
-          <input
-            type="range"
-            role="slider"
-            aria-label="Duración de Crossfade en segundos"
-            min={0}
-            max={12}
-            step={1}
-            value={safeCrossfade.durationSec}
-            onChange={(e) =>
-              setSafeCrossfade({ durationSec: Number(e.target.value) })
-            }
-            style={{ '--pm-fill': `${crossfadePct}%` } as React.CSSProperties}
-            className="pm-range-pill mt-2 w-full cursor-pointer"
-          />
-        </div>
-      </div>
-    </>
-  );
-};
-
-export const DjPopover: React.FC = () => {
-  const {
-    djPopoverOpen,
-    setDjPopoverOpen,
-    nowPlayingOpen,
     djMode,
     currentTrack,
     positionSec,
     activeTransitionPlan,
     isTransitioning,
     trackAnalyses,
+    setEqPreset,
+    setEqBandGain,
+    setEqEnabled,
+    setSafeCrossfade,
     toggleDjMode,
     setDjSessionStyle,
+    toggleDjFx,
     triggerDjMixNow,
+    startFullDjRadio,
   } = usePMusicStore();
 
+  const isOpen = eqSheetOpen || djPopoverOpen;
+
   React.useEffect(() => {
-    if (!djPopoverOpen) return;
+    if (!isOpen) return;
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
       if (
         target instanceof Element &&
         target.closest(
-          '[data-testid="dj-popover"], [data-testid="dock-dj-btn"], [data-testid="nowplaying-dj-btn"], [data-testid="mobile-dj-btn"]',
+          '[data-testid="audio-studio-sheet"], [data-testid="eq-sheet"], [data-testid="dj-popover"], [data-testid="dock-eq-btn"], [data-testid="dock-dj-btn"], [data-testid="nowplaying-eq-btn"], [data-testid="nowplaying-dj-btn"], [data-testid="mobile-eq-btn"], [data-testid="mobile-dj-btn"]'
         )
       ) {
         return;
       }
+      setEqSheetOpen(false);
       setDjPopoverOpen(false);
     };
     document.addEventListener('pointerdown', handlePointerDown);
     return () => document.removeEventListener('pointerdown', handlePointerDown);
-  }, [djPopoverOpen, setDjPopoverOpen]);
+  }, [isOpen, setEqSheetOpen, setDjPopoverOpen]);
 
-  if (!djPopoverOpen) return null;
+  if (!isOpen) return null;
 
+  const crossfadePct = Math.round((safeCrossfade.durationSec / 12) * 100);
   const ana = trackAnalyses[currentTrack.id];
   const countdownSec =
     djMode.enabled && activeTransitionPlan
@@ -2512,115 +2440,360 @@ export const DjPopover: React.FC = () => {
     <>
       <div
         aria-hidden="true"
-        onClick={() => setDjPopoverOpen(false)}
-        className="fixed inset-0 z-[64] bg-black/45 sm:hidden"
+        onClick={() => {
+          setEqSheetOpen(false);
+          setDjPopoverOpen(false);
+        }}
+        className="fixed inset-0 z-[64] bg-black/50 sm:hidden"
       />
       <div
         role="dialog"
         aria-modal="false"
-        aria-label="Modo Sesión DJ"
-        data-testid="dj-popover"
-        className={`pm-glass-liquid pm-popover-enter fixed left-3 right-3 mx-auto z-[65] max-h-[76dvh] w-auto max-w-[calc(100vw-24px)] overflow-y-auto rounded-[22px] p-4 shadow-[0_28px_72px_rgba(0,0,0,0.62)] pm-no-scrollbar pm-text-primary sm:left-auto sm:mx-0 sm:w-[320px] ${
-          nowPlayingOpen ? 'bottom-[70px] sm:right-6' : 'bottom-[102px] sm:right-4'
+        aria-label={audioPanelTab === 'dj' ? 'Modo Sesión DJ y Efectos' : 'Ecualizador y Crossfade'}
+        data-testid={audioPanelTab === 'dj' ? 'dj-popover' : 'eq-sheet'}
+        className={`pm-glass-frosted-neutral pm-popover-enter fixed inset-x-0 bottom-0 z-[65] max-h-[82dvh] overflow-y-auto rounded-t-[28px] px-5 pt-3 pb-[max(1.5rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] pm-no-scrollbar sm:inset-x-auto sm:mx-0 sm:w-[376px] sm:rounded-[24px] sm:p-4 sm:right-6 ${
+          nowPlayingOpen ? 'sm:bottom-[74px]' : 'sm:bottom-[104px]'
         }`}
-        style={{
-          background:
-            'radial-gradient(circle at 20% 20%, rgba(168, 85, 247, 0.24), transparent 60%), radial-gradient(circle at 82% 85%, color-mix(in srgb, var(--pm-ambient-2) 28%, transparent), transparent 62%), var(--pm-glass-regular-bg)',
-        }}
       >
-        <div className="flex items-start justify-between gap-3">
+        <div className="mb-3 flex items-center justify-between gap-2 sm:hidden">
+          <div className="w-7" aria-hidden="true" />
+          <div className="h-1 w-10 rounded-full bg-white/25" />
+          <button
+            type="button"
+            aria-label="Cerrar estudio de audio"
+            onClick={() => {
+              setEqSheetOpen(false);
+              setDjPopoverOpen(false);
+            }}
+            className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white/80 hover:bg-white/20 hover:text-white"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        {/* Frosted Segmented Switcher: Sesión DJ | Ecualizador */}
+        <div
+          data-testid="audio-studio-sheet"
+          className="mb-4 flex items-center justify-between gap-2 rounded-full bg-white/[0.08] p-1"
+        >
+          <button
+            type="button"
+            onClick={() => setAudioPanelTab('dj')}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-full py-1.5 text-xs font-bold transition-colors ${
+              audioPanelTab === 'dj'
+                ? 'bg-white text-[#070709] shadow-sm'
+                : 'text-white/75 hover:text-white'
+            }`}
+          >
+            <Disc3 className={`h-3.5 w-3.5 ${djMode.enabled && audioPanelTab !== 'dj' ? 'text-purple-300' : ''}`} />
+            <span>Sesión DJ</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setAudioPanelTab('eq')}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-full py-1.5 text-xs font-bold transition-colors ${
+              audioPanelTab === 'eq'
+                ? 'bg-white text-[#070709] shadow-sm'
+                : 'text-white/75 hover:text-white'
+            }`}
+          >
+            <Sliders className="h-3.5 w-3.5" />
+            <span>Ecualizador</span>
+          </button>
+        </div>
+
+        {audioPanelTab === 'dj' ? (
           <div>
-            <div className="flex items-center gap-1.5">
-              <Disc3 className={`h-4 w-4 text-purple-400 ${djMode.enabled ? 'animate-spin' : ''}`} />
-              <h2 className="text-[15px] font-bold leading-tight pm-text-primary">
-                Sesión DJ
-              </h2>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-[15px] font-bold leading-tight">
+                  AutoMix Pro DJ
+                </h2>
+                <p className="mt-0.5 text-[11.5px] opacity-70">
+                  {ana
+                    ? `${Math.round(ana.bpm)} BPM${ana.camelotKey ? ` · ${ana.camelotKey}` : ''} · Stems & Bucles`
+                    : 'Algoritmo inteligente por pista'}
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                data-testid="dj-mode-toggle"
+                aria-checked={djMode.enabled}
+                aria-label="Activar Modo Sesión DJ"
+                onClick={() => void toggleDjMode()}
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 transition-colors ${
+                  djMode.enabled ? 'bg-white' : 'bg-white/25'
+                }`}
+              >
+                <span
+                  className={`h-5 w-5 rounded-full shadow-sm transition-transform duration-200 ${
+                    djMode.enabled ? 'translate-x-5 bg-[#070709]' : 'translate-x-0 bg-white'
+                  }`}
+                />
+              </button>
             </div>
-            <p className="mt-0.5 text-[11.5px] pm-text-secondary">
-              {ana
-                ? `${Math.round(ana.bpm)} BPM${ana.camelotKey ? ` · ${ana.camelotKey}` : ''} · AutoMix inteligente`
-                : 'Elige cómo enlazar tus canciones'}
-            </p>
-          </div>
-          <button
-            type="button"
-            role="switch"
-            data-testid="dj-mode-toggle"
-            aria-checked={djMode.enabled}
-            aria-label="Activar Modo Sesión DJ"
-            onClick={() => void toggleDjMode()}
-            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 transition-colors ${
-              djMode.enabled ? 'bg-purple-500' : 'bg-white/20'
-            }`}
-          >
-            <span
-              className={`h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200 ${
-                djMode.enabled ? 'translate-x-5' : 'translate-x-0'
-              }`}
-            />
-          </button>
-        </div>
 
-        <div className="mt-3.5 grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            data-testid="dj-style-quick"
-            aria-pressed={djMode.enabled && djMode.style === 'quick'}
-            onClick={() => void setDjSessionStyle('quick')}
-            className={`pm-pressable flex flex-col items-start gap-1 rounded-[14px] border p-3 text-left transition-all ${
-              djMode.enabled && djMode.style === 'quick'
-                ? 'border-purple-400/60 bg-purple-500/20 text-white shadow-sm'
-                : 'border-white/10 bg-white/[0.06] pm-text-secondary hover:bg-white/[0.12]'
-            }`}
-          >
-            <span className="text-xs font-bold">Rápida</span>
-            <span className="text-[11px] leading-snug opacity-80">
-              Mezcla directa al drop o estribillo
-            </span>
-          </button>
-
-          <button
-            type="button"
-            data-testid="dj-style-full"
-            aria-pressed={djMode.enabled && djMode.style === 'full'}
-            onClick={() => void setDjSessionStyle('full')}
-            className={`pm-pressable flex flex-col items-start gap-1 rounded-[14px] border p-3 text-left transition-all ${
-              djMode.enabled && djMode.style === 'full'
-                ? 'border-purple-400/60 bg-purple-500/20 text-white shadow-sm'
-                : 'border-white/10 bg-white/[0.06] pm-text-secondary hover:bg-white/[0.12]'
-            }`}
-          >
-            <span className="text-xs font-bold">Completa</span>
-            <span className="text-[11px] leading-snug opacity-80">
-              Respeta cada canción y cruza en el outro
-            </span>
-          </button>
-        </div>
-
-        {djMode.enabled && (
-          <div className="mt-3 flex items-center justify-between gap-2 border-t border-white/10 pt-3">
-            <span className="tabular-nums text-[11px] pm-text-secondary">
-              {isTransitioning
-                ? 'Mezclando pistas ahora…'
-                : activeTransitionPlan && countdownSec !== null
-                  ? `Cruce auto en ${countdownSec}s (${formatDurationSec(activeTransitionPlan.cueOutSec)})`
-                  : 'Preparando siguiente cruce…'}
-            </span>
+            {/* Curated Radio Full DJ Button */}
             <button
               type="button"
-              data-testid="dj-mix-now-btn"
-              disabled={isTransitioning}
-              onClick={() => void triggerDjMixNow()}
-              className="pm-pressable rounded-full bg-purple-500 px-3 py-1 text-[11px] font-bold text-white shadow-sm transition-opacity hover:bg-purple-400 disabled:opacity-50"
+              data-testid="start-full-dj-radio-btn"
+              onClick={() => {
+                void startFullDjRadio();
+                setDjPopoverOpen(false);
+                setEqSheetOpen(false);
+              }}
+              className="pm-pressable mt-3 flex w-full items-center justify-between gap-2 rounded-[14px] border border-white/15 bg-white/[0.08] px-3.5 py-2.5 text-left transition-colors hover:bg-white/[0.15]"
             >
-              Mezclar ahora
+              <div className="flex items-center gap-2.5">
+                <Radio className="h-4 w-4 shrink-0 text-white" />
+                <div>
+                  <div className="text-xs font-bold">Radio Full DJ</div>
+                  <div className="text-[11px] opacity-70">
+                    Selecciona y ordena tus gustos para mezclas perfectas
+                  </div>
+                </div>
+              </div>
+              <Play className="h-3.5 w-3.5 shrink-0 fill-current opacity-80" />
             </button>
+
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                data-testid="dj-style-quick"
+                aria-pressed={djMode.enabled && djMode.style === 'quick'}
+                onClick={() => void setDjSessionStyle('quick')}
+                className={`pm-pressable flex flex-col items-start gap-1 rounded-[14px] border p-2.5 text-left transition-all ${
+                  djMode.enabled && djMode.style === 'quick'
+                    ? 'border-white/70 bg-white/[0.18] shadow-sm'
+                    : 'border-white/10 bg-white/[0.06] opacity-80 hover:bg-white/[0.12]'
+                }`}
+              >
+                <span className="text-xs font-bold">Rápida</span>
+                <span className="text-[11px] leading-snug opacity-75">
+                  Directo al drop y mezcla ágil
+                </span>
+              </button>
+
+              <button
+                type="button"
+                data-testid="dj-style-full"
+                aria-pressed={djMode.enabled && djMode.style === 'full'}
+                onClick={() => void setDjSessionStyle('full')}
+                className={`pm-pressable flex flex-col items-start gap-1 rounded-[14px] border p-2.5 text-left transition-all ${
+                  djMode.enabled && djMode.style === 'full'
+                    ? 'border-white/70 bg-white/[0.18] shadow-sm'
+                    : 'border-white/10 bg-white/[0.06] opacity-80 hover:bg-white/[0.12]'
+                }`}
+              >
+                <span className="text-xs font-bold">Completa</span>
+                <span className="text-[11px] leading-snug opacity-75">
+                  Duración adaptativa 2–12 compases
+                </span>
+              </button>
+            </div>
+
+            {/* FX Choreography Toggles */}
+            <div className="mt-3">
+              <div className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-wider opacity-60">
+                Efectos y stems permitidos
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {DJ_FX_ITEMS.map((fx) => {
+                  const active = djMode.enabledTransitions?.[fx.key] ?? true;
+                  return (
+                    <button
+                      key={fx.key}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => toggleDjFx(fx.key)}
+                      className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                        active
+                          ? 'border-white/55 bg-white/[0.18] text-white'
+                          : 'border-white/10 bg-white/[0.05] text-white/55 hover:bg-white/[0.12]'
+                      }`}
+                    >
+                      {fx.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {djMode.enabled && (
+              <div className="mt-3 space-y-2 border-t border-white/10 pt-3">
+                {activeTransitionPlan?.choreography?.summary && (
+                  <p className="text-[11px] opacity-75">
+                    {activeTransitionPlan.choreography.summary}
+                  </p>
+                )}
+                <div className="flex items-center justify-between gap-2">
+                  <span className="tabular-nums text-[11px] opacity-80">
+                    {isTransitioning
+                      ? 'Mezclando pistas ahora…'
+                      : activeTransitionPlan && countdownSec !== null
+                        ? `Cruce auto en ${countdownSec}s (${formatDurationSec(activeTransitionPlan.cueOutSec)})`
+                        : 'Preparando siguiente cruce…'}
+                  </span>
+                  <button
+                    type="button"
+                    data-testid="dj-mix-now-btn"
+                    disabled={isTransitioning}
+                    onClick={() => void triggerDjMixNow()}
+                    className="pm-pressable rounded-full bg-white px-3 py-1 text-[11px] font-bold text-[#070709] shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50"
+                  >
+                    Mezclar ahora
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-[15px] font-bold leading-tight">Ecualizador</h2>
+                <p className="mt-0.5 text-[11.5px] opacity-70">
+                  Moldea el sonido banda por banda
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={userEq.enabled}
+                aria-label="Activar ecualizador"
+                onClick={() => setEqEnabled(!userEq.enabled)}
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 transition-colors ${
+                  userEq.enabled ? 'bg-white' : 'bg-white/25'
+                }`}
+              >
+                <span
+                  className={`h-5 w-5 rounded-full shadow-sm transition-transform duration-200 ${
+                    userEq.enabled
+                      ? 'translate-x-5 bg-[#0A0A0F]'
+                      : 'translate-x-0 bg-white'
+                  }`}
+                />
+              </button>
+            </div>
+
+            <div className="mt-3.5 grid grid-cols-3 gap-1.5">
+              {USER_EQ_PRESETS.map((preset) => {
+                const active = userEq.preset === preset.id;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => setEqPreset(preset.id)}
+                    className={`rounded-[10px] py-1.5 text-[11.5px] font-bold transition-all ${
+                      active
+                        ? 'bg-white text-[#070709] shadow-sm'
+                        : 'bg-white/[0.08] opacity-80 hover:bg-white/[0.15]'
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="mt-4 grid grid-cols-5 gap-2">
+              {USER_EQ_FREQUENCIES_HZ.map((freq, idx) => {
+                const label = freq >= 1000 ? `${freq / 1000}k` : `${freq}`;
+                const ariaFreq = freq >= 1000 ? `${freq / 1000} kHz` : `${freq} Hz`;
+                const val = userEq.bandsDb[idx] ?? 0;
+                const pct = Math.max(0, Math.min(100, ((val + 12) / 24) * 100));
+                return (
+                  <div key={freq} className="flex flex-col items-center gap-1.5">
+                    <span className="tabular-nums text-[11px] font-semibold">
+                      {val > 0 ? `+${val}` : val}
+                    </span>
+                    <div className="relative flex h-28 w-7 items-center justify-center">
+                      <div className="pointer-events-none relative h-24 w-1.5 overflow-hidden rounded-full bg-white/18">
+                        <div
+                          className="absolute inset-x-0 bottom-0 rounded-full bg-white/75"
+                          style={{ height: `${pct}%` }}
+                        />
+                      </div>
+                      <div
+                        aria-hidden="true"
+                        className="pointer-events-none absolute left-1/2 h-3 w-4 -translate-x-1/2 translate-y-1/2 rounded-full bg-white shadow-md"
+                        style={{ bottom: `calc(${pct * 0.86}% + 7px)` }}
+                      />
+                      <input
+                        type="range"
+                        role="slider"
+                        aria-label={`Banda EQ ${ariaFreq}`}
+                        min={-12}
+                        max={12}
+                        step={0.5}
+                        value={val}
+                        onChange={(e) => setEqBandGain(idx, Number(e.target.value))}
+                        className="pm-eq-vertical absolute inset-0 h-full w-full opacity-0"
+                      />
+                    </div>
+                    <span className="tabular-nums text-[11px] font-medium opacity-70">
+                      {label}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-3.5 border-t border-white/10 pt-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <span className="text-xs font-bold">Crossfade</span>
+                  <span className="ml-2 text-[11px] opacity-70">
+                    {djMode.enabled ? 'En pausa con DJ' : `${safeCrossfade.durationSec} s`}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={safeCrossfade.enabled && !djMode.enabled}
+                  aria-label="Activar Crossfade seguro"
+                  onClick={() =>
+                    setSafeCrossfade({
+                      enabled: djMode.enabled ? true : !safeCrossfade.enabled,
+                      durationSec:
+                        safeCrossfade.durationSec > 0 ? safeCrossfade.durationSec : 4,
+                    })
+                  }
+                  className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold transition-colors ${
+                    safeCrossfade.enabled && !djMode.enabled
+                      ? 'bg-white text-[#070709]'
+                      : 'bg-white/10 opacity-80 hover:bg-white/15'
+                  }`}
+                >
+                  {safeCrossfade.enabled && !djMode.enabled ? 'Activo' : 'Off'}
+                </button>
+              </div>
+              <input
+                type="range"
+                role="slider"
+                aria-label="Duración de Crossfade en segundos"
+                min={0}
+                max={12}
+                step={1}
+                value={safeCrossfade.durationSec}
+                onChange={(e) =>
+                  setSafeCrossfade({ durationSec: Number(e.target.value) })
+                }
+                style={{ '--pm-fill': `${crossfadePct}%` } as React.CSSProperties}
+                className="pm-range-pill mt-2 w-full cursor-pointer"
+              />
+            </div>
           </div>
         )}
       </div>
     </>
   );
 };
+
+export const EqAndCrossfadeSheet = AudioStudioSheet;
+export const DjPopover: React.FC = () => null;
 
 export const DevicesConnectSheet: React.FC = () => {
   const {
