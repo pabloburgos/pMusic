@@ -152,8 +152,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="11"
-    android:versionName="0.10.1">
+    android:versionCode="12"
+    android:versionName="0.11.0">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -422,6 +422,7 @@ public class MainActivity extends Activity {
     private int safeInsetTopDp = 0;
     private int safeInsetBottomDp = 0;
     private final Object streamCacheLock = new Object();
+    private volatile long ytBotCooldownUntilMs = 0L;
     private String lastStreamId;
     private byte[] lastStreamBytes;
     private String lastStreamMime;
@@ -680,7 +681,8 @@ public class MainActivity extends Activity {
 
     private ResolvedStream resolveFullLengthStream(String rawTrackId, String qTitle, String qArtist, int qDurationSec) {
         try {
-            if (rawTrackId != null && YT_ID_PATTERN.matcher(rawTrackId).matches()) {
+            boolean ytAllowed = System.currentTimeMillis() >= ytBotCooldownUntilMs;
+            if (ytAllowed && rawTrackId != null && YT_ID_PATTERN.matcher(rawTrackId).matches()) {
                 ResolvedStream direct = fetchYoutubeIosPlayerStream(rawTrackId);
                 if (direct != null) return direct;
             }
@@ -710,23 +712,102 @@ public class MainActivity extends Activity {
             String primaryArtist = artist.split("(?i),|&|\\\\bfeat\\\\.?\\\\b|\\\\bft\\\\.?\\\\b")[0].trim();
             String focusedQuery = (primaryArtist.isEmpty() ? strippedTitle : primaryArtist + " " + strippedTitle).trim();
 
-            // 1) Primary: YouTube Music Songs search (WEB_REMIX)
-            List<Candidate> ytmCandidates = searchYtMusicSongs(focusedQuery, strippedTitle, primaryArtist, targetDur);
-            for (int i = 0; i < Math.min(3, ytmCandidates.size()); i++) {
-                ResolvedStream rs = fetchYoutubeIosPlayerStream(ytmCandidates.get(i).videoId);
-                if (rs != null) return rs;
+            if (System.currentTimeMillis() >= ytBotCooldownUntilMs) {
+                // 1) Primary: YouTube Music Songs search (WEB_REMIX)
+                List<Candidate> ytmCandidates = searchYtMusicSongs(focusedQuery, strippedTitle, primaryArtist, targetDur);
+                for (int i = 0; i < Math.min(3, ytmCandidates.size()); i++) {
+                    if (System.currentTimeMillis() < ytBotCooldownUntilMs) break;
+                    ResolvedStream rs = fetchYoutubeIosPlayerStream(ytmCandidates.get(i).videoId);
+                    if (rs != null) return rs;
+                }
+
+                // 2) Fallback: Standard YouTube search (WEB)
+                if (System.currentTimeMillis() >= ytBotCooldownUntilMs) {
+                    List<Candidate> ytCandidates = searchStandardYoutube(focusedQuery + " audio", strippedTitle, primaryArtist, targetDur);
+                    for (int i = 0; i < Math.min(3, ytCandidates.size()); i++) {
+                        if (System.currentTimeMillis() < ytBotCooldownUntilMs) break;
+                        ResolvedStream rs = fetchYoutubeIosPlayerStream(ytCandidates.get(i).videoId);
+                        if (rs != null) return rs;
+                    }
+                }
+                if (System.currentTimeMillis() >= ytBotCooldownUntilMs) {
+                    List<Candidate> ytDirectCandidates = searchStandardYoutube(focusedQuery, strippedTitle, primaryArtist, targetDur);
+                    for (int i = 0; i < Math.min(3, ytDirectCandidates.size()); i++) {
+                        if (System.currentTimeMillis() < ytBotCooldownUntilMs) break;
+                        ResolvedStream rs = fetchYoutubeIosPlayerStream(ytDirectCandidates.get(i).videoId);
+                        if (rs != null) return rs;
+                    }
+                }
             }
 
-            // 2) Fallback: Standard YouTube search (WEB) with "audio" hint, then raw title + artist
-            List<Candidate> ytCandidates = searchStandardYoutube(focusedQuery + " audio", strippedTitle, primaryArtist, targetDur);
-            for (int i = 0; i < Math.min(3, ytCandidates.size()); i++) {
-                ResolvedStream rs = fetchYoutubeIosPlayerStream(ytCandidates.get(i).videoId);
-                if (rs != null) return rs;
+            // 3) Fast fallback: Audius Public API (full MP3/MPEG stream, zero anti-bot)
+            ResolvedStream audius = resolveAudiusFullStream(strippedTitle, primaryArtist, targetDur);
+            if (audius != null) return audius;
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    private ResolvedStream resolveAudiusFullStream(String targetTitle, String targetArtist, int targetDurSec) {
+        try {
+            String primary = targetArtist != null ? targetArtist.trim() : "";
+            String focused = (primary.isEmpty() ? targetTitle : primary + " " + targetTitle).trim();
+            String[] queries = primary.isEmpty() ? new String[] { targetTitle } : new String[] { focused, targetTitle };
+            List<String> titleToks = tokenizeNorm(targetTitle);
+            List<String> artistToks = tokenizeNorm(primary);
+
+            String bestId = null;
+            int bestScore = Integer.MIN_VALUE;
+
+            for (int qIdx = 0; qIdx < queries.length; qIdx++) {
+                String q = queries[qIdx];
+                if (q == null || q.isEmpty()) continue;
+                byte[] bytes = fetchRemoteBytes("https://api.audius.co/v1/tracks/search?query=" + URLEncoder.encode(q, "UTF-8") + "&app_name=pMusic");
+                if (bytes == null) continue;
+                JSONObject root = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
+                JSONArray arr = root.optJSONArray("data");
+                if (arr == null) continue;
+
+                for (int i = 0; i < Math.min(12, arr.length()); i++) {
+                    JSONObject item = arr.optJSONObject(i);
+                    if (item == null) continue;
+                    String id = item.optString("id", "").trim();
+                    if (id.isEmpty() || !item.optBoolean("is_streamable", true)) continue;
+                    int dur = item.optInt("duration", 0);
+                    if (dur < 40) continue;
+                    String candTitle = item.optString("title", "");
+                    JSONObject userObj = item.optJSONObject("user");
+                    String candArtist = userObj != null ? userObj.optString("name", "") : "";
+                    int sc = scoreAudioCandidate(targetTitle, primary, targetDurSec, candTitle, candArtist, dur, true);
+                    if (sc < 6 && targetDurSec >= 45) {
+                        int maxDiff = Math.max(40, (int) Math.round(targetDurSec * 0.45));
+                        if (Math.abs(dur - targetDurSec) <= maxDiff) {
+                            String hay = normText(candTitle + " " + candArtist);
+                            boolean tOk = true;
+                            for (int k = 0; k < titleToks.size(); k++) {
+                                if (titleToks.get(k).length() > 1 && !hay.contains(titleToks.get(k))) { tOk = false; break; }
+                            }
+                            boolean aOk = artistToks.isEmpty();
+                            for (int k = 0; k < artistToks.size(); k++) {
+                                if (artistToks.get(k).length() > 1 && hay.contains(artistToks.get(k))) { aOk = true; break; }
+                            }
+                            if (tOk && aOk) sc = 4;
+                        }
+                    }
+                    if (sc >= 4 && sc > bestScore) {
+                        bestScore = sc;
+                        bestId = id;
+                    }
+                }
+                if (bestId != null) break;
             }
-            List<Candidate> ytDirectCandidates = searchStandardYoutube(focusedQuery, strippedTitle, primaryArtist, targetDur);
-            for (int i = 0; i < Math.min(3, ytDirectCandidates.size()); i++) {
-                ResolvedStream rs = fetchYoutubeIosPlayerStream(ytDirectCandidates.get(i).videoId);
-                if (rs != null) return rs;
+            if (bestId != null) {
+                return new ResolvedStream(
+                        "https://api.audius.co/v1/tracks/" + URLEncoder.encode(bestId, "UTF-8") + "/stream?app_name=pMusic",
+                        "audio/mpeg",
+                        "pMusic-Android/0.11.0",
+                        System.currentTimeMillis() + STREAM_CACHE_TTL_MS
+                );
             }
         } catch (Exception ignored) {
         }
@@ -908,7 +989,15 @@ public class MainActivity extends Activity {
             if (resp == null) return null;
             JSONObject root = new JSONObject(new String(resp, StandardCharsets.UTF_8));
             JSONObject statusObj = root.optJSONObject("playabilityStatus");
-            if (statusObj == null || !"OK".equalsIgnoreCase(statusObj.optString("status", ""))) {
+            String statusStr = statusObj != null ? statusObj.optString("status", "") : "";
+            if ("LOGIN_REQUIRED".equalsIgnoreCase(statusStr)) {
+                String reason = statusObj.optString("reason", "").toLowerCase(Locale.ROOT);
+                if (reason.contains("bot") || reason.contains("inicia") || reason.contains("sign in")) {
+                    ytBotCooldownUntilMs = System.currentTimeMillis() + 120000L;
+                }
+                return null;
+            }
+            if (statusObj == null || !"OK".equalsIgnoreCase(statusStr)) {
                 return null;
             }
             JSONObject streamingData = root.optJSONObject("streamingData");
@@ -1343,10 +1432,10 @@ public class MainActivity extends Activity {
         try {
             URL url = new URL(urlStr);
             conn = (HttpURLConnection) url.openConnection();
-            conn.setConnectTimeout(4500);
-            conn.setReadTimeout(6500);
+            conn.setConnectTimeout(3500);
+            conn.setReadTimeout(5000);
             conn.setInstanceFollowRedirects(true);
-            conn.setRequestProperty("User-Agent", "pMusic-Android/0.10.1");
+            conn.setRequestProperty("User-Agent", "pMusic-Android/0.11.0");
             int code = conn.getResponseCode();
             if (code >= 200 && code < 300) {
                 InputStream in = conn.getInputStream();

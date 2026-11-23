@@ -10,7 +10,7 @@ export interface AudioStreamMeta {
   durationSec?: number;
 }
 
-export type StreamSourceKind = 'youtube-full';
+export type StreamSourceKind = 'youtube-full' | 'audius-full';
 
 interface Resolved {
   url: string;
@@ -210,6 +210,7 @@ export class AudioStreamResolver {
   private readonly inflight = new Map<string, Promise<Resolved | null>>();
   private readonly catalog: DeezerCatalog;
   private lastFailureReason: 'bot_check' | 'not_found' | null = null;
+  private botCheckCooldownUntilMs = 0;
 
   public constructor(catalog: DeezerCatalog) {
     this.catalog = catalog;
@@ -241,7 +242,7 @@ export class AudioStreamResolver {
 
   private async isStreamableOpenRange(url: string): Promise<boolean> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 6000);
+    const timer = setTimeout(() => controller.abort(), 3000);
     try {
       const res = await fetch(url, {
         headers: { Range: 'bytes=0-' },
@@ -279,6 +280,7 @@ export class AudioStreamResolver {
           (reasonStr.includes('bot') || reasonStr.includes('inicia sesi') || reasonStr.includes('sign in'))
         ) {
           this.lastFailureReason = 'bot_check';
+          this.botCheckCooldownUntilMs = Date.now() + 2 * 60_000;
           return null;
         }
 
@@ -501,6 +503,97 @@ export class AudioStreamResolver {
     return null;
   }
 
+  private async resolveAudius(info: {
+    title: string;
+    artist: string;
+    durationSec: number;
+  }): Promise<Resolved | null> {
+    const strippedTitle = stripTrackTitleNoise(info.title) || info.title.trim();
+    const primaryArtist =
+      info.artist.split(/,|&|\bfeat\.?\b|\bft\.?\b/i)[0]?.trim() || info.artist.trim();
+    const focusedQuery = `${primaryArtist} ${strippedTitle}`.trim();
+    const queries = Array.from(new Set([focusedQuery, strippedTitle].filter(Boolean)));
+    const targetTokens = tokenize(strippedTitle).filter((t) => t.length >= 2);
+    const artistTokens = tokenize(primaryArtist).filter((t) => t.length >= 2);
+    const wantsSpecial = BAD_VERSION_RE.test(normText(info.title));
+
+    const strictMatches: Array<{ id: string; score: number }> = [];
+    const fallbackMatches: Array<{ id: string; score: number }> = [];
+
+    for (const q of queries) {
+      try {
+        const res = await fetch(
+          `https://api.audius.co/v1/tracks/search?query=${encodeURIComponent(q)}&app_name=pMusic`,
+          {
+            headers: { Accept: 'application/json' },
+            signal: AbortSignal.timeout(4000),
+          }
+        );
+        if (!res.ok) continue;
+        const json = (await res.json()) as { data?: Array<Record<string, any>> };
+        const items = Array.isArray(json?.data) ? json.data : [];
+
+        for (const item of items.slice(0, 12)) {
+          const id = String(item?.id ?? '').trim();
+          const dur = Number(item?.duration ?? 0);
+          if (!id || item?.is_streamable === false || dur < 40) continue;
+          const candTitle = String(item?.title ?? '');
+          const candArtist = String(item?.user?.name ?? '');
+          const sc = scoreAudioCandidate(info, {
+            candidateTitle: candTitle,
+            candidateArtists: candArtist,
+            candidateDurationSec: dur,
+            isYtMusicSong: true,
+          });
+          if (sc >= 6) {
+            strictMatches.push({ id, score: sc });
+            continue;
+          }
+          // Secondary tier (e.g. verified DJ mix/remix/reupload within +-45% duration when strict misses)
+          if (
+            info.durationSec < 45 ||
+            Math.abs(dur - info.durationSec) <= Math.max(40, Math.round(info.durationSec * 0.45))
+          ) {
+            const hay = normText(`${candTitle} ${candArtist}`);
+            const tHit =
+              targetTokens.length === 0 || targetTokens.every((t) => hay.includes(t));
+            const aHit =
+              artistTokens.length === 0 || artistTokens.some((a) => hay.includes(a));
+            if (tHit && aHit) {
+              const penalty = !wantsSpecial && BAD_VERSION_RE.test(normText(candTitle)) ? 0 : 4;
+              fallbackMatches.push({ id, score: (Number.isFinite(sc) ? sc : 0) + penalty });
+            }
+          }
+        }
+        if (strictMatches.length > 0) break;
+      } catch {
+        // try next Audius search query
+      }
+    }
+
+    const ordered =
+      strictMatches.length > 0
+        ? strictMatches.sort((a, b) => b.score - a.score)
+        : fallbackMatches.sort((a, b) => b.score - a.score);
+
+    const seen = new Set<string>();
+    for (const cand of ordered) {
+      if (seen.has(cand.id)) continue;
+      seen.add(cand.id);
+      const streamUrl = `https://api.audius.co/v1/tracks/${encodeURIComponent(cand.id)}/stream?app_name=pMusic`;
+      if (await this.isStreamableOpenRange(streamUrl)) {
+        return {
+          url: streamUrl,
+          mime: 'audio/mpeg',
+          source: 'audius-full',
+          expiresAt: Date.now() + 90 * 60_000,
+        };
+      }
+      if (seen.size >= 3) break;
+    }
+    return null;
+  }
+
   public async resolve(trackId: string, meta?: AudioStreamMeta): Promise<Resolved | null> {
     const cacheKey = `${trackId}::${meta?.title ?? ''}`;
     const hit = this.cache.get(cacheKey);
@@ -510,10 +603,24 @@ export class AudioStreamResolver {
     if (!p) {
       p = (async () => {
         let r: Resolved | null = null;
-        try {
-          r = await this.resolveYoutube(trackId, meta);
-        } catch {
-          r = null;
+        if (Date.now() >= this.botCheckCooldownUntilMs) {
+          try {
+            r = await this.resolveYoutube(trackId, meta);
+          } catch {
+            r = null;
+          }
+        } else {
+          this.lastFailureReason = 'bot_check';
+        }
+        if (!r) {
+          const info = await this.lookupTrackInfo(trackId, meta);
+          if (info) {
+            const audius = await this.resolveAudius(info);
+            if (audius) {
+              r = audius;
+              this.lastFailureReason = null;
+            }
+          }
         }
         if (r) this.cache.set(cacheKey, r);
         return r;

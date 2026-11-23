@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AudioStreamResolver,
   DeezerCatalog,
   LrcParser,
   LrclibLyricsProvider,
@@ -624,5 +625,53 @@ describe('@pmusic/providers', () => {
       }
     );
     expect(score).toBe(-Infinity);
+  });
+
+  it('falls back quickly to full-length Audius MP3 stream when YouTube resolution returns null', async () => {
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes('api.audius.co/v1/tracks/search')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 'aud123',
+                title: 'NUEVAYoL',
+                duration: 184,
+                is_streamable: true,
+                user: { name: 'Bad Bunny' },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('api.audius.co/v1/tracks/aud123/stream')) {
+        return new Response(new Uint8Array([1, 2, 3, 4]), {
+          status: 206,
+          headers: { 'content-type': 'audio/mpeg' },
+        });
+      }
+      return new Response('Not found', { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      const resolver = new AudioStreamResolver(new DeezerCatalog(globalThis.fetch));
+      (resolver as unknown as { yt: () => Promise<never> }).yt = async () => {
+        throw new Error('YT unavailable');
+      };
+      const resolved = await resolver.resolve('bb_nuevayol_01', {
+        title: 'NUEVAYoL',
+        artist: 'Bad Bunny',
+        durationSec: 183,
+      });
+      expect(resolved).not.toBeNull();
+      expect(resolved?.source).toBe('audius-full');
+      expect(resolved?.mime).toBe('audio/mpeg');
+      expect(resolved?.url).toBe('https://api.audius.co/v1/tracks/aud123/stream?app_name=pMusic');
+    } finally {
+      globalThis.fetch = prevFetch;
+    }
   });
 });
