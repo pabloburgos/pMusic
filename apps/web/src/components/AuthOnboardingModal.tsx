@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Check, Loader2, Mail, Sparkles, User, X } from 'lucide-react';
 import { usePMusicStore } from '../store/usePMusicStore.ts';
+import { PMusicLogo } from './PMusicLogo.tsx';
 
 function GoogleLogo() {
   return (
@@ -252,10 +253,11 @@ export const AuthOnboardingModal: React.FC = () => {
         ) : step === 'choice' ? (
           <div className="relative space-y-5">
             <div className="flex flex-col items-center text-center">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-[#fa233b] via-[#ff3b5c] to-[#7c3aed] text-2xl font-black text-white shadow-lg shadow-[#fa233b]/30">
-                pM
+              <PMusicLogo size={64} variant="icon" />
+              <div className="mt-3">
+                <PMusicLogo size={34} variant="wordmark-only" />
               </div>
-              <h2 className="mt-4 text-2xl font-bold tracking-tight text-white">
+              <h2 className="mt-3 text-xl font-bold tracking-tight text-white">
                 Bienvenido a pMusic
               </h2>
               <p className="mt-1.5 text-sm text-white/65">

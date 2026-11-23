@@ -11,6 +11,6 @@
 
 !macro customWelcomePage
   !define MUI_WELCOMEPAGE_TITLE "Bienvenido a pMusic"
-  !define MUI_WELCOMEPAGE_TEXT "Este asistente instalará pMusic v0.14.0 en tu equipo.$\r$\n$\r$\nDisfruta de reproducción de audio rápida, letras sincronizadas a 60 FPS, modo Liquid Glass, Pro-DJ AutoMix y pMusic Connect.$\r$\n$\r$\nHaz clic en Siguiente para continuar."
+  !define MUI_WELCOMEPAGE_TEXT "Este asistente instalará pMusic v0.14.1 en tu equipo.$\r$\n$\r$\nDisfruta de reproducción de audio rápida, letras sincronizadas a 60 FPS, modo Liquid Glass, Pro-DJ AutoMix y pMusic Connect.$\r$\n$\r$\nHaz clic en Siguiente para continuar."
   !insertmacro MUI_PAGE_WELCOME
 !macroend

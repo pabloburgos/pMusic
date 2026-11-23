@@ -132,7 +132,12 @@ function generateIconPng(size = 192) {
   ]);
 }
 
-writeFileSync(resolve(drawableDir, 'ic_launcher.png'), generateIconPng(192));
+const androidBrandIcon = resolve(__dirname, '../../desktop/build/icon-android.png');
+if (existsSync(androidBrandIcon)) {
+  cpSync(androidBrandIcon, resolve(drawableDir, 'ic_launcher.png'));
+} else {
+  writeFileSync(resolve(drawableDir, 'ic_launcher.png'), generateIconPng(192));
+}
 
 // 3. Write res/values/strings.xml
 writeFileSync(
@@ -152,8 +157,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="15"
-    android:versionName="0.14.0">
+    android:versionCode="16"
+    android:versionName="0.14.1">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 

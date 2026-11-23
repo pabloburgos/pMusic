@@ -12,6 +12,13 @@ const iconPngPath = resolve(buildDir, 'icon.png');
 if (!existsSync(iconPngPath)) {
   throw new Error(`Missing source icon PNG: ${iconPngPath}`);
 }
+const wordmarkSvgPath = resolve(desktopRoot, '..', '..', 'assets', 'pMusic-wordmark.svg');
+const wordmarkDataUri = existsSync(wordmarkSvgPath)
+  ? `data:image/svg+xml;base64,${Buffer.from(
+      readFileSync(wordmarkSvgPath, 'utf-8').replace(/currentColor/g, '#FFFFFF'),
+      'utf-8'
+    ).toString('base64')}`
+  : '';
 
 const CHROME_PATH =
   process.env.PMUSIC_CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
@@ -191,13 +198,19 @@ try {
   const icoPath = resolve(buildDir, 'icon.ico');
   writeFileSync(icoPath, encodeIco(icoEntries));
 
-  // 2. Render sleek 164x314 Liquid Glass pMusic NSIS Sidebar BMP
-  const sidebarRgba = await page.evaluate(async (src) => {
+  // 2. Render 164x314 NSIS Welcome/Finish Sidebar BMP (100% custom pMusic Original bubbly aesthetic)
+  const sidebarRgba = await page.evaluate(async ({ src, wmSrc }) => {
     const W = 164;
     const H = 314;
     const img = new Image();
     img.src = src;
     await img.decode();
+    let wmImg = null;
+    if (wmSrc) {
+      wmImg = new Image();
+      wmImg.src = wmSrc;
+      await wmImg.decode();
+    }
 
     const canvas = document.createElement('canvas');
     canvas.width = W;
@@ -218,108 +231,116 @@ try {
       ctx.closePath();
     };
 
-    // Deep obsidian base
+    // Pure obsidian dark base
     const baseGrad = ctx.createLinearGradient(0, 0, W, H);
-    baseGrad.addColorStop(0, '#07070D');
-    baseGrad.addColorStop(0.55, '#120D22');
-    baseGrad.addColorStop(1, '#090910');
+    baseGrad.addColorStop(0, '#050508');
+    baseGrad.addColorStop(0.55, '#0F0B14');
+    baseGrad.addColorStop(1, '#07070A');
     ctx.fillStyle = baseGrad;
     ctx.fillRect(0, 0, W, H);
 
-    // Liquid Glass ambient mesh glows
-    const g1 = ctx.createRadialGradient(W * 0.5, 96, 8, W * 0.5, 96, 118);
-    g1.addColorStop(0, 'rgba(186, 140, 255, 0.36)');
-    g1.addColorStop(0.55, 'rgba(124, 88, 224, 0.14)');
+    // Subtle crimson-white ambient glow behind puffy card
+    const g1 = ctx.createRadialGradient(W * 0.5, 96, 8, W * 0.5, 96, 114);
+    g1.addColorStop(0, 'rgba(250, 35, 59, 0.28)');
+    g1.addColorStop(0.55, 'rgba(255, 255, 255, 0.08)');
     g1.addColorStop(1, 'rgba(0, 0, 0, 0)');
     ctx.fillStyle = g1;
     ctx.fillRect(0, 0, W, H);
 
-    const g2 = ctx.createRadialGradient(W * 0.25, H - 34, 4, W * 0.25, H - 34, 96);
-    g2.addColorStop(0, 'rgba(92, 168, 255, 0.20)');
-    g2.addColorStop(1, 'rgba(0, 0, 0, 0)');
-    ctx.fillStyle = g2;
-    ctx.fillRect(0, 0, W, H);
-
-    // Central frosted Liquid Glass emblem card
-    roundRect(16, 30, 132, 198, 22);
-    const cardGrad = ctx.createLinearGradient(16, 30, 148, 228);
-    cardGrad.addColorStop(0, 'rgba(255, 255, 255, 0.095)');
+    // Puffy balloon emblem card
+    roundRect(14, 24, 136, 206, 28);
+    const cardGrad = ctx.createLinearGradient(14, 24, 150, 230);
+    cardGrad.addColorStop(0, 'rgba(255, 255, 255, 0.11)');
     cardGrad.addColorStop(1, 'rgba(255, 255, 255, 0.03)');
     ctx.fillStyle = cardGrad;
     ctx.fill();
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.16)';
+    ctx.lineWidth = 1.25;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
     ctx.stroke();
 
-    // Specular top caustic rim
-    const rimGrad = ctx.createLinearGradient(28, 30, 136, 30);
+    // Puffy top gloss highlight
+    const rimGrad = ctx.createLinearGradient(30, 25, 134, 25);
     rimGrad.addColorStop(0, 'rgba(255,255,255,0)');
-    rimGrad.addColorStop(0.5, 'rgba(255,255,255,0.45)');
+    rimGrad.addColorStop(0.5, 'rgba(255,255,255,0.5)');
     rimGrad.addColorStop(1, 'rgba(255,255,255,0)');
     ctx.strokeStyle = rimGrad;
     ctx.beginPath();
-    ctx.moveTo(30, 31);
-    ctx.lineTo(134, 31);
+    ctx.moveTo(32, 25.5);
+    ctx.lineTo(132, 25.5);
     ctx.stroke();
 
-    // pMusic Icon with subtle glow
+    // New black-squircle "p" app icon
     ctx.save();
-    ctx.shadowColor = 'rgba(226, 204, 255, 0.32)';
-    ctx.shadowBlur = 18;
-    ctx.drawImage(img, 41, 50, 82, 82);
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.65)';
+    ctx.shadowBlur = 16;
+    ctx.drawImage(img, 39, 44, 86, 86);
     ctx.restore();
 
-    // Brand wordmark
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = '700 23px "Segoe UI", system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('pMusic', W / 2, 156);
+    // New vectorized bubbly "pMusic" wordmark
+    if (wmImg) {
+      const wmW = 104;
+      const wmH = Math.round((wmW * wmImg.height) / wmImg.width);
+      ctx.drawImage(wmImg, (W - wmW) / 2, 142, wmW, wmH);
+    } else {
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '800 22px "Segoe UI", system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('pMusic', W / 2, 156);
+    }
 
-    // Frosted version pill
-    roundRect(45, 178, 74, 22, 11);
-    ctx.fillStyle = 'rgba(226, 204, 255, 0.15)';
+    // Puffy version pill
+    roundRect(45, 188, 74, 24, 12);
+    ctx.fillStyle = 'rgba(250, 35, 59, 0.22)';
     ctx.fill();
-    ctx.strokeStyle = 'rgba(226, 204, 255, 0.35)';
+    ctx.strokeStyle = 'rgba(250, 35, 59, 0.55)';
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    ctx.fillStyle = '#E8D8FF';
-    ctx.font = '600 10.5px "Segoe UI", system-ui, sans-serif';
-    ctx.fillText('v0.14.0', W / 2, 189.5);
+    ctx.fillStyle = '#FFD7DD';
+    ctx.font = '700 10.5px "Segoe UI", system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('v0.14.1', W / 2, 200);
 
-    // Acoustic wave decorative bars near footer
+    // Puffy sound-wave pills near footer
     const bars = [10, 18, 28, 16, 24, 32, 20, 14, 22, 12];
-    const barW = 4;
-    const gap = 5;
+    const barW = 5;
+    const gap = 4.5;
     const totalBarW = bars.length * barW + (bars.length - 1) * gap;
     const startX = (W - totalBarW) / 2;
     for (let i = 0; i < bars.length; i++) {
       const bh = bars[i];
       const bx = startX + i * (barW + gap);
       const by = 266 - bh / 2;
-      roundRect(bx, by, barW, bh, 2);
-      ctx.fillStyle = i % 3 === 1 ? 'rgba(226, 204, 255, 0.65)' : 'rgba(255, 255, 255, 0.28)';
+      roundRect(bx, by, barW, bh, 2.5);
+      ctx.fillStyle = i % 3 === 1 ? 'rgba(250, 35, 59, 0.8)' : 'rgba(255, 255, 255, 0.32)';
       ctx.fill();
     }
 
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.62)';
-    ctx.font = '500 9.5px "Segoe UI", system-ui, sans-serif';
-    ctx.fillText('Liquid Glass · AutoMix DJ', W / 2, 294);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.68)';
+    ctx.font = '600 9.5px "Segoe UI", system-ui, sans-serif';
+    ctx.fillText('pMusic Original · Hi-Fi', W / 2, 296);
 
     return Array.from(ctx.getImageData(0, 0, W, H).data);
-  }, iconDataUri);
+  }, { src: iconDataUri, wmSrc: wordmarkDataUri });
 
   const sidebarPath = resolve(buildDir, 'installerSidebar.bmp');
   writeFileSync(sidebarPath, encode24BitBmp(164, 314, Uint8Array.from(sidebarRgba)));
 
-  // 3. Render sleek 150x57 NSIS Header BMP (seamless #FFFFFF outer canvas + dark Liquid Glass pill)
-  const headerRgba = await page.evaluate(async (src) => {
+  // 3. Render sleek 150x57 NSIS Header BMP with new p icon + bubbly pMusic wordmark
+  const headerRgba = await page.evaluate(async ({ src, wmSrc }) => {
     const W = 150;
     const H = 57;
     const img = new Image();
     img.src = src;
     await img.decode();
+    let wmImg = null;
+    if (wmSrc) {
+      wmImg = new Image();
+      wmImg.src = wmSrc;
+      await wmImg.decode();
+    }
 
     const canvas = document.createElement('canvas');
     canvas.width = W;
@@ -340,35 +361,36 @@ try {
       ctx.closePath();
     };
 
-    // Match Windows MUI header surface on edges
     ctx.fillStyle = '#FFFFFF';
     ctx.fillRect(0, 0, W, H);
 
-    // Floating dark obsidian Liquid Glass pill inside header
-    roundRect(8, 7, W - 16, H - 14, 13);
-    const pillGrad = ctx.createLinearGradient(8, 7, W - 8, H - 7);
-    pillGrad.addColorStop(0, '#101018');
-    pillGrad.addColorStop(1, '#1D1533');
+    // Puffy dark pill inside header
+    roundRect(6, 6, W - 12, H - 12, 16);
+    const pillGrad = ctx.createLinearGradient(6, 6, W - 6, H - 6);
+    pillGrad.addColorStop(0, '#08080C');
+    pillGrad.addColorStop(1, '#19101A');
     ctx.fillStyle = pillGrad;
     ctx.fill();
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = '#D5C7F2';
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = 'rgba(250, 35, 59, 0.45)';
     ctx.stroke();
 
-    ctx.drawImage(img, 17, 13.5, 30, 30);
+    ctx.drawImage(img, 14, 12.5, 32, 32);
 
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = '700 15px "Segoe UI", system-ui, sans-serif';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('pMusic', 54, 24);
-
-    ctx.fillStyle = '#DFC8FF';
-    ctx.font = '600 9.5px "Segoe UI", system-ui, sans-serif';
-    ctx.fillText('PRO AUDIO', 54, 38);
+    if (wmImg) {
+      const wmW = 82;
+      const wmH = Math.round((wmW * wmImg.height) / wmImg.width);
+      ctx.drawImage(wmImg, 52, Math.round((H - wmH) / 2), wmW, wmH);
+    } else {
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '800 15px "Segoe UI", system-ui, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('pMusic', 54, 28);
+    }
 
     return Array.from(ctx.getImageData(0, 0, W, H).data);
-  }, iconDataUri);
+  }, { src: iconDataUri, wmSrc: wordmarkDataUri });
 
   const headerPath = resolve(buildDir, 'installerHeader.bmp');
   writeFileSync(headerPath, encode24BitBmp(150, 57, Uint8Array.from(headerRgba)));

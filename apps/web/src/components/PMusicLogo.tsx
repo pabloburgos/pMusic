@@ -1,27 +1,44 @@
-import React, { useId } from 'react';
+import React from 'react';
+import {
+  PMUSIC_P_MARK_HEIGHT,
+  PMUSIC_P_MARK_PATH,
+  PMUSIC_P_MARK_WIDTH,
+  PMUSIC_WORDMARK_HEIGHT,
+  PMUSIC_WORDMARK_PATH,
+  PMUSIC_WORDMARK_VIEWBOX,
+  PMUSIC_WORDMARK_WIDTH,
+} from './pmusic-logo-paths.ts';
 
 export interface PMusicLogoProps {
   size?: number;
   variant?: 'icon' | 'full' | 'wordmark-only';
   showWordmark?: boolean;
+  color?: string;
   className?: string;
 }
+
+const TARGET_H = 192;
+const P_SCALE = TARGET_H / PMUSIC_P_MARK_HEIGHT;
+const P_TX = (256 - PMUSIC_P_MARK_WIDTH * P_SCALE) / 2 + 5;
+const P_TY = (256 - TARGET_H) / 2;
 
 export const PMusicLogo: React.FC<PMusicLogoProps> = ({
   size = 30,
   variant,
   showWordmark = false,
+  color,
   className = '',
 }) => {
-  const uid = useId().replace(/[^a-zA-Z0-9_-]/g, '');
   const wordmarkOnly = variant === 'wordmark-only';
   const showFull = wordmarkOnly || (variant ? variant === 'full' : showWordmark);
-  const bgId = `pm-bg-${uid}`;
-  const rimId = `pm-rim-${uid}`;
-  const accentBarId = `pm-bar-${uid}`;
+  const wmHeight = wordmarkOnly ? Math.round(size * 0.92) : Math.round(size * 0.72);
+  const wmWidth = Math.round((wmHeight * PMUSIC_WORDMARK_WIDTH) / PMUSIC_WORDMARK_HEIGHT);
 
   return (
-    <span className={`inline-flex items-center gap-2.5 select-none ${className}`}>
+    <span
+      className={`inline-flex items-center gap-2 select-none ${className}`}
+      style={color ? { color } : undefined}
+    >
       {!wordmarkOnly && (
         <svg
           width={size}
@@ -30,51 +47,45 @@ export const PMusicLogo: React.FC<PMusicLogoProps> = ({
           fill="none"
           xmlns="http://www.w3.org/2000/svg"
           aria-hidden="true"
-          className="shrink-0 drop-shadow-[0_4px_10px_rgba(0,0,0,0.32)]"
+          className="shrink-0 drop-shadow-[0_4px_10px_rgba(0,0,0,0.45)]"
         >
-          <defs>
-            <linearGradient id={bgId} x1="20%" y1="0%" x2="80%" y2="100%">
-              <stop offset="0%" stopColor="#1F1D29" />
-              <stop offset="100%" stopColor="#0C0C11" />
-            </linearGradient>
-            <linearGradient id={rimId} x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#FFFFFF" stopOpacity="0.24" />
-              <stop offset="100%" stopColor="#FFFFFF" stopOpacity="0.06" />
-            </linearGradient>
-            <linearGradient id={accentBarId} x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#F4EDFF" />
-              <stop offset="100%" stopColor="#C4B5FD" />
-            </linearGradient>
-          </defs>
-
-          <rect x="8" y="8" width="240" height="240" rx="64" fill={`url(#${bgId})`} />
+          <rect x="6" y="6" width="244" height="244" rx="64" fill="#060608" />
           <rect
-            x="10.5"
-            y="10.5"
-            width="235"
-            height="235"
-            rx="61.5"
-            stroke={`url(#${rimId})`}
-            strokeWidth="5"
+            x="7.5"
+            y="7.5"
+            width="241"
+            height="241"
+            rx="62.5"
+            stroke="#FFFFFF"
+            strokeOpacity="0.14"
+            strokeWidth="3"
           />
-
-          {/* Signature 4-bar equalizer app mark */}
-          <rect x="52" y="92" width="26" height="72" rx="13" fill="#F8FAFC" />
-          <rect x="94" y="54" width="26" height="148" rx="13" fill={`url(#${accentBarId})`} />
-          <rect x="136" y="74" width="26" height="108" rx="13" fill="#F8FAFC" />
-          <rect x="178" y="108" width="26" height="40" rx="13" fill="#E2E8F0" />
+          <g transform={`translate(${P_TX.toFixed(2)}, ${P_TY.toFixed(2)}) scale(${P_SCALE.toFixed(5)})`}>
+            <path
+              d={PMUSIC_P_MARK_PATH}
+              fill={color ?? '#FFFFFF'}
+              fillRule="evenodd"
+            />
+          </g>
         </svg>
       )}
 
       {showFull && (
-        <span
-          className={`pm-brand-wordmark inline-flex items-baseline ${
-            wordmarkOnly ? 'text-[23px]' : 'text-[18px]'
-          }`}
+        <svg
+          width={wmWidth}
+          height={wmHeight}
+          viewBox={PMUSIC_WORDMARK_VIEWBOX}
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-label="pMusic"
+          className="shrink-0 pm-text-primary"
         >
-          <span className="pm-brand-p">p</span>
-          <span className="pm-text-primary">Music</span>
-        </span>
+          <path
+            d={PMUSIC_WORDMARK_PATH}
+            fill="currentColor"
+            fillRule="evenodd"
+          />
+        </svg>
       )}
     </span>
   );
