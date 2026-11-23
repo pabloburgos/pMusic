@@ -594,12 +594,11 @@ describe('@pmusic/audio-engine', () => {
     }
   });
 
-  it('caches full downloaded track blobs in background and reuses blob URL on replay', async () => {
+  it('streams directly on a single audio connection, ignores aborted errors, and cancels DJ mode immediately', async () => {
     const created: ReturnType<typeof createFakeBrowserAudioElement>[] = [];
     const prevDoc = (globalThis as { document?: unknown }).document;
     const prevFetch = globalThis.fetch;
-    const prevCreateObjUrl = URL.createObjectURL;
-    const prevRevokeObjUrl = URL.revokeObjectURL;
+    let fetchCalls = 0;
 
     (globalThis as { document?: unknown }).document = {
       createElement: () => {
@@ -610,34 +609,71 @@ describe('@pmusic/audio-engine', () => {
       },
       body: { appendChild: () => {} },
     };
-    const bigBytes = new Uint8Array(8192);
-    globalThis.fetch = (async () =>
-      ({
-        ok: true,
-        blob: async () => new Blob([bigBytes], { type: 'audio/mp4' }),
-      }) as Response) as typeof fetch;
-    URL.createObjectURL = () => 'blob:https://pmusic.local/cached-trk-1';
-    URL.revokeObjectURL = () => {};
+    globalThis.fetch = (async () => {
+      fetchCalls++;
+      return new Response(new Uint8Array(0), { status: 200 });
+    }) as typeof fetch;
 
     const engine = new DualDeckAudioEngine({
       resolveStreamUrl: async () => 'https://stream.pmusic.test/trk_1',
     });
     try {
       await engine.init();
+      const errs: string[] = [];
+      engine.onError((e) => errs.push(e.code));
+
       await engine.loadAndPlay(SAMPLE_TRACKS[0]!, 0);
       created[0]!.readyState = 4;
       created[0]!.dispatch('playing');
-      await new Promise((r) => setTimeout(r, 80));
+      await new Promise((r) => setTimeout(r, 40));
 
-      await engine.loadAndPlay(SAMPLE_TRACKS[0]!, 0);
-      expect(created[0]!.src).toBe('blob:https://pmusic.local/cached-trk-1');
-      expect(engine.getState().isBuffering).toBe(false);
+      // Single-stream design: never opens redundant background full-file downloads
+      expect(fetchCalls).toBe(0);
+
+      // Aborted error during rapid track swap does not emit TRACK_UNPLAYABLE
+      (created[0]! as unknown as { error?: { code: number } }).error = { code: 1 };
+      created[0]!.dispatch('error');
+      expect(errs).toHaveLength(0);
+
+      // Immediate DJ deactivation cancels active transition & restores playbackRate = 1.0
+      engine.setDjMode({
+        enabled: true,
+        style: 'quick',
+        autoReorderQueue: false,
+        preferredTransition: 'auto',
+        tempoMatching: true,
+      });
+      await engine.preloadNextDeck(SAMPLE_TRACKS[1]!, 4);
+      const pendingTransition = engine.executeTransition({
+        fromTrackId: SAMPLE_TRACKS[0]!.id,
+        toTrackId: SAMPLE_TRACKS[1]!.id,
+        cueInSec: 4,
+        cueOutSec: 70,
+        transitionDurationSec: 4,
+        transitionBars: 4,
+        transitionType: 'eq_swap',
+        tempoNudgeRate: 1.04,
+        echoSubdivision: 0.5,
+        compatibilityScore: 0.9,
+      });
+      await new Promise((r) => setTimeout(r, 40));
+      expect(engine.getState().isTransitioning).toBe(true);
+
+      engine.setDjMode({
+        enabled: false,
+        style: 'quick',
+        autoReorderQueue: false,
+        preferredTransition: 'auto',
+        tempoMatching: true,
+      });
+      await pendingTransition;
+      expect(engine.getState().isTransitioning).toBe(false);
+      expect(created[0]!.playbackRate).toBe(1);
+      expect(created[1]!.playbackRate).toBe(1);
     } finally {
       await engine.dispose();
       (globalThis as { document?: unknown }).document = prevDoc;
       globalThis.fetch = prevFetch;
-      URL.createObjectURL = prevCreateObjUrl;
-      URL.revokeObjectURL = prevRevokeObjUrl;
     }
   });
 

@@ -239,4 +239,61 @@ describe('@pmusic/web UI', () => {
     });
     expect(document.querySelector('.pm-skip-prev-hyper')).not.toBeNull();
   });
+
+  it('hides MEZCLANDO · DJ and Entrando takeover during plain crossfade, and deactivates DJ Mode synchronously', async () => {
+    const t1 = usePMusicStore.getState().homeShelves[0]!.tracks![0]!;
+    const t2 = usePMusicStore.getState().homeShelves[0]!.tracks![1]!;
+
+    act(() => {
+      usePMusicStore.setState({
+        nowPlayingOpen: true,
+        isBuffering: false,
+        isTransitioning: true,
+        transitionProgress01: 0.45,
+        incomingTransitionTrack: t2,
+        currentTrack: t1,
+        djMode: {
+          ...usePMusicStore.getState().djMode,
+          enabled: false,
+        },
+        safeCrossfade: { enabled: true, durationSec: 4 },
+      });
+    });
+
+    render(<App />);
+    expect(screen.queryByText(/MEZCLANDO · DJ/i)).toBeNull();
+    expect(screen.queryByText(/Entrando ·/i)).toBeNull();
+
+    // Activate DJ Mode, then toggle OFF and ensure synchronous cleanup
+    act(() => {
+      usePMusicStore.setState({
+        djMode: {
+          ...usePMusicStore.getState().djMode,
+          enabled: true,
+        },
+        isTransitioning: true,
+        incomingTransitionTrack: t2,
+        activeTransitionPlan: {
+          fromTrackId: t1.id,
+          toTrackId: t2.id,
+          cueInSec: 0,
+          cueOutSec: 160,
+          transitionDurationSec: 6,
+          transitionBars: 4,
+          transitionType: 'eq_swap',
+          tempoNudgeRate: 1.0,
+          echoSubdivision: 0.5,
+          compatibilityScore: 0.9,
+        },
+      });
+    });
+
+    const togglePromise = usePMusicStore.getState().toggleDjMode(false);
+    // Must be cleared synchronously on toggle off without waiting for async resolution
+    expect(usePMusicStore.getState().djMode.enabled).toBe(false);
+    expect(usePMusicStore.getState().isTransitioning).toBe(false);
+    expect(usePMusicStore.getState().incomingTransitionTrack).toBeNull();
+    expect(usePMusicStore.getState().activeTransitionPlan).toBeNull();
+    await togglePromise;
+  });
 });

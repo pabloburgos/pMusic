@@ -1037,45 +1037,41 @@ input[type="range"].pm-eq-vertical {
     filter 280ms ease;
 }
 
-/* Apple Music Sing progressive word illumination without unsung edge bleed */
+/* Apple Music Sing progressive word illumination — GPU-friendly 60fps sweep */
 .pm-sing-word {
   display: inline-block;
   color: rgba(255, 255, 255, 0.36);
-  -webkit-text-fill-color: rgba(255, 255, 255, 0.36);
-  transform: translateY(var(--word-y, 0px)) scale(var(--word-scale, 1));
+  transform: translate3d(0, var(--word-y, 0px), 0) scale(var(--word-scale, 1));
   transform-origin: center bottom;
-  filter: drop-shadow(0 0 var(--word-glow, 0px) rgba(255, 255, 255, 0.45));
-  transition:
-    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
-    filter 200ms ease,
-    color 180ms ease;
-  will-change: transform;
-}
-
-.pm-sing-word[data-word-state='upcoming'] {
-  color: rgba(255, 255, 255, 0.36);
-  -webkit-text-fill-color: rgba(255, 255, 255, 0.36);
-  background-image: none;
-}
-
-.pm-sing-word[data-word-state='active'] {
-  color: #FFFFFF;
   background-image: linear-gradient(
     90deg,
     #FFFFFF 0%,
-    #FFFFFF max(0%, calc(var(--word-p, 0%) - 4%)),
-    rgba(255, 255, 255, 0.36) calc(var(--word-p, 0%) + 6%),
+    #FFFFFF 45.45%,
+    rgba(255, 255, 255, 0.36) 54.55%,
     rgba(255, 255, 255, 0.36) 100%
   );
+  background-size: 220% 100%;
+  background-position: var(--word-bg-pos, 100%) 0%;
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
+  will-change: transform, background-position;
+}
+
+.pm-sing-word[data-word-state='upcoming'] {
+  background-position: 100% 0%;
+  transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.pm-sing-word[data-word-state='active'] {
+  transition: none;
+  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.24));
 }
 
 .pm-sing-word[data-word-state='sung'] {
+  background-position: 0% 0%;
   color: #FFFFFF;
-  -webkit-text-fill-color: #FFFFFF;
-  background-image: none;
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .pm-lyric-line-inactive {

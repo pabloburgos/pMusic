@@ -1461,7 +1461,8 @@ export const App: React.FC = () => {
 
           {/* Left: Artwork + Title & Clickable ArtistLinks + Heart (+ Incoming DJ Dock Takeover) */}
           <div className="pointer-events-none relative z-10 flex min-w-0 items-center">
-            {isTransitioning &&
+            {djMode.enabled &&
+              isTransitioning &&
               incomingTransitionTrack &&
               incomingTransitionTrack.id !== currentTrack.id && (
                 <div className="pm-dock-takeover-in pm-glass-chip pointer-events-auto mr-3 flex max-w-[230px] items-center gap-2 rounded-[12px] px-2.5 py-1.5">

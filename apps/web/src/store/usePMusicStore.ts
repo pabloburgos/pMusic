@@ -282,6 +282,7 @@ let djAutoTransitionInFlight = false;
 let djAutoTransitionStartedAtMs = 0;
 let autoAdvanceInFlight = false;
 let djPreloadedKey = '';
+let djSessionEpoch = 0;
 let engineBindingsAttached = false;
 let playbackMonitorTimer: ReturnType<typeof setInterval> | null = null;
 const decodedAudioAnalyzedIds = new Set<string>();
@@ -798,7 +799,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
             echoSubdivision: 0.5,
             compatibilityScore: 0.85,
           };
-          void executeDjTransition(cfPlan, nextTrack, nextIdx);
+          void executeDjTransition(cfPlan, nextTrack, nextIdx, true);
           return;
         }
       }
@@ -1042,6 +1043,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     );
 
     const latest = get();
+    if (!latest.djMode.enabled) {
+      if (latest.activeTransitionPlan !== null) set({ activeTransitionPlan: null });
+      return null;
+    }
     const latestDurRaw = audioEngine.getState().durationSec;
     const latestEffDuration =
       latestDurRaw > 2 ? latestDurRaw : latest.durationSec > 2 ? latest.durationSec : fromAna.durationSec;
@@ -1070,6 +1075,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       cueOutSec: nextCueOut,
     };
 
+    if (!get().djMode.enabled) return null;
     set({ activeTransitionPlan: plan });
     return plan;
   }
@@ -1092,9 +1098,15 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   async function executeDjTransition(
     plan: DeckTransitionPlan,
     nextTrack: Track,
-    nextIdx: number
+    nextIdx: number,
+    isPlainCrossfade = false
   ): Promise<void> {
     if (djAutoTransitionInFlight) return;
+    const startDjEpoch = djSessionEpoch;
+    const trackDjCancellation = !isPlainCrossfade;
+    const isCancelled = () =>
+      trackDjCancellation && (!get().djMode.enabled || startDjEpoch !== djSessionEpoch);
+
     djAutoTransitionInFlight = true;
     djAutoTransitionStartedAtMs = Date.now();
     let handoffTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1102,7 +1114,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
     const prevTrack = get().currentTrack;
     const commitTrackSwap = () => {
-      if (swapped) return;
+      if (swapped || isCancelled()) return;
       swapped = true;
       if (handoffTimer) {
         clearTimeout(handoffTimer);
@@ -1168,6 +1180,12 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           audioEngine.preloadNextDeck(nextTrack, plan.cueInSec),
           5000
         );
+        if (isCancelled()) {
+          djAutoTransitionInFlight = false;
+          djAutoTransitionStartedAtMs = 0;
+          set({ incomingTransitionTrack: null, isTransitioning: false, activeTransitionPlan: null });
+          return;
+        }
         if (!preloadedOk) {
           djAutoTransitionInFlight = false;
           djAutoTransitionStartedAtMs = 0;
@@ -1179,19 +1197,28 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         djAutoTransitionInFlight = false;
         djAutoTransitionStartedAtMs = 0;
         set({ incomingTransitionTrack: null });
+        if (isCancelled()) return;
         await get().playTrack(nextTrack, get().queue, plan.cueInSec);
         return;
       }
 
+      if (isCancelled()) return;
+
       // Act 1: Morph fluid backdrop & reveal incoming track banner/dock before swapping title & cover at deck handoff (~48%)
       set({ incomingTransitionTrack: nextTrack });
-      applyAmbientPaletteForTrack(nextTrack);
+      if (!isPlainCrossfade) {
+        applyAmbientPaletteForTrack(nextTrack);
+      }
 
       const handoffDelayMs = Math.max(
         380,
         Math.round(plan.transitionDurationSec * 480)
       );
-      handoffTimer = setTimeout(commitTrackSwap, handoffDelayMs);
+      handoffTimer = setTimeout(() => {
+        if (!isCancelled()) {
+          commitTrackSwap();
+        }
+      }, handoffDelayMs);
 
       try {
         const transTimeoutMs = Math.max(7000, Math.round(plan.transitionDurationSec * 1000) + 5500);
@@ -1199,6 +1226,17 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           audioEngine.executeTransition(plan),
           transTimeoutMs
         );
+        if (isCancelled()) {
+          if (handoffTimer) {
+            clearTimeout(handoffTimer);
+            handoffTimer = null;
+          }
+          audioEngine.cancelActiveTransition();
+          djAutoTransitionInFlight = false;
+          djAutoTransitionStartedAtMs = 0;
+          set({ incomingTransitionTrack: null, isTransitioning: false, activeTransitionPlan: null });
+          return;
+        }
         if (!transitionedOk) {
           if (handoffTimer) {
             clearTimeout(handoffTimer);
@@ -1224,6 +1262,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         djAutoTransitionInFlight = false;
         djAutoTransitionStartedAtMs = 0;
         set({ incomingTransitionTrack: null });
+        if (isCancelled()) return;
         await get().playTrack(nextTrack, get().queue, plan.cueInSec);
         return;
       }
@@ -1248,14 +1287,22 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       }
 
       djPreloadedKey = '';
-      void analyzeTrackAudioInBackground(nextTrack);
-      const upcoming = getUpcomingDjTarget(get())?.track;
-      if (upcoming && upcoming.id !== nextTrack.id) {
-        void analyzeTrackAudioInBackground(upcoming);
-      }
-      const nextPlan = await recomputeActiveDjPlan();
-      if (upcoming && upcoming.id !== nextTrack.id) {
-        void audioEngine.preloadNextDeck(upcoming, nextPlan?.cueInSec ?? 0);
+      if (!isPlainCrossfade && get().djMode.enabled && startDjEpoch === djSessionEpoch) {
+        void analyzeTrackAudioInBackground(nextTrack);
+        const upcoming = getUpcomingDjTarget(get())?.track;
+        if (upcoming && upcoming.id !== nextTrack.id) {
+          void analyzeTrackAudioInBackground(upcoming);
+        }
+        const nextPlan = await recomputeActiveDjPlan();
+        if (
+          nextPlan &&
+          get().djMode.enabled &&
+          startDjEpoch === djSessionEpoch &&
+          upcoming &&
+          upcoming.id !== nextTrack.id
+        ) {
+          void audioEngine.preloadNextDeck(upcoming, nextPlan.cueInSec);
+        }
       }
     } finally {
       if (handoffTimer) {
@@ -2300,7 +2347,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
             echoSubdivision: 0.5,
             compatibilityScore: 0.85,
           };
-          void executeDjTransition(cfPlan, target.track, target.nextIdx);
+          void executeDjTransition(cfPlan, target.track, target.nextIdx, true);
         }
       }, 160);
     }
@@ -2707,56 +2754,93 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       ...st.djMode,
       enabled: nextEnabled,
     };
-
-    audioEngine.setDjMode(nextDjMode);
+    const epoch = ++djSessionEpoch;
     djPreloadedKey = '';
 
-    let nextQueue = [...st.queue];
-    if (nextEnabled && nextDjMode.autoReorderQueue) {
-      const map = new Map<string, TrackAnalysis>();
-      for (const t of nextQueue) {
-        const ana =
-          st.trackAnalyses[t.id] ??
-          (await djPlanner.analyzeTrack(t.id, null, t.durationSec));
-        map.set(t.id, ana);
+    if (!nextEnabled) {
+      if (seekAutoTriggerTimer) {
+        clearTimeout(seekAutoTriggerTimer);
+        seekAutoTriggerTimer = null;
       }
-      nextQueue = djPlanner.reorderQueueForSession(nextQueue, map, st.currentTrack.id);
+      djAutoTransitionInFlight = false;
+      djAutoTransitionStartedAtMs = 0;
+      audioEngine.cancelActiveTransition();
+      audioEngine.setDjMode(nextDjMode);
+      audioEngine.setPlaybackRate(1.0);
+      const nextSafeCrossfade: SafeCrossfadeConfig = {
+        ...st.safeCrossfade,
+        enabled: st.safeCrossfade.durationSec > 0 ? true : st.safeCrossfade.enabled,
+      };
+      audioEngine.setSafeCrossfade(nextSafeCrossfade);
+      set({
+        djMode: nextDjMode,
+        safeCrossfade: nextSafeCrossfade,
+        activeTransitionPlan: null,
+        incomingTransitionTrack: null,
+        isTransitioning: false,
+        transitionProgress01: 0,
+        activeTransitionType: undefined,
+      });
+      persistPrefsFromStore();
+      return;
     }
 
-    const nextIdx = Math.max(
-      0,
-      nextQueue.findIndex((t) => t.id === st.currentTrack.id)
-    );
-
-    const nextSafeCrossfade: SafeCrossfadeConfig = nextEnabled
-      ? { ...st.safeCrossfade, enabled: false }
-      : {
-          ...st.safeCrossfade,
-          enabled: st.safeCrossfade.durationSec > 0 ? true : st.safeCrossfade.enabled,
-        };
-    audioEngine.setSafeCrossfade(nextSafeCrossfade);
-
+    audioEngine.setDjMode(nextDjMode);
+    const pausedSafeCrossfade: SafeCrossfadeConfig = {
+      ...st.safeCrossfade,
+      enabled: false,
+    };
+    audioEngine.setSafeCrossfade(pausedSafeCrossfade);
     set({
       djMode: nextDjMode,
-      queue: nextQueue,
-      queueIndex: nextIdx,
       // Safe crossfade is paused automatically while DJ Mode is active
-      safeCrossfade: nextSafeCrossfade,
+      safeCrossfade: pausedSafeCrossfade,
     });
     persistPrefsFromStore();
 
-    if (nextEnabled) {
-      void analyzeTrackAudioInBackground(st.currentTrack);
-      const upcoming = getUpcomingDjTarget(get())?.track;
-      if (upcoming && upcoming.id !== st.currentTrack.id) {
-        void analyzeTrackAudioInBackground(upcoming);
+    if (nextDjMode.autoReorderQueue) {
+      const baseQueue = [...get().queue];
+      const map = new Map<string, TrackAnalysis>();
+      for (const t of baseQueue) {
+        const ana =
+          get().trackAnalyses[t.id] ??
+          (await djPlanner.analyzeTrack(t.id, null, t.durationSec));
+        map.set(t.id, ana);
       }
-      const plan = await recomputeActiveDjPlan();
-      if (plan && upcoming && upcoming.id !== st.currentTrack.id) {
-        void audioEngine.preloadNextDeck(upcoming, plan.cueInSec);
-      }
-    } else {
-      set({ activeTransitionPlan: null });
+      if (!get().djMode.enabled || djSessionEpoch !== epoch) return;
+      const latest = get();
+      const reordered = djPlanner.reorderQueueForSession(
+        [...latest.queue],
+        map,
+        latest.currentTrack.id
+      );
+      const nextIdx = Math.max(
+        0,
+        reordered.findIndex((t) => t.id === latest.currentTrack.id)
+      );
+      set({
+        queue: reordered,
+        queueIndex: nextIdx,
+      });
+      persistPrefsFromStore();
+    }
+
+    if (!get().djMode.enabled || djSessionEpoch !== epoch) return;
+    const curState = get();
+    void analyzeTrackAudioInBackground(curState.currentTrack);
+    const upcoming = getUpcomingDjTarget(curState)?.track;
+    if (upcoming && upcoming.id !== curState.currentTrack.id) {
+      void analyzeTrackAudioInBackground(upcoming);
+    }
+    const plan = await recomputeActiveDjPlan();
+    if (
+      plan &&
+      get().djMode.enabled &&
+      djSessionEpoch === epoch &&
+      upcoming &&
+      upcoming.id !== get().currentTrack.id
+    ) {
+      void audioEngine.preloadNextDeck(upcoming, plan.cueInSec);
     }
   },
 
@@ -2768,42 +2852,58 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       enabled: true,
       style,
     };
+    const epoch = ++djSessionEpoch;
     audioEngine.setDjMode(nextDjMode);
     djPreloadedKey = '';
-
-    let nextQueue = [...st.queue];
-    if (!wasEnabled && nextDjMode.autoReorderQueue) {
-      const map = new Map<string, TrackAnalysis>();
-      for (const t of nextQueue) {
-        const ana =
-          st.trackAnalyses[t.id] ??
-          (await djPlanner.analyzeTrack(t.id, null, t.durationSec));
-        map.set(t.id, ana);
-      }
-      nextQueue = djPlanner.reorderQueueForSession(nextQueue, map, st.currentTrack.id);
-    }
-
-    const nextIdx = Math.max(
-      0,
-      nextQueue.findIndex((t) => t.id === st.currentTrack.id)
-    );
-
     set({
       djMode: nextDjMode,
-      queue: nextQueue,
-      queueIndex: nextIdx,
       activeTransitionPlan: null,
       safeCrossfade: { ...st.safeCrossfade, enabled: false },
     });
     persistPrefsFromStore();
 
-    void analyzeTrackAudioInBackground(st.currentTrack);
-    const upcoming = getUpcomingDjTarget(get())?.track;
-    if (upcoming && upcoming.id !== st.currentTrack.id) {
+    if (!wasEnabled && nextDjMode.autoReorderQueue) {
+      const baseQueue = [...get().queue];
+      const map = new Map<string, TrackAnalysis>();
+      for (const t of baseQueue) {
+        const ana =
+          get().trackAnalyses[t.id] ??
+          (await djPlanner.analyzeTrack(t.id, null, t.durationSec));
+        map.set(t.id, ana);
+      }
+      if (!get().djMode.enabled || djSessionEpoch !== epoch) return;
+      const latest = get();
+      const reordered = djPlanner.reorderQueueForSession(
+        [...latest.queue],
+        map,
+        latest.currentTrack.id
+      );
+      const nextIdx = Math.max(
+        0,
+        reordered.findIndex((t) => t.id === latest.currentTrack.id)
+      );
+      set({
+        queue: reordered,
+        queueIndex: nextIdx,
+      });
+      persistPrefsFromStore();
+    }
+
+    if (!get().djMode.enabled || djSessionEpoch !== epoch) return;
+    const curState = get();
+    void analyzeTrackAudioInBackground(curState.currentTrack);
+    const upcoming = getUpcomingDjTarget(curState)?.track;
+    if (upcoming && upcoming.id !== curState.currentTrack.id) {
       void analyzeTrackAudioInBackground(upcoming);
     }
     const plan = await recomputeActiveDjPlan();
-    if (plan && upcoming && upcoming.id !== st.currentTrack.id) {
+    if (
+      plan &&
+      get().djMode.enabled &&
+      djSessionEpoch === epoch &&
+      upcoming &&
+      upcoming.id !== get().currentTrack.id
+    ) {
       void audioEngine.preloadNextDeck(upcoming, plan.cueInSec);
     }
   },

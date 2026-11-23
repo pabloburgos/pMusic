@@ -195,8 +195,6 @@ export interface LivePlaybackSnapshot {
   isTransitioning: boolean;
 }
 
-const MAX_BLOB_CACHE_ENTRIES = 6;
-
 export class DualDeckAudioEngine implements IAudioEngine {
   private readonly resolveStreamUrlFn: (track: Track) => Promise<string>;
   private audioCtx: AudioContext | null = null;
@@ -230,14 +228,12 @@ export class DualDeckAudioEngine implements IAudioEngine {
   private transitionRafId: number | null = null;
   private transitionResolve: (() => void) | null = null;
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
+  private loadGeneration = 0;
   private eofFiredKey = '';
   private lastObservedSrc = '';
   private lastObservedTime = -1;
   private lastProgressWallMs = 0;
   private lastRecoveryNudgeWallMs = 0;
-  private readonly trackBlobCache = new Map<string, string>();
-  private readonly blobFetchInFlight = new Map<string, AbortController>();
-  private readonly swapInProgressDecks = new Set<DeckId>();
 
   private userEqConfig: UserEqConfig = {
     enabled: true,
@@ -354,7 +350,6 @@ export class DualDeckAudioEngine implements IAudioEngine {
       this.watchdogTimer = setInterval(() => {
         if (!this.isPlaying || this.isTransitioning || !this.deckA || !this.deckB) return;
         const deck = this.getDeck(this.activeDeck);
-        if (this.swapInProgressDecks.has(this.activeDeck)) return;
         const audio = deck.audio;
         const isBrowserAudio = typeof (audio as { readyState?: unknown }).readyState === 'number';
         if (!isBrowserAudio) return;
@@ -410,13 +405,6 @@ export class DualDeckAudioEngine implements IAudioEngine {
             this.isBuffering = true;
             this.emitState();
           }
-          const trackId = deck.track?.id;
-          const cachedBlob = trackId ? this.trackBlobCache.get(trackId) : undefined;
-          if (cachedBlob && audio.readyState < 2 && audio.src && !audio.src.startsWith('blob:')) {
-            this.hotSwapDeckToBlob(deck, trackId!, cachedBlob);
-            this.lastRecoveryNudgeWallMs = nowMs;
-            return;
-          }
         }
         if (
           !audio.ended &&
@@ -425,9 +413,16 @@ export class DualDeckAudioEngine implements IAudioEngine {
           curTime > 1 &&
           curTime < realDur - 4.5 &&
           ((audio.paused && stalledMs >= 1200) || stalledMs >= 3200) &&
-          nowMs - this.lastRecoveryNudgeWallMs >= 5000
+          nowMs - this.lastRecoveryNudgeWallMs >= 4500
         ) {
           this.lastRecoveryNudgeWallMs = nowMs;
+          if (stalledMs >= 4500 && !audio.paused && audio.readyState < 2) {
+            try {
+              audio.currentTime = curTime;
+            } catch {
+              // ignore
+            }
+          }
           void audio.play().catch(() => {});
         }
         this.emitState();
@@ -448,7 +443,6 @@ export class DualDeckAudioEngine implements IAudioEngine {
     if (
       this.activeDeck !== deckId ||
       this.isTransitioning ||
-      this.swapInProgressDecks.has(deckId) ||
       !this.deckA ||
       !this.deckB
     ) {
@@ -468,137 +462,6 @@ export class DualDeckAudioEngine implements IAudioEngine {
     this.emitState();
     for (const listener of this.endedListeners) {
       listener(deckId);
-    }
-  }
-
-  private putBlobCache(trackId: string, blobUrl: string): void {
-    const existing = this.trackBlobCache.get(trackId);
-    if (existing && existing !== blobUrl) {
-      this.trackBlobCache.delete(trackId);
-    }
-    this.trackBlobCache.set(trackId, blobUrl);
-    if (this.trackBlobCache.size > MAX_BLOB_CACHE_ENTRIES) {
-      const oldestKey = this.trackBlobCache.keys().next().value;
-      if (oldestKey && oldestKey !== trackId) {
-        const oldestUrl = this.trackBlobCache.get(oldestKey);
-        this.trackBlobCache.delete(oldestKey);
-        if (oldestUrl && typeof URL?.revokeObjectURL === 'function') {
-          try {
-            URL.revokeObjectURL(oldestUrl);
-          } catch {
-            // ignore
-          }
-        }
-      }
-    }
-  }
-
-  private hotSwapDeckToBlob(deck: DeckChannelNodes, trackId: string, blobUrl: string): void {
-    if (deck.track?.id !== trackId) return;
-    if (deck.audio.src.startsWith('blob:') || this.swapInProgressDecks.has(deck.id)) return;
-
-    const resumePos = Number.isFinite(deck.audio.currentTime)
-      ? deck.audio.currentTime
-      : deck.id === this.activeDeck
-        ? this.positionSec
-        : 0;
-    const wasPlaying = deck.id === this.activeDeck && this.isPlaying;
-
-    this.swapInProgressDecks.add(deck.id);
-    const safetyClear = setTimeout(() => {
-      this.swapInProgressDecks.delete(deck.id);
-      if (deck.id === this.activeDeck && this.isBuffering) {
-        this.isBuffering = false;
-        this.emitState();
-      }
-    }, 4500);
-    (safetyClear as { unref?: () => void }).unref?.();
-
-    const finishSwap = () => {
-      try {
-        if (Math.abs((deck.audio.currentTime || 0) - resumePos) > 0.35) {
-          deck.audio.currentTime = resumePos;
-        }
-      } catch {
-        // ignore before metadata
-      }
-      if (wasPlaying && deck.audio.paused) {
-        void playAudioWithTimeout(deck.audio, 3500);
-      }
-      clearTimeout(safetyClear);
-      this.swapInProgressDecks.delete(deck.id);
-      if (deck.id === this.activeDeck) {
-        this.bufferedPct = 1;
-        this.isBuffering = false;
-        this.lastProgressWallMs = Date.now();
-        this.emitState();
-      }
-    };
-
-    try {
-      deck.audio.addEventListener?.('loadedmetadata', finishSwap, { once: true });
-      deck.audio.addEventListener?.('canplay', finishSwap, { once: true });
-      deck.audio.crossOrigin = 'anonymous';
-      deck.audio.src = blobUrl;
-      if (typeof deck.audio.load === 'function') {
-        deck.audio.load();
-      }
-      try {
-        deck.audio.currentTime = resumePos;
-      } catch {
-        // handled in finishSwap
-      }
-    } catch {
-      clearTimeout(safetyClear);
-      this.swapInProgressDecks.delete(deck.id);
-    }
-  }
-
-  private async startBackgroundFullDownload(
-    deckId: DeckId,
-    trackId: string,
-    remoteUrl: string
-  ): Promise<void> {
-    if (
-      !remoteUrl ||
-      remoteUrl.startsWith('blob:') ||
-      remoteUrl.startsWith('data:') ||
-      typeof fetch !== 'function' ||
-      typeof URL?.createObjectURL !== 'function'
-    ) {
-      return;
-    }
-    if (this.trackBlobCache.has(trackId)) return;
-    if (this.blobFetchInFlight.has(trackId)) return;
-
-    const controller = typeof AbortController === 'function' ? new AbortController() : null;
-    if (controller) this.blobFetchInFlight.set(trackId, controller);
-
-    try {
-      const res = await fetch(remoteUrl, {
-        ...(controller ? { signal: controller.signal } : {}),
-        mode: 'cors',
-      });
-      if (!res.ok) return;
-      const blob = await res.blob();
-      if (!blob || blob.size <= 4096) return;
-
-      const blobUrl = URL.createObjectURL(blob);
-      this.putBlobCache(trackId, blobUrl);
-
-      if (!this.deckA || !this.deckB) return;
-      const deck = this.getDeck(deckId);
-      if (deck.track?.id !== trackId || deck.audio.src.startsWith('blob:')) return;
-
-      const audio = deck.audio;
-      const isBrowserAudio = typeof (audio as { readyState?: unknown }).readyState === 'number';
-      if (isBrowserAudio && (this.isBuffering || audio.readyState < 2)) {
-        this.hotSwapDeckToBlob(deck, trackId, blobUrl);
-      }
-    } catch {
-      // Non-fatal: remote HTMLAudioElement playback continues normally
-    } finally {
-      if (controller) this.blobFetchInFlight.delete(trackId);
     }
   }
 
@@ -672,16 +535,6 @@ export class DualDeckAudioEngine implements IAudioEngine {
         this.isBuffering = false;
         this.emitState();
       }
-      const currentDeck = this.getDeck(id);
-      if (
-        currentDeck.track &&
-        audio.src &&
-        !audio.src.startsWith('blob:') &&
-        !audio.src.startsWith('data:') &&
-        !this.trackBlobCache.has(currentDeck.track.id)
-      ) {
-        void this.startBackgroundFullDownload(id, currentDeck.track.id, audio.src);
-      }
     };
 
     const updateBufferedProgress = () => {
@@ -744,6 +597,12 @@ export class DualDeckAudioEngine implements IAudioEngine {
 
     audio.addEventListener('error', () => {
       if (this.activeDeck === id) {
+        const mediaErrCode = audio.error?.code;
+        if (!audio.src || mediaErrCode === 1) {
+          this.isBuffering = false;
+          this.emitState();
+          return;
+        }
         this.isBuffering = false;
         const realDur =
           Number.isFinite(audio.duration) && audio.duration > 1
@@ -864,6 +723,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
   }
 
   private resetDeckDsp(deck: DeckChannelNodes, gainValue = 1.0): void {
+    deck.audio.loop = false;
     deck.audio.playbackRate = this.playbackRate;
     try {
       const pitchAudio = deck.audio as HTMLAudioElement & {
@@ -896,6 +756,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
   public async loadAndPlay(track: Track, startSec = 0): Promise<void> {
     await this.init();
     this.cancelActiveTransition();
+    const loadGen = ++this.loadGeneration;
 
     const deck = this.getDeck(this.activeDeck);
     const otherDeck = this.getDeck(this.getInactiveDeckId());
@@ -903,13 +764,15 @@ export class DualDeckAudioEngine implements IAudioEngine {
     this.resetDeckDsp(otherDeck, 0);
 
     deck.track = track;
+    this.playbackRate = 1.0;
     this.resetDeckDsp(deck, 1.0);
-    const cachedBlob = this.trackBlobCache.get(track.id);
-    this.isBuffering = !cachedBlob;
-    this.bufferedPct = cachedBlob ? 1 : 0;
+    this.isBuffering = true;
+    this.bufferedPct = 0;
     this.emitState();
 
-    const streamUrl = cachedBlob ?? (await this.resolveStreamUrlFn(track));
+    const streamUrl = await this.resolveStreamUrlFn(track);
+    if (loadGen !== this.loadGeneration || !this.deckA || !this.deckB) return;
+
     deck.audio.crossOrigin = 'anonymous';
     deck.audio.src = streamUrl;
     this.durationSec = track.durationSec > 0 ? track.durationSec : 195;
@@ -959,13 +822,9 @@ export class DualDeckAudioEngine implements IAudioEngine {
 
     nextDeck.track = track;
     this.resetDeckDsp(nextDeck, 0);
-    const cachedBlob = this.trackBlobCache.get(track.id);
-    const streamUrl = cachedBlob ?? (await this.resolveStreamUrlFn(track));
+    const streamUrl = await this.resolveStreamUrlFn(track);
     nextDeck.audio.crossOrigin = 'anonymous';
     nextDeck.audio.src = streamUrl;
-    if (!cachedBlob && !streamUrl.startsWith('blob:') && !streamUrl.startsWith('data:')) {
-      void this.startBackgroundFullDownload(nextDeck.id, track.id, streamUrl);
-    }
     if (typeof nextDeck.audio.load === 'function') {
       try {
         nextDeck.audio.load();
@@ -1175,6 +1034,18 @@ export class DualDeckAudioEngine implements IAudioEngine {
         ...this.safeCrossfadeConfig,
         enabled: false,
       };
+    } else {
+      this.playbackRate = 1.0;
+      if (this.isTransitioning) {
+        this.cancelActiveTransition();
+      } else if (this.deckA && this.deckB) {
+        const active = this.getDeck(this.activeDeck);
+        const inactive = this.getDeck(this.getInactiveDeckId());
+        inactive.audio.pause();
+        this.resetDeckDsp(inactive, 0);
+        this.resetDeckDsp(active, 1.0);
+        this.emitState();
+      }
     }
   }
 
@@ -1737,17 +1608,19 @@ export class DualDeckAudioEngine implements IAudioEngine {
       cancelAnimationFrame(this.transitionRafId);
       this.transitionRafId = null;
     }
-    if (this.isTransitioning) {
-      this.isTransitioning = false;
-      this.activeTransitionType = undefined;
-      this.transitionProgress01 = 0;
-      if (this.deckA && this.deckB) {
-        const active = this.getDeck(this.activeDeck);
-        const inactive = this.getDeck(this.getInactiveDeckId());
-        inactive.audio.pause();
-        this.resetDeckDsp(inactive, 0);
-        this.resetDeckDsp(active, 1.0);
-      }
+    const wasTransitioning = this.isTransitioning;
+    this.isTransitioning = false;
+    this.activeTransitionType = undefined;
+    this.transitionProgress01 = 0;
+    this.playbackRate = 1.0;
+    if (this.deckA && this.deckB) {
+      const active = this.getDeck(this.activeDeck);
+      const inactive = this.getDeck(this.getInactiveDeckId());
+      inactive.audio.pause();
+      this.resetDeckDsp(inactive, 0);
+      this.resetDeckDsp(active, 1.0);
+    }
+    if (wasTransitioning) {
       this.emitState();
     }
     if (this.transitionResolve) {
@@ -1861,25 +1734,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
       clearInterval(this.watchdogTimer);
       this.watchdogTimer = null;
     }
-    for (const controller of this.blobFetchInFlight.values()) {
-      try {
-        controller.abort();
-      } catch {
-        // ignore
-      }
-    }
-    this.blobFetchInFlight.clear();
-    for (const blobUrl of this.trackBlobCache.values()) {
-      if (typeof URL?.revokeObjectURL === 'function') {
-        try {
-          URL.revokeObjectURL(blobUrl);
-        } catch {
-          // ignore
-        }
-      }
-    }
-    this.trackBlobCache.clear();
-    this.swapInProgressDecks.clear();
+    this.loadGeneration++;
     this.cancelActiveTransition();
     this.pause();
     this.deckA?.audio.remove?.();

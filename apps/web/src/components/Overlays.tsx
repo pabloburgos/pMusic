@@ -413,6 +413,12 @@ export const NowPlayingSheet: React.FC = () => {
     trackId: currentTrack.id,
     atMs: typeof performance !== 'undefined' ? performance.now() : 0,
   });
+  const lyricClockRef = useRef({
+    lastRawPos: positionSec,
+    lastWallMs: typeof performance !== 'undefined' ? performance.now() : 0,
+    smoothedPos: positionSec,
+    trackId: currentTrack.id,
+  });
 
   useEffect(() => {
     const now = typeof performance !== 'undefined' ? performance.now() : 0;
@@ -430,6 +436,12 @@ export const NowPlayingSheet: React.FC = () => {
     syncClockRef.current.trackId = currentTrack.id;
     if (trackChanged || seekJumped || !isPlaying) {
       syncClockRef.current.renderedPosSec = clampedPos;
+      lyricClockRef.current = {
+        lastRawPos: clampedPos,
+        lastWallMs: now,
+        smoothedPos: clampedPos,
+        trackId: currentTrack.id,
+      };
       lastWholeSecRef.current = Math.floor(clampedPos);
       setSmoothPosSec(clampedPos);
       const pct = Math.min(100, Math.max(0, (clampedPos / effDur) * 100));
@@ -474,7 +486,24 @@ export const NowPlayingSheet: React.FC = () => {
       const rawPos = Number.isFinite(live.positionSec)
         ? live.positionSec
         : syncClockRef.current.posSec;
-      const rendered = Math.max(0, Math.min(effDur, rawPos));
+      const lClock = lyricClockRef.current;
+      if (lClock.trackId !== currentTrack.id || Math.abs(rawPos - lClock.smoothedPos) > 0.75) {
+        lClock.trackId = currentTrack.id;
+        lClock.lastRawPos = rawPos;
+        lClock.lastWallMs = now;
+        lClock.smoothedPos = rawPos;
+      } else {
+        if (Math.abs(rawPos - lClock.lastRawPos) > 0.0005) {
+          lClock.lastRawPos = rawPos;
+          lClock.lastWallMs = now;
+        }
+        const extrapolated =
+          rawPos + Math.min(0.2, Math.max(0, (now - lClock.lastWallMs) / 1000));
+        if (extrapolated >= lClock.smoothedPos) {
+          lClock.smoothedPos = extrapolated;
+        }
+      }
+      const rendered = Math.max(0, Math.min(effDur, lClock.smoothedPos));
 
       syncClockRef.current.renderedPosSec = rendered;
       const pct = Math.min(100, Math.max(0, (rendered / effDur) * 100));
@@ -507,18 +536,73 @@ export const NowPlayingSheet: React.FC = () => {
             else break;
           }
         }
+
+        // Direct 60-120fps DOM sweep for classic Apple Music Sing mode (zero React re-render stutter)
+        if (
+          lyricsStyleRef.current === 'classic' &&
+          docs &&
+          docs.status === 'synced' &&
+          docs.lines.length > 0 &&
+          activeLyricRef.current
+        ) {
+          const idxForSweep =
+            curLineIdx >= 0
+              ? curLineIdx
+              : (docs.lines[0]?.timeMs ?? 0) <= 4000
+                ? 0
+                : -1;
+          const activeLineObj = idxForSweep >= 0 ? docs.lines[idxForSweep] : undefined;
+          if (activeLineObj) {
+            const nextLineObj = docs.lines[idxForSweep + 1];
+            const lineEndMs =
+              nextLineObj && nextLineObj.timeMs > activeLineObj.timeMs
+                ? nextLineObj.timeMs
+                : activeLineObj.timeMs + 4200;
+            const spanMs = Math.max(800, lineEndMs - activeLineObj.timeMs);
+            const vocalSpanMs = Math.min(
+              spanMs * 0.92,
+              Math.max(1100, activeLineObj.text.length * 90)
+            );
+            const vp01 = Math.max(
+              0,
+              Math.min(1, (rendered * 1000 - activeLineObj.timeMs) / vocalSpanMs)
+            );
+            const spans = activeLyricRef.current.querySelectorAll<HTMLElement>('.pm-sing-word');
+            for (let s = 0; s < spans.length; s++) {
+              const el = spans[s]!;
+              const wStart = Number(el.dataset.wStart ?? '0');
+              const wEnd = Number(el.dataset.wEnd ?? '1');
+              const wp = Math.max(
+                0,
+                Math.min(1, (vp01 - wStart) / Math.max(0.01, wEnd - wStart))
+              );
+              const wordState =
+                wp <= 0.002 ? 'upcoming' : wp >= 0.998 ? 'sung' : 'active';
+              if (el.dataset.wordState !== wordState) {
+                el.dataset.wordState = wordState;
+              }
+              const bgPos = wordState === 'upcoming' ? 100 : wordState === 'sung' ? 0 : (1 - wp) * 100;
+              el.style.setProperty('--word-bg-pos', `${bgPos.toFixed(2)}%`);
+              const wave = wordState === 'active' ? Math.sin(wp * Math.PI) : 0;
+              const lift = wordState === 'upcoming' ? 0 : wordState === 'sung' ? -1 : -(1 + 2.6 * wave);
+              const scale = wordState === 'active' ? 1 + 0.032 * wave : 1;
+              el.style.setProperty('--word-y', `${lift.toFixed(2)}px`);
+              el.style.setProperty('--word-scale', scale.toFixed(4));
+            }
+          }
+        }
+
         const lineChanged = curLineIdx !== lastRenderedLyricIdxRef.current;
         const wholeChanged = Math.floor(rendered) !== lastWholeSecRef.current;
-        const isSweepStyle =
-          lyricsStyleRef.current === 'classic' ||
+        const isAnimatedNonClassic =
           lyricsStyleRef.current === 'wordflow' ||
           lyricsStyleRef.current === 'typewriter' ||
           lyricsStyleRef.current === 'neon' ||
           lyricsStyleRef.current === 'poster';
-        const isClassicSweepDue =
-          isSweepStyle && now - lastLyricStateSyncMsRef.current >= 95;
+        const isAnimDue =
+          isAnimatedNonClassic && now - lastLyricStateSyncMsRef.current >= 40;
 
-        if (lineChanged || isClassicSweepDue || wholeChanged) {
+        if (lineChanged || isAnimDue || wholeChanged) {
           lastRenderedLyricIdxRef.current = curLineIdx;
           lastLyricStateSyncMsRef.current = now;
           lastWholeSecRef.current = Math.floor(rendered);
@@ -535,7 +619,7 @@ export const NowPlayingSheet: React.FC = () => {
     };
     rafId = requestAnimationFrame(step);
     return () => cancelAnimationFrame(rafId);
-  }, [nowPlayingOpen, isPlaying, durationSec, nowPlayingTab]);
+  }, [nowPlayingOpen, isPlaying, durationSec, nowPlayingTab, currentTrack.id]);
 
   useEffect(() => {
     if (!isElectronDesktop) return;
@@ -650,7 +734,10 @@ export const NowPlayingSheet: React.FC = () => {
 
   const remainingSec = Math.max(0, durationSec - smoothPosSec);
   const incomingPreviewTrack =
-    isTransitioning && incomingTransitionTrack && incomingTransitionTrack.id !== currentTrack.id
+    djMode.enabled &&
+    isTransitioning &&
+    incomingTransitionTrack &&
+    incomingTransitionTrack.id !== currentTrack.id
       ? incomingTransitionTrack
       : null;
 
@@ -898,7 +985,7 @@ export const NowPlayingSheet: React.FC = () => {
               <Loader2 className="h-3 w-3 animate-spin" />
               CARGANDO AUDIO…
             </span>
-          ) : isTransitioning ? (
+          ) : djMode.enabled && isTransitioning ? (
             <span className="font-sans text-[10px] font-semibold tracking-[0.14em] text-purple-300/90 animate-pulse">
               MEZCLANDO · DJ
             </span>
@@ -1565,7 +1652,7 @@ export const NowPlayingSheet: React.FC = () => {
                             (verseProgress01 - wStart) / Math.max(0.01, wEnd - wStart)
                           )
                         );
-                        return { word, wp };
+                        return { word, wp, wStart, wEnd };
                       });
                       const currentWordIdx = perWordTiming.findIndex(
                         (item) => item.wp > 0.005 && item.wp < 0.995
@@ -1695,36 +1782,43 @@ export const NowPlayingSheet: React.FC = () => {
                                     );
                                   })
                                 ) : (
-                                  perWordTiming.map(({ word, wp }, wIdx) => {
+                                  perWordTiming.map(({ word, wp, wStart, wEnd }, wIdx) => {
                                     const wordState =
-                                      wp <= 0.005
+                                      wp <= 0.002
                                         ? 'upcoming'
-                                        : wp >= 0.995
+                                        : wp >= 0.998
                                           ? 'sung'
                                           : 'active';
+                                    const wave =
+                                      wordState === 'active'
+                                        ? Math.sin(Math.min(1, wp) * Math.PI)
+                                        : 0;
                                     const liftPx =
                                       wordState === 'active'
-                                        ? '-3.5px'
+                                        ? `${(-(1 + 2.6 * wave)).toFixed(2)}px`
                                         : wordState === 'sung'
                                           ? '-1px'
                                           : '0px';
                                     const wordScale =
-                                      wordState === 'active' ? '1.035' : '1';
-                                    const glowPx =
-                                      wordState === 'active'
-                                        ? `${(8 * Math.sin(Math.min(1, wp) * Math.PI)).toFixed(1)}px`
-                                        : '0px';
+                                      wordState === 'active' ? (1 + 0.032 * wave).toFixed(4) : '1';
+                                    const bgPos =
+                                      wordState === 'upcoming'
+                                        ? 100
+                                        : wordState === 'sung'
+                                          ? 0
+                                          : (1 - wp) * 100;
                                     return (
                                       <React.Fragment key={`${idx}-${wIdx}`}>
                                         <span
                                           className="pm-sing-word"
                                           data-word-state={wordState}
+                                          data-w-start={wStart.toFixed(5)}
+                                          data-w-end={wEnd.toFixed(5)}
                                           style={
                                             {
-                                              '--word-p': `${Math.round(wp * 100)}%`,
+                                              '--word-bg-pos': `${bgPos.toFixed(2)}%`,
                                               '--word-y': liftPx,
                                               '--word-scale': wordScale,
-                                              '--word-glow': glowPx,
                                             } as React.CSSProperties
                                           }
                                         >

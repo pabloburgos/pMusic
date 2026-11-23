@@ -674,4 +674,65 @@ describe('@pmusic/providers', () => {
       globalThis.fetch = prevFetch;
     }
   });
+
+  it('rejects remixes, mashups, edits and bootlegs for Columbia while keeping authentic original, and refuses Audius remixes', async () => {
+    const remixScore = scoreAudioCandidate(
+      { title: 'Columbia', artist: 'Quevedo', durationSec: 186 },
+      {
+        candidateTitle: 'Columbia (DJ Remix / Mashup Edit)',
+        candidateArtists: 'Quevedo',
+        candidateDurationSec: 186,
+        isYtMusicSong: true,
+      }
+    );
+    expect(remixScore).toBe(-Infinity);
+
+    const originalScore = scoreAudioCandidate(
+      { title: 'Columbia', artist: 'Quevedo', durationSec: 186 },
+      {
+        candidateTitle: 'Columbia',
+        candidateArtists: 'Quevedo',
+        candidateDurationSec: 186,
+        isYtMusicSong: true,
+      }
+    );
+    expect(originalScore).toBeGreaterThanOrEqual(20);
+
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes('api.audius.co/v1/tracks/search')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 'remx999',
+                title: 'Columbia (Bootleg Remix)',
+                duration: 185,
+                is_streamable: true,
+                user: { name: 'Random DJ' },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      return new Response('Not found', { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      const resolver = new AudioStreamResolver(new DeezerCatalog(globalThis.fetch));
+      (resolver as unknown as { yt: () => Promise<never> }).yt = async () => {
+        throw new Error('YT unavailable');
+      };
+      const resolved = await resolver.resolve('quevedo_columbia_test', {
+        title: 'Columbia',
+        artist: 'Quevedo',
+        durationSec: 186,
+      });
+      expect(resolved).toBeNull();
+    } finally {
+      globalThis.fetch = prevFetch;
+    }
+  });
 });

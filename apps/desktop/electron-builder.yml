@@ -14,7 +14,8 @@ files:
   - "!**/node_modules/**"
   - "!**/design/apple-design-skill/**"
 win:
-  icon: build/icon.png
+  icon: build/icon.ico
+  signExecutable: false
   target:
     - target: nsis
       arch:
@@ -28,8 +29,20 @@ win:
 nsis:
   artifactName: pMusic-Setup-${version}.${ext}
   oneClick: false
+  perMachine: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: pMusic
+  uninstallDisplayName: pMusic
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+  installerSidebar: build/installerSidebar.bmp
+  installerHeader: build/installerHeader.bmp
+  include: build/installer.nsh
+  language: "3082"
+  runAfterFinish: true
 portable:
   artifactName: pMusic-Portable-${version}.${ext}
 linux:

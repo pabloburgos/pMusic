@@ -22,7 +22,7 @@ interface Resolved {
 const YOUTUBE_ID_RE = /^[a-zA-Z0-9_-]{11}$/;
 const AUDIO_CLIENTS = ['ANDROID', 'YTMUSIC', 'MWEB', 'IOS'] as const;
 const BAD_VERSION_RE =
-  /(karaoke|remix|live|en vivo|cover|reaction|sped up|slowed|nightcore|instrumental|letra|lyrics|tutorial|8d audio|reverb)/;
+  /\b(karaoke|remix|rmx|mashup|bootleg|flip|rework|refix|vip mix|club mix|extended mix|break intro|dj intro|intro edit|acapella|a capella|live|en vivo|cover|reaction|sped up|slowed|nightcore|instrumental|letra|lyrics|tutorial|8d audio|reverb|bass boosted|dj set|mixtape|megamix|tribute|parodia|parody|ai cover|pitched|radio edit|edit|version)\b/;
 
 function normText(s: string): string {
   return s
@@ -270,7 +270,11 @@ export class AudioStreamResolver {
       return Math.abs(approxSec - expectedDurationSec) <= Math.max(35, expectedDurationSec * 0.4);
     };
 
+    let botCheckRejects = 0;
+    let triedClients = 0;
+
     for (const client of AUDIO_CLIENTS) {
+      triedClients++;
       try {
         const info = await yt.getBasicInfo(videoId, { client });
         const statusStr = String(info?.playability_status?.status ?? '');
@@ -279,9 +283,8 @@ export class AudioStreamResolver {
           statusStr === 'LOGIN_REQUIRED' &&
           (reasonStr.includes('bot') || reasonStr.includes('inicia sesi') || reasonStr.includes('sign in'))
         ) {
-          this.lastFailureReason = 'bot_check';
-          this.botCheckCooldownUntilMs = Date.now() + 2 * 60_000;
-          return null;
+          botCheckRejects++;
+          continue;
         }
 
         const progressive = (info.streaming_data?.formats ?? [])
@@ -307,6 +310,8 @@ export class AudioStreamResolver {
             const url = await fmt?.decipher(yt.session.player);
             if (!url) continue;
             if (await this.isStreamableOpenRange(url)) {
+              this.lastFailureReason = null;
+              this.botCheckCooldownUntilMs = 0;
               return {
                 url,
                 mime: String(fmt.mime_type ?? 'video/mp4').split(';')[0]!,
@@ -321,6 +326,11 @@ export class AudioStreamResolver {
       } catch {
         // try next YouTube client
       }
+    }
+
+    if (triedClients > 0 && botCheckRejects === triedClients) {
+      this.lastFailureReason = 'bot_check';
+      this.botCheckCooldownUntilMs = Date.now() + 45_000;
     }
     return null;
   }
@@ -396,6 +406,9 @@ export class AudioStreamResolver {
         ? Math.abs(dur - info.durationSec) <= maxRelaxDelta
         : dur >= 45 && dur <= 600;
 
+    const wantsSpecialTitle = BAD_VERSION_RE.test(normText(info.title));
+    const artistTokens = tokenize(primaryArtist).filter((t) => t.length >= 2);
+
     // 1) Priority: YouTube Music official songs search (strict then relaxed for underground tracks)
     const relaxedYtm: Array<{ id: string; score: number }> = [];
     try {
@@ -422,8 +435,15 @@ export class AudioStreamResolver {
             musicCandidates.push({ id, score });
           } else if (isRelaxDurationOk(dur)) {
             const normCand = normText(candTitleStr);
+            const normCombined = normText(`${candTitleStr} ${itemArtists}`);
             const normTok = tokenize(strippedTitle).filter((t) => t.length >= 3);
-            if (normTok.some((t) => normCand.includes(t)) && !BAD_VERSION_RE.test(normCand)) {
+            const artistOk =
+              artistTokens.length === 0 || artistTokens.some((a) => normCombined.includes(a));
+            if (
+              normTok.some((t) => normCand.includes(t)) &&
+              artistOk &&
+              (wantsSpecialTitle || !BAD_VERSION_RE.test(normCand))
+            ) {
               relaxedYtm.push({ id, score: Number.isFinite(score) ? score : 0 });
             }
           }
@@ -469,8 +489,15 @@ export class AudioStreamResolver {
             candidates.push({ id: vid, score: sc });
           } else if (isRelaxDurationOk(dur)) {
             const normCand = normText(candTitleStr);
+            const normCombined = normText(`${candTitleStr} ${candAuthor}`);
             const normTok = tokenize(strippedTitle).filter((t) => t.length >= 3);
-            if (normTok.some((t) => normCand.includes(t)) && !BAD_VERSION_RE.test(normCand)) {
+            const artistOk =
+              artistTokens.length === 0 || artistTokens.some((a) => normCombined.includes(a));
+            if (
+              normTok.some((t) => normCand.includes(t)) &&
+              artistOk &&
+              (wantsSpecialTitle || !BAD_VERSION_RE.test(normCand))
+            ) {
               relaxedYt.push({ id: vid, score: Number.isFinite(sc) ? sc : 0 });
             }
           }
@@ -513,12 +540,9 @@ export class AudioStreamResolver {
       info.artist.split(/,|&|\bfeat\.?\b|\bft\.?\b/i)[0]?.trim() || info.artist.trim();
     const focusedQuery = `${primaryArtist} ${strippedTitle}`.trim();
     const queries = Array.from(new Set([focusedQuery, strippedTitle].filter(Boolean)));
-    const targetTokens = tokenize(strippedTitle).filter((t) => t.length >= 2);
-    const artistTokens = tokenize(primaryArtist).filter((t) => t.length >= 2);
     const wantsSpecial = BAD_VERSION_RE.test(normText(info.title));
 
     const strictMatches: Array<{ id: string; score: number }> = [];
-    const fallbackMatches: Array<{ id: string; score: number }> = [];
 
     for (const q of queries) {
       try {
@@ -539,30 +563,30 @@ export class AudioStreamResolver {
           if (!id || item?.is_streamable === false || dur < 40) continue;
           const candTitle = String(item?.title ?? '');
           const candArtist = String(item?.user?.name ?? '');
+          const candHandle = String(item?.user?.handle ?? '');
+          if (!wantsSpecial && BAD_VERSION_RE.test(normText(`${candTitle} ${candArtist}`))) {
+            continue;
+          }
+          // Require the Audius uploader itself to match the track artist so third-party DJ edits cannot masquerade
+          if (primaryArtist) {
+            const normPrimary = normText(primaryArtist);
+            const normUploader = normText(`${candArtist} ${candHandle}`);
+            const uploaderMatch =
+              normUploader.includes(normPrimary) ||
+              normUploader.replace(/\s+/g, '').includes(normPrimary.replace(/\s+/g, '')) ||
+              tokenize(primaryArtist)
+                .filter((t) => t.length >= 3)
+                .some((t) => normUploader.includes(t));
+            if (!uploaderMatch) continue;
+          }
           const sc = scoreAudioCandidate(info, {
             candidateTitle: candTitle,
             candidateArtists: candArtist,
             candidateDurationSec: dur,
             isYtMusicSong: true,
           });
-          if (sc >= 6) {
+          if (sc >= 8) {
             strictMatches.push({ id, score: sc });
-            continue;
-          }
-          // Secondary tier (e.g. verified DJ mix/remix/reupload within +-45% duration when strict misses)
-          if (
-            info.durationSec < 45 ||
-            Math.abs(dur - info.durationSec) <= Math.max(40, Math.round(info.durationSec * 0.45))
-          ) {
-            const hay = normText(`${candTitle} ${candArtist}`);
-            const tHit =
-              targetTokens.length === 0 || targetTokens.every((t) => hay.includes(t));
-            const aHit =
-              artistTokens.length === 0 || artistTokens.some((a) => hay.includes(a));
-            if (tHit && aHit) {
-              const penalty = !wantsSpecial && BAD_VERSION_RE.test(normText(candTitle)) ? 0 : 4;
-              fallbackMatches.push({ id, score: (Number.isFinite(sc) ? sc : 0) + penalty });
-            }
           }
         }
         if (strictMatches.length > 0) break;
@@ -571,10 +595,7 @@ export class AudioStreamResolver {
       }
     }
 
-    const ordered =
-      strictMatches.length > 0
-        ? strictMatches.sort((a, b) => b.score - a.score)
-        : fallbackMatches.sort((a, b) => b.score - a.score);
+    const ordered = strictMatches.sort((a, b) => b.score - a.score);
 
     const seen = new Set<string>();
     for (const cand of ordered) {

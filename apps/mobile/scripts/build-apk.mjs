@@ -152,8 +152,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="12"
-    android:versionName="0.11.0">
+    android:versionCode="13"
+    android:versionName="0.12.0">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -345,7 +345,7 @@ public class MainActivity extends Activity {
     private static final String YT_WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
     private static final long STREAM_CACHE_TTL_MS = 90L * 60L * 1000L;
     private static final Pattern YT_ID_PATTERN = Pattern.compile("^[a-zA-Z0-9_-]{11}$");
-    private static final Pattern BAD_VERSION_PATTERN = Pattern.compile("(karaoke|remix|live|en vivo|cover|reaction|sped up|slowed|nightcore|instrumental|letra|lyrics|tutorial|8d audio|reverb)");
+    private static final Pattern BAD_VERSION_PATTERN = Pattern.compile("\\\\b(karaoke|remix|rmx|mashup|bootleg|flip|rework|refix|vip mix|club mix|extended mix|break intro|dj intro|intro edit|acapella|a capella|live|en vivo|cover|reaction|sped up|slowed|nightcore|instrumental|letra|lyrics|tutorial|8d audio|reverb|bass boosted|dj set|mixtape|megamix|tribute|parodia|parody|ai cover|pitched|radio edit|edit|version)\\\\b");
     private static final Pattern TITLE_NOISE_PATTERN = Pattern.compile("\\\\((?:feat\\\\.|ft\\\\.|with|prod\\\\.|official|video|audio|lyric|remix|en vivo|live).*?\\\\)|\\\\[(?:official|video|audio|lyric|remix|hd|4k).*?\\\\]", Pattern.CASE_INSENSITIVE);
     private static final Pattern DURATION_TOKEN_PATTERN = Pattern.compile("^\\\\d{1,2}:\\\\d{2}(?::\\\\d{2})?$");
     private static final Pattern OPEN_RANGE_PATTERN = Pattern.compile("^bytes=(\\\\d+)-$");
@@ -753,8 +753,7 @@ public class MainActivity extends Activity {
             String primary = targetArtist != null ? targetArtist.trim() : "";
             String focused = (primary.isEmpty() ? targetTitle : primary + " " + targetTitle).trim();
             String[] queries = primary.isEmpty() ? new String[] { targetTitle } : new String[] { focused, targetTitle };
-            List<String> titleToks = tokenizeNorm(targetTitle);
-            List<String> artistToks = tokenizeNorm(primary);
+            boolean wantsSpecial = BAD_VERSION_PATTERN.matcher(normText(targetTitle)).find();
 
             String bestId = null;
             int bestScore = Integer.MIN_VALUE;
@@ -778,23 +777,28 @@ public class MainActivity extends Activity {
                     String candTitle = item.optString("title", "");
                     JSONObject userObj = item.optJSONObject("user");
                     String candArtist = userObj != null ? userObj.optString("name", "") : "";
-                    int sc = scoreAudioCandidate(targetTitle, primary, targetDurSec, candTitle, candArtist, dur, true);
-                    if (sc < 6 && targetDurSec >= 45) {
-                        int maxDiff = Math.max(40, (int) Math.round(targetDurSec * 0.45));
-                        if (Math.abs(dur - targetDurSec) <= maxDiff) {
-                            String hay = normText(candTitle + " " + candArtist);
-                            boolean tOk = true;
-                            for (int k = 0; k < titleToks.size(); k++) {
-                                if (titleToks.get(k).length() > 1 && !hay.contains(titleToks.get(k))) { tOk = false; break; }
-                            }
-                            boolean aOk = artistToks.isEmpty();
-                            for (int k = 0; k < artistToks.size(); k++) {
-                                if (artistToks.get(k).length() > 1 && hay.contains(artistToks.get(k))) { aOk = true; break; }
-                            }
-                            if (tOk && aOk) sc = 4;
-                        }
+                    String candHandle = userObj != null ? userObj.optString("handle", "") : "";
+                    if (!wantsSpecial && BAD_VERSION_PATTERN.matcher(normText(candTitle + " " + candArtist)).find()) {
+                        continue;
                     }
-                    if (sc >= 4 && sc > bestScore) {
+                    if (!primary.isEmpty()) {
+                        String normUploader = normText(candArtist + " " + candHandle);
+                        String normPrimary = normText(primary);
+                        boolean uploaderOk = !normPrimary.isEmpty() && normUploader.contains(normPrimary);
+                        if (!uploaderOk) {
+                            List<String> pToks = tokenizeNorm(primary);
+                            for (int k = 0; k < pToks.size(); k++) {
+                                String pt = pToks.get(k);
+                                if (pt.length() >= 3 && normUploader.contains(pt)) {
+                                    uploaderOk = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!uploaderOk) continue;
+                    }
+                    int sc = scoreAudioCandidate(targetTitle, primary, targetDurSec, candTitle, candArtist, dur, true);
+                    if (sc >= 8 && sc > bestScore) {
                         bestScore = sc;
                         bestId = id;
                     }
@@ -805,7 +809,7 @@ public class MainActivity extends Activity {
                 return new ResolvedStream(
                         "https://api.audius.co/v1/tracks/" + URLEncoder.encode(bestId, "UTF-8") + "/stream?app_name=pMusic",
                         "audio/mpeg",
-                        "pMusic-Android/0.11.0",
+                        "pMusic-Android/0.12.0",
                         System.currentTimeMillis() + STREAM_CACHE_TTL_MS
                 );
             }
@@ -948,14 +952,22 @@ public class MainActivity extends Activity {
     }
 
     private ResolvedStream fetchYoutubeIosPlayerStream(String videoId) {
-        ResolvedStream iosStream = fetchYoutubeClientPlayerStream(videoId, "IOS");
-        if (iosStream != null) return iosStream;
-        ResolvedStream androidStream = fetchYoutubeClientPlayerStream(videoId, "ANDROID");
-        if (androidStream != null) return androidStream;
-        return fetchYoutubeClientPlayerStream(videoId, "MWEB");
+        int[] botRejects = new int[] { 0 };
+        String[] modes = new String[] { "IOS", "ANDROID", "MWEB" };
+        for (int i = 0; i < modes.length; i++) {
+            ResolvedStream stream = fetchYoutubeClientPlayerStream(videoId, modes[i], botRejects);
+            if (stream != null) {
+                ytBotCooldownUntilMs = 0L;
+                return stream;
+            }
+        }
+        if (botRejects[0] >= modes.length) {
+            ytBotCooldownUntilMs = System.currentTimeMillis() + 45000L;
+        }
+        return null;
     }
 
-    private ResolvedStream fetchYoutubeClientPlayerStream(String videoId, String clientMode) {
+    private ResolvedStream fetchYoutubeClientPlayerStream(String videoId, String clientMode, int[] botRejects) {
         try {
             JSONObject client = new JSONObject();
             String ua;
@@ -993,7 +1005,7 @@ public class MainActivity extends Activity {
             if ("LOGIN_REQUIRED".equalsIgnoreCase(statusStr)) {
                 String reason = statusObj.optString("reason", "").toLowerCase(Locale.ROOT);
                 if (reason.contains("bot") || reason.contains("inicia") || reason.contains("sign in")) {
-                    ytBotCooldownUntilMs = System.currentTimeMillis() + 120000L;
+                    if (botRejects != null && botRejects.length > 0) botRejects[0]++;
                 }
                 return null;
             }
@@ -1435,7 +1447,7 @@ public class MainActivity extends Activity {
             conn.setConnectTimeout(3500);
             conn.setReadTimeout(5000);
             conn.setInstanceFollowRedirects(true);
-            conn.setRequestProperty("User-Agent", "pMusic-Android/0.11.0");
+            conn.setRequestProperty("User-Agent", "pMusic-Android/0.12.0");
             int code = conn.getResponseCode();
             if (code >= 200 && code < 300) {
                 InputStream in = conn.getInputStream();
