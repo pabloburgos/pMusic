@@ -305,7 +305,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
         const isBrowserAudio = typeof (audio as { readyState?: unknown }).readyState === 'number';
         if (!isBrowserAudio) return;
 
-        if (Number.isFinite(audio.currentTime) && audio.currentTime >= 0) {
+        if (!audio.seeking && Number.isFinite(audio.currentTime) && audio.currentTime >= 0) {
           this.positionSec = audio.currentTime;
         }
         if (Number.isFinite(audio.duration) && audio.duration > 1) {
@@ -316,7 +316,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
             ? audio.duration
             : this.durationSec;
 
-        if (audio.ended || (realDur > 10 && audio.currentTime >= realDur - 0.35)) {
+        if (audio.ended || (realDur > 10 && this.positionSec >= realDur - 0.35)) {
           this.isPlaying = false;
           this.emitState();
           for (const listener of this.endedListeners) {
@@ -394,7 +394,9 @@ export class DualDeckAudioEngine implements IAudioEngine {
 
     audio.addEventListener('timeupdate', () => {
       if (this.activeDeck === id) {
-        this.positionSec = Number.isFinite(audio.currentTime) ? audio.currentTime : this.positionSec;
+        if (!audio.seeking && Number.isFinite(audio.currentTime)) {
+          this.positionSec = audio.currentTime;
+        }
         if (Number.isFinite(audio.duration) && audio.duration > 1) {
           this.durationSec = audio.duration;
         } else if (this.positionSec + 0.5 > this.durationSec) {
@@ -408,7 +410,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
           (audio.ended ||
             (Number.isFinite(audio.duration) &&
               audio.duration > 10 &&
-              audio.currentTime >= audio.duration - 0.15 &&
+              this.positionSec >= audio.duration - 0.15 &&
               audio.paused))
         ) {
           fireEndedIfActive();
@@ -1194,7 +1196,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
     if (this.deckA && this.deckB) {
       const deck = this.getDeck(this.activeDeck);
       const t = deck.audio.currentTime;
-      if (Number.isFinite(t) && t >= 0) {
+      if (!deck.audio.seeking && Number.isFinite(t) && t >= 0) {
         return t;
       }
     }

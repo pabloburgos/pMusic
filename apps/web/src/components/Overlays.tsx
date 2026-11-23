@@ -1763,7 +1763,7 @@ export const NowPlayingSheet: React.FC = () => {
       </div>
 
       {/* Unified Soft Matte Translucent DJ & EQ Micro-Controls in Bottom-Right of Now Playing */}
-      <div className="fixed right-6 bottom-5 z-20 flex items-center gap-2">
+      <div className="fixed right-3 bottom-3 z-20 flex items-center gap-2 sm:right-6 sm:bottom-5">
         <button
           type="button"
           data-testid="nowplaying-dj-btn"
@@ -1825,7 +1825,7 @@ export const EqAndCrossfadeSheet: React.FC = () => {
       if (
         target instanceof Element &&
         target.closest(
-          '[data-testid="eq-sheet"], [data-testid="dock-eq-btn"], [data-testid="nowplaying-eq-btn"]',
+          '[data-testid="eq-sheet"], [data-testid="dock-eq-btn"], [data-testid="nowplaying-eq-btn"], [data-testid="mobile-eq-btn"]',
         )
       ) {
         return;
@@ -2023,7 +2023,7 @@ export const DjPopover: React.FC = () => {
       if (
         target instanceof Element &&
         target.closest(
-          '[data-testid="dj-popover"], [data-testid="dock-dj-btn"], [data-testid="nowplaying-dj-btn"]',
+          '[data-testid="dj-popover"], [data-testid="dock-dj-btn"], [data-testid="nowplaying-dj-btn"], [data-testid="mobile-dj-btn"]',
         )
       ) {
         return;

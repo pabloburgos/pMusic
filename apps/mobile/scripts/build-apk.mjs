@@ -3,6 +3,7 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -16,14 +17,35 @@ const mobileRoot = resolve(__dirname, '..');
 const webDist = resolve(mobileRoot, '../web/dist');
 const apkOutputDir = resolve(mobileRoot, 'android/app/build/outputs/apk/debug');
 const apkOutputPath = resolve(apkOutputDir, 'app-debug.apk');
+const apkNamedOutputPath = resolve(apkOutputDir, 'pMusic-Android.apk');
 
-const ANDROID_SDK = '/opt/android-sdk';
-const BUILD_TOOLS = `${ANDROID_SDK}/build-tools/35.0.0`;
-const PLATFORM_JAR = `${ANDROID_SDK}/platforms/android-35/android.jar`;
-const AAPT2 = `${BUILD_TOOLS}/aapt2`;
-const D8 = `${BUILD_TOOLS}/d8`;
-const ZIPALIGN = `${BUILD_TOOLS}/zipalign`;
-const APKSIGNER = `${BUILD_TOOLS}/apksigner`;
+function resolveAndroidSdk() {
+  const candidates = [
+    process.env.ANDROID_HOME,
+    process.env.ANDROID_SDK_ROOT,
+    'C:\\Users\\pable\\AppData\\Local\\Android\\Sdk',
+    '/opt/android-sdk',
+  ].filter(Boolean);
+  for (const cand of candidates) {
+    if (existsSync(cand)) return cand;
+  }
+  throw new Error('Android SDK not found');
+}
+
+const ANDROID_SDK = resolveAndroidSdk();
+const buildToolsRoot = resolve(ANDROID_SDK, 'build-tools');
+const buildToolVersions = readdirSync(buildToolsRoot).sort().reverse();
+const BUILD_TOOLS = resolve(buildToolsRoot, buildToolVersions[0]);
+
+const platformsRoot = resolve(ANDROID_SDK, 'platforms');
+const platformVersions = readdirSync(platformsRoot).sort().reverse();
+const PLATFORM_JAR = resolve(platformsRoot, platformVersions[0], 'android.jar');
+
+const isWin = process.platform === 'win32';
+const AAPT2 = resolve(BUILD_TOOLS, isWin ? 'aapt2.exe' : 'aapt2');
+const ZIPALIGN = resolve(BUILD_TOOLS, isWin ? 'zipalign.exe' : 'zipalign');
+const D8_JAR = resolve(BUILD_TOOLS, 'lib/d8.jar');
+const APKSIGNER_JAR = resolve(BUILD_TOOLS, 'lib/apksigner.jar');
 
 const workDir = resolve(mobileRoot, 'android/app/build/real-apk-work');
 rmSync(workDir, { recursive: true, force: true });
@@ -227,7 +249,6 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.view.View;
 import android.view.Window;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -236,8 +257,14 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import org.json.JSONObject;
+
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -251,14 +278,14 @@ public class MainActivity extends Activity {
 
         Window window = getWindow();
         if (window != null && Build.VERSION.SDK_INT >= 21) {
-            window.setStatusBarColor(Color.parseColor("#08080C"));
-            window.setNavigationBarColor(Color.parseColor("#08080C"));
+            window.setStatusBarColor(Color.parseColor("#070709"));
+            window.setNavigationBarColor(Color.parseColor("#070709"));
         }
 
         syntheticWavBytes = buildDeterministicWav(12, 120);
 
         webView = new WebView(this);
-        webView.setBackgroundColor(Color.parseColor("#08080C"));
+        webView.setBackgroundColor(Color.parseColor("#070709"));
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -281,30 +308,84 @@ public class MainActivity extends Activity {
                 if (path == null) path = "/";
 
                 if ("appassets.pmusic.local".equalsIgnoreCase(host)) {
+                    Map<String, String> corsHeaders = new HashMap<String, String>();
+                    corsHeaders.put("Access-Control-Allow-Origin", "*");
+                    corsHeaders.put("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+                    corsHeaders.put("Access-Control-Allow-Headers", "Range, Content-Type, Accept");
+
+                    if ("/api/dz-proxy".equals(path)) {
+                        String dzPath = uri.getQueryParameter("path");
+                        if (dzPath == null || !dzPath.startsWith("/")) dzPath = "/chart/0/tracks?limit=25";
+                        try {
+                            byte[] jsonBytes = fetchRemoteBytes("https://api.deezer.com" + dzPath);
+                            if (jsonBytes != null && jsonBytes.length > 2) {
+                                return new WebResourceResponse(
+                                        "application/json",
+                                        "UTF-8",
+                                        200,
+                                        "OK",
+                                        corsHeaders,
+                                        new ByteArrayInputStream(jsonBytes)
+                                );
+                            }
+                        } catch (Exception ignored) {
+                        }
+                        byte[] errBytes = "{\\"data\\":[]}".getBytes(StandardCharsets.UTF_8);
+                        return new WebResourceResponse("application/json", "UTF-8", 200, "OK", corsHeaders, new ByteArrayInputStream(errBytes));
+                    }
+
                     if (path.startsWith("/api/stream/")) {
-                        Map<String, String> headers = new HashMap<String, String>();
-                        headers.put("Access-Control-Allow-Origin", "*");
-                        headers.put("Accept-Ranges", "bytes");
+                        String rawTrackId = Uri.decode(path.substring("/api/stream/".length()));
+                        if (rawTrackId != null && rawTrackId.startsWith("dz:")) {
+                            String dzId = rawTrackId.substring(3);
+                            try {
+                                byte[] metaBytes = fetchRemoteBytes("https://api.deezer.com/track/" + dzId);
+                                if (metaBytes != null) {
+                                    JSONObject obj = new JSONObject(new String(metaBytes, StandardCharsets.UTF_8));
+                                    String previewUrl = obj.optString("preview", "");
+                                    if (previewUrl != null && previewUrl.startsWith("http")) {
+                                        byte[] mp3Bytes = fetchRemoteBytes(previewUrl);
+                                        if (mp3Bytes != null && mp3Bytes.length > 1024) {
+                                            corsHeaders.put("Accept-Ranges", "bytes");
+                                            return new WebResourceResponse(
+                                                    "audio/mpeg",
+                                                    "binary",
+                                                    200,
+                                                    "OK",
+                                                    corsHeaders,
+                                                    new ByteArrayInputStream(mp3Bytes)
+                                            );
+                                        }
+                                    }
+                                }
+                            } catch (Exception ignored) {
+                            }
+                        }
+                        corsHeaders.put("Accept-Ranges", "bytes");
                         return new WebResourceResponse(
                                 "audio/wav",
                                 "binary",
                                 200,
                                 "OK",
-                                headers,
+                                corsHeaders,
                                 new ByteArrayInputStream(syntheticWavBytes)
                         );
                     }
+
+                    if (path.startsWith("/api/")) {
+                        byte[] notFound = "{\\"error\\":\\"offline\\"}".getBytes(StandardCharsets.UTF_8);
+                        return new WebResourceResponse("application/json", "UTF-8", 404, "Not Found", corsHeaders, new ByteArrayInputStream(notFound));
+                    }
+
                     String assetPath = path.equals("/") ? "public/index.html" : "public" + path;
                     try {
                         InputStream is = getAssets().open(assetPath);
                         String mime = guessMime(assetPath);
-                        Map<String, String> headers = new HashMap<String, String>();
-                        headers.put("Access-Control-Allow-Origin", "*");
-                        return new WebResourceResponse(mime, "UTF-8", 200, "OK", headers, is);
+                        return new WebResourceResponse(mime, "UTF-8", 200, "OK", corsHeaders, is);
                     } catch (Exception e) {
                         try {
                             InputStream indexIs = getAssets().open("public/index.html");
-                            return new WebResourceResponse("text/html", "UTF-8", indexIs);
+                            return new WebResourceResponse("text/html", "UTF-8", 200, "OK", corsHeaders, indexIs);
                         } catch (Exception ignored) {
                             return null;
                         }
@@ -322,6 +403,34 @@ public class MainActivity extends Activity {
         }
 
         webView.loadUrl("https://appassets.pmusic.local/index.html");
+    }
+
+    private byte[] fetchRemoteBytes(String urlStr) {
+        HttpURLConnection conn = null;
+        try {
+            URL url = new URL(urlStr);
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(4500);
+            conn.setReadTimeout(6500);
+            conn.setInstanceFollowRedirects(true);
+            conn.setRequestProperty("User-Agent", "pMusic-Android/0.1.0");
+            int code = conn.getResponseCode();
+            if (code >= 200 && code < 300) {
+                InputStream in = conn.getInputStream();
+                ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                int r;
+                while ((r = in.read(buf)) != -1) {
+                    bos.write(buf, 0, r);
+                }
+                in.close();
+                return bos.toByteArray();
+            }
+        } catch (Exception ignored) {
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+        return null;
     }
 
     private String guessMime(String path) {
@@ -446,12 +555,14 @@ const classFiles = [
   resolve(classesDir, 'es/pmusic/app/MainActivity$1.class'),
 ].filter((f) => existsSync(f));
 
-execFileSync(D8, ['--lib', PLATFORM_JAR, '--min-api', '24', '--output', dexDir, ...classFiles], {
-  stdio: 'inherit',
-});
+execFileSync(
+  'java',
+  ['-cp', D8_JAR, 'com.android.tools.r8.D8', '--lib', PLATFORM_JAR, '--min-api', '24', '--output', dexDir, ...classFiles],
+  { stdio: 'inherit' }
+);
 
-// 8. Add compiled classes.dex into unaligned.apk
-execFileSync('zip', ['-j', unalignedApk, resolve(dexDir, 'classes.dex')], { stdio: 'inherit' });
+// 8. Add compiled classes.dex into unaligned.apk (using jar uf so it works on Windows & Linux)
+execFileSync('jar', ['uf', unalignedApk, '-C', dexDir, 'classes.dex'], { stdio: 'inherit' });
 
 // 9. Zipalign to 4-byte boundaries
 const alignedApk = resolve(workDir, 'aligned.apk');
@@ -485,8 +596,10 @@ execFileSync(
 );
 
 execFileSync(
-  APKSIGNER,
+  'java',
   [
+    '-jar',
+    APKSIGNER_JAR,
     'sign',
     '--ks',
     keystorePath,
@@ -509,7 +622,10 @@ execFileSync(
   { stdio: 'inherit' }
 );
 
-execFileSync(APKSIGNER, ['verify', '--verbose', apkOutputPath], { stdio: 'inherit' });
+execFileSync('java', ['-jar', APKSIGNER_JAR, 'verify', '--verbose', apkOutputPath], {
+  stdio: 'inherit',
+});
+cpSync(apkOutputPath, apkNamedOutputPath);
 
 const finalSize = statSync(apkOutputPath).size;
-console.log(`Successfully compiled and cryptographically signed Android APK (${finalSize} bytes) at ${apkOutputPath}`);
+console.log(`Successfully compiled and cryptographically signed Android APK (${finalSize} bytes) at ${apkOutputPath} and ${apkNamedOutputPath}`);

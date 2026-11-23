@@ -217,7 +217,9 @@ export interface DiscordRpcConfig {
 }
 
 const USER_PREFS_STORAGE_KEY = 'pmusic_user_prefs_v1';
+const HOME_HISTORY_MIGRATION_KEY = 'pmusic_home_history_clean_v2';
 let sleepTimerInterval: ReturnType<typeof setInterval> | null = null;
+let seekAutoTriggerTimer: ReturnType<typeof setTimeout> | null = null;
 
 function normTargetToDb(target: 'quiet' | 'normal' | 'loud'): number {
   if (target === 'quiet') return -14;
@@ -441,6 +443,7 @@ export interface PMusicStoreState {
   addSeedArtist: (name: string) => Promise<void>;
   removeSeedArtist: (artistKey: string) => Promise<void>;
   resetTasteProfile: () => Promise<void>;
+  refreshHomeRecommendations: (clearHistory?: boolean) => Promise<void>;
 
   // Library & Offline Actions
   setLibraryCategory: (cat: LibraryCategoryTab) => void;
@@ -638,13 +641,6 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       latest.positionSec < existingPlan.cueOutSec - 0.2
     ) {
       nextCueOut = Math.max(4, Math.min(maxSafeCueOut, existingPlan.cueOutSec));
-    } else if (
-      latest.djMode.style === 'quick' &&
-      latest.isPlaying &&
-      latest.positionSec >= nextCueOut - 3 &&
-      latest.positionSec < maxSafeCueOut
-    ) {
-      nextCueOut = Math.min(maxSafeCueOut, Math.round(latest.positionSec + 6));
     }
 
     plan = {
@@ -1005,6 +1001,18 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
     await libraryStore.hydrate();
     await recommendationEngine.hydrate();
+    try {
+      const migrated = await defaultPlatformBridge.preferencesStorage.getItem(
+        HOME_HISTORY_MIGRATION_KEY
+      );
+      if (migrated !== '1') {
+        await recommendationEngine.clearPlayHistory();
+        await libraryStore.setPlayHistory([]);
+        await defaultPlatformBridge.preferencesStorage.setItem(HOME_HISTORY_MIGRATION_KEY, '1');
+      }
+    } catch {
+      // ignore storage failure
+    }
     await audioEngine.init();
     await syncEngine.connectRealtime();
 
@@ -1284,26 +1292,29 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         if (nextTrack && nextTrack.id !== liveState.currentTrack.id) {
           const plan = liveState.activeTransitionPlan;
           const liveDur = engineState.durationSec || liveState.durationSec;
-          const planExceedsLiveDur =
-            Boolean(plan) &&
-            liveDur > 10 &&
-            plan!.cueOutSec > Math.max(5, liveDur - plan!.transitionDurationSec - 0.8);
           if (
             !plan ||
             plan.fromTrackId !== liveState.currentTrack.id ||
-            plan.toTrackId !== nextTrack.id ||
-            planExceedsLiveDur
+            plan.toTrackId !== nextTrack.id
           ) {
             void recomputeActiveDjPlan();
           } else {
+            const effectiveCueOut =
+              liveDur > 15
+                ? Math.max(4, Math.min(plan.cueOutSec, Math.floor(liveDur - Math.min(plan.transitionDurationSec, liveDur * 0.35) - 0.5)))
+                : plan.cueOutSec;
             const preloadKey = `${liveState.currentTrack.id}->${nextTrack.id}@${plan.cueInSec}`;
             if (djPreloadedKey !== preloadKey) {
               djPreloadedKey = preloadKey;
               void analyzeTrackAudioInBackground(nextTrack);
               void audioEngine.preloadNextDeck(nextTrack, plan.cueInSec);
             }
-            if (engineState.positionSec >= plan.cueOutSec) {
-              void executeDjTransition(plan, nextTrack, nextIdx);
+            if (engineState.positionSec >= effectiveCueOut) {
+              void executeDjTransition(
+                effectiveCueOut !== plan.cueOutSec ? { ...plan, cueOutSec: effectiveCueOut } : plan,
+                nextTrack,
+                nextIdx
+              );
             }
           }
         }
@@ -1796,16 +1807,93 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   },
 
   seekTo: (positionSec) => {
-    audioEngine.seek(positionSec);
-    const lyrics = get().currentLyrics;
+    if (seekAutoTriggerTimer) {
+      clearTimeout(seekAutoTriggerTimer);
+      seekAutoTriggerTimer = null;
+    }
+    const st = get();
+    const dur = audioEngine.getState().durationSec || st.durationSec || st.currentTrack.durationSec;
+    const lyrics = st.currentLyrics;
     const activeIdx =
       lyrics && lyrics.status === 'synced'
         ? lrcParser.findActiveLineIndex(lyrics.lines, positionSec * 1000)
         : -1;
+
+    // 1. If the user drags the scrub bar right to the end of the track, advance / mix immediately
+    if (dur > 10 && positionSec >= dur - 0.85) {
+      set({ positionSec: dur, activeLyricIndex: activeIdx });
+      syncDiscordPresenceState();
+      seekAutoTriggerTimer = setTimeout(() => {
+        seekAutoTriggerTimer = null;
+        const cur = get();
+        if (cur.isTransitioning || djAutoTransitionInFlight) return;
+        if (cur.djMode.enabled && cur.repeatMode !== 'one') {
+          void cur.triggerDjMixNow();
+        } else {
+          void recommendationEngine.recordSignal(cur.currentTrack, 'complete_listen', {
+            completionRatio: 1.0,
+          });
+          void cur.nextTrack(true);
+        }
+      }, 140);
+      return;
+    }
+
+    audioEngine.seek(positionSec);
     set({ positionSec, activeLyricIndex: activeIdx });
-    const plan = get().activeTransitionPlan;
-    if (get().djMode.enabled && (!plan || positionSec > plan.cueOutSec + 1)) {
-      void recomputeActiveDjPlan();
+
+    // 2. If DJ Mode is active and the user seeks into or past the DJ mix window, trigger the DJ mix smoothly
+    const plan = st.activeTransitionPlan;
+    if (st.djMode.enabled && st.repeatMode !== 'one') {
+      const effectiveCueOut = plan
+        ? Math.max(4, Math.min(plan.cueOutSec, Math.floor(dur - Math.min(plan.transitionDurationSec, dur * 0.35) - 0.5)))
+        : Math.max(10, Math.floor(dur - 8));
+      if (positionSec >= effectiveCueOut) {
+        seekAutoTriggerTimer = setTimeout(() => {
+          seekAutoTriggerTimer = null;
+          const cur = get();
+          if (!cur.djMode.enabled || cur.isTransitioning || djAutoTransitionInFlight) return;
+          void cur.triggerDjMixNow();
+        }, 160);
+      } else if (!plan) {
+        void recomputeActiveDjPlan();
+      }
+    } else if (
+      !st.djMode.enabled &&
+      st.safeCrossfade.enabled &&
+      st.safeCrossfade.durationSec > 0 &&
+      st.repeatMode !== 'one' &&
+      dur > 15 &&
+      positionSec >= dur - st.safeCrossfade.durationSec - 0.3
+    ) {
+      seekAutoTriggerTimer = setTimeout(() => {
+        seekAutoTriggerTimer = null;
+        const cur = get();
+        if (
+          cur.djMode.enabled ||
+          !cur.safeCrossfade.enabled ||
+          cur.isTransitioning ||
+          djAutoTransitionInFlight
+        ) {
+          return;
+        }
+        const target = getUpcomingDjTarget(cur);
+        if (target && target.track.id !== cur.currentTrack.id) {
+          const cfPlan: DeckTransitionPlan = {
+            fromTrackId: cur.currentTrack.id,
+            toTrackId: target.track.id,
+            cueInSec: 0,
+            cueOutSec: Math.max(10, Math.round(dur - cur.safeCrossfade.durationSec)),
+            transitionDurationSec: Math.max(1.5, Math.min(12, cur.safeCrossfade.durationSec)),
+            transitionBars: 4,
+            transitionType: 'eq_swap',
+            tempoNudgeRate: 1.0,
+            echoSubdivision: 0.5,
+            compatibilityScore: 0.85,
+          };
+          void executeDjTransition(cfPlan, target.track, target.nextIdx);
+        }
+      }, 160);
     }
     syncDiscordPresenceState();
   },
@@ -2498,6 +2586,37 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       playHistory: [],
       homeShelves: shelves,
     });
+  },
+
+  refreshHomeRecommendations: async (clearHistory = false) => {
+    if (clearHistory) {
+      await recommendationEngine.clearPlayHistory();
+      await libraryStore.setPlayHistory([]);
+    }
+    const shelves = await recommendationEngine.buildHomeShelves();
+    const allRealTracks = Array.from(
+      new Map(shelves.flatMap((s) => s.tracks ?? []).map((t) => [t.id, t])).values()
+    );
+    set((prev) => ({
+      playHistory: libraryStore.getPlayHistory(),
+      affinityProfile: recommendationEngine.getAffinityProfile(),
+      homeShelves: shelves,
+      ...(allRealTracks.length > 0 && !prev.isPlaying
+        ? {
+            currentTrack: allRealTracks[0]!,
+            queue: allRealTracks.slice(0, 10),
+            recommendedQueue: allRealTracks.slice(10, 20),
+            queueIndex: 0,
+            durationSec: allRealTracks[0]!.durationSec,
+            positionSec: 0,
+          }
+        : {}),
+    }));
+    get().showToast(
+      clearHistory
+        ? 'Historial y recomendaciones de inicio reiniciados'
+        : 'Recomendaciones de inicio actualizadas'
+    );
   },
 
   setLibraryCategory: (cat) => set({ libraryCategory: cat }),

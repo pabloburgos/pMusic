@@ -16,6 +16,7 @@ import {
   Pencil,
   Play,
   Plus,
+  RefreshCw,
   Search,
   Share2,
   Trash2,
@@ -1224,8 +1225,10 @@ export const HomeScreen: React.FC = () => {
     openAlbumDetail,
     openArtistDetail,
     openTrackMenu,
+    refreshHomeRecommendations,
   } = usePMusicStore();
   const [chip, setChip] = useState<(typeof HOME_CHIPS)[number]>('Todo');
+  const [isRefreshingHome, setIsRefreshingHome] = useState(false);
 
   const listen = homeShelves.find((s) => s.kind === 'listen_again');
   const mixes = homeShelves.find((s) => s.kind === 'mixes_for_you');
@@ -1249,9 +1252,24 @@ export const HomeScreen: React.FC = () => {
   return (
     <div className="pm-page-enter space-y-8">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-[28px] font-bold tracking-tight pm-text-primary md:text-[32px]">
+        <h1 className="text-[26px] font-bold tracking-tight pm-text-primary md:text-[32px]">
           {getSpanishGreeting()}
         </h1>
+        <button
+          type="button"
+          data-testid="reset-home-recommendations-btn"
+          aria-label="Reiniciar escuchar de nuevo y recomendaciones"
+          disabled={isRefreshingHome}
+          onClick={async () => {
+            setIsRefreshingHome(true);
+            await refreshHomeRecommendations(true);
+            setIsRefreshingHome(false);
+          }}
+          className="pm-pressable inline-flex h-9 items-center gap-2 rounded-full bg-white/[0.08] px-3.5 text-xs font-semibold pm-text-secondary transition-colors hover:bg-white/[0.16] hover:text-[var(--pm-text-primary)] disabled:opacity-50"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${isRefreshingHome ? 'animate-spin' : ''}`} />
+          <span>Reiniciar inicio</span>
+        </button>
       </div>
 
       {/* Spotify-style Filter Pills */}

@@ -264,6 +264,13 @@ export class YouTubeMusicProvider implements IMusicProvider {
     return fallback;
   }
 
+  public async getTrack(trackId: string, _signal?: AbortSignal): Promise<Track | null> {
+    if (this.catalog && isDeezerTrackId(trackId)) {
+      return this.catalog.getTrack(trackId, _signal);
+    }
+    return FALLBACK_TRACKS.find((t) => t.id === trackId) ?? null;
+  }
+
   public async getPlaylist(
     playlistId: string,
     maxItems = 100,
@@ -323,11 +330,38 @@ export class HttpProxyMusicProvider implements IMusicProvider {
   >;
   private readonly fetchFn: typeof fetch;
   private readonly baseUrl: string;
+  private mobileProxyCatalog: YouTubeMusicProvider | null = null;
 
   public constructor(options: HttpProxyMusicProviderOptions = {}) {
     this.platformBridge = options.platformBridge;
     this.fetchFn = options.fetchFn ?? globalThis.fetch.bind(globalThis);
     this.baseUrl = (options.baseUrl ?? '').replace(/\/+$/, '');
+  }
+
+  private getMobileDirectProvider(): YouTubeMusicProvider | null {
+    if (
+      typeof window !== 'undefined' &&
+      window.location?.hostname === 'appassets.pmusic.local'
+    ) {
+      if (!this.mobileProxyCatalog) {
+        const proxyFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+          const rawUrl = String(input);
+          if (rawUrl.startsWith('https://api.deezer.com')) {
+            const dzPath = rawUrl.slice('https://api.deezer.com'.length) || '/';
+            return this.fetchFn(
+              `https://appassets.pmusic.local/api/dz-proxy?path=${encodeURIComponent(dzPath)}`,
+              init
+            );
+          }
+          return this.fetchFn(input, init);
+        }) as typeof fetch;
+        this.mobileProxyCatalog = new YouTubeMusicProvider({
+          catalog: new DeezerCatalog(proxyFetch),
+        });
+      }
+      return this.mobileProxyCatalog;
+    }
+    return null;
   }
 
   private async resolveEndpoint(path: string): Promise<{ url: string; headers: Record<string, string> }> {
@@ -359,6 +393,10 @@ export class HttpProxyMusicProvider implements IMusicProvider {
     filter: SearchFilter = 'all',
     signal?: AbortSignal
   ): Promise<SearchResultBundle> {
+    const mobileDirect = this.getMobileDirectProvider();
+    if (mobileDirect) {
+      return mobileDirect.search(query, filter, signal);
+    }
     const params = new URLSearchParams({ q: query, filter });
     const remote = await this.fetchApiJson<SearchResultBundle>(`/api/search?${params.toString()}`, signal);
     if (remote && Array.isArray(remote.songs)) {
@@ -368,6 +406,10 @@ export class HttpProxyMusicProvider implements IMusicProvider {
   }
 
   public async getSearchSuggestions(input: string, signal?: AbortSignal): Promise<string[]> {
+    const mobileDirect = this.getMobileDirectProvider();
+    if (mobileDirect) {
+      return mobileDirect.getSearchSuggestions(input, signal);
+    }
     const params = new URLSearchParams({ q: input });
     const remote = await this.fetchApiJson<{ suggestions: string[] }>(
       `/api/suggestions?${params.toString()}`,
@@ -381,6 +423,10 @@ export class HttpProxyMusicProvider implements IMusicProvider {
   }
 
   public async getHomeFeed(moodFilter?: string, signal?: AbortSignal): Promise<HomeFeedResult> {
+    const mobileDirect = this.getMobileDirectProvider();
+    if (mobileDirect) {
+      return mobileDirect.getHomeFeed(moodFilter, signal);
+    }
     const query = moodFilter ? `?mood=${encodeURIComponent(moodFilter)}` : '';
     const remote = await this.fetchApiJson<HomeFeedResult>(`/api/home${query}`, signal);
     if (remote && Array.isArray(remote.shelves)) {
@@ -390,6 +436,10 @@ export class HttpProxyMusicProvider implements IMusicProvider {
   }
 
   public async getUpNext(videoId: string, _automix = true, signal?: AbortSignal): Promise<Track[]> {
+    const mobileDirect = this.getMobileDirectProvider();
+    if (mobileDirect) {
+      return mobileDirect.getUpNext(videoId, _automix, signal);
+    }
     const remote = await this.fetchApiJson<{ tracks: Track[] }>(
       `/api/up-next/${encodeURIComponent(videoId)}`,
       signal
@@ -401,6 +451,10 @@ export class HttpProxyMusicProvider implements IMusicProvider {
   }
 
   public async getRelated(videoId: string, signal?: AbortSignal): Promise<RelatedResult> {
+    const mobileDirect = this.getMobileDirectProvider();
+    if (mobileDirect) {
+      return mobileDirect.getRelated(videoId, signal);
+    }
     const remote = await this.fetchApiJson<RelatedResult>(
       `/api/related/${encodeURIComponent(videoId)}`,
       signal
@@ -412,6 +466,10 @@ export class HttpProxyMusicProvider implements IMusicProvider {
   }
 
   public async getArtist(artistId: string, signal?: AbortSignal): Promise<ArtistDetail> {
+    const mobileDirect = this.getMobileDirectProvider();
+    if (mobileDirect) {
+      return mobileDirect.getArtist(artistId, signal);
+    }
     const remote = await this.fetchApiJson<ArtistDetail>(
       `/api/artist/${encodeURIComponent(artistId)}`,
       signal
@@ -423,6 +481,10 @@ export class HttpProxyMusicProvider implements IMusicProvider {
   }
 
   public async getTrack(trackId: string, signal?: AbortSignal): Promise<Track | null> {
+    const mobileDirect = this.getMobileDirectProvider();
+    if (mobileDirect) {
+      return mobileDirect.getTrack ? mobileDirect.getTrack(trackId, signal) : null;
+    }
     const remote = await this.fetchApiJson<Track>(
       `/api/track/${encodeURIComponent(trackId)}`,
       signal
@@ -435,6 +497,10 @@ export class HttpProxyMusicProvider implements IMusicProvider {
     signal?: AbortSignal,
     hint?: { title?: string; artist?: string }
   ): Promise<AlbumDetail> {
+    const mobileDirect = this.getMobileDirectProvider();
+    if (mobileDirect) {
+      return mobileDirect.getAlbum(albumId, signal, hint);
+    }
     const params = new URLSearchParams();
     if (hint?.title?.trim()) params.set('title', hint.title.trim());
     if (hint?.artist?.trim()) params.set('artist', hint.artist.trim());
@@ -454,6 +520,10 @@ export class HttpProxyMusicProvider implements IMusicProvider {
     _maxItems = 100,
     signal?: AbortSignal
   ): Promise<PlaylistDetail> {
+    const mobileDirect = this.getMobileDirectProvider();
+    if (mobileDirect) {
+      return mobileDirect.getPlaylist(playlistId, _maxItems, signal);
+    }
     const remote = await this.fetchApiJson<PlaylistDetail>(
       `/api/playlist/${encodeURIComponent(playlistId)}`,
       signal

@@ -397,7 +397,13 @@ export function createPMusicApiHandler(options: PMusicApiHandlerOptions = {}) {
 
       if (pathname === '/api/download/android') {
         const { createReadStream, existsSync, statSync } = await import('node:fs');
-        const apkPath = '/home/antigravity/pMusic/apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk';
+        const { dirname, resolve } = await import('node:path');
+        const { fileURLToPath } = await import('node:url');
+        const here = dirname(fileURLToPath(import.meta.url));
+        const apkPath = resolve(
+          here,
+          '../../../apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk'
+        );
         if (!existsSync(apkPath)) {
           sendJson(res, 404, { error: 'APK no encontrado' });
           return true;
@@ -413,17 +419,20 @@ export function createPMusicApiHandler(options: PMusicApiHandlerOptions = {}) {
 
       if (pathname === '/api/download/windows') {
         const { createReadStream, existsSync, statSync } = await import('node:fs');
-        const zipPath = '/home/antigravity/pMusic/apps/desktop/release/pMusic-0.1.0-win.zip';
-        if (!existsSync(zipPath)) {
-          sendJson(res, 404, { error: 'Paquete Windows no encontrado' });
+        const { dirname, resolve } = await import('node:path');
+        const { fileURLToPath } = await import('node:url');
+        const here = dirname(fileURLToPath(import.meta.url));
+        const exePath = resolve(here, '../../../apps/desktop/release/latest/pMusic-Setup-0.1.0.exe');
+        if (!existsSync(exePath)) {
+          sendJson(res, 404, { error: 'Instalador Windows no encontrado' });
           return true;
         }
-        const st = statSync(zipPath);
+        const st = statSync(exePath);
         res.statusCode = 200;
-        res.setHeader('Content-Type', 'application/zip');
-        res.setHeader('Content-Disposition', 'attachment; filename="pMusic-0.1.0-Windows-x64.zip"');
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Disposition', 'attachment; filename="pMusic-Setup-0.1.0.exe"');
         res.setHeader('Content-Length', st.size);
-        createReadStream(zipPath).pipe(res);
+        createReadStream(exePath).pipe(res);
         return true;
       }
 

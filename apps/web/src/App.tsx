@@ -969,23 +969,40 @@ export const App: React.FC = () => {
               <div className="flex items-center gap-1.5">
                 <button
                   type="button"
+                  data-testid="mobile-dj-btn"
                   aria-label="Modo Sesión DJ"
-                  aria-pressed={djMode.enabled}
-                  onClick={() => void toggleDjMode()}
-                  className={`inline-flex items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ${
-                    djMode.enabled
-                      ? 'border border-purple-500/50 bg-purple-500/20 text-purple-400'
-                      : 'pm-btn-secondary'
+                  aria-pressed={djMode.enabled || djPopoverOpen}
+                  onClick={() => setDjPopoverOpen(!djPopoverOpen)}
+                  className={`pm-pressable inline-flex h-9 items-center justify-center gap-1.5 rounded-full px-3 text-xs font-semibold transition-colors ${
+                    djMode.enabled || djPopoverOpen
+                      ? 'bg-purple-500/25 text-purple-300'
+                      : 'bg-white/[0.08] pm-text-primary hover:bg-white/[0.16]'
                   }`}
                 >
-                  <Disc3 className="h-3.5 w-3.5 text-purple-500" />
+                  <Disc3 className={`h-3.5 w-3.5 text-purple-400 ${djMode.enabled ? 'animate-spin' : ''}`} />
+                  <span>DJ</span>
+                </button>
+
+                <button
+                  type="button"
+                  data-testid="mobile-eq-btn"
+                  aria-label="Ecualizador"
+                  aria-pressed={eqSheetOpen}
+                  onClick={() => setEqSheetOpen(!eqSheetOpen)}
+                  className={`pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors ${
+                    eqSheetOpen
+                      ? 'bg-white/[0.20] pm-text-primary'
+                      : 'bg-white/[0.08] pm-text-secondary hover:bg-white/[0.16]'
+                  }`}
+                >
+                  <Sliders className="h-4 w-4" />
                 </button>
 
                 <button
                   type="button"
                   aria-label="Dispositivos"
                   onClick={() => setDevicesSheetOpen(true)}
-                  className="pm-btn-secondary inline-flex items-center justify-center rounded-full p-2 text-emerald-500"
+                  className="pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/[0.08] text-emerald-400 transition-colors hover:bg-white/[0.16]"
                 >
                   <Wifi className="h-4 w-4" />
                 </button>
@@ -994,7 +1011,7 @@ export const App: React.FC = () => {
                   type="button"
                   aria-label="Ajustes"
                   onClick={() => setSettingsOpen(true)}
-                  className="pm-btn-secondary inline-flex items-center justify-center rounded-full p-2"
+                  className="pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/[0.08] pm-text-secondary transition-colors hover:bg-white/[0.16]"
                 >
                   <Settings className="h-4 w-4" />
                 </button>
@@ -1846,24 +1863,44 @@ export const App: React.FC = () => {
               <div className="flex items-center gap-1">
                 <button
                   type="button"
+                  aria-label={isLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
+                  onClick={() => void toggleLike(currentTrack)}
+                  className={`pm-pressable flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.08] ${
+                    isLiked ? 'text-rose-500' : 'pm-text-secondary'
+                  }`}
+                >
+                  <Heart className={`h-4 w-4 ${isLiked ? 'fill-current' : ''}`} />
+                </button>
+
+                <button
+                  type="button"
                   aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
                   onClick={() => void togglePlayPause()}
-                  className="pm-btn-primary pm-pressable flex h-11 w-11 items-center justify-center rounded-full"
+                  className="pm-btn-primary pm-pressable relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-full shadow-md"
                 >
-                  {isPlaying ? (
-                    <Pause className="h-5 w-5 fill-current" />
-                  ) : (
-                    <Play className="h-5 w-5 translate-x-[1px] fill-current" />
-                  )}
+                  <Pause
+                    className={`absolute h-4.5 w-4.5 fill-current transition-all duration-200 ease-out ${
+                      isPlaying
+                        ? 'scale-100 rotate-0 opacity-100 blur-0'
+                        : 'scale-50 rotate-90 opacity-0 blur-[1px]'
+                    }`}
+                  />
+                  <Play
+                    className={`absolute h-4.5 w-4.5 translate-x-[1px] fill-current transition-all duration-200 ease-out ${
+                      !isPlaying
+                        ? 'scale-100 rotate-0 opacity-100 blur-0'
+                        : 'scale-50 -rotate-90 opacity-0 blur-[1px]'
+                    }`}
+                  />
                 </button>
 
                 <button
                   type="button"
                   aria-label="Siguiente canción"
                   onClick={() => void nextTrack()}
-                  className="pm-pressable flex h-11 w-11 items-center justify-center rounded-full pm-text-primary"
+                  className="pm-pressable flex h-10 w-10 items-center justify-center rounded-full pm-text-primary"
                 >
-                  <SkipForward className="h-5 w-5" />
+                  <SkipForward className="h-4.5 w-4.5" />
                 </button>
               </div>
             </div>

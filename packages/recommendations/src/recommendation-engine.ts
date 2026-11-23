@@ -80,10 +80,31 @@ function collapseNormalized(input: string): string {
   return normalizeSearchText(input).replace(/[^a-z0-9]+/g, '');
 }
 
-const NON_SPANISH_DIACRITIC_RE = /[šŠčČžŽćĆđĐłŁøØß]/;
+const SYNTHETIC_TRACK_ID_SET = new Set([
+  'cc_me_muevo_01',
+  'cc_cangrinaje_02',
+  'cc_dios_1_03',
+  'lp_cayetano_04',
+  'lp_una_bala_05',
+  'bb_monaco_06',
+  'bb_perro_negro_07',
+  'qv_columbia_08',
+  'sk_supernova_09',
+  'mr_pelele_10',
+  'df_consentia_11',
+  'rb_a_mi_12',
+]);
+
+function isBrokenOrSyntheticTrack(t: Track | undefined | null): boolean {
+  if (!t || !t.id || !t.title) return true;
+  if (SYNTHETIC_TRACK_ID_SET.has(t.id)) return true;
+  const thumb = t.thumbnailUrl ?? '';
+  if (thumb.includes('unsplash.com')) return true;
+  return false;
+}
 
 function scoreSpanishTitleCues(title: string): number {
-  if (NON_SPANISH_DIACRITIC_RE.test(title)) return 0;
+  if (/[šŠčČžŽćĆđĐłŁøØß]/.test(title)) return 0;
   let score = 0;
   const hasEsAccent = SPANISH_ACCENT_RE.test(title);
   if (hasEsAccent) score += 28;
@@ -231,7 +252,11 @@ export class RecommendationEngine implements IRecommendationEngine {
     }
 
     if (storedHistory.length > 0) {
-      this.history = storedHistory;
+      const cleanedHistory = storedHistory.filter((h) => !isBrokenOrSyntheticTrack(h?.track));
+      this.history = cleanedHistory;
+      if (cleanedHistory.length !== storedHistory.length) {
+        await this.storage.saveHistory(cleanedHistory);
+      }
     }
   }
 
@@ -778,7 +803,7 @@ export class RecommendationEngine implements IRecommendationEngine {
 
     if (this.musicProvider) {
       const bundles = await Promise.all(
-        ['', topArtist1, topArtist2, topArtist3].map((q) =>
+        ['', topArtist1, topArtist2, topArtist3, 'Cruzzi'].map((q) =>
           this.musicProvider!.search(q, 'all', signal).catch(() => null)
         )
       );
@@ -801,9 +826,14 @@ export class RecommendationEngine implements IRecommendationEngine {
 
     const listenAgainTracks: Track[] = [];
     const seenIds = new Set<string>();
+    const hasLiveCatalog = catalogSongs.some((t) => !isBrokenOrSyntheticTrack(t));
 
     for (const h of this.history) {
-      if (h.signalType !== 'skip_early' && !seenIds.has(h.track.id)) {
+      if (
+        h.signalType !== 'skip_early' &&
+        !seenIds.has(h.track.id) &&
+        (!hasLiveCatalog || !isBrokenOrSyntheticTrack(h.track))
+      ) {
         seenIds.add(h.track.id);
         listenAgainTracks.push(h.track);
       }
@@ -849,15 +879,28 @@ export class RecommendationEngine implements IRecommendationEngine {
     ];
 
     const anchorArtist =
-      this.history.find((h) => h.signalType !== 'skip_early')?.track.artists[0]?.name ?? topArtist1;
+      this.history.find(
+        (h) => h.signalType !== 'skip_early' && !isBrokenOrSyntheticTrack(h.track)
+      )?.track.artists[0]?.name ?? topArtist1;
 
-    const becauseTracks = this.rerankTracks(
-      catalogSongs.filter((t) =>
-        t.artists.some((a) => normalizeArtistKey(a.name) === normalizeArtistKey(anchorArtist))
-      ).length > 0
-        ? catalogSongs
-        : listenAgainTracks
+    const anchorNorm = normalizeArtistKey(anchorArtist);
+    const artistSpecificSongs = catalogSongs.filter((t) =>
+      t.artists.some((a) => {
+        const k = normalizeArtistKey(a.name);
+        return (
+          k === anchorNorm ||
+          (anchorNorm === 'cruz cafune' && k === 'cruzzi') ||
+          (anchorNorm === 'cruzzi' && k === 'cruz cafune')
+        );
+      })
     );
+    const restSongs = catalogSongs.filter(
+      (t) => !artistSpecificSongs.some((as) => as.id === t.id)
+    );
+    const becauseTracks =
+      artistSpecificSongs.length > 0
+        ? [...artistSpecificSongs, ...this.rerankTracks(restSongs)]
+        : this.rerankTracks(catalogSongs.length > 0 ? catalogSongs : listenAgainTracks);
 
     const shelves: HomeEditorialShelf[] = [
       {
@@ -940,6 +983,13 @@ export class RecommendationEngine implements IRecommendationEngine {
     }
 
     return Array.from(merged.values()).sort((a, b) => b.score - a.score);
+  }
+
+  public async clearPlayHistory(): Promise<void> {
+    this.history = [];
+    if (this.storage) {
+      await this.storage.saveHistory([]);
+    }
   }
 
   public async resetTastes(): Promise<void> {
