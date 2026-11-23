@@ -23,6 +23,17 @@ contextBridge.exposeInMainWorld('pmusicDesktop', {
     symbolColor?: string;
     height?: number;
   }): Promise<void> => ipcRenderer.invoke('pmusic:set-titlebar-overlay', opts),
+  openExternalUrl: (url: string): Promise<void> =>
+    ipcRenderer.invoke('pmusic:open-external-url', url),
+  consumePendingAuthCallback: (): Promise<string | null> =>
+    ipcRenderer.invoke('pmusic:consume-pending-auth-callback'),
+  onAuthCallback: (cb: (url: string) => void): (() => void) => {
+    const handler = (_event: unknown, url: string) => cb(url);
+    ipcRenderer.on('pmusic:auth-callback', handler);
+    return () => {
+      ipcRenderer.removeListener('pmusic:auth-callback', handler);
+    };
+  },
   onMediaShortcut: (cb: (action: NativeMediaAction) => void): (() => void) => {
     const handler = (_event: unknown, action: NativeMediaAction) => cb(action);
     ipcRenderer.on('pmusic:media-action', handler);

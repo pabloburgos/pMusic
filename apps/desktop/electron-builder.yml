@@ -3,6 +3,10 @@ productName: pMusic
 executableName: pmusic
 electronVersion: "45.4.1"
 asar: false
+protocols:
+  - name: pMusic
+    schemes:
+      - pmusic
 directories:
   output: release
   buildResources: build

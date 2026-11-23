@@ -19,6 +19,37 @@ export interface SyncAuthState {
   userId: string | null;
   email: string | null;
   connected: boolean;
+  displayName?: string | null;
+  avatarUrl?: string | null;
+}
+
+export interface UserProfile {
+  userId: string;
+  username: string;
+  displayName: string;
+  avatarUrl?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface WrappedListenEvent {
+  id: string;
+  trackId: string;
+  title: string;
+  artist: string;
+  artistId?: string;
+  album?: string;
+  thumbnailUrl?: string;
+  genre: string;
+  durationSec: number;
+  playedSec: number;
+  completionRatio: number;
+  hourOfDay: number;
+  dayOfWeek: number;
+  deviceType: DevicePlatform;
+  sourceContext: string;
+  isRepeatLoop: boolean;
+  playedAt: string;
 }
 
 export interface SyncConfigInput {
@@ -154,9 +185,20 @@ export interface ISyncEngine {
     password: string
   ): Promise<{ userId: string; needsEmailConfirmation: boolean }>;
   signIn(email: string, password: string): Promise<{ userId: string }>;
+  signInWithGoogle?(redirectTo: string): Promise<{ url: string }>;
+  completeOAuthCallback?(callbackUrl: string): Promise<SyncAuthState>;
   signOut(): Promise<void>;
   restoreSession?(): Promise<SyncAuthState>;
   getAuthState(): SyncAuthState;
+  getProfile?(): Promise<UserProfile | null>;
+  upsertProfile?(input: {
+    username: string;
+    displayName: string;
+    avatarUrl?: string | null;
+  }): Promise<UserProfile>;
+  isUsernameAvailable?(username: string): Promise<boolean>;
+  recordListenEvent?(event: WrappedListenEvent): Promise<void>;
+  fetchYearListenEvents?(year: number): Promise<WrappedListenEvent[]>;
   persistDeviceSession?(snapshot: PlaybackTransferSnapshot): Promise<void>;
   fetchLatestDeviceSession?(): Promise<DeviceSessionRecord | null>;
   connectRealtime(): Promise<void>;

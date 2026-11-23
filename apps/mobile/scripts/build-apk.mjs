@@ -152,8 +152,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="14"
-    android:versionName="0.13.0">
+    android:versionCode="15"
+    android:versionName="0.14.0">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -178,6 +178,12 @@ writeFileSync(
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="pmusic" android:host="auth" />
             </intent-filter>
         </activity>
 
@@ -419,6 +425,7 @@ public class MainActivity extends Activity {
     }
 
     private WebView webView;
+    private String pendingAuthCallbackUrl = null;
     private int safeInsetTopDp = 0;
     private int safeInsetBottomDp = 0;
     private final Object streamCacheLock = new Object();
@@ -512,11 +519,39 @@ public class MainActivity extends Activity {
         }
 
         webView.setWebChromeClient(new WebChromeClient());
+        webView.addJavascriptInterface(new Object() {
+            @android.webkit.JavascriptInterface
+            public void openExternalUrl(final String url) {
+                if (url == null || (!url.startsWith("https://") && !url.startsWith("http://"))) return;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                            browserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                            startActivity(browserIntent);
+                        } catch (Exception ignored) {
+                        }
+                    }
+                });
+            }
+
+            @android.webkit.JavascriptInterface
+            public String consumePendingAuthCallback() {
+                String val = pendingAuthCallbackUrl;
+                pendingAuthCallbackUrl = null;
+                return val != null ? val : "";
+            }
+        }, "PMusicNative");
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
                 injectSafeAreaInsets();
+                if (pendingAuthCallbackUrl != null) {
+                    dispatchAuthCallbackToJs(pendingAuthCallbackUrl);
+                    pendingAuthCallbackUrl = null;
+                }
             }
 
             @Override
@@ -626,7 +661,39 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) {
         }
 
+        handleDeepLinkIntent(getIntent());
         webView.loadUrl("https://appassets.pmusic.local/index.html");
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleDeepLinkIntent(intent);
+    }
+
+    private void handleDeepLinkIntent(Intent intent) {
+        if (intent == null) return;
+        Uri data = intent.getData();
+        if (data != null && "pmusic".equalsIgnoreCase(data.getScheme())) {
+            String fullUrl = data.toString();
+            pendingAuthCallbackUrl = fullUrl;
+            dispatchAuthCallbackToJs(fullUrl);
+        }
+    }
+
+    private void dispatchAuthCallbackToJs(final String callbackUrl) {
+        if (webView == null || callbackUrl == null || Build.VERSION.SDK_INT < 19) return;
+        final String escaped = callbackUrl.replace("\\\\", "\\\\\\\\").replace("'", "\\\\'");
+        webView.post(new Runnable() {
+            @Override
+            public void run() {
+                if (webView == null) return;
+                String js = "(function(){if(typeof window.__pmusicHandleAuthCallback==='function'){window.__pmusicHandleAuthCallback('"
+                        + escaped + "');}})();";
+                webView.evaluateJavascript(js, null);
+            }
+        });
     }
 
     private void injectSafeAreaInsets() {

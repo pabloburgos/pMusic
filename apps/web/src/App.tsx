@@ -47,6 +47,8 @@ import { AppToast, TrackContextMenu } from './components/TrackMenu.tsx';
 import { ArtistLinks } from './components/ArtistLinks.tsx';
 import { SettingsModal } from './components/SettingsModal.tsx';
 import { TrackInfoModal } from './components/TrackInfoModal.tsx';
+import { AuthOnboardingModal } from './components/AuthOnboardingModal.tsx';
+import { WrappedStoriesModal } from './components/WrappedStoriesModal.tsx';
 import {
   clearDraggedTrack,
   readTrackFromDropEvent,
@@ -110,6 +112,9 @@ export const App: React.FC = () => {
     reducedMotionPref,
     sleepTimerMode,
     sleepTimerRemainingSec,
+    authState,
+    userProfile,
+    setAuthOnboardingOpen,
     setActiveTab,
     setSidebarCollapsed,
     setRightPanelOpen,
@@ -614,6 +619,40 @@ export const App: React.FC = () => {
                 </span>
               </button>
             )}
+
+            {authState.connected ? (
+              <button
+                type="button"
+                data-testid="desktop-profile-btn"
+                onClick={() => setSettingsOpen(true)}
+                className="pm-no-drag pm-btn-secondary pm-pressable inline-flex h-8 items-center gap-2 rounded-full pl-1.5 pr-3 text-xs font-semibold"
+                title={authState.email ?? 'Tu cuenta pMusic'}
+              >
+                {userProfile?.avatarUrl || authState.avatarUrl ? (
+                  <img
+                    src={userProfile?.avatarUrl || authState.avatarUrl || ''}
+                    alt=""
+                    className="h-5 w-5 rounded-full object-cover"
+                  />
+                ) : (
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#fa233b] text-[10px] font-black text-white">
+                    {(userProfile?.displayName || authState.email || 'P').slice(0, 1).toUpperCase()}
+                  </span>
+                )}
+                <span className="max-w-[110px] truncate">
+                  {userProfile?.username ? `@${userProfile.username}` : authState.email?.split('@')[0] ?? 'Cuenta'}
+                </span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                data-testid="desktop-signin-btn"
+                onClick={() => setAuthOnboardingOpen(true)}
+                className="pm-no-drag pm-btn-primary pm-pressable inline-flex h-8 items-center gap-1.5 rounded-full px-3.5 text-xs font-bold shadow-sm"
+              >
+                <span>Iniciar sesión</span>
+              </button>
+            )}
           </div>
         </header>
       )}
@@ -1046,6 +1085,40 @@ export const App: React.FC = () => {
               </div>
 
               <div className="flex items-center gap-2">
+                {authState.connected ? (
+                  <button
+                    type="button"
+                    data-testid="mobile-profile-btn"
+                    aria-label="Tu perfil"
+                    onClick={() => setSettingsOpen(true)}
+                    className="pm-glass-chip pm-pressable inline-flex h-9 items-center gap-1.5 rounded-full pl-1.5 pr-2.5 text-xs font-semibold pm-text-primary"
+                  >
+                    {userProfile?.avatarUrl || authState.avatarUrl ? (
+                      <img
+                        src={userProfile?.avatarUrl || authState.avatarUrl || ''}
+                        alt=""
+                        className="h-6 w-6 rounded-full object-cover"
+                      />
+                    ) : (
+                      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#fa233b] text-[10px] font-black text-white">
+                        {(userProfile?.displayName || authState.email || 'P').slice(0, 1).toUpperCase()}
+                      </span>
+                    )}
+                    <span className="max-w-[76px] truncate">
+                      {userProfile?.username ? `@${userProfile.username}` : 'Cuenta'}
+                    </span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    data-testid="mobile-signin-btn"
+                    onClick={() => setAuthOnboardingOpen(true)}
+                    className="pm-btn-primary pm-pressable inline-flex h-9 items-center rounded-full px-3 text-xs font-bold"
+                  >
+                    Entrar
+                  </button>
+                )}
+
                 <button
                   type="button"
                   data-testid="mobile-devices-btn"
@@ -2163,6 +2236,8 @@ export const App: React.FC = () => {
       <DevicesConnectSheet />
       <ImportPlaylistModal />
       <SettingsModal />
+      <AuthOnboardingModal />
+      <WrappedStoriesModal />
       <TrackInfoModal />
       <TrackContextMenu />
       <AppToast />

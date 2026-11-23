@@ -138,6 +138,14 @@ create table if not exists public.play_history (
 create index if not exists idx_play_history_user_played
   on public.play_history (user_id, played_at desc);
 
+alter table public.play_history
+  add column if not exists genre text,
+  add column if not exists artist_name text,
+  add column if not exists hour_of_day smallint check (hour_of_day between 0 and 23),
+  add column if not exists day_of_week smallint check (day_of_week between 0 and 6),
+  add column if not exists source_context text not null default 'library',
+  add column if not exists is_repeat_loop boolean not null default false;
+
 alter table public.play_history enable row level security;
 
 drop policy if exists "play_history_owner_all" on public.play_history;
@@ -220,14 +228,51 @@ create policy "device_sessions_owner_all"
   with check ((select auth.uid()) = user_id);
 
 -- -----------------------------------------------------------------------------
--- 7. Publicación en Supabase Realtime (Idempotente)
+-- 7. public.profiles (Perfiles @usuario para cuenta, Blend y Jam)
+-- -----------------------------------------------------------------------------
+create table if not exists public.profiles (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  username text not null unique check (username ~ '^[a-z0-9._]{3,24}$'),
+  display_name text not null check (char_length(trim(display_name)) between 1 and 60),
+  avatar_url text,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+create index if not exists idx_profiles_username_lower
+  on public.profiles (lower(username));
+
+drop trigger if exists trg_profiles_updated_at on public.profiles;
+create trigger trg_profiles_updated_at
+  before update on public.profiles
+  for each row execute function public.pmusic_set_updated_at();
+
+alter table public.profiles enable row level security;
+
+drop policy if exists "profiles_select_authenticated" on public.profiles;
+create policy "profiles_select_authenticated"
+  on public.profiles
+  for select
+  to authenticated
+  using (true);
+
+drop policy if exists "profiles_owner_write" on public.profiles;
+create policy "profiles_owner_write"
+  on public.profiles
+  for all
+  to authenticated
+  using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id);
+
+-- -----------------------------------------------------------------------------
+-- 8. Publicación en Supabase Realtime (Idempotente)
 -- -----------------------------------------------------------------------------
 do $$
 declare
   tbl text;
 begin
   if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
-    foreach tbl in array array['playlists', 'playlist_tracks', 'liked_tracks', 'artist_affinity', 'device_sessions']
+    foreach tbl in array array['playlists', 'playlist_tracks', 'liked_tracks', 'artist_affinity', 'device_sessions', 'profiles']
     loop
       if not exists (
         select 1
@@ -244,10 +289,11 @@ end;
 $$;
 
 -- -----------------------------------------------------------------------------
--- 8. Permisos explícitos para roles authenticated y service_role (Idempotente)
+-- 9. Permisos explícitos para roles authenticated y service_role (Idempotente)
 -- -----------------------------------------------------------------------------
 grant usage on schema public to anon, authenticated, service_role;
 grant all on table
+  public.profiles,
   public.playlists,
   public.playlist_tracks,
   public.liked_tracks,

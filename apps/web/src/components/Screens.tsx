@@ -19,6 +19,7 @@ import {
   RefreshCw,
   Search,
   Share2,
+  Sparkles,
   Trash2,
   X,
 } from 'lucide-react';
@@ -1223,6 +1224,8 @@ export const HomeScreen: React.FC = () => {
     isPlaying,
     homeShelves,
     isOfflineNetwork,
+    wrappedSeasonActive,
+    openWrappedModal,
     playTrack,
     toggleDjMode,
     openAlbumDetail,
@@ -1274,6 +1277,30 @@ export const HomeScreen: React.FC = () => {
           <span className="hidden sm:inline">Reiniciar inicio</span>
         </button>
       </div>
+
+      {wrappedSeasonActive && (
+        <button
+          type="button"
+          onClick={() => void openWrappedModal()}
+          className="pm-pressable relative flex w-full items-center justify-between gap-4 overflow-hidden rounded-3xl border border-[#fa233b]/35 bg-gradient-to-r from-[#2e0c29] via-[#5c1031] to-[#1a1033] p-5 text-left shadow-xl"
+        >
+          <div className="space-y-1">
+            <span className="inline-flex items-center gap-1 rounded-full bg-[#fa233b]/25 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-[#ff7a8a]">
+              <Sparkles className="h-3 w-3" />
+              Ya disponible
+            </span>
+            <h2 className="text-xl font-black text-white sm:text-2xl">
+              Tu pMusic Wrapped {new Date().getFullYear()}
+            </h2>
+            <p className="text-xs text-white/75 sm:text-sm">
+              Descubre tus minutos, géneros, artistas y canciones #1 en tarjetas 9:16.
+            </p>
+          </div>
+          <span className="shrink-0 rounded-full bg-white px-4 py-2 text-xs font-extrabold text-zinc-900 shadow-md">
+            Ver ahora
+          </span>
+        </button>
+      )}
 
       {/* Filter Pills */}
       <div

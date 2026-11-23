@@ -42,7 +42,17 @@ import {
   type UserEqBandsDb,
   type UserEqConfig,
   type UserEqPresetId,
+  type UserProfile,
 } from '@pmusic/core';
+import {
+  appendLocalWrappedEvent,
+  buildWrappedListenEvent,
+  computeWrappedSummary,
+  isWrappedSeason,
+  loadLocalWrappedEvents,
+  mergeWrappedEvents,
+  type WrappedSummary,
+} from '../lib/wrapped-stats.ts';
 import {
   FALLBACK_ALBUMS,
   FALLBACK_ARTISTS,
@@ -267,6 +277,46 @@ function isLegacyOutdatedTrack(track: Track | undefined | null): boolean {
   if (fallback && fallback.title !== track.title) return true;
   return false;
 }
+let lastWrappedTrackId = '';
+let lastWrappedRecordedAtMs = 0;
+
+function detectDevicePlatform(): 'windows' | 'android' | 'web' {
+  if (typeof window === 'undefined') return 'web';
+  if (window.location?.hostname === 'appassets.pmusic.local') return 'android';
+  if ((window as any).pmusicDesktop?.runtime === 'electron') return 'windows';
+  if (typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent)) return 'android';
+  return 'web';
+}
+
+function recordWrappedListenIfEligible(
+  track: Track | null | undefined,
+  playedSec: number,
+  sourceContext = 'library',
+  isRepeatLoop = false
+): void {
+  if (!track || !track.id) return;
+  const dur = Math.max(1, track.durationSec || 180);
+  const minThreshold = dur < 60 ? dur * 0.5 : 30;
+  if (playedSec < minThreshold) return;
+  const nowMs = Date.now();
+  if (track.id === lastWrappedTrackId && nowMs - lastWrappedRecordedAtMs < 20_000 && !isRepeatLoop) {
+    return;
+  }
+  lastWrappedTrackId = track.id;
+  lastWrappedRecordedAtMs = nowMs;
+
+  const event = buildWrappedListenEvent({
+    track,
+    playedSec,
+    deviceType: detectDevicePlatform(),
+    sourceContext,
+    isRepeatLoop,
+  });
+  const nextList = appendLocalWrappedEvent(event);
+  usePMusicStore.setState({ wrappedLocalCount: nextList.length });
+  void syncEngine.recordListenEvent?.(event);
+}
+
 let sleepTimerInterval: ReturnType<typeof setInterval> | null = null;
 let seekAutoTriggerTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -445,6 +495,15 @@ export interface PMusicStoreState {
     volume: number;
   } | null;
 
+  // Onboarding, Profile & Wrapped
+  authOnboardingOpen: boolean;
+  needsProfileSetup: boolean;
+  userProfile: UserProfile | null;
+  wrappedModalOpen: boolean;
+  wrappedSummary: WrappedSummary | null;
+  wrappedSeasonActive: boolean;
+  wrappedLocalCount: number;
+
   // Actions
   initApp: () => Promise<void>;
   setActiveTab: (tab: MainNavTab) => void;
@@ -559,7 +618,19 @@ export interface PMusicStoreState {
     email: string,
     password: string
   ) => Promise<{ userId: string; needsEmailConfirmation: boolean }>;
+  signInWithGoogle: () => Promise<void>;
+  handleAuthCallbackUrl: (callbackUrl: string) => Promise<void>;
   signOutSupabase: () => Promise<void>;
+  setAuthOnboardingOpen: (open: boolean) => void;
+  continueAsGuest: () => void;
+  saveUserProfile: (input: {
+    username: string;
+    displayName: string;
+    avatarUrl?: string | null;
+  }) => Promise<void>;
+  checkUsernameAvailable: (username: string) => Promise<boolean>;
+  openWrappedModal: (year?: number) => Promise<void>;
+  closeWrappedModal: () => void;
   pairDemoCompanionDevice: () => void;
   sendRemoteDeviceCommand: (
     targetDeviceId: string,
@@ -888,6 +959,12 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         return;
       }
       if (st.isTransitioning || djAutoTransitionInFlight) return;
+      recordWrappedListenIfEligible(
+        st.currentTrack,
+        Math.max(st.positionSec, st.durationSec || st.currentTrack.durationSec || 0),
+        st.activeTab.toLowerCase(),
+        st.repeatMode === 'one'
+      );
       void recommendationEngine.recordSignal(st.currentTrack, 'complete_listen', {
         completionRatio: 1.0,
       });
@@ -1660,6 +1737,14 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   remoteControlledDeviceId: null,
   remoteDeviceSnapshot: null,
 
+  authOnboardingOpen: false,
+  needsProfileSetup: false,
+  userProfile: null,
+  wrappedModalOpen: false,
+  wrappedSummary: null,
+  wrappedSeasonActive: isWrappedSeason(),
+  wrappedLocalCount: loadLocalWrappedEvents().length,
+
   initApp: async () => {
     ensureAudioEngineBindings();
     if (initialized) return;
@@ -1959,6 +2044,70 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     if (get().djMode.enabled) {
       void recomputeActiveDjPlan();
     }
+
+    // Wire native & web OAuth deep-link callbacks (Google Sign-In)
+    if (typeof window !== 'undefined') {
+      (window as any).__pmusicHandleAuthCallback = (cbUrl: string) => {
+        if (cbUrl) void get().handleAuthCallbackUrl(cbUrl);
+      };
+      const desktopBridge = (window as any).pmusicDesktop;
+      if (desktopBridge?.onAuthCallback) {
+        desktopBridge.onAuthCallback((cbUrl: string) => {
+          if (cbUrl) void get().handleAuthCallbackUrl(cbUrl);
+        });
+      }
+      if (desktopBridge?.consumePendingAuthCallback) {
+        void desktopBridge.consumePendingAuthCallback().then((pending: string | null) => {
+          if (pending) void get().handleAuthCallbackUrl(pending);
+        });
+      }
+      const androidNative = (window as any).PMusicNative;
+      if (androidNative?.consumePendingAuthCallback) {
+        try {
+          const pending = androidNative.consumePendingAuthCallback();
+          if (pending) void get().handleAuthCallbackUrl(pending);
+        } catch {
+          // ignore
+        }
+      }
+      const href = window.location?.href ?? '';
+      if (href.includes('code=') || href.includes('access_token=')) {
+        void get().handleAuthCallbackUrl(href);
+      }
+    }
+
+    // Restore Supabase session & show first-launch onboarding if guest
+    try {
+      const restored = await syncEngine.restoreSession?.();
+      if (restored?.connected) {
+        const profile = (await syncEngine.getProfile?.()) ?? null;
+        set({
+          authState: restored,
+          userProfile: profile,
+          needsProfileSetup: !profile,
+          onlineDevices: syncEngine.getOnlineDevices(),
+          likedTracks: libraryStore.getLikedTracks(),
+          playlists: libraryStore.getPlaylists(),
+        });
+      } else {
+        const isTestEnv =
+          Boolean((import.meta as any).vitest) ||
+          (import.meta as any).env?.MODE === 'test';
+        let dismissed = false;
+        try {
+          dismissed =
+            typeof localStorage !== 'undefined' &&
+            localStorage.getItem('pmusic.onboarding.dismissed') === '1';
+        } catch {
+          dismissed = false;
+        }
+        if (!isTestEnv && !dismissed) {
+          set({ authOnboardingOpen: true });
+        }
+      }
+    } catch {
+      // ignore offline session restore errors
+    }
   },
 
   setActiveTab: (tab) => {
@@ -2085,6 +2234,14 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   playTrack: async (track, newQueue, startSec, direction = 'next') => {
     ensureAudioEngineBindings();
     const st = get();
+    if (st.currentTrack && st.currentTrack.id !== track.id && st.positionSec >= 30) {
+      recordWrappedListenIfEligible(
+        st.currentTrack,
+        st.positionSec,
+        st.activeTab.toLowerCase(),
+        false
+      );
+    }
     const queue = newQueue && newQueue.length > 0 ? [...newQueue] : st.queue;
     let idx = queue.findIndex((t) => t.id === track.id);
     if (idx === -1) {
@@ -3648,8 +3805,19 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   signInSupabase: async (email, password) => {
     await syncEngine.signIn(email, password);
+    const profile = (await syncEngine.getProfile?.()) ?? null;
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('pmusic.onboarding.dismissed', '1');
+      }
+    } catch {
+      // ignore
+    }
     set({
       authState: syncEngine.getAuthState(),
+      userProfile: profile,
+      authOnboardingOpen: false,
+      needsProfileSetup: !profile,
       onlineDevices: syncEngine.getOnlineDevices(),
       likedTracks: libraryStore.getLikedTracks(),
       playlists: libraryStore.getPlaylists(),
@@ -3662,22 +3830,150 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   signUpSupabase: async (email, password) => {
     const res = await syncEngine.signUp(email, password);
+    const auth = syncEngine.getAuthState();
+    const profile = auth.connected ? ((await syncEngine.getProfile?.()) ?? null) : null;
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('pmusic.onboarding.dismissed', '1');
+      }
+    } catch {
+      // ignore
+    }
     set({
-      authState: syncEngine.getAuthState(),
+      authState: auth,
+      userProfile: profile,
+      authOnboardingOpen: false,
+      needsProfileSetup: auth.connected && !profile,
       onlineDevices: syncEngine.getOnlineDevices(),
     });
     return res;
+  },
+
+  signInWithGoogle: async () => {
+    const isNativeApp =
+      (typeof window !== 'undefined' &&
+        (window.location?.hostname === 'appassets.pmusic.local' ||
+          (window as any).pmusicDesktop?.runtime === 'electron')) ||
+      false;
+    const redirectTo = isNativeApp
+      ? 'pmusic://auth/callback'
+      : typeof window !== 'undefined'
+        ? `${window.location.origin}${window.location.pathname}`
+        : 'pmusic://auth/callback';
+
+    const res = await syncEngine.signInWithGoogle?.(redirectTo);
+    if (!res?.url) {
+      throw new Error('No se pudo obtener la URL de acceso con Google.');
+    }
+    if (typeof window !== 'undefined') {
+      const desktopBridge = (window as any).pmusicDesktop;
+      const androidNative = (window as any).PMusicNative;
+      if (desktopBridge?.openExternalUrl) {
+        await desktopBridge.openExternalUrl(res.url);
+        get().showToast('Completa el inicio con Google en tu navegador...');
+        return;
+      }
+      if (androidNative?.openExternalUrl) {
+        androidNative.openExternalUrl(res.url);
+        get().showToast('Completa el inicio con Google en Chrome...');
+        return;
+      }
+      window.location.href = res.url;
+    }
+  },
+
+  handleAuthCallbackUrl: async (callbackUrl) => {
+    try {
+      const auth = await syncEngine.completeOAuthCallback?.(callbackUrl);
+      if (auth?.connected) {
+        const profile = (await syncEngine.getProfile?.()) ?? null;
+        try {
+          if (typeof localStorage !== 'undefined') {
+            localStorage.setItem('pmusic.onboarding.dismissed', '1');
+          }
+        } catch {
+          // ignore
+        }
+        set({
+          authState: auth,
+          userProfile: profile,
+          authOnboardingOpen: false,
+          needsProfileSetup: !profile,
+          onlineDevices: syncEngine.getOnlineDevices(),
+          likedTracks: libraryStore.getLikedTracks(),
+          playlists: libraryStore.getPlaylists(),
+        });
+        get().showToast(
+          profile
+            ? `Sesión iniciada como @${profile.username}`
+            : 'Sesión iniciada con Google'
+        );
+        void syncEngine.sendRemoteCommand({
+          targetDeviceId: '*',
+          type: 'request_state',
+        });
+      }
+    } catch (err) {
+      get().showToast(
+        err instanceof Error ? err.message : 'No se pudo completar el inicio con Google'
+      );
+    }
   },
 
   signOutSupabase: async () => {
     await syncEngine.signOut();
     set({
       authState: syncEngine.getAuthState(),
+      userProfile: null,
+      needsProfileSetup: false,
       onlineDevices: syncEngine.getOnlineDevices(),
       remoteControlledDeviceId: null,
       remoteDeviceSnapshot: null,
     });
   },
+
+  setAuthOnboardingOpen: (open) => set({ authOnboardingOpen: open }),
+
+  continueAsGuest: () => {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('pmusic.onboarding.dismissed', '1');
+      }
+    } catch {
+      // ignore
+    }
+    set({ authOnboardingOpen: false });
+  },
+
+  saveUserProfile: async (input) => {
+    const profile = await syncEngine.upsertProfile?.(input);
+    if (profile) {
+      set({
+        userProfile: profile,
+        needsProfileSetup: false,
+        authOnboardingOpen: false,
+      });
+      get().showToast(`¡Bienvenido, @${profile.username}!`);
+    }
+  },
+
+  checkUsernameAvailable: async (username) => {
+    return (await syncEngine.isUsernameAvailable?.(username)) ?? true;
+  },
+
+  openWrappedModal: async (year) => {
+    const targetYear = year ?? new Date().getFullYear();
+    const localEvents = loadLocalWrappedEvents();
+    const remoteEvents = (await syncEngine.fetchYearListenEvents?.(targetYear)) ?? [];
+    const merged = mergeWrappedEvents(localEvents, remoteEvents);
+    const summary = computeWrappedSummary(merged, targetYear);
+    set({
+      wrappedSummary: summary,
+      wrappedModalOpen: true,
+    });
+  },
+
+  closeWrappedModal: () => set({ wrappedModalOpen: false }),
 
   pairDemoCompanionDevice: () => {
     syncEngine.upsertPeerDevice({

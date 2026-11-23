@@ -121,11 +121,15 @@ export const SettingsModal: React.FC = () => {
     sleepTimerMode,
     sleepTimerRemainingSec,
     authState,
+    userProfile,
+    wrappedLocalCount,
     onlineDevices,
     deviceName,
     offlineEntries,
     setDevicesSheetOpen,
     setDeviceName,
+    signInWithGoogle,
+    openWrappedModal,
     setTheme,
     setPlayerBarStyle,
     setAccentPreset,
@@ -1483,6 +1487,32 @@ export const SettingsModal: React.FC = () => {
                       </div>
                     ) : (
                       <div className="space-y-3">
+                        <button
+                          type="button"
+                          disabled={authBusy}
+                          onClick={async () => {
+                            setAuthNotice(null);
+                            setAuthBusy(true);
+                            try {
+                              await signInWithGoogle();
+                              setAuthNotice({
+                                kind: 'ok',
+                                text: 'Se abrió Google en tu navegador. Al terminar volverás a pMusic automáticamente.',
+                              });
+                            } catch (err) {
+                              setAuthNotice({
+                                kind: 'err',
+                                text: err instanceof Error ? err.message : 'No se pudo iniciar con Google',
+                              });
+                            } finally {
+                              setAuthBusy(false);
+                            }
+                          }}
+                          className="flex w-full items-center justify-center gap-2.5 rounded-full bg-white px-4 py-2.5 text-xs font-bold text-zinc-900 shadow-sm transition hover:bg-zinc-100 disabled:opacity-60"
+                        >
+                          <span>Continuar con Google</span>
+                        </button>
+
                         <div className="inline-flex rounded-full bg-black/15 p-1 text-xs font-bold">
                           <button
                             type="button"
@@ -1581,6 +1611,21 @@ export const SettingsModal: React.FC = () => {
                         {authNotice.text}
                       </p>
                     )}
+
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t pm-border pt-3">
+                      <div className="text-[11px] pm-text-secondary">
+                        <strong className="pm-text-primary">pMusic Wrapped {new Date().getFullYear()}</strong>
+                        {userProfile?.username ? ` · @${userProfile.username}` : ''} ·{' '}
+                        {wrappedLocalCount} escuchas guardadas en segundo plano (se desbloquea en diciembre)
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void openWrappedModal()}
+                        className="pm-btn-secondary rounded-full px-3 py-1.5 text-[11px] font-semibold"
+                      >
+                        Vista previa Wrapped
+                      </button>
+                    </div>
                   </div>
                 </section>
 

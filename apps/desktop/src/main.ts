@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu } from 'electron';
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, shell } from 'electron';
 import { createPMusicApiHandler } from '@pmusic/providers';
 import type {
   DiscordPresenceState,
@@ -14,6 +14,39 @@ let mainWindow: BrowserWindow | null = null;
 let loopbackServer: Server | null = null;
 let loopbackPort = 0;
 const loopbackAuthToken = randomBytes(24).toString('hex');
+let pendingAuthCallbackUrl: string | null = null;
+
+function dispatchAuthCallbackUrl(url: string): void {
+  if (!url || !url.toLowerCase().startsWith('pmusic://')) return;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+    mainWindow.webContents.send('pmusic:auth-callback', url);
+    pendingAuthCallbackUrl = null;
+  } else {
+    pendingAuthCallbackUrl = url;
+  }
+}
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', (_event, argv) => {
+    const deepLink = argv.find((arg) => typeof arg === 'string' && arg.toLowerCase().startsWith('pmusic://'));
+    if (deepLink) {
+      dispatchAuthCallbackUrl(deepLink);
+    } else if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  dispatchAuthCallbackUrl(url);
+});
 
 class DiscordRpcManager {
   private client: any = null;
@@ -392,8 +425,39 @@ ipcMain.handle(
   }
 );
 
+ipcMain.handle('pmusic:open-external-url', async (_event, url: string) => {
+  if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+    await shell.openExternal(url);
+  }
+});
+ipcMain.handle('pmusic:consume-pending-auth-callback', () => {
+  const url = pendingAuthCallbackUrl;
+  pendingAuthCallbackUrl = null;
+  return url;
+});
+
 void app.whenReady().then(async () => {
+  try {
+    if (process.defaultApp && process.argv.length >= 2 && process.argv[1]) {
+      app.setAsDefaultProtocolClient('pmusic', process.execPath, [process.argv[1]]);
+    } else {
+      app.setAsDefaultProtocolClient('pmusic');
+    }
+  } catch {
+    // Ignore protocol registration errors
+  }
+
+  const initialDeepLink = process.argv.find(
+    (arg) => typeof arg === 'string' && arg.toLowerCase().startsWith('pmusic://')
+  );
+  if (initialDeepLink) {
+    pendingAuthCallbackUrl = initialDeepLink;
+  }
+
   await createMainWindow();
+  if (pendingAuthCallbackUrl) {
+    dispatchAuthCallbackUrl(pendingAuthCallbackUrl);
+  }
   discordRpc.start();
 
   try {

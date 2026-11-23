@@ -14,6 +14,8 @@ import type {
   SyncTableName,
   Track,
   Unsubscribe,
+  UserProfile,
+  WrappedListenEvent,
 } from '@pmusic/core';
 import {
   LibraryStore,
@@ -219,6 +221,29 @@ export class SyncEngine implements ISyncEngine {
     return msg || fallback;
   }
 
+  private extractAuthMeta(user: {
+    id: string;
+    email?: string | null;
+    user_metadata?: Record<string, unknown>;
+  }): SyncAuthState {
+    const meta = user.user_metadata ?? {};
+    const displayName =
+      (typeof meta.full_name === 'string' && meta.full_name.trim()) ||
+      (typeof meta.name === 'string' && meta.name.trim()) ||
+      null;
+    const avatarUrl =
+      (typeof meta.avatar_url === 'string' && meta.avatar_url.trim()) ||
+      (typeof meta.picture === 'string' && meta.picture.trim()) ||
+      null;
+    return {
+      userId: user.id,
+      email: user.email ?? null,
+      connected: true,
+      displayName,
+      avatarUrl,
+    };
+  }
+
   public async restoreSession(): Promise<SyncAuthState> {
     try {
       const savedName = await this.preferencesStorage.getItem('pmusic.sync.deviceName');
@@ -242,28 +267,26 @@ export class SyncEngine implements ISyncEngine {
       const { data } = await this.supabaseBackend.client.auth.getSession();
       const session = data?.session;
       if (session?.user) {
-        this.updateAuthState({
-          userId: session.user.id,
-          email: session.user.email ?? null,
-          connected: true,
-        });
+        this.updateAuthState(this.extractAuthMeta(session.user));
         await this.connectRealtime();
         void this.syncNow();
       }
       this.supabaseBackend.client.auth.onAuthStateChange((_event, nextSession) => {
         if (nextSession?.user) {
           const changed = this.authState.userId !== nextSession.user.id || !this.authState.connected;
-          this.updateAuthState({
-            userId: nextSession.user.id,
-            email: nextSession.user.email ?? null,
-            connected: true,
-          });
+          this.updateAuthState(this.extractAuthMeta(nextSession.user));
           if (changed) {
             void this.connectRealtime();
             void this.syncNow();
           }
         } else if (this.authState.connected) {
-          this.updateAuthState({ userId: null, email: null, connected: false });
+          this.updateAuthState({
+            userId: null,
+            email: null,
+            connected: false,
+            displayName: null,
+            avatarUrl: null,
+          });
           void this.disconnectRealtime();
         }
       });
@@ -344,6 +367,295 @@ export class SyncEngine implements ISyncEngine {
     await this.connectRealtime();
     await this.syncNow();
     return { userId: data.user.id };
+  }
+
+  public async signInWithGoogle(redirectTo: string): Promise<{ url: string }> {
+    if (!this.supabaseBackend) {
+      throw new Error('Supabase no está configurado en esta instancia.');
+    }
+    const { data, error } = await this.supabaseBackend.client.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo,
+        skipBrowserRedirect: true,
+        queryParams: {
+          access_type: 'offline',
+          prompt: 'select_account',
+        },
+      },
+    });
+    if (error || !data?.url) {
+      throw new Error(
+        this.formatAuthError(
+          error?.message,
+          'No se pudo iniciar el acceso con Google. Activa Google en Supabase → Authentication → Providers.'
+        )
+      );
+    }
+    return { url: data.url };
+  }
+
+  public async completeOAuthCallback(callbackUrl: string): Promise<SyncAuthState> {
+    if (!this.supabaseBackend) {
+      return this.getAuthState();
+    }
+    try {
+      const parsed = new URL(callbackUrl);
+      const code = parsed.searchParams.get('code');
+      const errorDesc =
+        parsed.searchParams.get('error_description') ||
+        parsed.searchParams.get('error');
+      if (errorDesc) {
+        throw new Error(decodeURIComponent(errorDesc));
+      }
+
+      if (code) {
+        const { data, error } =
+          await this.supabaseBackend.client.auth.exchangeCodeForSession(code);
+        if (error) {
+          throw new Error(this.formatAuthError(error.message, 'Error completando acceso con Google'));
+        }
+        if (data.session?.user) {
+          this.updateAuthState(this.extractAuthMeta(data.session.user));
+          await this.connectRealtime();
+          void this.syncNow();
+          return this.getAuthState();
+        }
+      }
+
+      const hashRaw = parsed.hash.startsWith('#') ? parsed.hash.slice(1) : parsed.hash;
+      const hashParams = new URLSearchParams(hashRaw);
+      const accessToken = hashParams.get('access_token');
+      const refreshToken = hashParams.get('refresh_token');
+      if (accessToken && refreshToken) {
+        const { data, error } = await this.supabaseBackend.client.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        });
+        if (error) {
+          throw new Error(this.formatAuthError(error.message, 'Error guardando sesión de Google'));
+        }
+        if (data.session?.user) {
+          this.updateAuthState(this.extractAuthMeta(data.session.user));
+          await this.connectRealtime();
+          void this.syncNow();
+          return this.getAuthState();
+        }
+      }
+    } catch (err) {
+      throw err instanceof Error ? err : new Error('No se pudo completar el inicio con Google');
+    }
+    return this.getAuthState();
+  }
+
+  public async getProfile(): Promise<UserProfile | null> {
+    if (!this.authState.userId) return null;
+    if (!this.supabaseBackend || !this.authState.connected) {
+      try {
+        const cached = await this.preferencesStorage.getItem(
+          `pmusic.profile.${this.authState.userId}`
+        );
+        return cached ? (JSON.parse(cached) as UserProfile) : null;
+      } catch {
+        return null;
+      }
+    }
+
+    try {
+      const { data, error } = await this.supabaseBackend.client
+        .from('profiles')
+        .select('user_id,username,display_name,avatar_url,created_at,updated_at')
+        .eq('user_id', this.authState.userId)
+        .maybeSingle();
+      if (error || !data) {
+        const cached = await this.preferencesStorage.getItem(
+          `pmusic.profile.${this.authState.userId}`
+        );
+        return cached ? (JSON.parse(cached) as UserProfile) : null;
+      }
+      const profile: UserProfile = {
+        userId: String(data.user_id),
+        username: String(data.username),
+        displayName: String(data.display_name),
+        avatarUrl: (data.avatar_url as string | null) ?? this.authState.avatarUrl ?? null,
+        createdAt: data.created_at ? String(data.created_at) : undefined,
+        updatedAt: data.updated_at ? String(data.updated_at) : undefined,
+      };
+      await this.preferencesStorage.setItem(
+        `pmusic.profile.${this.authState.userId}`,
+        JSON.stringify(profile)
+      );
+      return profile;
+    } catch {
+      return null;
+    }
+  }
+
+  public async isUsernameAvailable(username: string): Promise<boolean> {
+    const clean = username.trim().toLowerCase().replace(/^@+/, '');
+    if (!/^[a-z0-9._]{3,24}$/.test(clean)) return false;
+    if (!this.supabaseBackend || !this.authState.connected) return true;
+    try {
+      const { data, error } = await this.supabaseBackend.client
+        .from('profiles')
+        .select('user_id')
+        .eq('username', clean)
+        .maybeSingle();
+      if (error) return true;
+      if (!data) return true;
+      return data.user_id === this.authState.userId;
+    } catch {
+      return true;
+    }
+  }
+
+  public async upsertProfile(input: {
+    username: string;
+    displayName: string;
+    avatarUrl?: string | null;
+  }): Promise<UserProfile> {
+    const userId = this.authState.userId;
+    if (!userId) {
+      throw new Error('Inicia sesión para guardar tu perfil.');
+    }
+    const cleanUsername = input.username.trim().toLowerCase().replace(/^@+/, '');
+    if (!/^[a-z0-9._]{3,24}$/.test(cleanUsername)) {
+      throw new Error('El @usuario debe tener entre 3 y 24 caracteres (letras, números, . o _).');
+    }
+    const cleanDisplayName = input.displayName.trim().slice(0, 60);
+    if (!cleanDisplayName) {
+      throw new Error('Introduce un nombre visible.');
+    }
+    const avatarUrl = input.avatarUrl ?? this.authState.avatarUrl ?? null;
+
+    const profile: UserProfile = {
+      userId,
+      username: cleanUsername,
+      displayName: cleanDisplayName,
+      avatarUrl,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (this.supabaseBackend && this.authState.connected) {
+      const { error } = await this.supabaseBackend.client.from('profiles').upsert(
+        {
+          user_id: userId,
+          username: cleanUsername,
+          display_name: cleanDisplayName,
+          avatar_url: avatarUrl,
+        },
+        { onConflict: 'user_id' }
+      );
+      if (error) {
+        if (error.code === '23505' || error.message.toLowerCase().includes('unique')) {
+          throw new Error(`@${cleanUsername} ya está en uso. Prueba otro.`);
+        }
+        // If profiles table wasn't created yet on Supabase, still persist locally so user isn't blocked
+        if (!error.message.toLowerCase().includes('does not exist') && error.code !== '42P01') {
+          throw new Error(error.message || 'No se pudo guardar el perfil en Supabase.');
+        }
+      }
+    }
+
+    await this.preferencesStorage.setItem(
+      `pmusic.profile.${userId}`,
+      JSON.stringify(profile)
+    );
+    return profile;
+  }
+
+  public async recordListenEvent(event: WrappedListenEvent): Promise<void> {
+    if (!this.supabaseBackend || !this.authState.connected || !this.authState.userId) {
+      return;
+    }
+    try {
+      await this.supabaseBackend.client.from('play_history').insert({
+        user_id: this.authState.userId,
+        track_id: event.trackId,
+        track_data: {
+          id: event.trackId,
+          title: event.title,
+          artist: event.artist,
+          artistId: event.artistId,
+          album: event.album ? { name: event.album } : undefined,
+          thumbnailUrl: event.thumbnailUrl,
+          duration: event.durationSec,
+          genre: event.genre,
+        },
+        played_sec: Math.max(0, Math.round(event.playedSec * 100) / 100),
+        completion_ratio: Math.min(1.5, Math.max(0, Number(event.completionRatio.toFixed(3)))),
+        signal_type: event.isRepeatLoop
+          ? 'repeat_loop'
+          : event.completionRatio >= 0.85
+            ? 'complete_listen'
+            : 'play',
+        device_id: this.deviceId,
+        genre: event.genre || 'Sin género',
+        artist_name: event.artist,
+        hour_of_day: Math.min(23, Math.max(0, Math.floor(event.hourOfDay))),
+        day_of_week: Math.min(6, Math.max(0, Math.floor(event.dayOfWeek))),
+        source_context: event.sourceContext || 'library',
+        is_repeat_loop: Boolean(event.isRepeatLoop),
+        played_at: event.playedAt,
+      });
+    } catch {
+      // Non-fatal; local wrapped store keeps the full log even offline
+    }
+  }
+
+  public async fetchYearListenEvents(year: number): Promise<WrappedListenEvent[]> {
+    if (!this.supabaseBackend || !this.authState.connected || !this.authState.userId) {
+      return [];
+    }
+    try {
+      const startIso = `${year}-01-01T00:00:00.000Z`;
+      const endIso = `${year + 1}-01-01T00:00:00.000Z`;
+      const { data, error } = await this.supabaseBackend.client
+        .from('play_history')
+        .select(
+          'id,track_id,track_data,played_sec,completion_ratio,signal_type,genre,artist_name,hour_of_day,day_of_week,source_context,is_repeat_loop,played_at'
+        )
+        .eq('user_id', this.authState.userId)
+        .gte('played_at', startIso)
+        .lt('played_at', endIso)
+        .order('played_at', { ascending: false })
+        .limit(5000);
+      if (error || !Array.isArray(data)) return [];
+
+      return data
+        .filter((row) => Number(row.played_sec ?? 0) >= 20)
+        .map((row) => {
+          const td = (row.track_data ?? {}) as Record<string, any>;
+          const playedDate = new Date(String(row.played_at ?? new Date().toISOString()));
+          return {
+            id: String(row.id),
+            trackId: String(row.track_id),
+            title: String(td.title ?? 'Desconocido'),
+            artist: String(row.artist_name ?? td.artist ?? 'Artista'),
+            artistId: typeof td.artistId === 'string' ? td.artistId : undefined,
+            album: typeof td.album?.name === 'string' ? td.album.name : undefined,
+            thumbnailUrl: typeof td.thumbnailUrl === 'string' ? td.thumbnailUrl : undefined,
+            genre: String(row.genre ?? td.genre ?? 'Pop / Urbano'),
+            durationSec: Number(td.duration ?? 180),
+            playedSec: Number(row.played_sec ?? 0),
+            completionRatio: Number(row.completion_ratio ?? 0),
+            hourOfDay:
+              typeof row.hour_of_day === 'number'
+                ? row.hour_of_day
+                : playedDate.getHours(),
+            dayOfWeek:
+              typeof row.day_of_week === 'number'
+                ? row.day_of_week
+                : playedDate.getDay(),
+            deviceType: 'web',
+            sourceContext: String(row.source_context ?? 'library'),
+            isRepeatLoop: Boolean(row.is_repeat_loop || row.signal_type === 'repeat_loop'),
+            playedAt: String(row.played_at ?? playedDate.toISOString()),
+          };
+        });
+    } catch {
+      return [];
+    }
   }
 
   public async signOut(): Promise<void> {
@@ -834,6 +1146,74 @@ export class SyncEngine implements ISyncEngine {
       }
     } catch {
       // Non-fatal if table grants or network are offline
+    }
+
+    // 3. Push & pull playlists (auto-merge local playlists on sign-in)
+    try {
+      const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const localPlaylists = this.libraryStore.getPlaylists();
+      for (const pl of localPlaylists.slice(0, 40)) {
+        if (!uuidRe.test(pl.id)) continue;
+        await this.supabaseBackend.client.from('playlists').upsert(
+          {
+            id: pl.id,
+            user_id: userId,
+            name: pl.name.slice(0, 140),
+            description: (pl.description ?? '').slice(0, 500),
+            cover_url: pl.coverUrl ?? null,
+            source: pl.source ?? 'local',
+            source_url: pl.sourceUrl ?? null,
+          },
+          { onConflict: 'id' }
+        );
+        if (pl.tracks.length > 0) {
+          const trackRows = pl.tracks.slice(0, 200).map((t, idx) => ({
+            playlist_id: pl.id,
+            user_id: userId,
+            track_id: t.id,
+            position: idx,
+            track_data: t,
+          }));
+          await this.supabaseBackend.client
+            .from('playlist_tracks')
+            .upsert(trackRows, { onConflict: 'playlist_id,track_id' });
+        }
+      }
+
+      const { data: remotePlaylists } = await this.supabaseBackend.client
+        .from('playlists')
+        .select('id,name,description,cover_url,source,source_url')
+        .eq('user_id', userId)
+        .order('updated_at', { ascending: false })
+        .limit(40);
+      if (Array.isArray(remotePlaylists) && remotePlaylists.length > 0) {
+        const localIds = new Set(localPlaylists.map((p) => p.id));
+        const localNames = new Set(localPlaylists.map((p) => p.name.trim().toLowerCase()));
+        for (const rpl of remotePlaylists) {
+          if (localIds.has(rpl.id) || localNames.has(String(rpl.name ?? '').trim().toLowerCase())) {
+            continue;
+          }
+          const { data: rTracks } = await this.supabaseBackend.client
+            .from('playlist_tracks')
+            .select('track_data,position')
+            .eq('playlist_id', rpl.id)
+            .order('position', { ascending: true })
+            .limit(200);
+          const tracks = Array.isArray(rTracks)
+            ? rTracks.map((rt) => rt.track_data as Track).filter(Boolean)
+            : [];
+          await this.libraryStore.createPlaylist({
+            name: String(rpl.name ?? 'Playlist'),
+            description: String(rpl.description ?? ''),
+            coverUrl: (rpl.cover_url as string | null) ?? undefined,
+            source: (rpl.source as any) ?? 'local',
+            sourceUrl: (rpl.source_url as string | null) ?? undefined,
+            tracks,
+          });
+        }
+      }
+    } catch {
+      // Non-fatal if offline or schema grants pending
     }
 
     const processedIds: string[] = [];
