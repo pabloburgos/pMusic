@@ -49,6 +49,7 @@ nsis:
   runAfterFinish: true
 portable:
   artifactName: pMusic-Portable-${version}.${ext}
+  splashImage: build/portableSplash.bmp
 linux:
   icon: build/icon.png
   category: Audio

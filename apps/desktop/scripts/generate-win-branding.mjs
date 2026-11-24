@@ -395,8 +395,88 @@ try {
   const headerPath = resolve(buildDir, 'installerHeader.bmp');
   writeFileSync(headerPath, encode24BitBmp(150, 57, Uint8Array.from(headerRgba)));
 
+  // 4. Render 460x280 Futuristic Portable Splash BMP (shown immediately while Portable EXE unpacks)
+  const splashRgba = await page.evaluate(async ({ src, wmSrc }) => {
+    const W = 460;
+    const H = 280;
+    const img = new Image();
+    img.src = src;
+    await img.decode();
+    let wmImg = null;
+    if (wmSrc) {
+      wmImg = new Image();
+      wmImg.src = wmSrc;
+      await wmImg.decode();
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d');
+
+    ctx.fillStyle = '#050508';
+    ctx.fillRect(0, 0, W, H);
+
+    // Subtle architectural grid
+    ctx.strokeStyle = 'rgba(255,255,255,0.035)';
+    ctx.lineWidth = 1;
+    for (let x = 0; x < W; x += 36) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    }
+    for (let y = 0; y < H; y += 36) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    }
+
+    // Top studio aura
+    const glow = ctx.createRadialGradient(W / 2, 84, 10, W / 2, 84, 180);
+    glow.addColorStop(0, 'rgba(250, 35, 59, 0.28)');
+    glow.addColorStop(0.55, 'rgba(124, 58, 237, 0.12)');
+    glow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, W, H);
+
+    // Outer hairline border
+    ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(1, 1, W - 2, H - 2);
+
+    // Centered p icon
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.75)';
+    ctx.shadowBlur = 22;
+    ctx.drawImage(img, (W - 92) / 2, 34, 92, 92);
+    ctx.restore();
+
+    // Wordmark
+    if (wmImg) {
+      const wmW = 136;
+      const wmH = Math.round((wmW * wmImg.height) / wmImg.width);
+      ctx.drawImage(wmImg, (W - wmW) / 2, 142, wmW, wmH);
+    }
+
+    // Status line + glowing progress track
+    ctx.fillStyle = 'rgba(255,255,255,0.62)';
+    ctx.font = '600 11px "Segoe UI", system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('INICIANDO pMusic PORTABLE  ·  v0.14.2', W / 2, 212);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.fillRect((W - 220) / 2, 234, 220, 4);
+    const barGrad = ctx.createLinearGradient((W - 220) / 2, 0, (W + 220) / 2, 0);
+    barGrad.addColorStop(0, '#fa233b');
+    barGrad.addColorStop(1, '#ffffff');
+    ctx.fillStyle = barGrad;
+    ctx.fillRect((W - 220) / 2, 234, 124, 4);
+
+    return Array.from(ctx.getImageData(0, 0, W, H).data);
+  }, { src: iconDataUri, wmSrc: wordmarkDataUri });
+
+  const splashPath = resolve(buildDir, 'portableSplash.bmp');
+  writeFileSync(splashPath, encode24BitBmp(460, 280, Uint8Array.from(splashRgba)));
+
   console.log(
-    `Generated Windows branding assets:\n- ${icoPath} (${statSync(icoPath).size} bytes)\n- ${sidebarPath} (${statSync(sidebarPath).size} bytes)\n- ${headerPath} (${statSync(headerPath).size} bytes)`
+    `Generated Windows branding assets:\n- ${icoPath} (${statSync(icoPath).size} bytes)\n- ${sidebarPath} (${statSync(sidebarPath).size} bytes)\n- ${headerPath} (${statSync(headerPath).size} bytes)\n- ${splashPath} (${statSync(splashPath).size} bytes)`
   );
 } finally {
   await browser.close();

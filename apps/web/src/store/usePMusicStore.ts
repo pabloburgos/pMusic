@@ -3851,23 +3851,29 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   },
 
   signInWithGoogle: async () => {
-    const isNativeApp =
-      (typeof window !== 'undefined' &&
-        (window.location?.hostname === 'appassets.pmusic.local' ||
-          (window as any).pmusicDesktop?.runtime === 'electron')) ||
-      false;
-    const redirectTo = isNativeApp
-      ? 'pmusic://auth/callback'
-      : typeof window !== 'undefined'
-        ? `${window.location.origin}${window.location.pathname}`
-        : 'pmusic://auth/callback';
+    const desktopBridge = typeof window !== 'undefined' ? (window as any).pmusicDesktop : null;
+    const isAndroidApp =
+      typeof window !== 'undefined' && window.location?.hostname === 'appassets.pmusic.local';
+
+    let redirectTo = 'pmusic://auth/callback';
+    if (desktopBridge?.getOAuthRedirectUrl) {
+      try {
+        const loopbackRedirect = await desktopBridge.getOAuthRedirectUrl();
+        if (typeof loopbackRedirect === 'string' && loopbackRedirect.startsWith('http://127.0.0.1:')) {
+          redirectTo = loopbackRedirect;
+        }
+      } catch {
+        redirectTo = 'pmusic://auth/callback';
+      }
+    } else if (!isAndroidApp && typeof window !== 'undefined' && window.location?.protocol?.startsWith('http')) {
+      redirectTo = `${window.location.origin}${window.location.pathname}`;
+    }
 
     const res = await syncEngine.signInWithGoogle?.(redirectTo);
     if (!res?.url) {
       throw new Error('No se pudo obtener la URL de acceso con Google.');
     }
     if (typeof window !== 'undefined') {
-      const desktopBridge = (window as any).pmusicDesktop;
       const androidNative = (window as any).PMusicNative;
       if (desktopBridge?.openExternalUrl) {
         await desktopBridge.openExternalUrl(res.url);

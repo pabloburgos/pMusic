@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld('pmusicDesktop', {
   }): Promise<void> => ipcRenderer.invoke('pmusic:set-titlebar-overlay', opts),
   openExternalUrl: (url: string): Promise<void> =>
     ipcRenderer.invoke('pmusic:open-external-url', url),
+  getOAuthRedirectUrl: (): Promise<string> =>
+    ipcRenderer.invoke('pmusic:get-oauth-redirect-url'),
   consumePendingAuthCallback: (): Promise<string | null> =>
     ipcRenderer.invoke('pmusic:consume-pending-auth-callback'),
   onAuthCallback: (cb: (url: string) => void): (() => void) => {

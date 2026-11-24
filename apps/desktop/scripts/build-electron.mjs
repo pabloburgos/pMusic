@@ -154,20 +154,131 @@ import { app, BrowserWindow, globalShortcut, ipcMain, Menu, shell } from 'electr
 import { createPMusicApiHandler } from '@pmusic/providers';
 
 let mainWindow: BrowserWindow | null = null;
+let splashWindow: BrowserWindow | null = null;
 let loopbackServer: Server | null = null;
 let loopbackPort = 0;
+let oauthServer: Server | null = null;
+let oauthPort = 47821;
 let pendingAuthCallbackUrl: string | null = null;
 
 function dispatchAuthCallbackUrl(url: string): void {
-  if (!url || !url.toLowerCase().startsWith('pmusic://')) return;
+  if (!url) return;
+  const lower = url.toLowerCase();
+  if (!lower.startsWith('pmusic://') && !lower.startsWith('http://127.0.0.1:')) return;
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
     mainWindow.focus();
     mainWindow.webContents.send('pmusic:auth-callback', url);
     pendingAuthCallbackUrl = null;
   } else {
     pendingAuthCallbackUrl = url;
   }
+}
+
+async function startOAuthCallbackServer(): Promise<number> {
+  if (oauthServer && oauthPort > 0) return oauthPort;
+  const htmlDone = \`<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>pMusic — Sesión iniciada</title>
+<style>
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#050508;color:#fff;font-family:system-ui,-apple-system,sans-serif}
+  .card{padding:36px 42px;border-radius:24px;border:1px solid rgba(255,255,255,.12);background:linear-gradient(160deg,#0f0f17,#07070b);text-align:center;box-shadow:0 24px 60px rgba(0,0,0,.65);max-width:380px}
+  .dot{width:52px;height:52px;margin:0 auto 16px;border-radius:16px;background:rgba(52,211,153,.14);border:1px solid rgba(52,211,153,.4);display:flex;align-items:center;justify-content:center;font-size:24px;color:#34d399}
+  h1{margin:0 0 8px;font-size:20px;font-weight:700}
+  p{margin:0;font-size:13px;color:rgba(255,255,255,.65);line-height:1.5}
+</style></head><body>
+<div class="card">
+  <div class="dot">✓</div>
+  <h1>Sesión conectada</h1>
+  <p>Volviendo a pMusic automáticamente... Ya puedes cerrar esta pestaña.</p>
+</div>
+<script>
+  if (location.hash && location.hash.includes('access_token')) {
+    fetch('/auth/hash', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: location.href }).catch(()=>{});
+  }
+  setTimeout(() => { try { window.close(); } catch {} }, 1200);
+</script></body></html>\`;
+
+  const tryListen = (port: number) =>
+    new Promise<number>((resolvePort, reject) => {
+      const srv = createServer((req, res) => {
+        const reqUrl = req.url ?? '/';
+        if (req.method === 'POST' && reqUrl.startsWith('/auth/hash')) {
+          let body = '';
+          req.on('data', (chunk) => { body += String(chunk); });
+          req.on('end', () => {
+            if (body.includes('access_token=')) {
+              dispatchAuthCallbackUrl(body.trim());
+            }
+            res.statusCode = 200;
+            res.end('ok');
+          });
+          return;
+        }
+        const fullUrl = \`http://127.0.0.1:\${oauthPort}\${reqUrl}\`;
+        if (reqUrl.includes('code=') || reqUrl.includes('error=')) {
+          dispatchAuthCallbackUrl(fullUrl);
+        }
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.end(htmlDone);
+      });
+      srv.on('error', reject);
+      srv.listen(port, '127.0.0.1', () => {
+        const addr = srv.address();
+        oauthPort = typeof addr === 'object' && addr ? addr.port : port;
+        oauthServer = srv;
+        resolvePort(oauthPort);
+      });
+    });
+
+  try {
+    return await tryListen(47821);
+  } catch {
+    return await tryListen(0);
+  }
+}
+
+function createSplashWindow(): void {
+  const iconCandidates = [
+    join(__dirname, '../dist/icon.png'),
+    join(__dirname, '../build/icon.png'),
+  ];
+  const iconPath = iconCandidates.find((p) => existsSync(p));
+  const iconB64 = iconPath ? readFileSync(iconPath).toString('base64') : '';
+
+  splashWindow = new BrowserWindow({
+    width: 400,
+    height: 270,
+    frame: false,
+    resizable: false,
+    movable: true,
+    alwaysOnTop: true,
+    center: true,
+    backgroundColor: '#050508',
+    show: true,
+    skipTaskbar: false,
+    webPreferences: { contextIsolation: true, nodeIntegration: false },
+  });
+
+  const splashHtml = \`<!doctype html><html><head><meta charset="utf-8"><style>
+    *{box-sizing:border-box}
+    body{margin:0;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 28%, rgba(250,35,59,.22), transparent 62%), #050508;color:#fff;font-family:system-ui,-apple-system,sans-serif;overflow:hidden;border:1px solid rgba(255,255,255,.12);border-radius:20px;user-select:none;-webkit-app-region:drag}
+    .icon{width:84px;height:84px;border-radius:22px;box-shadow:0 16px 40px rgba(0,0,0,.7), 0 0 32px rgba(250,35,59,.22);animation:pulse 2.2s ease-in-out infinite}
+    .title{margin-top:16px;font-size:20px;font-weight:800;letter-spacing:-0.02em}
+    .sub{margin-top:4px;font-size:11.5px;color:rgba(255,255,255,.55);letter-spacing:0.08em;text-transform:uppercase}
+    .bar{margin-top:22px;width:190px;height:3px;border-radius:99px;background:rgba(255,255,255,.1);overflow:hidden;position:relative}
+    .bar::after{content:'';position:absolute;inset:0;width:42%;border-radius:99px;background:linear-gradient(90deg,transparent,#fa233b,#fff,transparent);animation:slide 1.15s cubic-bezier(.4,0,.2,1) infinite}
+    @keyframes slide{0%{transform:translateX(-110%)}100%{transform:translateX(260%)}}
+    @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}
+  </style></head><body>
+    \${iconB64 ? \`<img class="icon" src="data:image/png;base64,\${iconB64}" />\` : ''}
+    <div class="title">pMusic</div>
+    <div class="sub">Iniciando motor de audio</div>
+    <div class="bar"></div>
+  </body></html>\`;
+
+  void splashWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(splashHtml));
 }
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
@@ -263,6 +374,10 @@ ipcMain.handle('pmusic:open-external-url', async (_event, url: string) => {
     await shell.openExternal(url);
   }
 });
+ipcMain.handle('pmusic:get-oauth-redirect-url', async () => {
+  const port = await startOAuthCallbackServer();
+  return \`http://127.0.0.1:\${port}/auth/callback\`;
+});
 ipcMain.handle('pmusic:consume-pending-auth-callback', () => {
   const url = pendingAuthCallbackUrl;
   pendingAuthCallbackUrl = null;
@@ -298,6 +413,7 @@ async function createMainWindow(): Promise<void> {
     minHeight: 640,
     backgroundColor: '#070709',
     title: 'pMusic',
+    show: false,
     titleBarStyle: 'hidden',
     titleBarOverlay: {
       color: '#070709',
@@ -329,11 +445,21 @@ async function createMainWindow(): Promise<void> {
   ]);
   Menu.setApplicationMenu(menu);
 
+  mainWindow.once('ready-to-show', () => {
+    mainWindow?.show();
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.close();
+      splashWindow = null;
+    }
+  });
+
   const targetUrl = process.env.PMUSIC_DEV_URL || \`http://127.0.0.1:\${port}\`;
   await mainWindow.loadURL(targetUrl);
 }
 
 void app.whenReady().then(async () => {
+  createSplashWindow();
+  void startOAuthCallbackServer();
   try {
     if (process.defaultApp && process.argv.length >= 2 && process.argv[1]) {
       app.setAsDefaultProtocolClient('pmusic', process.execPath, [process.argv[1]]);
@@ -365,6 +491,7 @@ void app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   globalShortcut.unregisterAll();
   loopbackServer?.close();
+  oauthServer?.close();
   if (process.platform !== 'darwin') {
     app.quit();
   }
