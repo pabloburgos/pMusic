@@ -43,4 +43,8 @@ contextBridge.exposeInMainWorld('pmusicDesktop', {
       ipcRenderer.removeListener('pmusic:media-action', handler);
     };
   },
+  vaultGet: (key: string): Promise<string | null> => ipcRenderer.invoke('pmusic:vault-get', key),
+  vaultSet: (key: string, value: string): Promise<void> =>
+    ipcRenderer.invoke('pmusic:vault-set', key, value),
+  vaultRemove: (key: string): Promise<void> => ipcRenderer.invoke('pmusic:vault-remove', key),
 });

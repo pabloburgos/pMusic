@@ -37,6 +37,48 @@ interface ElectronDesktopWindowBridge {
     height?: number;
   }) => Promise<void>;
   onMediaShortcut?: (cb: (action: NativeMediaAction) => void) => Unsubscribe;
+  vaultGet?: (key: string) => Promise<string | null>;
+  vaultSet?: (key: string, value: string) => Promise<void>;
+  vaultRemove?: (key: string) => Promise<void>;
+}
+
+function createElectronVaultPreferencesStorage(
+  fallback: IPreferencesStorageBridge,
+  desktopBridge?: ElectronDesktopWindowBridge
+): IPreferencesStorageBridge {
+  if (!desktopBridge?.vaultGet) return fallback;
+  return {
+    async getItem(key: string): Promise<string | null> {
+      const localVal = await fallback.getItem(key);
+      if (localVal !== null) return localVal;
+      try {
+        const diskVal = await desktopBridge.vaultGet?.(key);
+        if (typeof diskVal === 'string') {
+          await fallback.setItem(key, diskVal);
+          return diskVal;
+        }
+      } catch {
+        // ignore vault read error
+      }
+      return null;
+    },
+    async setItem(key: string, value: string): Promise<void> {
+      await fallback.setItem(key, value);
+      try {
+        await desktopBridge.vaultSet?.(key, value);
+      } catch {
+        // ignore vault write error
+      }
+    },
+    async removeItem(key: string): Promise<void> {
+      await fallback.removeItem(key);
+      try {
+        await desktopBridge.vaultRemove?.(key);
+      } catch {
+        // ignore vault remove error
+      }
+    },
+  };
 }
 
 export function isElectronDesktopRuntime(): boolean {
@@ -160,7 +202,10 @@ export function createPlatformBridge(): IPlatformBridge {
       ? 'android'
       : 'web';
 
-  const preferencesStorage = createDefaultPreferencesStorage();
+  const preferencesStorage = createElectronVaultPreferencesStorage(
+    createDefaultPreferencesStorage(),
+    desktopBridge
+  );
   const offlineStorage = new BrowserOfflineStorageBridge(preferencesStorage);
 
   return {

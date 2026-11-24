@@ -465,6 +465,8 @@ export const DetailViewPanel: React.FC = () => {
   const {
     activeDetailView,
     playlists,
+    likedTracks,
+    dismissedPlaylistRecs,
     searchResults,
     playTrack,
     toggleDjMode,
@@ -475,6 +477,8 @@ export const DetailViewPanel: React.FC = () => {
     addTrackToPlaylist,
     reorderPlaylistTrack,
     searchTracksForPlaylist,
+    dismissPlaylistRecommendation,
+    fetchPlaylistRecommendations,
     openAlbumDetail,
     openArtistDetail,
     openLocalPlaylistDetail,
@@ -491,6 +495,29 @@ export const DetailViewPanel: React.FC = () => {
   const [addSearchQuery, setAddSearchQuery] = useState('');
   const [addSearchResults, setAddSearchResults] = useState<Track[]>([]);
   const [isSearchingAdd, setIsSearchingAdd] = useState(false);
+  const [recPool, setRecPool] = useState<Track[]>([]);
+  const [isLoadingRecs, setIsLoadingRecs] = useState(false);
+  const [sessionSkippedIds, setSessionSkippedIds] = useState<string[]>([]);
+
+  const activeLocalPlaylistId =
+    activeDetailView?.kind === 'local_playlist' ? activeDetailView.playlistId : null;
+
+  useEffect(() => {
+    setRecPool([]);
+    setSessionSkippedIds([]);
+    if (!activeLocalPlaylistId) return;
+    let cancelled = false;
+    setIsLoadingRecs(true);
+    void fetchPlaylistRecommendations(activeLocalPlaylistId).then((tracks) => {
+      if (!cancelled) {
+        setRecPool(tracks);
+        setIsLoadingRecs(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeLocalPlaylistId, fetchPlaylistRecommendations]);
 
   if (!activeDetailView) return null;
 
@@ -731,6 +758,63 @@ export const DetailViewPanel: React.FC = () => {
 
   const localPl = playlists.find((p) => p.id === activeDetailView.playlistId);
   if (!localPl) return null;
+
+  const dismissedSet = new Set(dismissedPlaylistRecs[localPl.id] ?? []);
+  const skippedSet = new Set(sessionSkippedIds);
+  const plOwnedIds = new Set(localPl.tracks.map((t) => t.id));
+  const plOwnedKeys = new Set(
+    localPl.tracks.map(
+      (t) => `${t.title.trim().toLowerCase()}::${(t.artists[0]?.name ?? '').trim().toLowerCase()}`
+    )
+  );
+  const visibleRecs = recPool
+    .filter((t) => {
+      if (plOwnedIds.has(t.id) || dismissedSet.has(t.id) || skippedSet.has(t.id)) return false;
+      const k = `${t.title.trim().toLowerCase()}::${(t.artists[0]?.name ?? '').trim().toLowerCase()}`;
+      return !plOwnedKeys.has(k);
+    })
+    .slice(0, 6);
+
+  const handleReloadPlaylistRecs = async () => {
+    const shownIds = visibleRecs.map((t) => t.id);
+    const nextSkipped = Array.from(new Set([...sessionSkippedIds, ...shownIds]));
+    setSessionSkippedIds(nextSkipped);
+    setIsLoadingRecs(true);
+    const fresh = await fetchPlaylistRecommendations(localPl.id, {
+      excludeIds: [...nextSkipped, ...recPool.map((t) => t.id)],
+    });
+    setRecPool(fresh);
+    setIsLoadingRecs(false);
+  };
+
+  const handleAddRecommendedTrack = async (track: Track) => {
+    setRecPool((prev) => prev.filter((item) => item.id !== track.id));
+    await addTrackToPlaylist(localPl.id, track);
+    const nextExtra = await fetchPlaylistRecommendations(localPl.id, {
+      seedTrack: track,
+      excludeIds: [...sessionSkippedIds, track.id],
+    });
+    setRecPool((prev) => {
+      const existingIds = new Set([...prev.map((x) => x.id), track.id]);
+      const appended = nextExtra.filter((x) => !existingIds.has(x.id));
+      return [...prev, ...appended];
+    });
+  };
+
+  const handleDismissRecommendedTrack = async (track: Track) => {
+    dismissPlaylistRecommendation(localPl.id, track.id);
+    const remaining = recPool.filter((item) => item.id !== track.id);
+    setRecPool(remaining);
+    if (remaining.length < 8) {
+      const fresh = await fetchPlaylistRecommendations(localPl.id, {
+        excludeIds: [...sessionSkippedIds, ...remaining.map((x) => x.id), track.id],
+      });
+      setRecPool((prev) => {
+        const seen = new Set([...prev.map((x) => x.id), track.id]);
+        return [...prev, ...fresh.filter((x) => !seen.has(x.id))];
+      });
+    }
+  };
 
   const suggestedAdds = (
     addSearchQuery.trim() ? addSearchResults : searchResults.songs.slice(0, 8)
@@ -1212,6 +1296,84 @@ export const DetailViewPanel: React.FC = () => {
         </div>
       </section>
       )}
+
+      {/* Infinite Adaptive Playlist Recommendations */}
+      <section
+        data-surface="content"
+        className="pm-surface-card space-y-4 rounded-[16px] p-5"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-[17px] font-bold pm-text-primary">
+              Recomendadas para esta playlist
+            </h2>
+            <p className="text-xs pm-text-tertiary">
+              Al añadir un tema se adaptan automáticamente con nuevas canciones afines
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void handleReloadPlaylistRecs()}
+            className="pm-btn-secondary pm-pressable inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isLoadingRecs ? 'animate-spin' : ''}`} />
+            <span>Recargar</span>
+          </button>
+        </div>
+
+        <div className="space-y-1">
+          {visibleRecs.map((t) => (
+            <div
+              key={`pl-rec-${t.id}`}
+              className="pm-hover flex items-center justify-between gap-2.5 rounded-[10px] px-2.5 py-2"
+            >
+              <button
+                type="button"
+                onClick={() => void playTrack(t, [t, ...visibleRecs])}
+                className="flex min-w-0 flex-1 items-center gap-3 text-left"
+              >
+                <img
+                  src={t.thumbnailUrl}
+                  alt=""
+                  className="h-10 w-10 shrink-0 rounded-[7px] object-cover"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[13.5px] font-medium pm-text-primary hover:underline">
+                    {t.title}
+                  </div>
+                  <div className="truncate text-xs pm-text-tertiary">
+                    {t.artists.map((a) => a.name).join(', ')}
+                  </div>
+                </div>
+              </button>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  aria-label={`No recomendar ${t.title}`}
+                  title="No recomendar nunca aquí"
+                  onClick={() => void handleDismissRecommendedTrack(t)}
+                  className="pm-btn-secondary inline-flex h-8 w-8 items-center justify-center rounded-full pm-text-tertiary hover:text-rose-400"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleAddRecommendedTrack(t)}
+                  className="pm-btn-secondary inline-flex items-center gap-1 rounded-full px-3.5 py-1.5 text-xs font-semibold"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>Añadir</span>
+                </button>
+              </div>
+            </div>
+          ))}
+          {visibleRecs.length === 0 && !isLoadingRecs && (
+            <div className="py-4 text-center text-xs pm-text-tertiary">
+              No quedan sugerencias en este lote. Pulsa <strong>Recargar</strong> para descubrir más canciones.
+            </div>
+          )}
+        </div>
+      </section>
     </div>
   );
 };
@@ -1552,6 +1714,8 @@ export const ExploreScreen: React.FC = () => {
   const {
     homeShelves,
     searchResults,
+    playlists,
+    likedTracks,
     exploreSimilarTracks,
     exploreEmergingArtists,
     isLoadingExplore,
@@ -1565,15 +1729,36 @@ export const ExploreScreen: React.FC = () => {
 
   const listen = homeShelves.find((s) => s.kind === 'listen_again');
   const releases = homeShelves.find((s) => s.kind === 'favorite_new_releases');
-  const similarDiscoverTracks =
+  const ownedTracks = [
+    ...playlists.flatMap((p) => p.tracks),
+    ...likedTracks.map((l) => l.track),
+  ];
+  const ownedIds = new Set(ownedTracks.map((t) => t.id));
+  const ownedKeys = new Set(
+    ownedTracks.map(
+      (t) => `${t.title.trim().toLowerCase()}::${(t.artists[0]?.name ?? '').trim().toLowerCase()}`
+    )
+  );
+  const isNotOwned = (t: Track) => {
+    if (ownedIds.has(t.id)) return false;
+    const key = `${t.title.trim().toLowerCase()}::${(t.artists[0]?.name ?? '').trim().toLowerCase()}`;
+    return !ownedKeys.has(key);
+  };
+
+  const similarDiscoverTracks = (
     exploreSimilarTracks.length > 0
-      ? exploreSimilarTracks.slice(0, 8)
-      : (listen?.tracks ?? []).slice(0, 6);
+      ? exploreSimilarTracks
+      : (listen?.tracks ?? [])
+  )
+    .filter(isNotOwned)
+    .slice(0, 8);
   const trendingSongs = (
     searchResults.songs.length > 0
       ? searchResults.songs
       : listen?.tracks ?? []
-  ).slice(0, 6);
+  )
+    .filter(isNotOwned)
+    .slice(0, 6);
   const albums =
     searchResults.albums.length > 0
       ? searchResults.albums

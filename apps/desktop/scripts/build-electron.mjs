@@ -152,10 +152,35 @@ if (existsSync(canonicalLogoPng)) {
 
 // Update src/main.ts to serve both static dist/ files AND /api/* over http://127.0.0.1:<port>
 const mainEntrySource = `import { createServer, type Server } from 'node:http';
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import { extname, join, normalize } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, extname, join, normalize } from 'node:path';
 import { app, BrowserWindow, globalShortcut, ipcMain, Menu, shell } from 'electron';
 import { createPMusicApiHandler } from '@pmusic/providers';
+
+function getVaultFilePath(): string {
+  return join(app.getPath('userData'), 'pmusic-vault.json');
+}
+
+function readVaultData(): Record<string, string> {
+  try {
+    const file = getVaultFilePath();
+    if (!existsSync(file)) return {};
+    const parsed = JSON.parse(readFileSync(file, 'utf-8')) as unknown;
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeVaultData(data: Record<string, string>): void {
+  try {
+    const file = getVaultFilePath();
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify(data), 'utf-8');
+  } catch {
+    // ignore disk vault write error
+  }
+}
 
 let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
@@ -374,10 +399,19 @@ async function startLoopbackServer(): Promise<number> {
       loopbackServer = srv;
       resolvePort(loopbackPort);
     };
-    srv.once('error', () => {
-      srv.listen(0, '127.0.0.1', onListening);
-    });
-    srv.listen(47820, '127.0.0.1', onListening);
+    let attempt = 0;
+    const tryBindFixedPort = () => {
+      attempt++;
+      srv.once('error', () => {
+        if (attempt < 8) {
+          setTimeout(tryBindFixedPort, 150);
+        } else {
+          srv.listen(0, '127.0.0.1', onListening);
+        }
+      });
+      srv.listen(47820, '127.0.0.1', onListening);
+    };
+    tryBindFixedPort();
   });
 }
 
@@ -389,6 +423,25 @@ function sendMediaAction(type: string): void {
 
 ipcMain.handle('pmusic:get-api-base-url', () => \`http://127.0.0.1:\${loopbackPort}\`);
 ipcMain.handle('pmusic:get-auth-headers', () => ({}));
+ipcMain.handle('pmusic:vault-get', (_event, key: string) => {
+  if (typeof key !== 'string' || !key) return null;
+  const vault = readVaultData();
+  return Object.prototype.hasOwnProperty.call(vault, key) ? vault[key]! : null;
+});
+ipcMain.handle('pmusic:vault-set', (_event, key: string, value: string) => {
+  if (typeof key !== 'string' || !key) return;
+  const vault = readVaultData();
+  vault[key] = String(value);
+  writeVaultData(vault);
+});
+ipcMain.handle('pmusic:vault-remove', (_event, key: string) => {
+  if (typeof key !== 'string' || !key) return;
+  const vault = readVaultData();
+  if (Object.prototype.hasOwnProperty.call(vault, key)) {
+    delete vault[key];
+    writeVaultData(vault);
+  }
+});
 ipcMain.handle('pmusic:update-discord', () => undefined);
 ipcMain.handle('pmusic:open-external-url', async (_event, url: string) => {
   if (typeof url === 'string' && /^https?:\\/\\//i.test(url)) {

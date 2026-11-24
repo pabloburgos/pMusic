@@ -1252,6 +1252,39 @@ export class SyncEngine implements ISyncEngine {
     };
   }
 
+  public async saveAccountPreferences(prefs: Record<string, unknown>): Promise<void> {
+    if (!this.supabaseBackend || !this.authState.connected) return;
+    try {
+      await this.supabaseBackend.client.auth.updateUser({
+        data: {
+          pmusic_prefs: prefs,
+          pmusic_prefs_updated_at: Date.now(),
+        },
+      });
+    } catch {
+      // ignore transient network errors
+    }
+  }
+
+  public async loadAccountPreferences(): Promise<Record<string, unknown> | null> {
+    if (!this.supabaseBackend || !this.authState.connected) return null;
+    try {
+      const { data } = await this.supabaseBackend.client.auth.getUser();
+      const meta = data?.user?.user_metadata as Record<string, unknown> | undefined;
+      if (meta?.pmusic_prefs && typeof meta.pmusic_prefs === 'object') {
+        return meta.pmusic_prefs as Record<string, unknown>;
+      }
+      const { data: sessionData } = await this.supabaseBackend.client.auth.getSession();
+      const sessMeta = sessionData?.session?.user?.user_metadata as Record<string, unknown> | undefined;
+      if (sessMeta?.pmusic_prefs && typeof sessMeta.pmusic_prefs === 'object') {
+        return sessMeta.pmusic_prefs as Record<string, unknown>;
+      }
+    } catch {
+      // ignore offline read errors
+    }
+    return null;
+  }
+
   public onAuthStateChanged(cb: (state: SyncAuthState) => void): Unsubscribe {
     this.authListeners.add(cb);
     return () => {

@@ -362,9 +362,28 @@ export type TrackMenuState = {
 } | null;
 
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
+let cloudPrefsSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
 function applyAmbientPaletteForTrack(track: Track | null): void {
   applyAmbientPaletteFromCover(track);
+}
+
+function normalizeTrackMetaKey(t: Track): string {
+  const title = (t.title ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const artist = (t.artists?.[0]?.name ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  return `${title}::${artist}`;
+}
+
+function parseFanCountText(txt?: string): number {
+  if (!txt) return 0;
+  const low = txt.trim().toLowerCase();
+  const numMatch = low.match(/([\d.,]+)/);
+  if (!numMatch) return 0;
+  const cleanNum = Number.parseFloat(numMatch[1]!.replace(/\.(?=\d{3}(?:\D|$))/g, '').replace(',', '.'));
+  if (!Number.isFinite(cleanNum)) return 0;
+  if (/\bm\b|\bmill/i.test(low)) return Math.round(cleanNum * 1_000_000);
+  if (/\bmil\b|\bk\b/i.test(low)) return Math.round(cleanNum * 1_000);
+  return Math.round(cleanNum);
 }
 
 export interface PMusicStoreState {
@@ -434,6 +453,7 @@ export interface PMusicStoreState {
   isTransitioning: boolean;
   activeTransitionType?: DjTransitionType;
   transitionProgress01: number;
+  transitionDurationSec: number;
   autoplayEnabled: boolean;
 
   // Audio Modes (DJ AutoMix, Safe Crossfade, 5-Band EQ)
@@ -468,6 +488,7 @@ export interface PMusicStoreState {
   libraryCategory: LibraryCategoryTab;
   libraryFilterQuery: string;
   playlists: PlaylistRecord[];
+  dismissedPlaylistRecs: Record<string, string[]>;
   likedTracks: LikedTrackRecord[];
   playHistory: PlayHistoryRecord[];
   offlineDownloads: Record<string, OfflineDownloadStatus>;
@@ -606,6 +627,11 @@ export interface PMusicStoreState {
   reorderPlaylistTrack: (playlistId: string, fromIndex: number, toIndex: number) => Promise<void>;
   likeTrackIfNeeded: (track: Track) => Promise<void>;
   searchTracksForPlaylist: (query: string) => Promise<Track[]>;
+  dismissPlaylistRecommendation: (playlistId: string, trackId: string) => void;
+  fetchPlaylistRecommendations: (
+    playlistId: string,
+    options?: { seedTrack?: Track; excludeIds?: string[] }
+  ) => Promise<Track[]>;
   toggleLike: (track?: Track) => Promise<void>;
   downloadTrackOffline: (track: Track) => Promise<void>;
   removeOfflineTrack: (trackId: string) => Promise<void>;
@@ -883,13 +909,12 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           djPreloadedKey = cfPreloadKey;
           void audioEngine.preloadNextDeck(nextTrack, 0);
         }
-        const earlyLeadSec = safeDur > liveState.safeCrossfade.durationSec + 10 ? 1.8 : 0.4;
-        if (safeDur > 10 && safePos >= safeDur - liveState.safeCrossfade.durationSec - earlyLeadSec) {
+        if (safeDur > 10 && safePos >= safeDur - liveState.safeCrossfade.durationSec - 0.35) {
           const cfPlan: DeckTransitionPlan = {
             fromTrackId: liveState.currentTrack.id,
             toTrackId: nextTrack.id,
             cueInSec: 0,
-            cueOutSec: Math.max(6, Math.round(safeDur - liveState.safeCrossfade.durationSec - earlyLeadSec)),
+            cueOutSec: Math.max(6, Math.round(safeDur - liveState.safeCrossfade.durationSec)),
             transitionDurationSec: Math.max(1.5, Math.min(12, liveState.safeCrossfade.durationSec)),
             transitionBars: 4,
             transitionType: 'eq_swap',
@@ -1370,7 +1395,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       if (isCancelled()) return;
 
       // Act 1: Reveal incoming track transition state before swapping title & cover at deck handoff (~48%)
-      set({ outgoingTransitionTrack: prevTrack, incomingTransitionTrack: nextTrack });
+      set({
+        outgoingTransitionTrack: prevTrack,
+        incomingTransitionTrack: nextTrack,
+        transitionDurationSec: plan.transitionDurationSec,
+      });
       if (!isPlainCrossfade) {
         applyAmbientPaletteForTrack(nextTrack);
       }
@@ -1542,10 +1571,128 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       safeCrossfade: st.safeCrossfade,
       userEq: st.userEq,
       djMode: st.djMode,
+      dismissedPlaylistRecs: st.dismissedPlaylistRecs,
     };
     void defaultPlatformBridge.preferencesStorage
       .setItem(USER_PREFS_STORAGE_KEY, JSON.stringify(payload))
       .catch(() => {});
+
+    if (st.authState.connected) {
+      if (cloudPrefsSaveTimer) clearTimeout(cloudPrefsSaveTimer);
+      cloudPrefsSaveTimer = setTimeout(() => {
+        cloudPrefsSaveTimer = null;
+        if (get().authState.connected) {
+          void syncEngine.saveAccountPreferences?.(payload);
+        }
+      }, 1200);
+    }
+  }
+
+  function applyPreferencesPayload(prefs: Record<string, any>): void {
+    const resolvedSurfaceStyle: PMusicSurfaceStyle =
+      prefs.surfaceStyle === 'liquid-glass' ||
+      prefs.surfaceStyle === 'frosted-glass' ||
+      prefs.surfaceStyle === 'simple'
+        ? prefs.surfaceStyle
+        : typeof prefs.liquidGlassMode === 'boolean'
+          ? prefs.liquidGlassMode
+            ? 'liquid-glass'
+            : 'simple'
+          : prefs.graphicSaverMode
+            ? 'simple'
+            : get().surfaceStyle;
+
+    applySurfaceStyleClasses(resolvedSurfaceStyle);
+    if (typeof document !== 'undefined') {
+      document.documentElement.classList.toggle(
+        'pm-reduced-motion',
+        Boolean(prefs.reducedMotionPref)
+      );
+    }
+
+    const resolvedTheme =
+      typeof prefs.themeId === 'string'
+        ? (prefs.themeId as PMusicThemeId)
+        : get().themeId;
+    if (typeof prefs.themeId === 'string') {
+      applyPMusicTheme(resolvedTheme);
+    }
+    if (typeof prefs.accentPreset === 'string') {
+      applyAccentOverride(
+        prefs.accentPreset as PMusicAccentPresetId,
+        resolvedTheme
+      );
+    }
+    if (typeof prefs.streamQuality === 'string') {
+      currentStreamQualityPref = prefs.streamQuality as AudioStreamQuality;
+    }
+    if (prefs.userEq) audioEngine.setUserEq(prefs.userEq as UserEqConfig);
+    if (prefs.safeCrossfade) {
+      audioEngine.setSafeCrossfade(prefs.safeCrossfade as SafeCrossfadeConfig);
+    }
+    if (prefs.djMode) audioEngine.setDjMode(prefs.djMode as DjModeConfig);
+    if (typeof prefs.playbackRate === 'number') {
+      audioEngine.setPlaybackRate(prefs.playbackRate, prefs.preservesPitch !== false);
+    }
+    if (typeof prefs.stereoBalance === 'number') {
+      audioEngine.setBalance(prefs.stereoBalance);
+    }
+    if (typeof prefs.monoAudio === 'boolean') {
+      audioEngine.setMonoAudio(prefs.monoAudio);
+    }
+
+    set((prev) => ({
+      themeId: (prefs.themeId as PMusicThemeId) ?? prev.themeId,
+      playerBarStyle:
+        prefs.playerBarStyle === 'classic-center' ||
+        prefs.playerBarStyle === 'ambient-dock' ||
+        prefs.playerBarStyle === 'floating-island' ||
+        prefs.playerBarStyle === 'minimal-wave'
+          ? prefs.playerBarStyle
+          : prev.playerBarStyle,
+      accentPreset: (prefs.accentPreset as PMusicAccentPresetId) ?? prev.accentPreset,
+      surfaceStyle: resolvedSurfaceStyle,
+      liquidGlassMode: resolvedSurfaceStyle === 'liquid-glass',
+      ambientMotionEnabled: Boolean(prefs.ambientMotionEnabled ?? prev.ambientMotionEnabled),
+      graphicSaverMode: resolvedSurfaceStyle === 'simple',
+      reducedMotionPref: Boolean(prefs.reducedMotionPref ?? prev.reducedMotionPref),
+      visualizerEnabled: Boolean(prefs.visualizerEnabled ?? prev.visualizerEnabled),
+      lyricsSize: prefs.lyricsSize ?? prev.lyricsSize,
+      lyricsBlurEnabled: Boolean(prefs.lyricsBlurEnabled ?? prev.lyricsBlurEnabled),
+      lyricsStyle:
+        prefs.lyricsStyle === 'classic' ||
+        prefs.lyricsStyle === 'wordflow' ||
+        prefs.lyricsStyle === 'kinetic' ||
+        prefs.lyricsStyle === 'neon' ||
+        prefs.lyricsStyle === 'typewriter' ||
+        prefs.lyricsStyle === 'poster' ||
+        prefs.lyricsStyle === 'focus' ||
+        prefs.lyricsStyle === 'editorial'
+          ? prefs.lyricsStyle
+          : prev.lyricsStyle,
+      discordRpcEnabled: Boolean(prefs.discordRpcEnabled ?? prev.discordRpcEnabled),
+      discordRpcConfig: {
+        ...prev.discordRpcConfig,
+        ...(prefs.discordRpcConfig ?? {}),
+        clientId:
+          prefs.discordRpcConfig?.clientId || prev.discordRpcConfig.clientId,
+      },
+      playbackRate: Number(prefs.playbackRate ?? prev.playbackRate),
+      preservesPitch: Boolean(prefs.preservesPitch ?? prev.preservesPitch),
+      audioNormalization: Boolean(prefs.audioNormalization ?? prev.audioNormalization),
+      normalizationTarget: prefs.normalizationTarget ?? prev.normalizationTarget,
+      stereoBalance: Number(prefs.stereoBalance ?? prev.stereoBalance),
+      monoAudio: Boolean(prefs.monoAudio ?? prev.monoAudio),
+      streamQuality: prefs.streamQuality ?? prev.streamQuality,
+      autoplayEnabled: Boolean(prefs.autoplayEnabled ?? prev.autoplayEnabled),
+      safeCrossfade: prefs.safeCrossfade ?? prev.safeCrossfade,
+      userEq: prefs.userEq ?? prev.userEq,
+      djMode: prefs.djMode ?? prev.djMode,
+      dismissedPlaylistRecs:
+        prefs.dismissedPlaylistRecs && typeof prefs.dismissedPlaylistRecs === 'object'
+          ? (prefs.dismissedPlaylistRecs as Record<string, string[]>)
+          : prev.dismissedPlaylistRecs,
+    }));
   }
 
   return {
@@ -1620,6 +1767,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   isTransitioning: false,
   activeTransitionType: undefined,
   transitionProgress01: 0,
+  transitionDurationSec: 4,
   autoplayEnabled: true,
 
   djMode: {
@@ -1724,6 +1872,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   libraryCategory: 'Todo',
   libraryFilterQuery: '',
   playlists: [],
+  dismissedPlaylistRecs: {},
   likedTracks: [],
   playHistory: [],
   offlineDownloads: {},
@@ -2012,9 +2161,28 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
             safeCrossfade: hydratedPrefs.safeCrossfade ?? prev.safeCrossfade,
             userEq: hydratedPrefs.userEq ?? prev.userEq,
             djMode: hydratedPrefs.djMode ?? prev.djMode,
+            dismissedPlaylistRecs:
+              hydratedPrefs.dismissedPlaylistRecs &&
+              typeof hydratedPrefs.dismissedPlaylistRecs === 'object'
+                ? (hydratedPrefs.dismissedPlaylistRecs as Record<string, string[]>)
+                : prev.dismissedPlaylistRecs,
           }
         : {}),
     }));
+
+    if (restoredAuth.connected) {
+      try {
+        const cloudPrefs = await syncEngine.loadAccountPreferences?.();
+        if (cloudPrefs) {
+          applyPreferencesPayload(cloudPrefs);
+          void defaultPlatformBridge.preferencesStorage
+            .setItem(USER_PREFS_STORAGE_KEY, JSON.stringify(cloudPrefs))
+            .catch(() => {});
+        }
+      } catch {
+        // ignore offline cloud prefs load
+      }
+    }
 
     const allRealTracks = Array.from(
       new Map(shelves.flatMap((s) => s.tracks ?? []).map((t) => [t.id, t])).values()
@@ -2590,7 +2758,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       st.safeCrossfade.durationSec > 0 &&
       st.repeatMode !== 'one' &&
       dur > 15 &&
-      positionSec >= dur - st.safeCrossfade.durationSec - (dur > st.safeCrossfade.durationSec + 10 ? 1.8 : 0.4)
+      positionSec >= dur - st.safeCrossfade.durationSec - 0.3
     ) {
       seekAutoTriggerTimer = setTimeout(() => {
         seekAutoTriggerTimer = null;
@@ -3661,6 +3829,92 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }
   },
 
+  dismissPlaylistRecommendation: (playlistId, trackId) => {
+    if (!playlistId || !trackId) return;
+    set((prev) => {
+      const existing = prev.dismissedPlaylistRecs[playlistId] ?? [];
+      if (existing.includes(trackId)) return prev;
+      return {
+        dismissedPlaylistRecs: {
+          ...prev.dismissedPlaylistRecs,
+          [playlistId]: [...existing, trackId].slice(-250),
+        },
+      };
+    });
+    persistPrefsFromStore();
+  },
+
+  fetchPlaylistRecommendations: async (playlistId, options) => {
+    const st = get();
+    const pl = st.playlists.find((p) => p.id === playlistId);
+    if (!pl) return [];
+
+    const dismissed = new Set(st.dismissedPlaylistRecs[playlistId] ?? []);
+    const excludedIds = new Set<string>([
+      ...pl.tracks.map((t) => t.id),
+      ...dismissed,
+      ...(options?.excludeIds ?? []),
+    ]);
+    const excludedKeys = new Set<string>(pl.tracks.map((t) => normalizeTrackMetaKey(t)));
+    if (options?.seedTrack) {
+      excludedIds.add(options.seedTrack.id);
+      excludedKeys.add(normalizeTrackMetaKey(options.seedTrack));
+    }
+
+    const candidates = new Map<string, Track>();
+    const pushCand = (t: Track) => {
+      if (!t?.id || excludedIds.has(t.id)) return;
+      const key = normalizeTrackMetaKey(t);
+      if (excludedKeys.has(key)) return;
+      excludedKeys.add(key);
+      candidates.set(t.id, t);
+    };
+
+    const playlistSeeds = [...pl.tracks];
+    // Pick up to 3 varied seeds across playlist + explicit seedTrack just added
+    const seedTracks: Track[] = [];
+    if (options?.seedTrack) seedTracks.push(options.seedTrack);
+    if (playlistSeeds.length > 0) {
+      const step = Math.max(1, Math.floor(playlistSeeds.length / 3));
+      for (let i = playlistSeeds.length - 1; i >= 0 && seedTracks.length < 4; i -= step) {
+        const cand = playlistSeeds[i]!;
+        if (!seedTracks.some((s) => s.id === cand.id)) seedTracks.push(cand);
+      }
+    }
+    if (seedTracks.length === 0) {
+      seedTracks.push(st.currentTrack);
+    }
+
+    const artistSeeds = Array.from(
+      new Set([
+        ...(options?.seedTrack?.artists.map((a) => a.name) ?? []),
+        ...pl.tracks.flatMap((t) => t.artists.map((a) => a.name)),
+      ])
+    ).slice(0, 3);
+
+    const [relRes, artRes] = await Promise.all([
+      Promise.allSettled(seedTracks.map((t) => musicProvider.getRelated(t.id))),
+      Promise.allSettled(artistSeeds.map((name) => musicProvider.getArtist(name))),
+    ]);
+
+    for (const r of relRes) {
+      if (r.status !== 'fulfilled') continue;
+      for (const t of r.value.tracks ?? []) pushCand(t);
+    }
+    for (const r of artRes) {
+      if (r.status !== 'fulfilled') continue;
+      for (const t of r.value.topSongs ?? []) pushCand(t);
+    }
+    for (const t of [...st.searchResults.songs, ...st.recommendedQueue, ...FALLBACK_TRACKS]) {
+      pushCand(t);
+    }
+
+    return recommendationEngine.rerankTracks(Array.from(candidates.values()), {
+      maxPerArtistInWindow: 2,
+      limit: 24,
+    });
+  },
+
   toggleLike: async (track) => {
     const target = track ?? get().currentTrack;
     const likedNow = await libraryStore.toggleLikeTrack(target);
@@ -3820,6 +4074,17 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     await syncEngine.signIn(email, password);
     const profile = (await syncEngine.getProfile?.()) ?? null;
     try {
+      const cloudPrefs = await syncEngine.loadAccountPreferences?.();
+      if (cloudPrefs) {
+        applyPreferencesPayload(cloudPrefs);
+        void defaultPlatformBridge.preferencesStorage
+          .setItem(USER_PREFS_STORAGE_KEY, JSON.stringify(cloudPrefs))
+          .catch(() => {});
+      }
+    } catch {
+      // ignore cloud prefs load error
+    }
+    try {
       if (typeof localStorage !== 'undefined') {
         localStorage.setItem('pmusic.onboarding.dismissed', '1');
       }
@@ -3845,6 +4110,9 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     const res = await syncEngine.signUp(email, password);
     const auth = syncEngine.getAuthState();
     const profile = auth.connected ? ((await syncEngine.getProfile?.()) ?? null) : null;
+    if (auth.connected) {
+      persistPrefsFromStore();
+    }
     try {
       if (typeof localStorage !== 'undefined') {
         localStorage.setItem('pmusic.onboarding.dismissed', '1');
@@ -3907,6 +4175,19 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       const auth = await syncEngine.completeOAuthCallback?.(callbackUrl);
       if (auth?.connected) {
         const profile = (await syncEngine.getProfile?.()) ?? null;
+        try {
+          const cloudPrefs = await syncEngine.loadAccountPreferences?.();
+          if (cloudPrefs) {
+            applyPreferencesPayload(cloudPrefs);
+            void defaultPlatformBridge.preferencesStorage
+              .setItem(USER_PREFS_STORAGE_KEY, JSON.stringify(cloudPrefs))
+              .catch(() => {});
+          } else {
+            persistPrefsFromStore();
+          }
+        } catch {
+          // ignore
+        }
         try {
           if (typeof localStorage !== 'undefined') {
             localStorage.setItem('pmusic.onboarding.dismissed', '1');
@@ -4404,11 +4685,15 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       const fallbackSeeds = st.homeShelves.flatMap((s) => s.tracks ?? []).slice(0, 2);
       const seedTracks = Array.from(
         new Map(
-          [st.currentTrack, ...recentPlayed, ...likedSeedTracks, ...fallbackSeeds].map(
-            (t) => [t.id, t]
-          )
+          [
+            st.currentTrack,
+            ...st.playlists.flatMap((p) => p.tracks.slice(0, 2)),
+            ...recentPlayed,
+            ...likedSeedTracks,
+            ...fallbackSeeds,
+          ].map((t) => [t.id, t])
         ).values()
-      ).slice(0, 2);
+      ).slice(0, 4);
 
       const [artistResults, relatedResults] = await Promise.all([
         Promise.allSettled(
@@ -4419,16 +4704,35 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         ),
       ]);
 
-      const recentTrackIds = new Set<string>([
+      const ownedPlaylistTracks = st.playlists.flatMap((p) => p.tracks);
+      const ownedLikedTracks = st.likedTracks.map((l) => l.track);
+      const ownedTrackIds = new Set<string>([
         st.currentTrack.id,
         ...st.playHistory.slice(0, 12).map((h) => h.trackId),
+        ...ownedPlaylistTracks.map((t) => t.id),
+        ...ownedLikedTracks.map((t) => t.id),
+        ...st.offlineEntries.map((e) => e.trackId),
       ]);
+      const ownedNormKeys = new Set<string>([
+        ...ownedPlaylistTracks.map((t) => normalizeTrackMetaKey(t)),
+        ...ownedLikedTracks.map((t) => normalizeTrackMetaKey(t)),
+        normalizeTrackMetaKey(st.currentTrack),
+      ]);
+
+      const playlistArtistCount = new Map<string, number>();
+      for (const t of ownedPlaylistTracks) {
+        for (const a of t.artists) {
+          const k = a.name.trim().toLowerCase();
+          if (k) playlistArtistCount.set(k, (playlistArtistCount.get(k) ?? 0) + 1);
+        }
+      }
+
       const seenTitleKeys = new Set<string>();
       const candidateTrackMap = new Map<string, Track>();
       const pushCandidateTrack = (t: Track) => {
-        if (!t?.id || recentTrackIds.has(t.id)) return;
-        const normKey = `${t.title.trim().toLowerCase()}::${(t.artists[0]?.name ?? '').trim().toLowerCase()}`;
-        if (seenTitleKeys.has(normKey)) return;
+        if (!t?.id || ownedTrackIds.has(t.id)) return;
+        const normKey = normalizeTrackMetaKey(t);
+        if (ownedNormKeys.has(normKey) || seenTitleKeys.has(normKey)) return;
         seenTitleKeys.add(normKey);
         candidateTrackMap.set(t.id, t);
       };
@@ -4437,26 +4741,23 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         string,
         { artist: ArtistSummary; score: number }
       >();
-      const parseFanCount = (txt?: string): number => {
-        if (!txt) return 0;
-        const digits = txt.replace(/[^\d]/g, '');
-        return digits ? Number.parseInt(digits, 10) || 0 : 0;
-      };
       const addEmergingCandidate = (artist: ArtistSummary, baseBoost: number) => {
         const cleanName = artist.name.trim();
         const key = cleanName.toLowerCase();
         if (!cleanName || topKeys.has(key)) return;
-        const fans = parseFanCount(artist.subscribersText);
-        // Reward emerging / mid-sized scene artists with distinct identity
+        if ((playlistArtistCount.get(key) ?? 0) >= 3) return;
+        const fans = parseFanCountText(artist.subscribersText);
+        // Strictly filter mega-mainstream stars out of "Artistas emergentes para descubrir"
+        if (fans >= 3_000_000) return;
         const emergingSweetSpot =
           fans > 20 && fans < 250_000
-            ? 45
+            ? 50
             : fans >= 250_000 && fans < 1_500_000
               ? 18
               : fans === 0
-                ? 25
+                ? 24
                 : 4;
-        const affinityBoost = recommendationEngine.getEffectiveAffinity(cleanName) * 2;
+        const affinityBoost = recommendationEngine.getEffectiveAffinity(cleanName) * 1.5;
         const total = baseBoost + emergingSweetSpot + affinityBoost;
         const existing = emergingPool.get(key);
         if (!existing || total > existing.score) {
@@ -4472,7 +4773,6 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           relatedArtistsToFetch.push(rel);
         }
         for (const t of r.value.topSongs ?? []) {
-          // Include collaborations involving non-mainstream co-artists
           if (t.artists.length > 1) {
             pushCandidateTrack(t);
             for (const co of t.artists) {
@@ -4503,10 +4803,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         }
       }
 
-      // Fetch top tracks of up to 3 discovered emerging/related artists for fresh discoveries
+      // Fetch top tracks of up to 5 discovered emerging/related artists for fresh discoveries
       const topRelatedPick = Array.from(emergingPool.values())
         .sort((a, b) => b.score - a.score)
-        .slice(0, 3)
+        .slice(0, 5)
         .map((x) => x.artist);
       if (topRelatedPick.length > 0) {
         const extraArtistDetails = await Promise.allSettled(
@@ -4526,7 +4826,9 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       const similarPool =
         candidateTrackMap.size > 0
           ? Array.from(candidateTrackMap.values())
-          : [...FALLBACK_TRACKS].filter((t) => t.id !== st.currentTrack.id);
+          : [...FALLBACK_TRACKS].filter(
+              (t) => !ownedTrackIds.has(t.id) && !ownedNormKeys.has(normalizeTrackMetaKey(t))
+            );
 
       const exploreSimilarTracks = recommendationEngine.rerankTracks(similarPool, {
         maxPerArtistInWindow: 2,

@@ -1741,6 +1741,128 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   transform-style: preserve-3d;
 }
 
+/* ── True Hardware-Accelerated 3D Cube / Prism Transitions (60/120fps GPU) ── */
+.pm-cube-viewport {
+  container-type: size;
+  perspective: 1100px;
+  overflow: visible;
+}
+
+.pm-cube-prism {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+@keyframes pmCubeRollDown {
+  0% {
+    transform: translateZ(-50cqh) rotateX(0deg);
+  }
+  100% {
+    transform: translateZ(-50cqh) rotateX(-90deg);
+  }
+}
+
+.pm-cube-face-front {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  transform: rotateX(0deg) translateZ(50cqh);
+}
+
+.pm-cube-face-top {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  transform: rotateX(90deg) translateZ(50cqh);
+}
+
+@keyframes pmCubeShadeOut {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 0.58;
+  }
+}
+
+.pm-cube-shade-out {
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.85));
+  animation: pmCubeShadeOut 4s linear forwards;
+  pointer-events: none;
+}
+
+@keyframes pmCubeLightIn {
+  0% {
+    opacity: 0.38;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.pm-cube-light-in {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 65%);
+  animation: pmCubeLightIn 4s linear forwards;
+  pointer-events: none;
+}
+
+/* Unified Dock 3D Prism (rotates Cover + Title + Explicit + Artists + Heart together) */
+.pm-dock-prism-viewport {
+  perspective: 720px;
+  height: 52px;
+  overflow: visible;
+}
+
+@keyframes pmDockPrismRoll {
+  0% {
+    transform: translateZ(-26px) rotateX(0deg);
+  }
+  100% {
+    transform: translateZ(-26px) rotateX(-90deg);
+  }
+}
+
+.pm-dock-face-front {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  transform: rotateX(0deg) translateZ(26px);
+}
+
+.pm-dock-face-top {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  transform: rotateX(90deg) translateZ(26px);
+}
+
+/* GPU-Composited Living "Two Waters Merging" Fluid Expansion (Zero per-frame mask repaints) */
+@keyframes pmWaterBlobExpand {
+  0% {
+    transform: translate3d(0, 0, 0) scale(0.08) rotate(-18deg);
+    opacity: 0;
+  }
+  22% {
+    opacity: 0.85;
+  }
+  100% {
+    transform: translate3d(var(--wx, 4%), var(--wy, -3%), 0) scale(2.15) rotate(16deg);
+    opacity: 0.92;
+  }
+}
+
+@keyframes pmWaterFloodMerge {
+  0%, 42% {
+    opacity: 0;
+  }
+  96%, 100% {
+    opacity: 1;
+  }
+}
+
 .pm-backdrop-static .pm-orb-1,
 .pm-backdrop-static .pm-orb-2,
 .pm-backdrop-static .pm-orb-3,
@@ -2357,165 +2479,197 @@ html.pm-solid-modern .pm-mobile-glass-header {
   animation: pmRepeatSpinEpic 520ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 
-/* ── Hyper-kinetic Skip, Rewind, Shuffle & Play Loading Animations ── */
-@keyframes pmSkipNextHyper {
-  0% {
-    transform: translate3d(0, 0, 0) scaleX(1) scaleY(1);
-    opacity: 1;
-    filter: drop-shadow(0 0 0 transparent);
-  }
-  18% {
-    transform: translate3d(-4px, 0, 0) scaleX(0.84) scaleY(1.12);
-    opacity: 1;
-  }
-  42% {
-    transform: translate3d(16px, 0, 0) skewX(-16deg) scaleX(1.26) scaleY(0.86);
-    opacity: 0.12;
-    filter: blur(1.5px) drop-shadow(-8px 0 8px currentColor);
-  }
-  49% {
-    transform: translate3d(-14px, 0, 0) skewX(12deg) scale(0.85);
-    opacity: 0;
-  }
-  74% {
-    transform: translate3d(3px, 0, 0) skewX(-3deg) scale(1.18);
-    opacity: 1;
-    filter: blur(0) drop-shadow(0 0 10px currentColor);
-  }
-  100% {
-    transform: translate3d(0, 0, 0) skewX(0deg) scale(1);
-    opacity: 1;
-    filter: drop-shadow(0 0 0 transparent);
-  }
-}
-
-.pm-skip-next-hyper {
-  animation: pmSkipNextHyper 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
-  will-change: transform, opacity, filter;
-}
-
-@keyframes pmSkipPrevHyper {
-  0% {
-    transform: translate3d(0, 0, 0) scaleX(1) scaleY(1);
-    opacity: 1;
-    filter: drop-shadow(0 0 0 transparent);
-  }
-  18% {
-    transform: translate3d(4px, 0, 0) scaleX(0.84) scaleY(1.12);
-    opacity: 1;
-  }
-  42% {
-    transform: translate3d(-16px, 0, 0) skewX(16deg) scaleX(1.26) scaleY(0.86);
-    opacity: 0.12;
-    filter: blur(1.5px) drop-shadow(8px 0 8px currentColor);
-  }
-  49% {
-    transform: translate3d(14px, 0, 0) skewX(-12deg) scale(0.85);
-    opacity: 0;
-  }
-  74% {
-    transform: translate3d(-3px, 0, 0) skewX(3deg) scale(1.18);
-    opacity: 1;
-    filter: blur(0) drop-shadow(0 0 10px currentColor);
-  }
-  100% {
-    transform: translate3d(0, 0, 0) skewX(0deg) scale(1);
-    opacity: 1;
-    filter: drop-shadow(0 0 0 transparent);
-  }
-}
-
+/* ── Shape-Playing Geometric Skip, Rewind & Shuffle Animations ── */
+.pm-skip-next-hyper,
 .pm-skip-prev-hyper {
-  animation: pmSkipPrevHyper 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
-  will-change: transform, opacity, filter;
+  will-change: transform;
 }
 
-@keyframes pmSkipTrailNext {
+@keyframes pmSkipTriOut {
   0% {
-    opacity: 0.85;
-    transform: translate3d(-4px, -50%, 0) scaleX(0.4) scaleY(0.75);
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 1;
   }
-  55% {
-    opacity: 0.65;
-    transform: translate3d(14px, -50%, 0) scaleX(1.35) scaleY(1.1);
-  }
-  100% {
+  58% {
+    transform: translate3d(7px, 0, 0) scale(0.86);
     opacity: 0;
-    transform: translate3d(24px, -50%, 0) scaleX(1.65) scaleY(0.5);
-  }
-}
-
-.pm-skip-trail-next {
-  animation: pmSkipTrailNext 460ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-
-@keyframes pmSkipTrailPrev {
-  0% {
-    opacity: 0.85;
-    transform: translate3d(4px, -50%, 0) scaleX(0.4) scaleY(0.75);
-  }
-  55% {
-    opacity: 0.65;
-    transform: translate3d(-14px, -50%, 0) scaleX(1.35) scaleY(1.1);
   }
   100% {
+    transform: translate3d(9px, 0, 0) scale(0.82);
     opacity: 0;
-    transform: translate3d(-24px, -50%, 0) scaleX(1.65) scaleY(0.5);
   }
 }
 
-.pm-skip-trail-prev {
-  animation: pmSkipTrailPrev 460ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-
-@keyframes pmShuffleChaosEpic {
+@keyframes pmSkipTriIn {
   0% {
-    transform: perspective(440px) rotateY(0deg) rotateZ(0deg) scale(1);
-    filter: drop-shadow(0 0 0 transparent);
+    transform: translate3d(-11px, 0, 0) scale(0.82);
+    opacity: 0;
   }
-  20% {
-    transform: perspective(440px) rotateY(-24deg) rotateZ(-22deg) scale(0.76);
+  25% {
+    opacity: 0.75;
   }
-  52% {
-    transform: perspective(440px) rotateY(205deg) rotateZ(18deg) scale(1.36);
-    filter: drop-shadow(0 0 12px currentColor);
-  }
-  76% {
-    transform: perspective(440px) rotateY(345deg) rotateZ(-10deg) scale(0.94);
-    filter: drop-shadow(0 0 6px currentColor);
-  }
-  90% {
-    transform: perspective(440px) rotateY(362deg) rotateZ(3deg) scale(1.1);
+  72% {
+    transform: translate3d(1.5px, 0, 0) scale(1.06);
+    opacity: 1;
   }
   100% {
-    transform: perspective(440px) rotateY(360deg) rotateZ(0deg) scale(1);
-    filter: drop-shadow(0 0 0 transparent);
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 1;
   }
+}
+
+@keyframes pmSkipBarBump {
+  0% {
+    transform: translate3d(0, 0, 0) scaleY(1);
+  }
+  32% {
+    transform: translate3d(2.5px, 0, 0) scaleY(1.14);
+  }
+  68% {
+    transform: translate3d(-0.6px, 0, 0) scaleY(0.96);
+  }
+  100% {
+    transform: translate3d(0, 0, 0) scaleY(1);
+  }
+}
+
+.pm-skip-tri-out {
+  transform-origin: center;
+  animation: pmSkipTriOut 420ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.pm-skip-tri-in {
+  transform-origin: center;
+  animation: pmSkipTriIn 440ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.pm-skip-bar-bump {
+  transform-origin: 19px 12px;
+  animation: pmSkipBarBump 420ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+@keyframes pmSkipBackTriOut {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 1;
+  }
+  58% {
+    transform: translate3d(-7px, 0, 0) scale(0.86);
+    opacity: 0;
+  }
+  100% {
+    transform: translate3d(-9px, 0, 0) scale(0.82);
+    opacity: 0;
+  }
+}
+
+@keyframes pmSkipBackTriIn {
+  0% {
+    transform: translate3d(11px, 0, 0) scale(0.82);
+    opacity: 0;
+  }
+  25% {
+    opacity: 0.75;
+  }
+  72% {
+    transform: translate3d(-1.5px, 0, 0) scale(1.06);
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes pmSkipBackBarBump {
+  0% {
+    transform: translate3d(0, 0, 0) scaleY(1);
+  }
+  32% {
+    transform: translate3d(-2.5px, 0, 0) scaleY(1.14);
+  }
+  68% {
+    transform: translate3d(0.6px, 0, 0) scaleY(0.96);
+  }
+  100% {
+    transform: translate3d(0, 0, 0) scaleY(1);
+  }
+}
+
+.pm-skip-back-tri-out {
+  transform-origin: center;
+  animation: pmSkipBackTriOut 420ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.pm-skip-back-tri-in {
+  transform-origin: center;
+  animation: pmSkipBackTriIn 440ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.pm-skip-back-bar-bump {
+  transform-origin: 5px 12px;
+  animation: pmSkipBackBarBump 420ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
 }
 
 .pm-shuffle-chaos-epic {
-  animation: pmShuffleChaosEpic 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
-  transform-style: preserve-3d;
-  will-change: transform, filter;
+  will-change: transform;
 }
 
-@keyframes pmShuffleSpark {
+@keyframes pmShuffleLaneSwapA {
   0% {
-    opacity: 1;
-    transform: translate(-50%, -50%) scale(0.45);
+    transform: translate3d(0, 0, 0);
   }
-  55% {
-    opacity: 0.95;
-    transform: translate(calc(-50% + var(--sx, 12px) * 0.85), calc(-50% + var(--sy, -12px) * 0.85)) scale(1.15);
+  45% {
+    transform: translate3d(1.5px, -3.5px, 0) scale(1.04);
   }
   100% {
-    opacity: 0;
-    transform: translate(calc(-50% + var(--sx, 12px)), calc(-50% + var(--sy, -12px))) scale(0.25);
+    transform: translate3d(0, 0, 0);
   }
 }
 
-.pm-shuffle-spark {
-  animation: pmShuffleSpark 540ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+@keyframes pmShuffleLaneSwapB {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  45% {
+    transform: translate3d(1.5px, 3.5px, 0) scale(1.04);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes pmShuffleStrokeDash {
+  0% {
+    stroke-dasharray: 1 0.01;
+    stroke-dashoffset: 0;
+  }
+  40% {
+    stroke-dasharray: 0.55 0.45;
+    stroke-dashoffset: -0.35;
+  }
+  100% {
+    stroke-dasharray: 1 0.01;
+    stroke-dashoffset: -1;
+  }
+}
+
+.pm-shuffle-lane-a {
+  transform-origin: center;
+  animation: pmShuffleLaneSwapA 480ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.pm-shuffle-lane-b {
+  transform-origin: center;
+  animation: pmShuffleLaneSwapB 480ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.pm-shuffle-stroke-a {
+  animation: pmShuffleStrokeDash 480ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.pm-shuffle-stroke-b {
+  animation: pmShuffleStrokeDash 480ms cubic-bezier(0.22, 1, 0.36, 1) 40ms both;
 }
 
 @keyframes pmPlayLoadingRing {
@@ -2769,7 +2923,20 @@ html.pm-solid-modern .pm-mobile-glass-header {
   .pm-cf-sheen,
   .pm-lyrics-swap-in,
   .pm-water-eddy-a,
-  .pm-water-eddy-b {
+  .pm-water-eddy-b,
+  .pm-cube-prism,
+  .pm-cube-shade-out,
+  .pm-cube-light-in,
+  .pm-skip-tri-out,
+  .pm-skip-tri-in,
+  .pm-skip-bar-bump,
+  .pm-skip-back-tri-out,
+  .pm-skip-back-tri-in,
+  .pm-skip-back-bar-bump,
+  .pm-shuffle-lane-a,
+  .pm-shuffle-lane-b,
+  .pm-shuffle-stroke-a,
+  .pm-shuffle-stroke-b {
     animation: none !important;
   }
   .pm-sing-word {
@@ -2847,7 +3014,20 @@ html.pm-reduced-motion .pm-cf-carousel-stage,
 html.pm-reduced-motion .pm-cf-sheen,
 html.pm-reduced-motion .pm-lyrics-swap-in,
 html.pm-reduced-motion .pm-water-eddy-a,
-html.pm-reduced-motion .pm-water-eddy-b {
+html.pm-reduced-motion .pm-water-eddy-b,
+html.pm-reduced-motion .pm-cube-prism,
+html.pm-reduced-motion .pm-cube-shade-out,
+html.pm-reduced-motion .pm-cube-light-in,
+html.pm-reduced-motion .pm-skip-tri-out,
+html.pm-reduced-motion .pm-skip-tri-in,
+html.pm-reduced-motion .pm-skip-bar-bump,
+html.pm-reduced-motion .pm-skip-back-tri-out,
+html.pm-reduced-motion .pm-skip-back-tri-in,
+html.pm-reduced-motion .pm-skip-back-bar-bump,
+html.pm-reduced-motion .pm-shuffle-lane-a,
+html.pm-reduced-motion .pm-shuffle-lane-b,
+html.pm-reduced-motion .pm-shuffle-stroke-a,
+html.pm-reduced-motion .pm-shuffle-stroke-b {
   animation: none !important;
 }
 html.pm-reduced-motion .pm-sing-word {

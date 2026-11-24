@@ -22,8 +22,6 @@ import {
   Repeat1,
   Search,
   Shuffle,
-  SkipBack,
-  SkipForward,
   Sliders,
   SlidersHorizontal,
   Smartphone,
@@ -34,6 +32,11 @@ import {
   Wifi,
   X,
 } from 'lucide-react';
+import {
+  AnimatedShuffleIcon,
+  AnimatedSkipBackIcon,
+  AnimatedSkipForwardIcon,
+} from './TransportIcons.tsx';
 import {
   USER_EQ_FREQUENCIES_HZ,
   USER_EQ_PRESETS,
@@ -164,6 +167,7 @@ export const NowPlayingSheet: React.FC = () => {
     volume,
     isTransitioning,
     transitionProgress01,
+    transitionDurationSec,
     djMode,
     activeTransitionPlan,
     trackAnalyses,
@@ -755,8 +759,7 @@ export const NowPlayingSheet: React.FC = () => {
       incomingTransitionTrack &&
       outgoingTransitionTrack.id !== incomingTransitionTrack.id
   );
-  const cfP = Math.max(0, Math.min(1, transitionProgress01));
-  const cfPush = cfP < 0.5 ? 2 * cfP * cfP : 1 - Math.pow(-2 * cfP + 2, 2) / 2;
+  const cfAnimDurationSec = Math.max(1.2, transitionDurationSec || 4);
   const baseBackdropTrack = cfActive && outgoingTransitionTrack ? outgoingTransitionTrack : currentTrack;
 
   const incomingPreviewTrack =
@@ -775,31 +778,25 @@ export const NowPlayingSheet: React.FC = () => {
       hash = (hash * 31 + idStr.charCodeAt(i)) | 0;
     }
     const hAbs = Math.abs(hash);
-    const x1 = 18 + (hAbs % 64);
-    const y1 = 18 + ((hAbs >> 4) % 64);
-    const x2 = 100 - x1;
-    const y2 = 100 - y1;
-    const x3 = 16 + ((hAbs >> 8) % 68);
-    const y3 = 16 + ((hAbs >> 12) % 68);
-    const r1 = Math.max(0, Math.min(165, (cfP / 0.78) * 165));
-    const r2 = Math.max(0, Math.min(165, ((cfP - 0.12) / 0.74) * 165));
-    const r3 = Math.max(0, Math.min(155, ((cfP - 0.24) / 0.68) * 155));
-    const floodRaw = Math.max(0, Math.min(1, (cfP - 0.42) / 0.54));
-    const flood = floodRaw * floodRaw * (3 - 2 * floodRaw);
+    const x1 = 15 + (hAbs % 62);
+    const y1 = 15 + ((hAbs >> 4) % 62);
+    const x2 = 88 - (hAbs % 62);
+    const y2 = 88 - ((hAbs >> 4) % 62);
+    const x3 = 18 + ((hAbs >> 8) % 64);
+    const y3 = 18 + ((hAbs >> 12) % 64);
     return {
       url: incomingTransitionTrack.thumbnailHighUrl ?? incomingTransitionTrack.thumbnailUrl,
+      key: `water-${outgoingTransitionTrack?.id ?? ''}-${incomingTransitionTrack.id}`,
       x1,
       y1,
       x2,
       y2,
       x3,
       y3,
-      r1,
-      r2,
-      r3,
-      flood,
     };
   })();
+
+  const isPostCrossfadeSameTrack = lastCrossfadedTrackIdRef.current === currentTrack.id;
 
   const PlayerDeckColumn = (compact = false) => (
     <div
@@ -809,12 +806,14 @@ export const NowPlayingSheet: React.FC = () => {
           : 'mx-auto flex h-full w-full max-w-[420px] justify-center gap-5 pb-4 md:h-auto md:justify-center md:gap-5 md:py-0'
       }`}
     >
-      {/* Large Borderless Centerpiece Artwork with smooth 3D push-out carousel & swipe skip */}
+      {/* Large Borderless Centerpiece Artwork with true GPU 3D Cube roll & swipe skip */}
       <div
         key={
-          cfActive && outgoingTransitionTrack && incomingTransitionTrack
-            ? `cf-big-${outgoingTransitionTrack.id}-${incomingTransitionTrack.id}`
-            : currentTrack.id
+          cfActive
+            ? `cf-big-${outgoingTransitionTrack?.id ?? ''}-${incomingTransitionTrack?.id ?? ''}`
+            : isPostCrossfadeSameTrack
+              ? `cf-big-${outgoingTransitionTrack?.id ?? currentTrack.id}-${currentTrack.id}`
+              : currentTrack.id
         }
         onTouchStart={(e) => {
           const t = e.touches[0];
@@ -838,53 +837,60 @@ export const NowPlayingSheet: React.FC = () => {
           }
         }}
         className={`${
-          cfActive
+          cfActive || isPostCrossfadeSameTrack
             ? ''
             : lastTrackDirection === 'prev'
               ? 'pm-cover-slide-prev'
               : 'pm-cover-slide-next'
-        } relative aspect-square overflow-hidden rounded-[14px] bg-[#111115] shadow-[0_26px_64px_rgba(0,0,0,0.58)] transition-transform duration-300 ease-out md:rounded-[16px] ${
+        } relative aspect-square ${
+          cfActive ? 'overflow-visible bg-transparent' : 'overflow-hidden bg-[#111115] shadow-[0_26px_64px_rgba(0,0,0,0.58)]'
+        } rounded-[14px] transition-transform duration-300 ease-out md:rounded-[16px] ${
           compact
             ? 'w-[min(68vw,320px,36dvh)] xl:w-[min(68vw,346px,38dvh)]'
             : 'w-[min(86vw,356px,42dvh)] md:w-[min(74vw,340px,38dvh)] xl:w-[min(74vw,380px,42dvh)]'
         } ${isPlaying ? 'scale-100' : 'scale-[0.96]'}`}
       >
         {cfActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
-          <div
-            className="pm-cf-3d-stage relative h-full w-full overflow-hidden rounded-[inherit]"
-            style={{ perspective: '760px', transformStyle: 'preserve-3d' }}
-          >
-            <img
-              src={outgoingTransitionTrack.thumbnailHighUrl ?? outgoingTransitionTrack.thumbnailUrl}
-              alt={outgoingTransitionTrack.title}
-              draggable={false}
-              className="pointer-events-none absolute inset-0 h-full w-full select-none object-cover will-change-transform"
-              style={{
-                transform: `translate3d(0, ${(cfPush * 105).toFixed(1)}%, 0) rotateX(${(-cfPush * 26).toFixed(1)}deg) scale(${(1 - cfPush * 0.12).toFixed(3)})`,
-                opacity: (1 - cfPush * 0.45).toFixed(3),
-              }}
-            />
+          <div className="pm-cube-viewport relative h-full w-full">
             <div
-              className="pointer-events-none absolute inset-0 h-full w-full will-change-transform"
+              className="pm-cube-prism"
               style={{
-                transform: `translate3d(0, ${(-(1 - cfPush) * 105).toFixed(1)}%, 0) rotateX(${((1 - cfPush) * 26).toFixed(1)}deg) scale(${(0.88 + cfPush * 0.12).toFixed(3)})`,
-                opacity: (0.55 + cfPush * 0.45).toFixed(3),
+                animation: `pmCubeRollDown ${cfAnimDurationSec}s cubic-bezier(0.32, 0.05, 0.22, 1) forwards`,
               }}
             >
-              <img
-                src={incomingTransitionTrack.thumbnailHighUrl ?? incomingTransitionTrack.thumbnailUrl}
-                alt={incomingTransitionTrack.title}
-                draggable={false}
-                className="h-full w-full select-none object-cover"
-              />
-              <span aria-hidden="true" className="pm-cf-sheen pointer-events-none absolute inset-0" />
+              <div className="pm-cube-face-front overflow-hidden rounded-[14px] shadow-[0_26px_64px_rgba(0,0,0,0.58)] md:rounded-[16px]">
+                <img
+                  src={outgoingTransitionTrack.thumbnailHighUrl ?? outgoingTransitionTrack.thumbnailUrl}
+                  alt={outgoingTransitionTrack.title}
+                  draggable={false}
+                  className="h-full w-full select-none object-cover"
+                />
+                <div
+                  aria-hidden="true"
+                  className="pm-cube-shade-out absolute inset-0"
+                  style={{ animationDuration: `${cfAnimDurationSec}s` }}
+                />
+              </div>
+              <div className="pm-cube-face-top overflow-hidden rounded-[14px] shadow-[0_26px_64px_rgba(0,0,0,0.58)] md:rounded-[16px]">
+                <img
+                  src={incomingTransitionTrack.thumbnailHighUrl ?? incomingTransitionTrack.thumbnailUrl}
+                  alt={incomingTransitionTrack.title}
+                  draggable={false}
+                  className="h-full w-full select-none object-cover"
+                />
+                <div
+                  aria-hidden="true"
+                  className="pm-cube-light-in absolute inset-0"
+                  style={{ animationDuration: `${cfAnimDurationSec}s` }}
+                />
+              </div>
             </div>
           </div>
         ) : (
           <img
             src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
             alt={currentTrack.title}
-            className="h-full w-full object-cover transition-all duration-500 scale-100 opacity-100"
+            className="h-full w-full object-cover scale-100 opacity-100"
           />
         )}
       </div>
@@ -894,39 +900,36 @@ export const NowPlayingSheet: React.FC = () => {
         key={
           cfActive && outgoingTransitionTrack && incomingTransitionTrack
             ? `cf-meta-${outgoingTransitionTrack.id}-${incomingTransitionTrack.id}`
-            : `meta-${incomingPreviewTrack?.id ?? currentTrack.id}`
+            : isPostCrossfadeSameTrack
+              ? `meta-post-cf-${currentTrack.id}`
+              : `meta-${incomingPreviewTrack?.id ?? currentTrack.id}`
         }
-        className={`${cfActive ? '' : 'pm-track-meta-in'} flex w-full flex-col gap-0.5 md:gap-1`}
+        className={`${cfActive || isPostCrossfadeSameTrack ? '' : 'pm-track-meta-in'} flex w-full flex-col gap-0.5 md:gap-1`}
       >
         {cfActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
           <div className="flex w-full items-center justify-between gap-2">
-            <div className="relative h-[54px] min-w-0 flex-1 overflow-hidden">
+            <div className="relative h-[56px] min-w-0 flex-1" style={{ perspective: '720px' }}>
               <div
-                className="absolute inset-0 flex flex-col justify-center will-change-transform"
+                className="pm-cube-prism"
                 style={{
-                  transform: `translateY(${(cfPush * 114).toFixed(1)}%)`,
-                  opacity: (1 - cfPush * 0.72).toFixed(3),
+                  animation: `pmDockPrismRoll ${cfAnimDurationSec}s cubic-bezier(0.32, 0.05, 0.22, 1) forwards`,
                 }}
               >
-                <h1 className="truncate text-[21px] font-bold leading-snug tracking-tight text-white md:text-[23px]">
-                  {outgoingTransitionTrack.title}
-                </h1>
-                <div className="truncate text-[14px] leading-snug text-white/70">
-                  {outgoingTransitionTrack.artists.map((a) => a.name).join(', ')}
+                <div className="pm-dock-face-front flex h-[56px] flex-col justify-center overflow-hidden">
+                  <h1 className="truncate text-[21px] font-bold leading-snug tracking-tight text-white md:text-[23px]">
+                    {outgoingTransitionTrack.title}
+                  </h1>
+                  <div className="truncate text-[14px] leading-snug text-white/70">
+                    {outgoingTransitionTrack.artists.map((a) => a.name).join(', ')}
+                  </div>
                 </div>
-              </div>
-              <div
-                className="absolute inset-0 flex flex-col justify-center will-change-transform"
-                style={{
-                  transform: `translateY(${(-(1 - cfPush) * 114).toFixed(1)}%)`,
-                  opacity: (0.28 + cfPush * 0.72).toFixed(3),
-                }}
-              >
-                <h1 className="truncate text-[21px] font-bold leading-snug tracking-tight text-white md:text-[23px]">
-                  {incomingTransitionTrack.title}
-                </h1>
-                <div className="truncate text-[14px] leading-snug text-white/70">
-                  {incomingTransitionTrack.artists.map((a) => a.name).join(', ')}
+                <div className="pm-dock-face-top flex h-[56px] flex-col justify-center overflow-hidden">
+                  <h1 className="truncate text-[21px] font-bold leading-snug tracking-tight text-white md:text-[23px]">
+                    {incomingTransitionTrack.title}
+                  </h1>
+                  <div className="truncate text-[14px] leading-snug text-white/70">
+                    {incomingTransitionTrack.artists.map((a) => a.name).join(', ')}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1179,30 +1182,9 @@ export const NowPlayingSheet: React.FC = () => {
               : 'text-white/55 hover:text-white'
           }`}
         >
-          {transportAnim === 'shuffle' && !reducedMotionPref && (
-            <span aria-hidden="true" className="pointer-events-none absolute inset-0">
-              <span
-                className="pm-shuffle-spark absolute left-1/2 top-1/2 h-1.5 w-1.5 rounded-full bg-white"
-                style={{ '--sx': '-16px', '--sy': '-13px' } as React.CSSProperties}
-              />
-              <span
-                className="pm-shuffle-spark absolute left-1/2 top-1/2 h-1.5 w-1.5 rounded-full bg-white"
-                style={{ '--sx': '16px', '--sy': '-13px' } as React.CSSProperties}
-              />
-              <span
-                className="pm-shuffle-spark absolute left-1/2 top-1/2 h-1.5 w-1.5 rounded-full bg-white"
-                style={{ '--sx': '-16px', '--sy': '13px' } as React.CSSProperties}
-              />
-              <span
-                className="pm-shuffle-spark absolute left-1/2 top-1/2 h-1.5 w-1.5 rounded-full bg-white"
-                style={{ '--sx': '16px', '--sy': '13px' } as React.CSSProperties}
-              />
-            </span>
-          )}
-          <Shuffle
-            className={`h-4 w-4 ${
-              transportAnim === 'shuffle' && !reducedMotionPref ? 'pm-shuffle-chaos-epic' : ''
-            }`}
+          <AnimatedShuffleIcon
+            className="h-4 w-4"
+            animate={transportAnim === 'shuffle' && !reducedMotionPref}
           />
           {shuffleEnabled && (
             <span
@@ -1221,16 +1203,10 @@ export const NowPlayingSheet: React.FC = () => {
           }}
           className="pm-pressable relative flex h-12 w-12 items-center justify-center overflow-visible bg-transparent text-white/90 transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none"
         >
-          {transportAnim === 'prev' && !reducedMotionPref && (
-            <span
-              aria-hidden="true"
-              className="pm-skip-trail-prev pointer-events-none absolute left-1/2 top-1/2 h-6 w-7 -translate-x-1/2 rounded-full bg-white/35 blur-[3px]"
-            />
-          )}
-          <SkipBack
-            className={`h-7 w-7 fill-current ${
-              transportAnim === 'prev' && !reducedMotionPref ? 'pm-skip-prev-hyper' : ''
-            }`}
+          <AnimatedSkipBackIcon
+            className="h-7 w-7"
+            filled
+            animate={transportAnim === 'prev' && !reducedMotionPref}
           />
         </button>
 
@@ -1281,16 +1257,10 @@ export const NowPlayingSheet: React.FC = () => {
           }}
           className="pm-pressable relative flex h-12 w-12 items-center justify-center overflow-visible bg-transparent text-white/90 transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none"
         >
-          {transportAnim === 'next' && !reducedMotionPref && (
-            <span
-              aria-hidden="true"
-              className="pm-skip-trail-next pointer-events-none absolute left-1/2 top-1/2 h-6 w-7 -translate-x-1/2 rounded-full bg-white/35 blur-[3px]"
-            />
-          )}
-          <SkipForward
-            className={`h-7 w-7 fill-current ${
-              transportAnim === 'next' && !reducedMotionPref ? 'pm-skip-next-hyper' : ''
-            }`}
+          <AnimatedSkipForwardIcon
+            className="h-7 w-7"
+            filled
+            animate={transportAnim === 'next' && !reducedMotionPref}
           />
         </button>
 
@@ -1431,66 +1401,89 @@ export const NowPlayingSheet: React.FC = () => {
           />
         </div>
 
-        {/* Living "Two Waters Merging" Fluid Crossfade Currents */}
+        {/* Living GPU-Composited "Two Waters Merging" Fluid Crossfade Currents (zero per-frame blur/mask repaints) */}
         {waterPools && (
           <div
+            key={waterPools.key}
             data-testid="live-water-merge"
             className="pointer-events-none absolute -inset-24"
           >
-            <img
-              src={waterPools.url}
-              alt=""
-              draggable={false}
-              className="pm-water-eddy-a absolute inset-0 h-full w-full select-none object-cover"
+            <div
+              className="absolute h-[88vmax] w-[88vmax] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-full will-change-transform"
+              style={
+                {
+                  left: `${waterPools.x1}%`,
+                  top: `${waterPools.y1}%`,
+                  '--wx': '6%',
+                  '--wy': '-5%',
+                  animation: `pmWaterBlobExpand ${(cfAnimDurationSec * 0.85).toFixed(2)}s cubic-bezier(0.22, 1, 0.36, 1) forwards`,
+                } as React.CSSProperties
+              }
+            >
+              <img
+                src={waterPools.url}
+                alt=""
+                draggable={false}
+                className="h-full w-full scale-125 select-none object-cover opacity-75 blur-[36px] saturate-150"
+              />
+            </div>
+            <div
+              className="absolute h-[84vmax] w-[84vmax] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-full will-change-transform"
+              style={
+                {
+                  left: `${waterPools.x2}%`,
+                  top: `${waterPools.y2}%`,
+                  '--wx': '-5%',
+                  '--wy': '5%',
+                  animation: `pmWaterBlobExpand ${(cfAnimDurationSec * 0.85).toFixed(2)}s cubic-bezier(0.22, 1, 0.36, 1) ${(cfAnimDurationSec * 0.1).toFixed(2)}s both`,
+                } as React.CSSProperties
+              }
+            >
+              <img
+                src={waterPools.url}
+                alt=""
+                draggable={false}
+                className="h-full w-full -scale-x-125 scale-y-125 select-none object-cover opacity-70 blur-[40px] saturate-150"
+              />
+            </div>
+            <div
+              className="absolute h-[76vmax] w-[76vmax] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-full mix-blend-screen will-change-transform"
+              style={
+                {
+                  left: `${waterPools.x3}%`,
+                  top: `${waterPools.y3}%`,
+                  '--wx': '3%',
+                  '--wy': '4%',
+                  animation: `pmWaterBlobExpand ${(cfAnimDurationSec * 0.78).toFixed(2)}s cubic-bezier(0.22, 1, 0.36, 1) ${(cfAnimDurationSec * 0.2).toFixed(2)}s both`,
+                } as React.CSSProperties
+              }
+            >
+              <img
+                src={waterPools.url}
+                alt=""
+                draggable={false}
+                className="h-full w-full scale-125 select-none object-cover opacity-50 blur-[44px] saturate-150"
+              />
+            </div>
+            <div
+              className="pointer-events-none absolute inset-0 will-change-transform"
               style={{
-                filter: 'blur(34px) saturate(1.65)',
-                opacity: Math.min(0.76, cfP * 1.15),
-                WebkitMaskImage: `radial-gradient(circle at ${waterPools.x1}% ${waterPools.y1}%, #000 0%, #000 ${(waterPools.r1 * 0.52).toFixed(1)}%, transparent ${waterPools.r1.toFixed(1)}%)`,
-                maskImage: `radial-gradient(circle at ${waterPools.x1}% ${waterPools.y1}%, #000 0%, #000 ${(waterPools.r1 * 0.52).toFixed(1)}%, transparent ${waterPools.r1.toFixed(1)}%)`,
+                animation: `pmWaterFloodMerge ${cfAnimDurationSec}s ease-in-out forwards`,
               }}
-            />
-            <img
-              src={waterPools.url}
-              alt=""
-              draggable={false}
-              className="pm-water-eddy-b absolute inset-0 h-full w-full -scale-x-100 select-none object-cover"
-              style={{
-                filter: 'blur(38px) saturate(1.7)',
-                opacity: Math.max(0, Math.min(0.68, (cfP - 0.1) * 1.15)),
-                WebkitMaskImage: `radial-gradient(circle at ${waterPools.x2}% ${waterPools.y2}%, #000 0%, #000 ${(waterPools.r2 * 0.52).toFixed(1)}%, transparent ${waterPools.r2.toFixed(1)}%)`,
-                maskImage: `radial-gradient(circle at ${waterPools.x2}% ${waterPools.y2}%, #000 0%, #000 ${(waterPools.r2 * 0.52).toFixed(1)}%, transparent ${waterPools.r2.toFixed(1)}%)`,
-              }}
-            />
-            <img
-              src={waterPools.url}
-              alt=""
-              draggable={false}
-              className="pm-water-eddy-a absolute inset-0 h-full w-full select-none object-cover mix-blend-screen"
-              style={{
-                filter: 'blur(42px) saturate(1.75) brightness(1.1)',
-                opacity: Math.max(0, Math.min(0.42, (cfP - 0.22) * 0.85)),
-                WebkitMaskImage: `radial-gradient(circle at ${waterPools.x3}% ${waterPools.y3}%, #000 0%, #000 ${(waterPools.r3 * 0.5).toFixed(1)}%, transparent ${waterPools.r3.toFixed(1)}%)`,
-                maskImage: `radial-gradient(circle at ${waterPools.x3}% ${waterPools.y3}%, #000 0%, #000 ${(waterPools.r3 * 0.5).toFixed(1)}%, transparent ${waterPools.r3.toFixed(1)}%)`,
-              }}
-            />
-            {waterPools.flood > 0.01 && (
-              <>
-                <img
-                  src={waterPools.url}
-                  alt=""
-                  draggable={false}
-                  className="pm-fluid-cover-a absolute inset-0 h-full w-full select-none object-cover"
-                  style={{ opacity: 0.55 * waterPools.flood }}
-                />
-                <img
-                  src={waterPools.url}
-                  alt=""
-                  draggable={false}
-                  className="pm-fluid-cover-b absolute inset-0 h-full w-full -scale-x-100 select-none object-cover"
-                  style={{ opacity: 0.35 * waterPools.flood }}
-                />
-              </>
-            )}
+            >
+              <img
+                src={waterPools.url}
+                alt=""
+                draggable={false}
+                className="pm-fluid-cover-a absolute inset-0 h-full w-full select-none object-cover opacity-55"
+              />
+              <img
+                src={waterPools.url}
+                alt=""
+                draggable={false}
+                className="pm-fluid-cover-b absolute inset-0 h-full w-full -scale-x-100 select-none object-cover opacity-35"
+              />
+            </div>
           </div>
         )}
 
@@ -1779,7 +1772,7 @@ export const NowPlayingSheet: React.FC = () => {
                   <div
                     key={`lyrics-body-${currentTrack.id}`}
                     style={{
-                      opacity: cfActive && cfP > 0.35 && cfP < 0.58 ? 0.55 : 1,
+                      opacity: cfActive && transitionProgress01 > 0.35 && transitionProgress01 < 0.58 ? 0.55 : 1,
                       transition: 'opacity 320ms ease',
                     }}
                     className={

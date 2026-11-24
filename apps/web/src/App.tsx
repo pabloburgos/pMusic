@@ -24,9 +24,6 @@ import {
   Repeat1,
   Search,
   Settings,
-  Shuffle,
-  SkipBack,
-  SkipForward,
   Sliders,
   Sparkles,
   Timer,
@@ -35,6 +32,11 @@ import {
   VolumeX,
   Wifi,
 } from 'lucide-react';
+import {
+  AnimatedShuffleIcon,
+  AnimatedSkipBackIcon,
+  AnimatedSkipForwardIcon,
+} from './components/TransportIcons.tsx';
 import { formatDurationSec } from '@pmusic/core';
 import {
   getLivePlaybackPosition,
@@ -106,6 +108,7 @@ const PMusicMainApp: React.FC = () => {
     isTransitioning,
     activeTransitionType,
     transitionProgress01,
+    transitionDurationSec,
     activeTransitionPlan,
     trackAnalyses,
     likedTracks,
@@ -511,8 +514,7 @@ const PMusicMainApp: React.FC = () => {
       incomingTransitionTrack &&
       outgoingTransitionTrack.id !== incomingTransitionTrack.id
   );
-  const cfP = Math.max(0, Math.min(1, transitionProgress01));
-  const cfPush = cfP < 0.5 ? 2 * cfP * cfP : 1 - Math.pow(-2 * cfP + 2, 2) / 2;
+  const cfAnimDurationSec = Math.max(1.2, transitionDurationSec || 4);
   const currentBpm = trackAnalyses[currentTrack.id]?.bpm;
   const repeatLabel =
     repeatMode === 'one'
@@ -1597,8 +1599,90 @@ const PMusicMainApp: React.FC = () => {
             />
           )}
 
-          {/* Left: Artwork + Title & Clickable ArtistLinks + Heart */}
+          {/* Left: Unified GPU 3D Track Prism (Cover + Title + Explicit + Artists + Heart) */}
           <div className="pointer-events-none relative z-10 flex min-w-0 items-center">
+            {crossfadePairActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
+              <div
+                key={`dock-prism-${outgoingTransitionTrack.id}-${incomingTransitionTrack.id}`}
+                className="pm-dock-prism-viewport pointer-events-auto relative w-full max-w-[350px]"
+              >
+                <div
+                  className="pm-cube-prism"
+                  style={{
+                    animation: `pmDockPrismRoll ${cfAnimDurationSec}s cubic-bezier(0.32, 0.05, 0.22, 1) forwards`,
+                  }}
+                >
+                  {[
+                    { trackItem: outgoingTransitionTrack, faceClass: 'pm-dock-face-front', isIncoming: false },
+                    { trackItem: incomingTransitionTrack, faceClass: 'pm-dock-face-top', isIncoming: true },
+                  ].map(({ trackItem, faceClass, isIncoming }) => {
+                    const faceLiked = likedTracks.some((l) => l.trackId === trackItem.id);
+                    return (
+                      <div
+                        key={faceClass}
+                        className={`${faceClass} flex h-[52px] w-full items-center gap-3 overflow-hidden px-0.5`}
+                      >
+                        <button
+                          type="button"
+                          aria-label="Abrir reproductor a pantalla completa"
+                          onClick={() => setNowPlayingOpen(true)}
+                          className="relative h-11 w-11 shrink-0 overflow-hidden rounded-[10px] shadow-md"
+                        >
+                          <img
+                            src={trackItem.thumbnailUrl}
+                            alt={trackItem.title}
+                            draggable={false}
+                            className="pointer-events-none h-full w-full select-none object-cover"
+                          />
+                        </button>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-left text-[14px] font-semibold leading-tight pm-text-primary">
+                            {trackItem.title}
+                          </div>
+                          <div className="mt-0.5 flex items-center gap-1.5 truncate">
+                            {trackItem.isExplicit && (
+                              <span
+                                aria-label="Explícita"
+                                className="inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-[3px] bg-[var(--pm-text-secondary)]/20 text-[9px] font-extrabold leading-none pm-text-secondary"
+                              >
+                                E
+                              </span>
+                            )}
+                            <span className="truncate text-[12px] pm-text-secondary">
+                              {trackItem.artists.map((a) => a.name).join(', ')}
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          aria-label={faceLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
+                          aria-pressed={faceLiked}
+                          onClick={() => void toggleLike(trackItem)}
+                          className={`pm-pressable pm-hover relative inline-flex shrink-0 items-center justify-center rounded-full p-2 ${
+                            faceLiked ? 'text-rose-500' : 'pm-text-secondary hover:text-[var(--pm-text-primary)]'
+                          }`}
+                        >
+                          <Heart className={`h-4 w-4 ${faceLiked ? 'fill-current' : ''}`} />
+                        </button>
+                        {isIncoming ? (
+                          <span
+                            aria-hidden="true"
+                            className="pm-cube-light-in absolute inset-0 rounded-[12px]"
+                            style={{ animationDuration: `${cfAnimDurationSec}s` }}
+                          />
+                        ) : (
+                          <span
+                            aria-hidden="true"
+                            className="pm-cube-shade-out absolute inset-0 rounded-[12px]"
+                            style={{ animationDuration: `${cfAnimDurationSec}s` }}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
             <div
               draggable
               onDragStart={(e) => setDraggedTrack(e, currentTrack)}
@@ -1611,56 +1695,12 @@ const PMusicMainApp: React.FC = () => {
                 onClick={() => setNowPlayingOpen(true)}
                 className="group relative h-11 w-11 shrink-0 overflow-hidden rounded-[10px] shadow-md"
               >
-                {crossfadePairActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
-                  <div
-                    className="relative h-full w-full overflow-hidden rounded-[10px]"
-                    style={{ perspective: '280px', transformStyle: 'preserve-3d' }}
-                  >
-                    <div
-                      aria-hidden="true"
-                      className="pointer-events-none absolute -inset-[2px] z-20 rounded-[12px] p-[2px]"
-                      style={{
-                        background: `conic-gradient(from 0deg, rgba(255,255,255,0.92) ${Math.round(cfP * 360)}deg, rgba(255,255,255,0.12) 0deg)`,
-                        WebkitMask:
-                          'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
-                        WebkitMaskComposite: 'xor',
-                        maskComposite: 'exclude',
-                      }}
-                    />
-                    <img
-                      src={outgoingTransitionTrack.thumbnailUrl}
-                      alt={outgoingTransitionTrack.title}
-                      draggable={false}
-                      className="pointer-events-none absolute inset-0 h-full w-full select-none object-cover will-change-transform"
-                      style={{
-                        transform: `translate3d(0, ${(cfPush * 108).toFixed(1)}%, 0) rotateX(${(-cfPush * 48).toFixed(1)}deg) scale(${(1 - cfPush * 0.14).toFixed(3)})`,
-                        opacity: (1 - cfPush * 0.65).toFixed(3),
-                      }}
-                    />
-                    <div
-                      className="pointer-events-none absolute inset-0 h-full w-full will-change-transform"
-                      style={{
-                        transform: `translate3d(0, ${(-(1 - cfPush) * 108).toFixed(1)}%, 0) rotateX(${((1 - cfPush) * 48).toFixed(1)}deg) scale(${(0.86 + cfPush * 0.14).toFixed(3)})`,
-                        opacity: (0.35 + cfPush * 0.65).toFixed(3),
-                      }}
-                    >
-                      <img
-                        src={incomingTransitionTrack.thumbnailUrl}
-                        alt={incomingTransitionTrack.title}
-                        draggable={false}
-                        className="h-full w-full select-none object-cover"
-                      />
-                      <span aria-hidden="true" className="pm-cf-sheen pointer-events-none absolute inset-0" />
-                    </div>
-                  </div>
-                ) : (
-                  <img
-                    src={currentTrack.thumbnailUrl}
-                    alt={currentTrack.title}
-                    draggable={false}
-                    className="pointer-events-none h-full w-full select-none object-cover transition-transform duration-200 group-hover:scale-105"
-                  />
-                )}
+                <img
+                  src={currentTrack.thumbnailUrl}
+                  alt={currentTrack.title}
+                  draggable={false}
+                  className="pointer-events-none h-full w-full select-none object-cover transition-transform duration-200 group-hover:scale-105"
+                />
                 {playerBarStyle === 'minimal-wave' && isPlaying && (
                   <span
                     aria-hidden="true"
@@ -1683,64 +1723,29 @@ const PMusicMainApp: React.FC = () => {
               </button>
 
               <div className="min-w-0 max-w-[200px] xl:max-w-[240px]">
-                {crossfadePairActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
-                  <div className="relative h-[38px] overflow-hidden">
-                    <div
-                      className="absolute inset-0 flex flex-col justify-center will-change-transform"
-                      style={{
-                        transform: `translateY(${(cfPush * 114).toFixed(1)}%)`,
-                        opacity: (1 - cfPush * 0.75).toFixed(3),
-                      }}
+                <button
+                  type="button"
+                  onClick={() => setNowPlayingOpen(true)}
+                  className="block max-w-full truncate text-left text-[14px] font-semibold leading-tight pm-text-primary hover:underline"
+                >
+                  {currentTrack.title}
+                </button>
+                <div className="mt-0.5 flex items-center gap-1.5 truncate">
+                  {currentTrack.isExplicit && (
+                    <span
+                      aria-label="Explícita"
+                      className="inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-[3px] bg-[var(--pm-text-secondary)]/20 text-[9px] font-extrabold leading-none pm-text-secondary"
                     >
-                      <span className="block truncate text-[14px] font-semibold leading-tight pm-text-primary">
-                        {outgoingTransitionTrack.title}
-                      </span>
-                      <span className="mt-0.5 block truncate text-[12px] pm-text-secondary">
-                        {outgoingTransitionTrack.artists.map((a) => a.name).join(', ')}
-                      </span>
-                    </div>
-                    <div
-                      className="absolute inset-0 flex flex-col justify-center will-change-transform"
-                      style={{
-                        transform: `translateY(${(-(1 - cfPush) * 114).toFixed(1)}%)`,
-                        opacity: (0.25 + cfPush * 0.75).toFixed(3),
-                      }}
-                    >
-                      <span className="block truncate text-[14px] font-semibold leading-tight pm-text-primary">
-                        {incomingTransitionTrack.title}
-                      </span>
-                      <span className="mt-0.5 block truncate text-[12px] pm-text-secondary">
-                        {incomingTransitionTrack.artists.map((a) => a.name).join(', ')}
-                      </span>
-                    </div>
+                      E
+                    </span>
+                  )}
+                  <div className="truncate text-[12px] pm-text-secondary">
+                    <ArtistLinks
+                      artists={currentTrack.artists}
+                      linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
+                    />
                   </div>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setNowPlayingOpen(true)}
-                      className="block max-w-full truncate text-left text-[14px] font-semibold leading-tight pm-text-primary hover:underline"
-                    >
-                      {currentTrack.title}
-                    </button>
-                    <div className="mt-0.5 flex items-center gap-1.5 truncate">
-                      {currentTrack.isExplicit && (
-                        <span
-                          aria-label="Explícita"
-                          className="inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-[3px] bg-[var(--pm-text-secondary)]/20 text-[9px] font-extrabold leading-none pm-text-secondary"
-                        >
-                          E
-                        </span>
-                      )}
-                      <div className="truncate text-[12px] pm-text-secondary">
-                        <ArtistLinks
-                          artists={currentTrack.artists}
-                          linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
-                        />
-                      </div>
-                    </div>
-                  </>
-                )}
+                </div>
               </div>
 
               <button
@@ -1786,6 +1791,7 @@ const PMusicMainApp: React.FC = () => {
                   ))}
               </button>
             </div>
+            )}
           </div>
 
           {/* Center: Symmetrical Clean Transport [Shuffle · Prev · Play · Next · Repeat] + Centered Timeline/Time */}
@@ -1809,32 +1815,9 @@ const PMusicMainApp: React.FC = () => {
                     : 'pm-text-tertiary hover:text-[var(--pm-text-primary)]'
                 }`}
               >
-                {dockTransportAnim === 'shuffle' && !reducedMotionPref && (
-                  <span aria-hidden="true" className="pointer-events-none absolute inset-0">
-                    <span
-                      className="pm-shuffle-spark absolute left-1/2 top-1/2 h-1 w-1 rounded-full bg-current"
-                      style={{ '--sx': '-13px', '--sy': '-11px' } as React.CSSProperties}
-                    />
-                    <span
-                      className="pm-shuffle-spark absolute left-1/2 top-1/2 h-1 w-1 rounded-full bg-current"
-                      style={{ '--sx': '13px', '--sy': '-11px' } as React.CSSProperties}
-                    />
-                    <span
-                      className="pm-shuffle-spark absolute left-1/2 top-1/2 h-1 w-1 rounded-full bg-current"
-                      style={{ '--sx': '-13px', '--sy': '11px' } as React.CSSProperties}
-                    />
-                    <span
-                      className="pm-shuffle-spark absolute left-1/2 top-1/2 h-1 w-1 rounded-full bg-current"
-                      style={{ '--sx': '13px', '--sy': '11px' } as React.CSSProperties}
-                    />
-                  </span>
-                )}
-                <Shuffle
-                  className={`h-3.5 w-3.5 ${
-                    dockTransportAnim === 'shuffle' && !reducedMotionPref
-                      ? 'pm-shuffle-chaos-epic'
-                      : ''
-                  }`}
+                <AnimatedShuffleIcon
+                  className="h-3.5 w-3.5"
+                  animate={dockTransportAnim === 'shuffle' && !reducedMotionPref}
                 />
                 {shuffleEnabled && (
                   <span
@@ -1854,16 +1837,9 @@ const PMusicMainApp: React.FC = () => {
                 }}
                 className="pm-pressable pm-hover relative inline-flex h-9 w-9 items-center justify-center overflow-visible rounded-full pm-text-primary active:scale-90"
               >
-                {dockTransportAnim === 'prev' && !reducedMotionPref && (
-                  <span
-                    aria-hidden="true"
-                    className="pm-skip-trail-prev pointer-events-none absolute left-1/2 top-1/2 h-4 w-5 -translate-x-1/2 rounded-full bg-current opacity-25 blur-[2px]"
-                  />
-                )}
-                <SkipBack
-                  className={`h-4 w-4 ${
-                    dockTransportAnim === 'prev' && !reducedMotionPref ? 'pm-skip-prev-hyper' : ''
-                  }`}
+                <AnimatedSkipBackIcon
+                  className="h-4 w-4"
+                  animate={dockTransportAnim === 'prev' && !reducedMotionPref}
                 />
               </button>
 
@@ -1914,16 +1890,9 @@ const PMusicMainApp: React.FC = () => {
                 }}
                 className="pm-pressable pm-hover relative inline-flex h-9 w-9 items-center justify-center overflow-visible rounded-full pm-text-primary active:scale-90"
               >
-                {dockTransportAnim === 'next' && !reducedMotionPref && (
-                  <span
-                    aria-hidden="true"
-                    className="pm-skip-trail-next pointer-events-none absolute left-1/2 top-1/2 h-4 w-5 -translate-x-1/2 rounded-full bg-current opacity-25 blur-[2px]"
-                  />
-                )}
-                <SkipForward
-                  className={`h-4 w-4 ${
-                    dockTransportAnim === 'next' && !reducedMotionPref ? 'pm-skip-next-hyper' : ''
-                  }`}
+                <AnimatedSkipForwardIcon
+                  className="h-4 w-4"
+                  animate={dockTransportAnim === 'next' && !reducedMotionPref}
                 />
               </button>
 
@@ -2181,97 +2150,94 @@ const PMusicMainApp: React.FC = () => {
               </button>
             )}
             <div className="flex items-center justify-between gap-2">
-              <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                <button
-                  type="button"
-                  aria-label="Abrir reproductor Reproduciendo ahora"
-                  onClick={() => setNowPlayingOpen(true)}
-                  className="relative h-11 w-11 shrink-0 overflow-hidden rounded-[8px] shadow-sm"
+              {crossfadePairActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
+                <div
+                  key={`m-dock-prism-${outgoingTransitionTrack.id}-${incomingTransitionTrack.id}`}
+                  className="pm-dock-prism-viewport relative min-w-0 flex-1"
                 >
-                  {crossfadePairActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
-                    <div
-                      className="relative h-full w-full overflow-hidden rounded-[8px]"
-                      style={{ perspective: '280px', transformStyle: 'preserve-3d' }}
+                  <div
+                    className="pm-cube-prism"
+                    style={{
+                      animation: `pmDockPrismRoll ${cfAnimDurationSec}s cubic-bezier(0.32, 0.05, 0.22, 1) forwards`,
+                    }}
+                  >
+                    {[
+                      { trackItem: outgoingTransitionTrack, faceClass: 'pm-dock-face-front', isIncoming: false },
+                      { trackItem: incomingTransitionTrack, faceClass: 'pm-dock-face-top', isIncoming: true },
+                    ].map(({ trackItem, faceClass, isIncoming }) => {
+                      const faceLiked = likedTracks.some((l) => l.trackId === trackItem.id);
+                      return (
+                        <div
+                          key={faceClass}
+                          className={`${faceClass} flex h-[52px] w-full items-center justify-between gap-2 overflow-hidden`}
+                        >
+                          <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                            <button
+                              type="button"
+                              aria-label="Abrir reproductor Reproduciendo ahora"
+                              onClick={() => setNowPlayingOpen(true)}
+                              className="relative h-11 w-11 shrink-0 overflow-hidden rounded-[8px] shadow-sm"
+                            >
+                              <img
+                                src={trackItem.thumbnailUrl}
+                                alt={trackItem.title}
+                                draggable={false}
+                                className="h-full w-full object-cover"
+                              />
+                            </button>
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-left text-[14px] font-semibold leading-snug pm-text-primary">
+                                {trackItem.title}
+                              </div>
+                              <div className="truncate text-xs leading-normal pm-text-secondary">
+                                {trackItem.artists.map((a) => a.name).join(', ')}
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            aria-label={faceLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
+                            onClick={() => void toggleLike(trackItem)}
+                            className={`pm-pressable flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/[0.08] ${
+                              faceLiked ? 'text-rose-500' : 'pm-text-secondary'
+                            }`}
+                          >
+                            <Heart className={`h-4 w-4 ${faceLiked ? 'fill-current' : ''}`} />
+                          </button>
+                          {isIncoming ? (
+                            <span
+                              aria-hidden="true"
+                              className="pm-cube-light-in absolute inset-0 rounded-[12px]"
+                              style={{ animationDuration: `${cfAnimDurationSec}s` }}
+                            />
+                          ) : (
+                            <span
+                              aria-hidden="true"
+                              className="pm-cube-shade-out absolute inset-0 rounded-[12px]"
+                              style={{ animationDuration: `${cfAnimDurationSec}s` }}
+                            />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                    <button
+                      type="button"
+                      aria-label="Abrir reproductor Reproduciendo ahora"
+                      onClick={() => setNowPlayingOpen(true)}
+                      className="relative h-11 w-11 shrink-0 overflow-hidden rounded-[8px] shadow-sm"
                     >
-                      <div
-                        aria-hidden="true"
-                        className="pointer-events-none absolute -inset-[2px] z-20 rounded-[10px] p-[2px]"
-                        style={{
-                          background: `conic-gradient(from 0deg, rgba(255,255,255,0.92) ${Math.round(cfP * 360)}deg, rgba(255,255,255,0.12) 0deg)`,
-                          WebkitMask:
-                            'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
-                          WebkitMaskComposite: 'xor',
-                          maskComposite: 'exclude',
-                        }}
-                      />
                       <img
-                        src={outgoingTransitionTrack.thumbnailUrl}
-                        alt={outgoingTransitionTrack.title}
-                        draggable={false}
-                        className="pointer-events-none absolute inset-0 h-full w-full select-none object-cover will-change-transform"
-                        style={{
-                          transform: `translate3d(0, ${(cfPush * 108).toFixed(1)}%, 0) rotateX(${(-cfPush * 48).toFixed(1)}deg) scale(${(1 - cfPush * 0.14).toFixed(3)})`,
-                          opacity: (1 - cfPush * 0.65).toFixed(3),
-                        }}
+                        src={currentTrack.thumbnailUrl}
+                        alt={currentTrack.title}
+                        className="h-full w-full object-cover"
                       />
-                      <div
-                        className="pointer-events-none absolute inset-0 h-full w-full will-change-transform"
-                        style={{
-                          transform: `translate3d(0, ${(-(1 - cfPush) * 108).toFixed(1)}%, 0) rotateX(${((1 - cfPush) * 48).toFixed(1)}deg) scale(${(0.86 + cfPush * 0.14).toFixed(3)})`,
-                          opacity: (0.35 + cfPush * 0.65).toFixed(3),
-                        }}
-                      >
-                        <img
-                          src={incomingTransitionTrack.thumbnailUrl}
-                          alt={incomingTransitionTrack.title}
-                          draggable={false}
-                          className="h-full w-full select-none object-cover"
-                        />
-                        <span aria-hidden="true" className="pm-cf-sheen pointer-events-none absolute inset-0" />
-                      </div>
-                    </div>
-                  ) : (
-                    <img
-                      src={currentTrack.thumbnailUrl}
-                      alt={currentTrack.title}
-                      className="h-full w-full object-cover"
-                    />
-                  )}
-                </button>
-                <div className="min-w-0 flex-1">
-                  {crossfadePairActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
-                    <div className="relative h-[38px] overflow-hidden">
-                      <div
-                        className="absolute inset-0 flex flex-col justify-center will-change-transform"
-                        style={{
-                          transform: `translateY(${(cfPush * 114).toFixed(1)}%)`,
-                          opacity: (1 - cfPush * 0.75).toFixed(3),
-                        }}
-                      >
-                        <span className="block truncate text-[14px] font-semibold leading-snug pm-text-primary">
-                          {outgoingTransitionTrack.title}
-                        </span>
-                        <span className="block truncate text-xs leading-normal pm-text-secondary">
-                          {outgoingTransitionTrack.artists.map((a) => a.name).join(', ')}
-                        </span>
-                      </div>
-                      <div
-                        className="absolute inset-0 flex flex-col justify-center will-change-transform"
-                        style={{
-                          transform: `translateY(${(-(1 - cfPush) * 114).toFixed(1)}%)`,
-                          opacity: (0.25 + cfPush * 0.75).toFixed(3),
-                        }}
-                      >
-                        <span className="block truncate text-[14px] font-semibold leading-snug pm-text-primary">
-                          {incomingTransitionTrack.title}
-                        </span>
-                        <span className="block truncate text-xs leading-normal pm-text-secondary">
-                          {incomingTransitionTrack.artists.map((a) => a.name).join(', ')}
-                        </span>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
+                    </button>
+                    <div className="min-w-0 flex-1">
                       <button
                         type="button"
                         onClick={() => setNowPlayingOpen(true)}
@@ -2285,23 +2251,22 @@ const PMusicMainApp: React.FC = () => {
                           linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
                         />
                       </div>
-                    </>
-                  )}
-                </div>
-              </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label={isLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
+                    onClick={() => void toggleLike(currentTrack)}
+                    className={`pm-pressable flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/[0.08] ${
+                      isLiked ? 'text-rose-500' : 'pm-text-secondary'
+                    }`}
+                  >
+                    <Heart className={`h-4 w-4 ${isLiked ? 'fill-current' : ''}`} />
+                  </button>
+                </>
+              )}
 
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  aria-label={isLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
-                  onClick={() => void toggleLike(currentTrack)}
-                  className={`pm-pressable flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.08] ${
-                    isLiked ? 'text-rose-500' : 'pm-text-secondary'
-                  }`}
-                >
-                  <Heart className={`h-4 w-4 ${isLiked ? 'fill-current' : ''}`} />
-                </button>
-
+              <div className="flex shrink-0 items-center gap-1">
                 <button
                   type="button"
                   data-testid="mobile-play-btn"
@@ -2346,16 +2311,9 @@ const PMusicMainApp: React.FC = () => {
                   }}
                   className="pm-pressable relative flex h-10 w-10 items-center justify-center overflow-visible rounded-full pm-text-primary"
                 >
-                  {dockTransportAnim === 'next' && !reducedMotionPref && (
-                    <span
-                      aria-hidden="true"
-                      className="pm-skip-trail-next pointer-events-none absolute left-1/2 top-1/2 h-4 w-5 -translate-x-1/2 rounded-full bg-current opacity-25 blur-[2px]"
-                    />
-                  )}
-                  <SkipForward
-                    className={`h-4.5 w-4.5 ${
-                      dockTransportAnim === 'next' && !reducedMotionPref ? 'pm-skip-next-hyper' : ''
-                    }`}
+                  <AnimatedSkipForwardIcon
+                    className="h-4.5 w-4.5"
+                    animate={dockTransportAnim === 'next' && !reducedMotionPref}
                   />
                 </button>
               </div>
