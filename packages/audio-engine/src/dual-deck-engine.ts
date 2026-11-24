@@ -741,6 +741,8 @@ export class DualDeckAudioEngine implements IAudioEngine {
         : volumeToPerceptualGain(this.volume) * gainValue;
     resetAudioParam(deck.lowEqNode?.gain, this.audioCtx, 0);
     resetAudioParam(deck.midEqNode?.gain, this.audioCtx, 0);
+    resetAudioParam(deck.midEqNode?.frequency, this.audioCtx, 1000);
+    resetAudioParam(deck.midEqNode?.Q, this.audioCtx, 0.8);
     resetAudioParam(deck.highEqNode?.gain, this.audioCtx, 0);
     if (deck.sweepFilterNode) {
       deck.sweepFilterNode.type = 'lowpass';
@@ -1114,13 +1116,19 @@ export class DualDeckAudioEngine implements IAudioEngine {
           setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, ch.inLowPassStartHz, 0.01);
         }
       } else if (plan.transitionType === 'eq_swap') {
-        setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -28, 0.01);
-        setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, -2.5, 0.01);
+        // Vocal-Stem Isolation setup on incoming deck so its voice floats cleanly over the outgoing beat
+        setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -32, 0.01);
+        setAudioParamSmooth(incoming.midEqNode?.frequency, this.audioCtx, 1250, 0.01);
+        setAudioParamSmooth(incoming.midEqNode?.Q, this.audioCtx, 0.72, 0.01);
+        setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, 3.5, 0.01);
+        setAudioParamSmooth(incoming.highEqNode?.gain, this.audioCtx, -4.5, 0.01);
         if (incoming.sweepFilterNode) {
           incoming.sweepFilterNode.type = 'highpass';
           incoming.sweepFilterNode.Q.value = 0.75;
-          setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, 260, 0.01);
+          setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, 320, 0.01);
         }
+        setAudioParamSmooth(outgoing.midEqNode?.frequency, this.audioCtx, 1250, 0.01);
+        setAudioParamSmooth(outgoing.midEqNode?.Q, this.audioCtx, 0.72, 0.01);
       } else if (plan.transitionType === 'filter_sweep' && incoming.sweepFilterNode) {
         incoming.sweepFilterNode.type = 'lowpass';
         incoming.sweepFilterNode.Q.value = 1.25;
@@ -1441,66 +1449,109 @@ export class DualDeckAudioEngine implements IAudioEngine {
             inGain = p < 0.55 ? Math.sin((p / 0.55) * 0.5 * Math.PI) * 0.92 : 0.92 + 0.08 * ((p - 0.55) / 0.45);
           }
         } else if (plan.transitionType === 'eq_swap') {
-          // Clean bass-cut crossfade: cut outgoing lows/kicks first, brief zero-clash pocket, then restore incoming lows
-          // Prevents double-kicks / rhythmic bass clashes when overlapping tracks have different BPMs
-          outGain = Math.cos(p * 0.5 * Math.PI);
-          inGain = Math.sin(p * 0.5 * Math.PI);
+          // Vocal-Stem over Outgoing Beat Crossfade:
+          // Phase 1 (0–46%): Outgoing carves its own vocal pocket (-16.5 dB) to become an instrumental bed
+          //                  while incoming enters isolated as a vocal stem (HPF 320Hz, +3.5 dB vocal presence, -32 dB lows).
+          // Phase 2 (46–54%): Brief zero-clash low-end pocket (both basses cut) so kicks at different BPMs never collide.
+          // Phase 3 (54–72%): Incoming beat & bass drop in cleanly while outgoing fades out high-passed with subtle echo tail.
+          // Phase 4 (72–100%): Full transparent incoming track; outgoing dissolves cleanly.
+          if (p < 0.46) {
+            const u = p / 0.46;
+            const carveU = Math.min(1, p / 0.22);
+            const outBassCutU = p < 0.34 ? 0 : (p - 0.34) / 0.12;
 
-          if (p < 0.44) {
-            const u = p / 0.44;
-            setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -28 * u);
-            setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -28);
-            setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, -2.5 * (1 - u * 0.5));
+            outGain = 1.0 - 0.22 * u;
+            inGain = Math.sin(u * 0.5 * Math.PI) * 0.86;
+
+            // Outgoing becomes clean instrumental bed (carve vocals, keep beat until p=0.34, then drop lows)
+            setAudioParamSmooth(outgoing.midEqNode?.gain, this.audioCtx, -16.5 * carveU);
+            setAudioParamSmooth(outgoing.highEqNode?.gain, this.audioCtx, -3.5 * carveU);
+            setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -32 * outBassCutU);
             if (outgoing.sweepFilterNode) {
               outgoing.sweepFilterNode.type = 'highpass';
               outgoing.sweepFilterNode.Q.value = 0.75;
-              setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, 24 + u * 236);
+              setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, 24 + outBassCutU * 276);
             }
+
+            // Incoming floats as vocal stem only (zero kicks/bass, vocal presence forward)
+            setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -32);
+            setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, 3.5);
+            setAudioParamSmooth(incoming.highEqNode?.gain, this.audioCtx, -4.5);
             if (incoming.sweepFilterNode) {
               incoming.sweepFilterNode.type = 'highpass';
               incoming.sweepFilterNode.Q.value = 0.75;
-              setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, 260);
+              setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, 320);
             }
-          } else if (p < 0.52) {
-            // Brief zero-clash low-end pocket so kicks at different BPMs never collide
-            setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -28);
-            setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -28);
-            setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, -1.2);
+          } else if (p < 0.54) {
+            const u = (p - 0.46) / 0.08;
+            outGain = 0.78 - 0.14 * u;
+            inGain = 0.86 + 0.06 * u;
+
+            // Zero-clash pocket + subtle dub echo tail on outgoing instrumental
+            setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -32);
+            setAudioParamSmooth(outgoing.midEqNode?.gain, this.audioCtx, -16.5);
+            setAudioParamSmooth(outgoing.highEqNode?.gain, this.audioCtx, -4.5);
             if (outgoing.sweepFilterNode) {
               outgoing.sweepFilterNode.type = 'highpass';
               outgoing.sweepFilterNode.Q.value = 0.8;
-              setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, 260);
+              setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, 300 + u * 80);
             }
+            setAudioParamSmooth(outgoing.delaySendNode?.gain, this.audioCtx, 0.16 * u, 0.025);
+            setAudioParamSmooth(outgoing.delayFeedbackNode?.gain, this.audioCtx, 0.32, 0.025);
+
+            setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -32);
+            setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, 3.5);
+            setAudioParamSmooth(incoming.highEqNode?.gain, this.audioCtx, -4.0);
             if (incoming.sweepFilterNode) {
               incoming.sweepFilterNode.type = 'highpass';
               incoming.sweepFilterNode.Q.value = 0.75;
-              setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, 260);
+              setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, 320);
             }
-          } else if (p < 0.68) {
-            const u = (p - 0.52) / 0.16;
-            setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -28);
-            setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -28 * (1 - u));
-            setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, -1.2 * (1 - u));
-            if (outgoing.sweepFilterNode) {
-              outgoing.sweepFilterNode.type = 'highpass';
-              outgoing.sweepFilterNode.Q.value = 0.85;
-              setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, 260 + u * 240);
-            }
+          } else if (p < 0.72) {
+            const u = (p - 0.54) / 0.18;
+            outGain = 0.64 * Math.cos(u * 0.5 * Math.PI * 0.75);
+            inGain = 0.92 + 0.08 * u;
+
+            // Incoming beat & bass drop in smoothly while vocal EQ relaxes to flat
+            setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -32 * (1 - u));
+            setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, 3.5 * (1 - u));
+            setAudioParamSmooth(incoming.highEqNode?.gain, this.audioCtx, -4.0 * (1 - u));
             if (incoming.sweepFilterNode) {
               incoming.sweepFilterNode.type = 'highpass';
               incoming.sweepFilterNode.Q.value = 0.707;
-              setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, 260 - u * 236);
+              setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, 320 - u * 296);
             }
-          } else {
-            const u = (p - 0.68) / 0.32;
-            setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -28);
-            setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, 0);
-            setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, 0);
+
+            // Outgoing sweeps up and dissolves out of the way
+            setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -32);
+            setAudioParamSmooth(outgoing.midEqNode?.gain, this.audioCtx, -16.5);
+            setAudioParamSmooth(outgoing.highEqNode?.gain, this.audioCtx, -4.5 - u * 3.5);
             if (outgoing.sweepFilterNode) {
               outgoing.sweepFilterNode.type = 'highpass';
               outgoing.sweepFilterNode.Q.value = 0.9;
-              setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, 500 + u * 450);
+              setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, 380 + u * 420);
             }
+            setAudioParamSmooth(outgoing.delaySendNode?.gain, this.audioCtx, 0.16 * (1 - u), 0.025);
+            setAudioParamSmooth(outgoing.delayFeedbackNode?.gain, this.audioCtx, 0.32 * (1 - u * 0.6), 0.025);
+          } else {
+            const u = (p - 0.72) / 0.28;
+            outGain = 0.24 * Math.cos(u * 0.5 * Math.PI);
+            inGain = 1.0;
+
+            setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -32);
+            setAudioParamSmooth(outgoing.midEqNode?.gain, this.audioCtx, -18);
+            setAudioParamSmooth(outgoing.highEqNode?.gain, this.audioCtx, -8);
+            if (outgoing.sweepFilterNode) {
+              outgoing.sweepFilterNode.type = 'highpass';
+              outgoing.sweepFilterNode.Q.value = 0.9;
+              setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, 800 + u * 600);
+            }
+            setAudioParamSmooth(outgoing.delaySendNode?.gain, this.audioCtx, 0, 0.025);
+            setAudioParamSmooth(outgoing.delayFeedbackNode?.gain, this.audioCtx, 0, 0.025);
+
+            setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, 0);
+            setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, 0);
+            setAudioParamSmooth(incoming.highEqNode?.gain, this.audioCtx, 0);
             if (incoming.sweepFilterNode) {
               incoming.sweepFilterNode.type = 'lowpass';
               incoming.sweepFilterNode.Q.value = 0.707;
