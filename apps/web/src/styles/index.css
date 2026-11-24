@@ -1763,11 +1763,16 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   transform-style: preserve-3d;
 }
 
-/* ── True Hardware-Accelerated 3D Cube / Prism Transitions (60/120fps GPU) ── */
+/* ── True Hardware-Accelerated 3D Spatial Floating Card Orbit & Dock Prism (60/120fps GPU) ── */
 .pm-cube-viewport {
   container-type: size;
-  perspective: 960px;
+  perspective: 1100px;
   overflow: visible;
+}
+
+.pm-card-orbit-stage {
+  perspective: 1100px;
+  transform-style: preserve-3d;
 }
 
 .pm-cube-prism {
@@ -1778,104 +1783,137 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   will-change: transform;
 }
 
-@keyframes pmCubeFromTop {
+@keyframes pmCardOutLeft {
   0% {
-    transform: translateZ(-50cqh) rotateX(0deg) rotateY(0deg);
-  }
-  46% {
-    transform: translateZ(-76cqh) rotateX(-46deg) rotateY(15deg);
+    transform: translate3d(0, 0, 0) rotateY(0deg) rotateX(0deg) scale(1);
+    opacity: 1;
+    filter: blur(0px);
   }
   100% {
-    transform: translateZ(-50cqh) rotateX(-90deg) rotateY(0deg);
+    transform: translate3d(-38%, -4%, -180px) rotateY(28deg) rotateX(6deg) scale(0.84);
+    opacity: 0;
+    filter: blur(4px);
   }
 }
 
-@keyframes pmCubeFromBottom {
+@keyframes pmCardInRight {
   0% {
-    transform: translateZ(-50cqh) rotateX(0deg) rotateY(0deg);
+    transform: translate3d(38%, 4%, -150px) rotateY(-26deg) rotateX(-6deg) scale(0.86);
+    opacity: 0;
+    filter: blur(4px);
   }
-  46% {
-    transform: translateZ(-76cqh) rotateX(46deg) rotateY(-15deg);
+  26% {
+    opacity: 1;
   }
   100% {
-    transform: translateZ(-50cqh) rotateX(90deg) rotateY(0deg);
+    transform: translate3d(0, 0, 0) rotateY(0deg) rotateX(0deg) scale(1);
+    opacity: 1;
+    filter: blur(0px);
   }
 }
 
-@keyframes pmCubeFromRight {
+@keyframes pmCardOutRight {
   0% {
-    transform: translateZ(-50cqh) rotateY(0deg) rotateX(0deg);
-  }
-  46% {
-    transform: translateZ(-76cqh) rotateY(-46deg) rotateX(13deg);
+    transform: translate3d(0, 0, 0) rotateY(0deg) rotateX(0deg) scale(1);
+    opacity: 1;
+    filter: blur(0px);
   }
   100% {
-    transform: translateZ(-50cqh) rotateY(-90deg) rotateX(0deg);
+    transform: translate3d(38%, -4%, -180px) rotateY(-28deg) rotateX(6deg) scale(0.84);
+    opacity: 0;
+    filter: blur(4px);
   }
 }
 
-@keyframes pmCubeFromLeft {
+@keyframes pmCardInLeft {
   0% {
-    transform: translateZ(-50cqh) rotateY(0deg) rotateX(0deg);
+    transform: translate3d(-38%, 4%, -150px) rotateY(26deg) rotateX(-6deg) scale(0.86);
+    opacity: 0;
+    filter: blur(4px);
   }
-  46% {
-    transform: translateZ(-76cqh) rotateY(46deg) rotateX(-13deg);
+  26% {
+    opacity: 1;
   }
   100% {
-    transform: translateZ(-50cqh) rotateY(90deg) rotateX(0deg);
+    transform: translate3d(0, 0, 0) rotateY(0deg) rotateX(0deg) scale(1);
+    opacity: 1;
+    filter: blur(0px);
   }
 }
 
-.pm-cube-face-front {
-  position: absolute;
-  inset: 0;
-  backface-visibility: hidden;
-  transform: rotateX(0deg) translateZ(50cqh);
+@keyframes pmCardOutDown {
+  0% {
+    transform: translate3d(0, 0, 0) rotateX(0deg) rotateY(0deg) scale(1);
+    opacity: 1;
+    filter: blur(0px);
+  }
+  100% {
+    transform: translate3d(-6%, 34%, -180px) rotateX(-24deg) rotateY(10deg) scale(0.84);
+    opacity: 0;
+    filter: blur(4px);
+  }
 }
 
-.pm-cube-face-back {
-  position: absolute;
-  inset: 0;
-  backface-visibility: hidden;
-  transform: rotateY(180deg) translateZ(50cqh);
+@keyframes pmCardInTop {
+  0% {
+    transform: translate3d(6%, -34%, -150px) rotateX(24deg) rotateY(-10deg) scale(0.86);
+    opacity: 0;
+    filter: blur(4px);
+  }
+  26% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(0, 0, 0) rotateX(0deg) rotateY(0deg) scale(1);
+    opacity: 1;
+    filter: blur(0px);
+  }
 }
 
-.pm-cube-face-top {
-  position: absolute;
-  inset: 0;
-  backface-visibility: hidden;
-  transform: rotateX(90deg) translateZ(50cqh);
+@keyframes pmCardOutUp {
+  0% {
+    transform: translate3d(0, 0, 0) rotateX(0deg) rotateY(0deg) scale(1);
+    opacity: 1;
+    filter: blur(0px);
+  }
+  100% {
+    transform: translate3d(6%, -34%, -180px) rotateX(24deg) rotateY(-10deg) scale(0.84);
+    opacity: 0;
+    filter: blur(4px);
+  }
 }
 
-.pm-cube-face-bottom {
-  position: absolute;
-  inset: 0;
-  backface-visibility: hidden;
-  transform: rotateX(-90deg) translateZ(50cqh);
+@keyframes pmCardInBottom {
+  0% {
+    transform: translate3d(-6%, 34%, -150px) rotateX(-24deg) rotateY(10deg) scale(0.86);
+    opacity: 0;
+    filter: blur(4px);
+  }
+  26% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(0, 0, 0) rotateX(0deg) rotateY(0deg) scale(1);
+    opacity: 1;
+    filter: blur(0px);
+  }
 }
 
-.pm-cube-face-right {
-  position: absolute;
-  inset: 0;
-  backface-visibility: hidden;
-  transform: rotateY(90deg) translateZ(50cqh);
+@keyframes pmCardOrbitSheen {
+  0% {
+    opacity: 0.34;
+    transform: translate3d(-25%, -25%, 0) rotate(24deg);
+  }
+  65%, 100% {
+    opacity: 0;
+    transform: translate3d(35%, 35%, 0) rotate(24deg);
+  }
 }
 
-.pm-cube-face-left {
-  position: absolute;
-  inset: 0;
-  backface-visibility: hidden;
-  transform: rotateY(-90deg) translateZ(50cqh);
-}
-
-.pm-cube-side-wall {
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.22) 0%,
-    rgba(26, 26, 34, 0.92) 45%,
-    rgba(8, 8, 14, 0.98) 100%
-  );
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+.pm-card-orbit-sheen {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.38) 0%, rgba(255, 255, 255, 0) 58%);
+  animation: pmCardOrbitSheen 4s ease-out forwards;
+  pointer-events: none;
 }
 
 @keyframes pmCubeShadeOut {
@@ -1908,7 +1946,7 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   pointer-events: none;
 }
 
-/* Unified Dock 3D Prism (rotates Cover + Title + Explicit + Artists + Heart together) */
+/* Unified Dock 3D Prism (rotates Cover + Title + Explicit + Artists together) */
 .pm-dock-prism-viewport {
   perspective: 720px;
   height: 52px;
@@ -1938,76 +1976,96 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   transform: rotateX(90deg) translateZ(26px);
 }
 
+/* Dock Heart Fade-Out before roll & Fade-In after song settles */
+@keyframes pmDockHeartOut {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.75);
+  }
+}
+
+.pm-dock-heart-out {
+  animation: pmDockHeartOut 260ms ease-out forwards;
+  pointer-events: none;
+}
+
+@keyframes pmDockHeartIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.76);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.pm-dock-heart-in {
+  animation: pmDockHeartIn 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 /* Gaussian Blur Crossfade for NowPlaying Big Title & Artist */
 @keyframes pmMetaBlurOut {
   0% {
     opacity: 1;
     filter: blur(0px);
-    transform: scale(1);
+    transform: translateY(0) scale(1);
   }
-  44% {
+  52% {
     opacity: 0;
-    filter: blur(12px);
-    transform: scale(0.975);
+    filter: blur(10px);
+    transform: translateY(-4px) scale(0.98);
   }
   100% {
     opacity: 0;
-    filter: blur(12px);
-    transform: scale(0.975);
+    filter: blur(10px);
+    transform: translateY(-4px) scale(0.98);
   }
 }
 
 @keyframes pmMetaBlurIn {
-  0%, 38% {
-    opacity: 0;
-    filter: blur(12px);
-    transform: scale(1.025);
-  }
-  88%, 100% {
-    opacity: 1;
-    filter: blur(0px);
-    transform: scale(1);
-  }
-}
-
-/* GPU-Composited Living "Two Waters Mixing" Fluid Expansion (Feathered washes — zero circular seams or end cuts) */
-.pm-water-wash {
-  -webkit-mask-image: radial-gradient(
-    ellipse 56% 52% at 50% 50%,
-    rgba(0, 0, 0, 1) 0%,
-    rgba(0, 0, 0, 0.72) 28%,
-    rgba(0, 0, 0, 0.28) 54%,
-    rgba(0, 0, 0, 0) 76%
-  );
-  mask-image: radial-gradient(
-    ellipse 56% 52% at 50% 50%,
-    rgba(0, 0, 0, 1) 0%,
-    rgba(0, 0, 0, 0.72) 28%,
-    rgba(0, 0, 0, 0.28) 54%,
-    rgba(0, 0, 0, 0) 76%
-  );
-}
-
-@keyframes pmWaterFlowMerge {
-  0% {
-    transform: translate3d(0, 0, 0) scale(0.32) rotate(-16deg);
-    opacity: 0;
-  }
-  22% {
-    opacity: 0.88;
-  }
-  100% {
-    transform: translate3d(var(--wx, 5%), var(--wy, -4%), 0) scale(1.75) rotate(14deg);
-    opacity: 0.96;
-  }
-}
-
-@keyframes pmWaterFloodMerge {
   0%, 28% {
     opacity: 0;
+    filter: blur(10px);
+    transform: translateY(4px) scale(1.02);
+  }
+  86%, 100% {
+    opacity: 1;
+    filter: blur(0px);
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* GPU-Composited Seam-Free & Zero-Flicker Fluid Water Currents */
+@keyframes pmWaterCurrentA {
+  0% {
+    opacity: 0;
+    transform: translate3d(-4%, 3%, 0) scale(1.22);
+  }
+  25% {
+    opacity: 0.36;
+  }
+  85%, 100% {
+    opacity: 0.55;
+    transform: translate3d(-2%, -2%, 0) scale(1.32);
+  }
+}
+
+@keyframes pmWaterCurrentB {
+  0%, 10% {
+    opacity: 0;
+    transform: translate3d(4%, -3%, 0) scale(1.24) scaleX(-1);
+  }
+  42% {
+    opacity: 0.24;
   }
   92%, 100% {
-    opacity: 1;
+    opacity: 0.35;
+    transform: translate3d(3%, 2%, 0) scale(1.34) scaleX(-1);
   }
 }
 
@@ -2742,143 +2800,130 @@ html.pm-solid-modern .pm-mobile-glass-header {
   will-change: transform;
 }
 
-@keyframes pmSkipTriOut {
+@keyframes pmSkipChevronOut {
   0% {
     transform: translate3d(0, 0, 0) scale(1);
     opacity: 1;
   }
-  52% {
-    transform: translate3d(9.5px, 0, 0) scale(0.76);
+  58% {
+    transform: translate3d(7.5px, 0, 0) scale(0.56);
     opacity: 0;
   }
   100% {
-    transform: translate3d(10px, 0, 0) scale(0.74);
+    transform: translate3d(8px, 0, 0) scale(0.5);
     opacity: 0;
   }
 }
 
-@keyframes pmSkipBarToBase {
+@keyframes pmSkipChevronIn {
   0% {
-    transform: translate3d(0, 0, 0) scaleY(1);
-    opacity: 1;
-  }
-  56% {
-    transform: translate3d(-13.2px, 0, 0) scaleY(0.94);
-    opacity: 1;
-  }
-  78% {
-    transform: translate3d(-13.2px, 0, 0) scaleY(0.92);
+    transform: translate3d(-7.5px, 0, 0) scale(0.52);
     opacity: 0;
   }
-  100% {
-    transform: translate3d(-13.2px, 0, 0) scaleY(0.92);
-    opacity: 0;
+  22% {
+    opacity: 0.85;
   }
-}
-
-@keyframes pmSkipTriUnfold {
-  0%, 38% {
-    transform: scaleX(0.16) scaleY(0.92);
-    opacity: 0;
-  }
-  56% {
-    opacity: 1;
-  }
-  82% {
-    transform: scaleX(1.06) scaleY(1.02);
+  72% {
+    transform: translate3d(1.2px, 0, 0) scale(1.05);
     opacity: 1;
   }
   100% {
-    transform: scaleX(1) scaleY(1);
+    transform: translate3d(0, 0, 0) scale(1);
     opacity: 1;
   }
 }
 
-@keyframes pmSkipBarNew {
-  0%, 44% {
-    transform: translate3d(5px, 0, 0) scaleY(0.5);
-    opacity: 0;
-  }
-  82% {
-    transform: translate3d(-0.6px, 0, 0) scaleY(1.06);
-    opacity: 1;
-  }
-  100% {
-    transform: translate3d(0, 0, 0) scaleY(1);
-    opacity: 1;
-  }
-}
-
-.pm-skip-tri-out {
-  transform-origin: center;
-  animation: pmSkipTriOut 340ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
-}
-
-.pm-skip-bar-to-base {
-  transform-origin: 18.6px 12px;
-  animation: pmSkipBarToBase 360ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
-}
-
-.pm-skip-tri-unfold {
-  transform-origin: 4.5px 12px;
-  animation: pmSkipTriUnfold 360ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
-}
-
-.pm-skip-bar-new {
-  transform-origin: 18.6px 12px;
-  animation: pmSkipBarNew 360ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
-}
-
-@keyframes pmSkipBackStickyTri {
+@keyframes pmSkipBumperNext {
   0% {
-    transform: translate3d(0, 0, 0) scaleX(1) scaleY(1);
+    transform: translate3d(0, 0, 0) scaleY(1) scaleX(1);
   }
-  26% {
-    transform: translate3d(-3.5px, 0, 0) scaleX(0.84) scaleY(1.14);
-  }
-  46% {
-    transform: translate3d(-3.1px, 0, 0) scaleX(0.88) scaleY(1.1);
+  30% {
+    transform: translate3d(2px, 0, 0) scaleY(1.2) scaleX(0.88);
   }
   68% {
-    transform: translate3d(2.4px, 0, 0) scaleX(1.12) scaleY(0.92);
-  }
-  86% {
-    transform: translate3d(-0.5px, 0, 0) scaleX(0.98) scaleY(1.02);
+    transform: translate3d(-0.6px, 0, 0) scaleY(0.94) scaleX(1.04);
   }
   100% {
-    transform: translate3d(0, 0, 0) scaleX(1) scaleY(1);
+    transform: translate3d(0, 0, 0) scaleY(1) scaleX(1);
   }
 }
 
-@keyframes pmSkipBackStickyBar {
+.pm-skip-chevron-out {
+  transform-origin: center;
+  animation: pmSkipChevronOut 340ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.pm-skip-chevron-in {
+  transform-origin: center;
+  animation: pmSkipChevronIn 380ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.pm-skip-bumper-next {
+  transform-origin: 18.6px 12px;
+  animation: pmSkipBumperNext 380ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+@keyframes pmSkipBackChevronOut {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 1;
+  }
+  58% {
+    transform: translate3d(-7.5px, 0, 0) scale(0.56);
+    opacity: 0;
+  }
+  100% {
+    transform: translate3d(-8px, 0, 0) scale(0.5);
+    opacity: 0;
+  }
+}
+
+@keyframes pmSkipBackChevronIn {
+  0% {
+    transform: translate3d(7.5px, 0, 0) scale(0.52);
+    opacity: 0;
+  }
+  22% {
+    opacity: 0.85;
+  }
+  72% {
+    transform: translate3d(-1.2px, 0, 0) scale(1.05);
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes pmSkipBumperPrev {
   0% {
     transform: translate3d(0, 0, 0) scaleY(1) scaleX(1);
   }
-  26% {
-    transform: translate3d(-1.4px, 0, 0) scaleY(1.16) scaleX(0.88);
+  30% {
+    transform: translate3d(-2px, 0, 0) scaleY(1.2) scaleX(0.88);
   }
-  46% {
-    transform: translate3d(-1px, 0, 0) scaleY(1.1) scaleX(0.92);
-  }
-  64% {
-    transform: translate3d(1.5px, 0, 0) scaleY(0.92) scaleX(1.1);
-  }
-  86% {
-    transform: translate3d(-0.4px, 0, 0) scaleY(1.03) scaleX(0.98);
+  68% {
+    transform: translate3d(0.6px, 0, 0) scaleY(0.94) scaleX(1.04);
   }
   100% {
     transform: translate3d(0, 0, 0) scaleY(1) scaleX(1);
   }
 }
 
-.pm-skip-back-sticky-tri {
-  transform-origin: 9.5px 12px;
-  animation: pmSkipBackStickyTri 400ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+.pm-skip-back-chevron-out {
+  transform-origin: center;
+  animation: pmSkipBackChevronOut 340ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
-.pm-skip-back-sticky-bar {
+.pm-skip-back-chevron-in {
+  transform-origin: center;
+  animation: pmSkipBackChevronIn 380ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.pm-skip-bumper-prev {
   transform-origin: 5.4px 12px;
-  animation: pmSkipBackStickyBar 400ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation: pmSkipBumperPrev 380ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
 }
 
 .pm-shuffle-chaos-epic {
@@ -3197,16 +3242,18 @@ html.pm-solid-modern .pm-mobile-glass-header {
   .pm-cube-prism,
   .pm-cube-shade-out,
   .pm-cube-light-in,
-  .pm-water-wash,
+  .pm-card-orbit-sheen,
+  .pm-dock-heart-out,
+  .pm-dock-heart-in,
   .pm-dock-color-collapse,
   .pm-dock-water-recede-sheen,
   .pm-dock-water-recede-crest,
-  .pm-skip-tri-out,
-  .pm-skip-bar-to-base,
-  .pm-skip-tri-unfold,
-  .pm-skip-bar-new,
-  .pm-skip-back-sticky-tri,
-  .pm-skip-back-sticky-bar,
+  .pm-skip-chevron-out,
+  .pm-skip-chevron-in,
+  .pm-skip-bumper-next,
+  .pm-skip-back-chevron-out,
+  .pm-skip-back-chevron-in,
+  .pm-skip-bumper-prev,
   .pm-shuffle-lane-a,
   .pm-shuffle-lane-b,
   .pm-shuffle-stroke-a,
@@ -3292,16 +3339,18 @@ html.pm-reduced-motion .pm-water-eddy-b,
 html.pm-reduced-motion .pm-cube-prism,
 html.pm-reduced-motion .pm-cube-shade-out,
 html.pm-reduced-motion .pm-cube-light-in,
-html.pm-reduced-motion .pm-water-wash,
+html.pm-reduced-motion .pm-card-orbit-sheen,
+html.pm-reduced-motion .pm-dock-heart-out,
+html.pm-reduced-motion .pm-dock-heart-in,
 html.pm-reduced-motion .pm-dock-color-collapse,
 html.pm-reduced-motion .pm-dock-water-recede-sheen,
 html.pm-reduced-motion .pm-dock-water-recede-crest,
-html.pm-reduced-motion .pm-skip-tri-out,
-html.pm-reduced-motion .pm-skip-bar-to-base,
-html.pm-reduced-motion .pm-skip-tri-unfold,
-html.pm-reduced-motion .pm-skip-bar-new,
-html.pm-reduced-motion .pm-skip-back-sticky-tri,
-html.pm-reduced-motion .pm-skip-back-sticky-bar,
+html.pm-reduced-motion .pm-skip-chevron-out,
+html.pm-reduced-motion .pm-skip-chevron-in,
+html.pm-reduced-motion .pm-skip-bumper-next,
+html.pm-reduced-motion .pm-skip-back-chevron-out,
+html.pm-reduced-motion .pm-skip-back-chevron-in,
+html.pm-reduced-motion .pm-skip-bumper-prev,
 html.pm-reduced-motion .pm-shuffle-lane-a,
 html.pm-reduced-motion .pm-shuffle-lane-b,
 html.pm-reduced-motion .pm-shuffle-stroke-a,

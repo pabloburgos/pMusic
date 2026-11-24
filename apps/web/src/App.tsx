@@ -175,6 +175,7 @@ const PMusicMainApp: React.FC = () => {
   const [dockHoverPct, setDockHoverPct] = useState<number | null>(null);
   const [heartBurst, setHeartBurst] = useState(false);
   const [dockHeartBurstKey, setDockHeartBurstKey] = useState(0);
+  const [dockHeartPhase, setDockHeartPhase] = useState<'idle' | 'fading-in'>('idle');
   const [dockTransportAnim, setDockTransportAnim] = useState<
     'prev' | 'next' | 'play' | 'shuffle' | 'repeat' | null
   >(null);
@@ -200,6 +201,8 @@ const PMusicMainApp: React.FC = () => {
   );
   const dockColorWaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dockRecedePrevTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastDockCrossfadeIdRef = useRef<string | null>(null);
+  const dockHeartPhaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dockAnimTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dockClockRef = useRef({
     posSec: positionSec,
@@ -236,8 +239,34 @@ const PMusicMainApp: React.FC = () => {
     return () => {
       if (dockColorWaveTimerRef.current) clearTimeout(dockColorWaveTimerRef.current);
       if (dockRecedePrevTimerRef.current) clearTimeout(dockRecedePrevTimerRef.current);
+      if (dockHeartPhaseTimerRef.current) clearTimeout(dockHeartPhaseTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    const cfNow = Boolean(
+      isTransitioning &&
+        outgoingTransitionTrack &&
+        incomingTransitionTrack &&
+        outgoingTransitionTrack.id !== incomingTransitionTrack.id
+    );
+    if (cfNow && incomingTransitionTrack) {
+      lastDockCrossfadeIdRef.current = incomingTransitionTrack.id;
+      if (dockHeartPhaseTimerRef.current) clearTimeout(dockHeartPhaseTimerRef.current);
+      setDockHeartPhase('idle');
+      return;
+    }
+    if (lastDockCrossfadeIdRef.current === currentTrack.id && !reducedMotionPref) {
+      lastDockCrossfadeIdRef.current = null;
+      setDockHeartPhase('fading-in');
+      if (dockHeartPhaseTimerRef.current) clearTimeout(dockHeartPhaseTimerRef.current);
+      dockHeartPhaseTimerRef.current = setTimeout(() => {
+        setDockHeartPhase('idle');
+      }, 360);
+    } else if (lastDockCrossfadeIdRef.current && lastDockCrossfadeIdRef.current !== currentTrack.id) {
+      lastDockCrossfadeIdRef.current = null;
+    }
+  }, [isTransitioning, outgoingTransitionTrack, incomingTransitionTrack, currentTrack.id, reducedMotionPref]);
 
   useEffect(() => {
     const now = typeof performance !== 'undefined' ? performance.now() : 0;
@@ -1760,10 +1789,10 @@ const PMusicMainApp: React.FC = () => {
                             />
                           </button>
                           <div className="min-w-0 max-w-[200px] xl:max-w-[240px]">
-                            <div className="block max-w-full truncate text-left text-[14px] font-semibold leading-[1.25] pm-text-primary">
+                            <div className="block max-w-full truncate text-left text-[14px] font-semibold leading-[1.15] pm-text-primary">
                               {trackItem.title}
                             </div>
-                            <div className="mt-0.5 flex items-center gap-1.5 truncate">
+                            <div className="mt-[1px] flex items-center gap-1.5 truncate">
                               {trackItem.isExplicit && (
                                 <span
                                   aria-label="Explícita"
@@ -1772,22 +1801,21 @@ const PMusicMainApp: React.FC = () => {
                                   E
                                 </span>
                               )}
-                              <div className="truncate text-[12px] leading-[1.35] pm-text-secondary">
+                              <div className="truncate text-[12px] leading-[1.2] pm-text-secondary">
                                 {trackItem.artists.map((a) => a.name).join(', ')}
                               </div>
                             </div>
                           </div>
-                          <button
-                            type="button"
-                            aria-label={faceLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
-                            aria-pressed={faceLiked}
-                            onClick={() => void toggleLike(trackItem)}
-                            className={`pm-pressable pm-hover relative inline-flex shrink-0 items-center justify-center rounded-full p-2 ${
-                              faceLiked ? 'text-rose-500' : 'pm-text-secondary hover:text-[var(--pm-text-primary)]'
-                            }`}
-                          >
-                            <Heart className={`h-4 w-4 ${faceLiked ? 'fill-current' : ''}`} />
-                          </button>
+                          {!isIncoming && (
+                            <span
+                              aria-hidden="true"
+                              className={`relative inline-flex shrink-0 items-center justify-center rounded-full p-2 ${
+                                faceLiked ? 'text-rose-500' : 'pm-text-secondary'
+                              } pm-dock-heart-out`}
+                            >
+                              <Heart className={`h-4 w-4 ${faceLiked ? 'fill-current' : ''}`} />
+                            </span>
+                          )}
                           {isIncoming ? (
                             <span
                               aria-hidden="true"
@@ -1851,11 +1879,11 @@ const PMusicMainApp: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setNowPlayingOpen(true)}
-                  className="block max-w-full truncate text-left text-[14px] font-semibold leading-[1.25] pm-text-primary hover:underline"
+                  className="block max-w-full truncate text-left text-[14px] font-semibold leading-[1.15] pm-text-primary hover:underline"
                 >
                   {currentTrack.title}
                 </button>
-                <div className="mt-0.5 flex items-center gap-1.5 truncate">
+                <div className="mt-[1px] flex items-center gap-1.5 truncate">
                   {currentTrack.isExplicit && (
                     <span
                       aria-label="Explícita"
@@ -1864,9 +1892,10 @@ const PMusicMainApp: React.FC = () => {
                       E
                     </span>
                   )}
-                  <div className="truncate text-[12px] leading-[1.35] pm-text-secondary">
+                  <div className="truncate text-[12px] leading-[1.2] pm-text-secondary">
                     <ArtistLinks
                       artists={currentTrack.artists}
+                      className="!py-0 !leading-[1.2]"
                       linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
                     />
                   </div>
@@ -1883,6 +1912,8 @@ const PMusicMainApp: React.FC = () => {
                 }}
                 className={`pm-pressable pm-hover relative inline-flex shrink-0 items-center justify-center overflow-visible rounded-full p-2 ${
                   heartBurst && !reducedMotionPref ? 'pm-heart-burst-epic' : ''
+                } ${
+                  dockHeartPhase === 'fading-in' && !reducedMotionPref ? 'pm-dock-heart-in' : ''
                 } ${
                   isLiked
                     ? 'text-rose-500'
@@ -2510,24 +2541,24 @@ const PMusicMainApp: React.FC = () => {
                               />
                             </button>
                             <div className="min-w-0 flex-1">
-                              <div className="block max-w-full truncate text-left text-[14px] font-semibold leading-[1.25] pm-text-primary">
+                              <div className="block max-w-full truncate text-left text-[14px] font-semibold leading-[1.15] pm-text-primary">
                                 {trackItem.title}
                               </div>
-                              <div className="mt-0.5 truncate text-xs leading-[1.35] pm-text-secondary">
+                              <div className="mt-[1px] truncate text-xs leading-[1.2] pm-text-secondary">
                                 {trackItem.artists.map((a) => a.name).join(', ')}
                               </div>
                             </div>
                           </div>
-                          <button
-                            type="button"
-                            aria-label={faceLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
-                            onClick={() => void toggleLike(trackItem)}
-                            className={`pm-pressable flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/[0.08] ${
-                              faceLiked ? 'text-rose-500' : 'pm-text-secondary'
-                            }`}
-                          >
-                            <Heart className={`h-4 w-4 ${faceLiked ? 'fill-current' : ''}`} />
-                          </button>
+                          {!isIncoming && (
+                            <span
+                              aria-hidden="true"
+                              className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/[0.08] ${
+                                faceLiked ? 'text-rose-500' : 'pm-text-secondary'
+                              } pm-dock-heart-out`}
+                            >
+                              <Heart className={`h-4 w-4 ${faceLiked ? 'fill-current' : ''}`} />
+                            </span>
+                          )}
                           {isIncoming ? (
                             <span
                               aria-hidden="true"
@@ -2565,13 +2596,14 @@ const PMusicMainApp: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => setNowPlayingOpen(true)}
-                        className="block max-w-full truncate text-left text-[14px] font-semibold leading-[1.25] pm-text-primary hover:underline"
+                        className="block max-w-full truncate text-left text-[14px] font-semibold leading-[1.15] pm-text-primary hover:underline"
                       >
                         {currentTrack.title}
                       </button>
-                      <div className="mt-0.5 truncate text-xs leading-[1.35] pm-text-secondary">
+                      <div className="mt-[1px] truncate text-xs leading-[1.2] pm-text-secondary">
                         <ArtistLinks
                           artists={currentTrack.artists}
+                          className="!py-0 !leading-[1.2]"
                           linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
                         />
                       </div>
@@ -2582,6 +2614,8 @@ const PMusicMainApp: React.FC = () => {
                     aria-label={isLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
                     onClick={() => void toggleLike(currentTrack)}
                     className={`pm-pressable flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/[0.08] ${
+                      dockHeartPhase === 'fading-in' && !reducedMotionPref ? 'pm-dock-heart-in' : ''
+                    } ${
                       isLiked ? 'text-rose-500' : 'pm-text-secondary'
                     }`}
                   >

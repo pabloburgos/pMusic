@@ -33,33 +33,24 @@ export const AnimatedSkipForwardIcon: React.FC<TransportIconProps> = ({
     aria-hidden="true"
     className={`overflow-visible ${className} ${animate ? 'pm-skip-next-hyper' : ''}`}
   >
-    {/* Unfolding incoming triangle whose left spine morphs directly out of the travelling right bar */}
+    {/* Incoming twin rounded chevron gliding in behind the outgoing chevron */}
     <path
       d="M5.6 5.4 C4.6 4.78 3.5 5.5 3.5 6.68 V17.32 C3.5 18.5 4.6 19.22 5.6 18.6 L14.4 13.28 C15.38 12.69 15.38 11.31 14.4 10.72 L5.6 5.4 Z"
-      className={animate ? 'pm-skip-tri-unfold' : 'opacity-0'}
+      className={animate ? 'pm-skip-chevron-in' : 'opacity-0'}
     />
-    {/* Fresh replacement vertical pill bar snapping into place on the right */}
+    {/* Primary rounded chevron shooting forward through the bumper */}
+    <path
+      d="M5.6 5.4 C4.6 4.78 3.5 5.5 3.5 6.68 V17.32 C3.5 18.5 4.6 19.22 5.6 18.6 L14.4 13.28 C15.38 12.69 15.38 11.31 14.4 10.72 L5.6 5.4 Z"
+      className={animate ? 'pm-skip-chevron-out' : ''}
+    />
+    {/* Right vertical rounded pill bumper with magnetic recoil */}
     <rect
       x="17.2"
       y="5"
       width="2.8"
       height="14"
       rx="1.4"
-      className={animate ? 'pm-skip-bar-new' : 'opacity-0'}
-    />
-    {/* Primary rounded filled triangle shooting forward */}
-    <path
-      d="M5.6 5.4 C4.6 4.78 3.5 5.5 3.5 6.68 V17.32 C3.5 18.5 4.6 19.22 5.6 18.6 L14.4 13.28 C15.38 12.69 15.38 11.31 14.4 10.72 L5.6 5.4 Z"
-      className={animate ? 'pm-skip-tri-out' : ''}
-    />
-    {/* Vertical pill bar gliding left to become the spine/base of the incoming triangle */}
-    <rect
-      x="17.2"
-      y="5"
-      width="2.8"
-      height="14"
-      rx="1.4"
-      className={animate ? 'pm-skip-bar-to-base' : ''}
+      className={animate ? 'pm-skip-bumper-next' : ''}
     />
   </svg>
 );
@@ -74,19 +65,24 @@ export const AnimatedSkipBackIcon: React.FC<TransportIconProps> = ({
     aria-hidden="true"
     className={`overflow-visible ${className} ${animate ? 'pm-skip-prev-hyper' : ''}`}
   >
-    {/* Left vertical rounded pill bumper bar reacting with elastic sticky adhesion */}
+    {/* Left vertical rounded pill bumper with magnetic recoil */}
     <rect
       x="4"
       y="5"
       width="2.8"
       height="14"
       rx="1.4"
-      className={animate ? 'pm-skip-back-sticky-bar' : ''}
+      className={animate ? 'pm-skip-bumper-prev' : ''}
     />
-    {/* Left-pointing rounded triangle pulling & sticking against the bar before snapping back */}
+    {/* Incoming twin left-pointing rounded chevron gliding in from right */}
     <path
       d="M18.4 5.4 C19.4 4.78 20.5 5.5 20.5 6.68 V17.32 C20.5 18.5 19.4 19.22 18.4 18.6 L9.6 13.28 C8.62 12.69 8.62 11.31 9.6 10.72 L18.4 5.4 Z"
-      className={animate ? 'pm-skip-back-sticky-tri' : ''}
+      className={animate ? 'pm-skip-back-chevron-in' : 'opacity-0'}
+    />
+    {/* Primary left-pointing rounded chevron darting through the bumper */}
+    <path
+      d="M18.4 5.4 C19.4 4.78 20.5 5.5 20.5 6.68 V17.32 C20.5 18.5 19.4 19.22 18.4 18.6 L9.6 13.28 C8.62 12.69 8.62 11.31 9.6 10.72 L18.4 5.4 Z"
+      className={animate ? 'pm-skip-back-chevron-out' : ''}
     />
   </svg>
 );
