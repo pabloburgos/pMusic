@@ -179,6 +179,11 @@ const PMusicMainApp: React.FC = () => {
     'prev' | 'next' | 'play' | 'shuffle' | 'repeat' | null
   >(null);
   const [smoothDockPosSec, setSmoothDockPosSec] = useState<number>(positionSec);
+  const [islandMenuOpen, setIslandMenuOpen] = useState(false);
+  const [isDockReceding, setIsDockReceding] = useState(false);
+  const [dockColorWave, setDockColorWave] = useState<{ key: string; prevColor: string } | null>(
+    null
+  );
   const isElectronDesktop = isElectronDesktopRuntime();
 
   const swipeStartXRef = useRef<number | null>(null);
@@ -187,7 +192,14 @@ const PMusicMainApp: React.FC = () => {
   const ambientFillRef = useRef<HTMLDivElement | null>(null);
   const islandFillRef = useRef<HTMLDivElement | null>(null);
   const waveFillRef = useRef<HTMLDivElement | null>(null);
+  const islandMenuRef = useRef<HTMLDivElement | null>(null);
   const scrubDraggingRef = useRef(false);
+  const lastRenderedPctRef = useRef<number>(0);
+  const dockRecedeRef = useRef<{ fromPct: number; startMs: number; durationMs: number } | null>(
+    null
+  );
+  const dockColorWaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dockRecedePrevTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dockAnimTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dockClockRef = useRef({
     posSec: positionSec,
@@ -197,26 +209,97 @@ const PMusicMainApp: React.FC = () => {
   });
 
   useEffect(() => {
+    if (playerBarStyle !== 'floating-island') {
+      setIslandMenuOpen(false);
+    }
+  }, [playerBarStyle]);
+
+  useEffect(() => {
+    if (!islandMenuOpen || typeof document === 'undefined') return;
+    const handlePointerDown = (e: PointerEvent) => {
+      if (islandMenuRef.current && !islandMenuRef.current.contains(e.target as Node)) {
+        setIslandMenuOpen(false);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIslandMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [islandMenuOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (dockColorWaveTimerRef.current) clearTimeout(dockColorWaveTimerRef.current);
+      if (dockRecedePrevTimerRef.current) clearTimeout(dockRecedePrevTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
     const now = typeof performance !== 'undefined' ? performance.now() : 0;
     const trackChanged = dockClockRef.current.trackId !== currentTrack.id;
     const seekJumped = Math.abs(positionSec - dockClockRef.current.renderedPosSec) > 0.85;
     const effDur = Math.max(1, durationSec);
     const clampedPos = Math.max(0, Math.min(effDur, positionSec));
+    const targetPct = Math.max(0, Math.min(100, (clampedPos / effDur) * 100));
+    const pctStr = `${targetPct.toFixed(4)}%`;
+
     dockClockRef.current.posSec = clampedPos;
     dockClockRef.current.atMs = now;
     dockClockRef.current.trackId = currentTrack.id;
-    if (trackChanged || seekJumped || !isPlaying) {
+
+    if (trackChanged) {
+      if (typeof document !== 'undefined' && !reducedMotionPref) {
+        const prevColor = getComputedStyle(document.documentElement)
+          .getPropertyValue('--pm-ambient-1')
+          .trim();
+        if (prevColor) {
+          if (dockColorWaveTimerRef.current) clearTimeout(dockColorWaveTimerRef.current);
+          setDockColorWave({ key: `cw-${currentTrack.id}-${Math.round(now)}`, prevColor });
+          dockColorWaveTimerRef.current = setTimeout(() => {
+            setDockColorWave(null);
+          }, 1750);
+        }
+      }
+
+      if (!reducedMotionPref && !scrubDraggingRef.current && lastRenderedPctRef.current - targetPct > 8) {
+        dockRecedeRef.current = {
+          fromPct: lastRenderedPctRef.current,
+          startMs: now,
+          durationMs: 1150,
+        };
+        setIsDockReceding(true);
+        dockClockRef.current.renderedPosSec = clampedPos;
+        setSmoothDockPosSec(clampedPos);
+        return;
+      }
+
+      dockRecedeRef.current = null;
+      setIsDockReceding(false);
       dockClockRef.current.renderedPosSec = clampedPos;
       setSmoothDockPosSec(clampedPos);
-      const pctStr = `${Math.max(0, Math.min(100, (clampedPos / effDur) * 100)).toFixed(4)}%`;
+      lastRenderedPctRef.current = targetPct;
       if (ambientFillRef.current) ambientFillRef.current.style.width = pctStr;
       if (islandFillRef.current) islandFillRef.current.style.width = pctStr;
       if (waveFillRef.current) waveFillRef.current.style.width = pctStr;
+    } else if (seekJumped || !isPlaying) {
+      dockClockRef.current.renderedPosSec = clampedPos;
+      setSmoothDockPosSec(clampedPos);
+      if (!dockRecedeRef.current) {
+        lastRenderedPctRef.current = targetPct;
+        if (ambientFillRef.current) ambientFillRef.current.style.width = pctStr;
+        if (islandFillRef.current) islandFillRef.current.style.width = pctStr;
+        if (waveFillRef.current) waveFillRef.current.style.width = pctStr;
+      }
     }
-  }, [positionSec, currentTrack.id, isPlaying, durationSec]);
+  }, [positionSec, currentTrack.id, isPlaying, durationSec, reducedMotionPref]);
 
   useEffect(() => {
-    if (!isPlaying || isMobileViewport || typeof requestAnimationFrame !== 'function') {
+    if ((!isPlaying && !isDockReceding) || isMobileViewport || typeof requestAnimationFrame !== 'function') {
       return;
     }
     let rafId = 0;
@@ -232,7 +315,23 @@ const PMusicMainApp: React.FC = () => {
       const rendered = Math.max(0, Math.min(effDur, rawPos));
       dockClockRef.current.renderedPosSec = rendered;
 
-      const pctStr = `${Math.max(0, Math.min(100, (rendered / effDur) * 100)).toFixed(4)}%`;
+      const liveTargetPct = Math.max(0, Math.min(100, (rendered / effDur) * 100));
+      let visualPct = liveTargetPct;
+
+      if (dockRecedeRef.current) {
+        const elapsed = now - dockRecedeRef.current.startMs;
+        const t = Math.max(0, Math.min(1, elapsed / dockRecedeRef.current.durationMs));
+        const ease = 1 - Math.pow(1 - t, 3.2);
+        visualPct = dockRecedeRef.current.fromPct + (liveTargetPct - dockRecedeRef.current.fromPct) * ease;
+        if (t >= 1) {
+          dockRecedeRef.current = null;
+          visualPct = liveTargetPct;
+          setIsDockReceding(false);
+        }
+      }
+
+      lastRenderedPctRef.current = visualPct;
+      const pctStr = `${visualPct.toFixed(4)}%`;
       if (ambientFillRef.current) ambientFillRef.current.style.width = pctStr;
       if (islandFillRef.current) islandFillRef.current.style.width = pctStr;
       if (waveFillRef.current) waveFillRef.current.style.width = pctStr;
@@ -243,11 +342,13 @@ const PMusicMainApp: React.FC = () => {
         lastStateSyncMs = now;
         setSmoothDockPosSec(rendered);
       }
-      rafId = requestAnimationFrame(step);
+      if (isPlaying || dockRecedeRef.current) {
+        rafId = requestAnimationFrame(step);
+      }
     };
     rafId = requestAnimationFrame(step);
     return () => cancelAnimationFrame(rafId);
-  }, [isPlaying, isMobileViewport, durationSec]);
+  }, [isPlaying, isDockReceding, isMobileViewport, durationSec]);
 
   const triggerDockTransportAnim = (
     kind: 'prev' | 'next' | 'play' | 'shuffle' | 'repeat'
@@ -555,6 +656,9 @@ const PMusicMainApp: React.FC = () => {
       trackId: currentTrack.id,
       atMs: typeof performance !== 'undefined' ? performance.now() : 0,
     };
+    dockRecedeRef.current = null;
+    setIsDockReceding(false);
+    lastRenderedPctRef.current = pct * 100;
     const pctStr = `${(pct * 100).toFixed(4)}%`;
     if (ambientFillRef.current) ambientFillRef.current.style.width = pctStr;
     if (islandFillRef.current) islandFillRef.current.style.width = pctStr;
@@ -1481,7 +1585,7 @@ const PMusicMainApp: React.FC = () => {
           }}
           className={`pm-glass-regular fixed z-40 grid select-none items-center gap-4 overflow-visible ${
             playerBarStyle === 'floating-island'
-              ? 'left-1/2 bottom-3.5 h-[72px] w-[min(840px,calc(100%-32px))] -translate-x-1/2 cursor-pointer grid-cols-[minmax(160px,1fr)_auto_minmax(160px,1fr)] rounded-full px-5'
+              ? 'left-1/2 bottom-3.5 h-[72px] w-[min(880px,calc(100%-32px))] -translate-x-1/2 cursor-pointer grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] rounded-full px-5'
               : playerBarStyle === 'minimal-wave'
                 ? 'inset-x-3 bottom-3 h-[76px] cursor-pointer grid-cols-[minmax(200px,1fr)_minmax(300px,520px)_minmax(200px,1fr)] rounded-[18px] px-5'
                 : playerBarStyle === 'ambient-dock'
@@ -1493,19 +1597,38 @@ const PMusicMainApp: React.FC = () => {
             aria-hidden="true"
             className="pointer-events-none absolute inset-0 overflow-hidden rounded-[inherit]"
           >
-            {/* Flat Solid Sharp-Edged Ambient Progress Fill (Zero Gradient, Zero Vertical Playhead) */}
+            {/* Ambient Progress Fill with Smooth Color Collapse + Liquid Water-Recede */}
             {playerBarStyle === 'ambient-dock' && (
               <div
                 ref={ambientFillRef}
                 aria-hidden="true"
                 data-testid="ambient-progress-fill"
-                className="pointer-events-none absolute inset-y-0 left-0 z-0 transition-[background-color] duration-300"
+                className="pointer-events-none absolute inset-y-0 left-0 z-0 overflow-hidden transition-[background-color] duration-700"
                 style={{
                   width: `${progressPct}%`,
                   backgroundColor:
                     'color-mix(in srgb, var(--pm-ambient-1) 36%, rgba(255, 255, 255, 0.08))',
                 }}
-              />
+              >
+                {dockColorWave && !reducedMotionPref && (
+                  <span
+                    key={dockColorWave.key}
+                    aria-hidden="true"
+                    className="pm-dock-color-collapse"
+                    style={
+                      {
+                        '--pm-dock-prev-color': dockColorWave.prevColor,
+                      } as React.CSSProperties
+                    }
+                  />
+                )}
+                {isDockReceding && !reducedMotionPref && (
+                  <>
+                    <span aria-hidden="true" className="pm-dock-water-recede-sheen" />
+                    <span aria-hidden="true" className="pm-dock-water-recede-crest" />
+                  </>
+                )}
+              </div>
             )}
 
             {/* Dynamic Floating Island Bottom Curve Progress Hairline */}
@@ -1988,8 +2111,206 @@ const PMusicMainApp: React.FC = () => {
             )}
           </div>
 
-          {/* Right: Unified Soft Matte Translucent Utility Capsule */}
+          {/* Right: Compact Floating Island Menu OR Full Utility Capsule */}
           <div className="pointer-events-none relative z-10 flex items-center justify-end">
+            {playerBarStyle === 'floating-island' ? (
+              <div
+                ref={islandMenuRef}
+                className="pm-dock-interactive pm-dock-cluster pointer-events-auto relative flex items-center gap-1 rounded-full px-2 py-1"
+              >
+                <button
+                  type="button"
+                  aria-label={volume === 0 ? 'Activar sonido' : 'Silenciar'}
+                  onClick={() => toggleMute()}
+                  className="pm-pressable inline-flex h-8 w-8 items-center justify-center rounded-full pm-text-secondary transition-colors hover:bg-white/[0.10] hover:text-[var(--pm-text-primary)]"
+                >
+                  {volume === 0 ? (
+                    <VolumeX className="h-3.5 w-3.5" />
+                  ) : (
+                    <Volume2 className="h-3.5 w-3.5" />
+                  )}
+                </button>
+
+                <input
+                  type="range"
+                  role="slider"
+                  aria-label="Volumen"
+                  min={0}
+                  max={100}
+                  value={volumePct}
+                  onChange={(e) => setVolume(Number(e.target.value) / 100)}
+                  style={{ '--pm-fill': `${volumePct}%` } as React.CSSProperties}
+                  className="pm-range-subtle mx-0.5 hidden w-14 sm:block"
+                />
+
+                <button
+                  type="button"
+                  data-testid="island-effects-btn"
+                  aria-label="Efectos y controles"
+                  aria-expanded={islandMenuOpen}
+                  onClick={() => setIslandMenuOpen((v) => !v)}
+                  className={`pm-pressable relative inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
+                    islandMenuOpen || djMode.enabled || eqSheetOpen || Boolean(remoteControlledDeviceId)
+                      ? 'bg-white/[0.16] pm-text-primary'
+                      : 'pm-text-secondary hover:bg-white/[0.10] hover:text-[var(--pm-text-primary)]'
+                  }`}
+                >
+                  <MoreHorizontal className="h-4 w-4" />
+                  {(djMode.enabled || eqSheetOpen || Boolean(remoteControlledDeviceId)) && (
+                    <span
+                      aria-hidden="true"
+                      className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full"
+                      style={{
+                        backgroundColor: remoteControlledDeviceId
+                          ? '#34D399'
+                          : djMode.enabled
+                            ? '#C084FC'
+                            : 'var(--pm-accent-primary)',
+                      }}
+                    />
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  aria-label="Expandir reproductor"
+                  onClick={() => setNowPlayingOpen(true)}
+                  className="pm-pressable inline-flex h-8 w-8 items-center justify-center rounded-full pm-text-secondary transition-colors hover:bg-white/[0.10] hover:text-[var(--pm-text-primary)]"
+                >
+                  <Maximize2 className="h-3.5 w-3.5" />
+                </button>
+
+                {islandMenuOpen && (
+                  <div
+                    data-testid="island-effects-menu"
+                    role="menu"
+                    aria-label="Efectos y herramientas de reproducción"
+                    className="pm-glass-liquid pm-menu-pop pm-dock-interactive pointer-events-auto absolute right-0 bottom-[calc(100%+14px)] z-50 w-[264px] rounded-[22px] p-2.5 shadow-[0_22px_60px_rgba(0,0,0,0.68)]"
+                  >
+                    <div className="mb-2 flex items-center justify-between px-1.5">
+                      <span className="text-[11px] font-bold uppercase tracking-wider pm-text-tertiary">
+                        Efectos y controles
+                      </span>
+                      {djMode.enabled && (
+                        <span className="rounded-full bg-purple-500/20 px-2 py-0.5 text-[10px] font-bold text-purple-300">
+                          DJ Activo
+                        </span>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        data-testid="island-effect-dj"
+                        onClick={() => {
+                          setIslandMenuOpen(false);
+                          setDjPopoverOpen(!djPopoverOpen);
+                        }}
+                        className={`pm-pressable flex flex-col items-start gap-1 rounded-[14px] px-3 py-2.5 text-left transition-colors ${
+                          djMode.enabled || djPopoverOpen
+                            ? 'bg-purple-500/20 text-purple-200 ring-1 ring-purple-400/35'
+                            : 'bg-white/[0.06] pm-text-secondary hover:bg-white/[0.12] hover:text-[var(--pm-text-primary)]'
+                        }`}
+                      >
+                        <Disc3 className={`h-4 w-4 ${djMode.enabled ? 'text-purple-400' : ''}`} />
+                        <span className="text-[12px] font-semibold pm-text-primary">Sesión DJ</span>
+                        <span className="text-[10px] pm-text-tertiary">
+                          {djMode.enabled ? 'Mezcla automática' : 'AutoMix'}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        data-testid="island-effect-eq"
+                        onClick={() => {
+                          setIslandMenuOpen(false);
+                          setEqSheetOpen(!eqSheetOpen);
+                        }}
+                        className={`pm-pressable flex flex-col items-start gap-1 rounded-[14px] px-3 py-2.5 text-left transition-colors ${
+                          eqSheetOpen
+                            ? 'bg-white/[0.16] pm-text-primary ring-1 ring-white/25'
+                            : 'bg-white/[0.06] pm-text-secondary hover:bg-white/[0.12] hover:text-[var(--pm-text-primary)]'
+                        }`}
+                      >
+                        <Sliders className="h-4 w-4" />
+                        <span className="text-[12px] font-semibold pm-text-primary">Ecualizador</span>
+                        <span className="text-[10px] pm-text-tertiary">Audio &amp; Crossfade</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        data-testid="island-effect-lyrics"
+                        onClick={() => {
+                          setIslandMenuOpen(false);
+                          setNowPlayingOpen(true);
+                          setNowPlayingTab('Letras');
+                        }}
+                        className="pm-pressable flex flex-col items-start gap-1 rounded-[14px] bg-white/[0.06] px-3 py-2.5 text-left pm-text-secondary transition-colors hover:bg-white/[0.12] hover:text-[var(--pm-text-primary)]"
+                      >
+                        <Mic2 className="h-4 w-4" />
+                        <span className="text-[12px] font-semibold pm-text-primary">Letras</span>
+                        <span className="text-[10px] pm-text-tertiary">Sincronizadas</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        data-testid="island-effect-connect"
+                        onClick={() => {
+                          setIslandMenuOpen(false);
+                          setDevicesSheetOpen(true);
+                        }}
+                        className={`pm-pressable flex flex-col items-start gap-1 rounded-[14px] px-3 py-2.5 text-left transition-colors ${
+                          remoteControlledDeviceId
+                            ? 'bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/35'
+                            : 'bg-white/[0.06] pm-text-secondary hover:bg-white/[0.12] hover:text-[var(--pm-text-primary)]'
+                        }`}
+                      >
+                        <Wifi
+                          className={`h-4 w-4 ${
+                            remoteControlledDeviceId || onlineDevices.length > 1
+                              ? 'text-emerald-400'
+                              : ''
+                          }`}
+                        />
+                        <span className="text-[12px] font-semibold pm-text-primary">Conectar</span>
+                        <span className="truncate max-w-full text-[10px] pm-text-tertiary">
+                          {remoteDeviceSnapshot?.deviceName ?? 'Dispositivos'}
+                        </span>
+                      </button>
+                    </div>
+
+                    <div className="mt-1.5 flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        data-testid="island-effect-queue"
+                        onClick={() => {
+                          setIslandMenuOpen(false);
+                          setRightPanelOpen(!rightPanelOpen);
+                        }}
+                        className="pm-pressable flex flex-1 items-center justify-center gap-1.5 rounded-full bg-white/[0.07] px-3 py-1.5 text-[11px] font-semibold pm-text-secondary transition-colors hover:bg-white/[0.14] hover:text-[var(--pm-text-primary)]"
+                      >
+                        {rightPanelOpen ? (
+                          <PanelRightClose className="h-3.5 w-3.5" />
+                        ) : (
+                          <PanelRightOpen className="h-3.5 w-3.5" />
+                        )}
+                        <span>{rightPanelOpen ? 'Ocultar cola' : 'Ver cola'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIslandMenuOpen(false);
+                          setNowPlayingOpen(true);
+                        }}
+                        className="pm-pressable flex items-center justify-center gap-1.5 rounded-full bg-white/[0.07] px-3 py-1.5 text-[11px] font-semibold pm-text-secondary transition-colors hover:bg-white/[0.14] hover:text-[var(--pm-text-primary)]"
+                      >
+                        <Maximize2 className="h-3.5 w-3.5" />
+                        <span>Expandir</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
             <div className="pm-dock-interactive pm-dock-cluster pointer-events-auto flex items-center gap-1 rounded-full px-2 py-1">
               <button
                 type="button"
@@ -2111,6 +2432,7 @@ const PMusicMainApp: React.FC = () => {
                 )}
               </button>
             </div>
+            )}
           </div>
         </footer>
       )}

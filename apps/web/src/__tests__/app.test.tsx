@@ -296,4 +296,56 @@ describe('@pmusic/web UI', () => {
     expect(usePMusicStore.getState().activeTransitionPlan).toBeNull();
     await togglePromise;
   });
+
+  it('suppresses auto-crossfade when seeking directly inside the final crossfade window', async () => {
+    const t1 = usePMusicStore.getState().homeShelves[0]!.tracks![0]!;
+    const t2 = usePMusicStore.getState().homeShelves[0]!.tracks![1]!;
+
+    act(() => {
+      usePMusicStore.setState({
+        queue: [t1, t2],
+        queueIndex: 0,
+        currentTrack: t1,
+        durationSec: 180,
+        positionSec: 40,
+        repeatMode: 'off',
+        djMode: {
+          ...usePMusicStore.getState().djMode,
+          enabled: false,
+        },
+        safeCrossfade: { enabled: true, durationSec: 12 },
+        isTransitioning: false,
+      });
+    });
+
+    // Seeking directly into the final 12s crossfade zone (e.g. 173s) must NOT trigger crossfade
+    act(() => {
+      usePMusicStore.getState().seekTo(173);
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 220));
+    });
+    expect(usePMusicStore.getState().isTransitioning).toBe(false);
+    expect(usePMusicStore.getState().currentTrack.id).toBe(t1.id);
+    expect(usePMusicStore.getState().positionSec).toBe(173);
+  });
+
+  it('renders a compact 3-dots effects menu in Floating Island mode so right controls never overlap transport buttons', () => {
+    act(() => {
+      usePMusicStore.setState({ playerBarStyle: 'floating-island' });
+    });
+    render(<App />);
+
+    const effectsBtn = screen.getByTestId('island-effects-btn');
+    expect(effectsBtn).toBeDefined();
+    expect(screen.queryByTestId('island-effects-menu')).toBeNull();
+
+    fireEvent.click(effectsBtn);
+    const menu = screen.getByTestId('island-effects-menu');
+    expect(menu).toBeDefined();
+    expect(screen.getByTestId('island-effect-dj')).toBeDefined();
+    expect(screen.getByTestId('island-effect-eq')).toBeDefined();
+    expect(screen.getByTestId('island-effect-lyrics')).toBeDefined();
+    expect(screen.getByTestId('island-effect-connect')).toBeDefined();
+  });
 });

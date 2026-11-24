@@ -49,10 +49,12 @@ export function applyAmbientPaletteFromCover(track: Track | null): void {
     ? track.id.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0) % FALLBACK_PALETTES.length
     : 0;
   const fallback = FALLBACK_PALETTES[idx] ?? FALLBACK_PALETTES[0]!;
-  setRootAmbient(fallback);
 
   const imgUrl = track?.thumbnailHighUrl ?? track?.thumbnailUrl;
-  if (!imgUrl || typeof Image === 'undefined') return;
+  if (!imgUrl || typeof Image === 'undefined') {
+    setRootAmbient(fallback);
+    return;
+  }
 
   const token = ++activeExtractToken;
   try {
@@ -122,14 +124,16 @@ export function applyAmbientPaletteFromCover(track: Track | null): void {
           }
         }
       } catch {
-        // Keep deterministic fallback palette when canvas is tainted
+        setRootAmbient(fallback);
       }
     };
     img.onerror = () => {
-      // Keep deterministic fallback palette
+      if (token === activeExtractToken) {
+        setRootAmbient(fallback);
+      }
     };
     img.src = imgUrl;
   } catch {
-    // Ignore in test environments
+    setRootAmbient(fallback);
   }
 }

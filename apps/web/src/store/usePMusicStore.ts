@@ -339,6 +339,9 @@ let djAutoTransitionStartedAtMs = 0;
 let autoAdvanceInFlight = false;
 let djPreloadedKey = '';
 let djSessionEpoch = 0;
+let suppressedAutoTransitionTrackId: string | null = null;
+let lastObservedPlayback: { trackId: string; posSec: number } | null = null;
+let lastAutoAdvanceGuard: { trackId: string; atMs: number } = { trackId: '', atMs: 0 };
 let engineBindingsAttached = false;
 let playbackMonitorTimer: ReturnType<typeof setInterval> | null = null;
 const decodedAudioAnalyzedIds = new Set<string>();
@@ -854,7 +857,17 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       return;
     }
 
-    if (liveState.djMode.enabled && liveState.repeatMode !== 'one') {
+    const prevObsPos =
+      lastObservedPlayback && lastObservedPlayback.trackId === liveState.currentTrack.id
+        ? lastObservedPlayback.posSec
+        : null;
+    lastObservedPlayback = { trackId: liveState.currentTrack.id, posSec: safePos };
+
+    if (
+      liveState.djMode.enabled &&
+      liveState.repeatMode !== 'one' &&
+      suppressedAutoTransitionTrackId !== liveState.currentTrack.id
+    ) {
       const target = getUpcomingDjTarget(liveState);
       const nextTrack = target?.track;
       const nextIdx = target?.nextIdx ?? 0;
@@ -885,12 +898,16 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
             void audioEngine.preloadNextDeck(nextTrack, plan.cueInSec);
           }
           if (safePos >= effectiveCueOut - 0.25) {
-            void executeDjTransition(
-              effectiveCueOut !== plan.cueOutSec ? { ...plan, cueOutSec: effectiveCueOut } : plan,
-              nextTrack,
-              nextIdx
-            );
-            return;
+            if (prevObsPos !== null && prevObsPos >= effectiveCueOut + 1.25) {
+              suppressedAutoTransitionTrackId = liveState.currentTrack.id;
+            } else {
+              void executeDjTransition(
+                effectiveCueOut !== plan.cueOutSec ? { ...plan, cueOutSec: effectiveCueOut } : plan,
+                nextTrack,
+                nextIdx
+              );
+              return;
+            }
           }
         }
       }
@@ -898,7 +915,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       !liveState.djMode.enabled &&
       liveState.safeCrossfade.enabled &&
       liveState.safeCrossfade.durationSec > 0 &&
-      liveState.repeatMode !== 'one'
+      liveState.repeatMode !== 'one' &&
+      suppressedAutoTransitionTrackId !== liveState.currentTrack.id
     ) {
       const target = getUpcomingDjTarget(liveState);
       const nextTrack = target?.track;
@@ -909,63 +927,74 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           djPreloadedKey = cfPreloadKey;
           void audioEngine.preloadNextDeck(nextTrack, 0);
         }
-        if (safeDur > 10 && safePos >= safeDur - liveState.safeCrossfade.durationSec - 0.35) {
-          const cfPlan: DeckTransitionPlan = {
-            fromTrackId: liveState.currentTrack.id,
-            toTrackId: nextTrack.id,
-            cueInSec: 0,
-            cueOutSec: Math.max(6, Math.round(safeDur - liveState.safeCrossfade.durationSec)),
-            transitionDurationSec: Math.max(1.5, Math.min(12, liveState.safeCrossfade.durationSec)),
-            transitionBars: 4,
-            transitionType: 'eq_swap',
-            tempoNudgeRate: 1.0,
-            echoSubdivision: 0.5,
-            compatibilityScore: 0.85,
-          };
-          void executeDjTransition(cfPlan, nextTrack, nextIdx, true);
-          return;
-        }
-      }
-    } else {
-      if (liveState.repeatMode !== 'one') {
-        const target = getUpcomingDjTarget(liveState);
-        const nextTrack = target?.track;
-        if (
-          nextTrack &&
-          nextTrack.id !== liveState.currentTrack.id &&
-          safeDur > 15 &&
-          safePos >= Math.max(0, safeDur - 20)
-        ) {
-          const normPreloadKey = `${liveState.currentTrack.id}->${nextTrack.id}@0`;
-          if (djPreloadedKey !== normPreloadKey) {
-            djPreloadedKey = normPreloadKey;
-            void audioEngine.preloadNextDeck(nextTrack, 0);
+        const triggerPos = safeDur - liveState.safeCrossfade.durationSec - 0.35;
+        if (safeDur > 10 && safePos >= triggerPos) {
+          if (prevObsPos !== null && prevObsPos >= triggerPos + 1.25) {
+            suppressedAutoTransitionTrackId = liveState.currentTrack.id;
+          } else {
+            const cfPlan: DeckTransitionPlan = {
+              fromTrackId: liveState.currentTrack.id,
+              toTrackId: nextTrack.id,
+              cueInSec: 0,
+              cueOutSec: Math.max(6, Math.round(safeDur - liveState.safeCrossfade.durationSec)),
+              transitionDurationSec: Math.max(1.5, Math.min(12, liveState.safeCrossfade.durationSec)),
+              transitionBars: 4,
+              transitionType: 'eq_swap',
+              tempoNudgeRate: 1.0,
+              echoSubdivision: 0.5,
+              compatibilityScore: 0.85,
+            };
+            void executeDjTransition(cfPlan, nextTrack, nextIdx, true);
+            return;
           }
         }
       }
-
+    } else if (liveState.repeatMode !== 'one') {
+      const target = getUpcomingDjTarget(liveState);
+      const nextTrack = target?.track;
       if (
-        !engineState.isBuffering &&
-        !autoAdvanceInFlight &&
-        (snap.isEnded || (safeDur > 4 && safePos >= safeDur - 0.35))
+        nextTrack &&
+        nextTrack.id !== liveState.currentTrack.id &&
+        safeDur > 15 &&
+        safePos >= Math.max(0, safeDur - 20)
       ) {
-        if (liveState.sleepTimerMode === 'end_of_track') {
-          audioEngine.pause();
-          set({
-            isPlaying: false,
-            isBuffering: false,
-            sleepTimerMode: 'off',
-            sleepTimerRemainingSec: 0,
-          });
-          syncDiscordPresenceState();
-          liveState.showToast('Temporizador finalizado');
-          return;
+        const normPreloadKey = `${liveState.currentTrack.id}->${nextTrack.id}@0`;
+        if (djPreloadedKey !== normPreloadKey) {
+          djPreloadedKey = normPreloadKey;
+          void audioEngine.preloadNextDeck(nextTrack, 0);
         }
-        void recommendationEngine.recordSignal(liveState.currentTrack, 'complete_listen', {
-          completionRatio: 1.0,
-        });
-        void liveState.nextTrack(true);
       }
+    }
+
+    if (
+      !engineState.isBuffering &&
+      !autoAdvanceInFlight &&
+      (snap.isEnded || (safeDur > 4 && safePos >= safeDur - 0.35))
+    ) {
+      if (liveState.sleepTimerMode === 'end_of_track') {
+        audioEngine.pause();
+        set({
+          isPlaying: false,
+          isBuffering: false,
+          sleepTimerMode: 'off',
+          sleepTimerRemainingSec: 0,
+        });
+        syncDiscordPresenceState();
+        liveState.showToast('Temporizador finalizado');
+        return;
+      }
+      const nowMs = Date.now();
+      if (
+        lastAutoAdvanceGuard.trackId === liveState.currentTrack.id &&
+        nowMs - lastAutoAdvanceGuard.atMs < 1800
+      ) {
+        return;
+      }
+      lastAutoAdvanceGuard = { trackId: liveState.currentTrack.id, atMs: nowMs };
+      void recommendationEngine.recordSignal(liveState.currentTrack, 'complete_listen', {
+        completionRatio: 1.0,
+      });
+      void liveState.nextTrack(true);
     }
   }
 
@@ -991,7 +1020,15 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         st.showToast('Temporizador finalizado');
         return;
       }
-      if (st.isTransitioning || djAutoTransitionInFlight) return;
+      if (st.isTransitioning || djAutoTransitionInFlight || autoAdvanceInFlight) return;
+      const nowMs = Date.now();
+      if (
+        lastAutoAdvanceGuard.trackId === st.currentTrack.id &&
+        nowMs - lastAutoAdvanceGuard.atMs < 1800
+      ) {
+        return;
+      }
+      lastAutoAdvanceGuard = { trackId: st.currentTrack.id, atMs: nowMs };
       recordWrappedListenIfEligible(
         st.currentTrack,
         Math.max(st.positionSec, st.durationSec || st.currentTrack.durationSec || 0),
@@ -1294,7 +1331,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     const startDjEpoch = djSessionEpoch;
     const trackDjCancellation = !isPlainCrossfade;
     const isCancelled = () =>
-      trackDjCancellation && (!get().djMode.enabled || startDjEpoch !== djSessionEpoch);
+      startDjEpoch !== djSessionEpoch || (trackDjCancellation && !get().djMode.enabled);
 
     djAutoTransitionInFlight = true;
     djAutoTransitionStartedAtMs = Date.now();
@@ -1347,6 +1384,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         lyricsUserScrolled: false,
       });
 
+      suppressedAutoTransitionTrackId = null;
+      lastObservedPlayback = { trackId: nextTrack.id, posSec: plan.cueInSec };
       applyAmbientPaletteForTrack(nextTrack);
       void get().loadLyricsForTrack(nextTrack);
       if (nextRecommended.length < 6) {
@@ -1401,7 +1440,9 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         transitionDurationSec: plan.transitionDurationSec,
       });
       if (!isPlainCrossfade) {
-        applyAmbientPaletteForTrack(nextTrack);
+        suppressedAutoTransitionTrackId = null;
+      lastObservedPlayback = { trackId: nextTrack.id, posSec: plan.cueInSec };
+      applyAmbientPaletteForTrack(nextTrack);
       }
 
       const handoffDelayMs = Math.max(
@@ -2460,6 +2501,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       });
 
       djPreloadedKey = '';
+      suppressedAutoTransitionTrackId = null;
+      lastObservedPlayback = { trackId: track.id, posSec: effectiveStartSec };
       applyAmbientPaletteForTrack(track);
       void get().loadLyricsForTrack(track);
       audioEngine.setPlaybackRate(get().playbackRate, get().preservesPitch);
@@ -2604,6 +2647,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       const next = target.track;
 
       if (!isAutoAdvance && (djAutoTransitionInFlight || latest.isTransitioning)) {
+        djSessionEpoch++;
         audioEngine.cancelActiveTransition();
         djAutoTransitionInFlight = false;
         djAutoTransitionStartedAtMs = 0;
@@ -2713,81 +2757,74 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         ? lrcParser.findActiveLineIndex(lyrics.lines, positionSec * 1000)
         : -1;
 
-    // 1. If the user drags the scrub bar right to the end of the track, advance / mix immediately
+    if (st.isTransitioning || djAutoTransitionInFlight) {
+      djSessionEpoch++;
+      djAutoTransitionInFlight = false;
+      djAutoTransitionStartedAtMs = 0;
+      set({
+        isTransitioning: false,
+        outgoingTransitionTrack: null,
+        incomingTransitionTrack: null,
+      });
+    }
+
+    // 1. If the user drags the scrub bar right to the very end of the track, advance 1 track cleanly
     if (dur > 10 && positionSec >= dur - 0.85) {
+      suppressedAutoTransitionTrackId = st.currentTrack.id;
+      lastObservedPlayback = { trackId: st.currentTrack.id, posSec: dur };
       set({ positionSec: dur, activeLyricIndex: activeIdx });
       syncDiscordPresenceState();
       seekAutoTriggerTimer = setTimeout(() => {
         seekAutoTriggerTimer = null;
         const cur = get();
-        if (cur.isTransitioning || djAutoTransitionInFlight) return;
-        if (cur.djMode.enabled && cur.repeatMode !== 'one') {
-          void cur.triggerDjMixNow();
-        } else {
-          void recommendationEngine.recordSignal(cur.currentTrack, 'complete_listen', {
-            completionRatio: 1.0,
-          });
-          void cur.nextTrack(true);
+        if (cur.isTransitioning || djAutoTransitionInFlight || autoAdvanceInFlight) return;
+        const nowMs = Date.now();
+        if (
+          lastAutoAdvanceGuard.trackId === cur.currentTrack.id &&
+          nowMs - lastAutoAdvanceGuard.atMs < 1800
+        ) {
+          return;
         }
+        lastAutoAdvanceGuard = { trackId: cur.currentTrack.id, atMs: nowMs };
+        void recommendationEngine.recordSignal(cur.currentTrack, 'complete_listen', {
+          completionRatio: 1.0,
+        });
+        void cur.nextTrack(true);
       }, 140);
       return;
     }
 
     audioEngine.seek(positionSec);
+    lastObservedPlayback = { trackId: st.currentTrack.id, posSec: positionSec };
     set({ positionSec, activeLyricIndex: activeIdx });
 
-    // 2. If DJ Mode is active and the user seeks into or past the DJ mix window, trigger the DJ mix smoothly
+    // 2. Seeking directly inside the active DJ / crossfade window suppresses auto-crossfade
+    // for the rest of this track so playback never bugs or skips multiple tracks; seeking
+    // back out re-arms it cleanly for when natural playback crosses the threshold.
     const plan = st.activeTransitionPlan;
     if (st.djMode.enabled && st.repeatMode !== 'one') {
       const effectiveCueOut = plan
         ? Math.max(4, Math.min(plan.cueOutSec, Math.floor(dur - Math.min(plan.transitionDurationSec, dur * 0.35) - 0.5)))
         : Math.max(10, Math.floor(dur - 8));
-      if (positionSec >= effectiveCueOut) {
-        seekAutoTriggerTimer = setTimeout(() => {
-          seekAutoTriggerTimer = null;
-          const cur = get();
-          if (!cur.djMode.enabled || cur.isTransitioning || djAutoTransitionInFlight) return;
-          void cur.triggerDjMixNow();
-        }, 160);
-      } else if (!plan) {
-        void recomputeActiveDjPlan();
+      if (dur > 10 && positionSec >= effectiveCueOut - 0.5) {
+        suppressedAutoTransitionTrackId = st.currentTrack.id;
+      } else {
+        suppressedAutoTransitionTrackId = null;
+        if (!plan) {
+          void recomputeActiveDjPlan();
+        }
       }
     } else if (
       !st.djMode.enabled &&
       st.safeCrossfade.enabled &&
       st.safeCrossfade.durationSec > 0 &&
       st.repeatMode !== 'one' &&
-      dur > 15 &&
-      positionSec >= dur - st.safeCrossfade.durationSec - 0.3
+      dur > 10 &&
+      positionSec >= dur - st.safeCrossfade.durationSec - 0.5
     ) {
-      seekAutoTriggerTimer = setTimeout(() => {
-        seekAutoTriggerTimer = null;
-        const cur = get();
-        if (
-          cur.djMode.enabled ||
-          !cur.safeCrossfade.enabled ||
-          cur.isTransitioning ||
-          djAutoTransitionInFlight
-        ) {
-          return;
-        }
-        const target = getUpcomingDjTarget(cur);
-        if (target && target.track.id !== cur.currentTrack.id) {
-          const cfPlan: DeckTransitionPlan = {
-            fromTrackId: cur.currentTrack.id,
-            toTrackId: target.track.id,
-            cueInSec: 0,
-            cueOutSec: Math.max(10, Math.round(dur - cur.safeCrossfade.durationSec)),
-            transitionDurationSec: Math.max(1.5, Math.min(12, cur.safeCrossfade.durationSec)),
-            transitionBars: 4,
-            transitionType: 'eq_swap',
-            tempoNudgeRate: 1.0,
-            echoSubdivision: 0.5,
-            compatibilityScore: 0.85,
-          };
-          void executeDjTransition(cfPlan, target.track, target.nextIdx, true);
-        }
-      }, 160);
+      suppressedAutoTransitionTrackId = st.currentTrack.id;
+    } else {
+      suppressedAutoTransitionTrackId = null;
     }
     syncDiscordPresenceState();
   },

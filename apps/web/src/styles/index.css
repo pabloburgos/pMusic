@@ -1,8 +1,30 @@
 @import "tailwindcss";
 
+@property --pm-ambient-1 {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #5E2B97;
+}
+
+@property --pm-ambient-2 {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #0F4C81;
+}
+
+@property --pm-ambient-3 {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #111024;
+}
+
 :root,
 [data-theme="obsidian"] {
   color-scheme: dark;
+  transition:
+    --pm-ambient-1 1.6s cubic-bezier(0.22, 1, 0.36, 1),
+    --pm-ambient-2 1.6s cubic-bezier(0.22, 1, 0.36, 1),
+    --pm-ambient-3 1.6s cubic-bezier(0.22, 1, 0.36, 1);
   --pm-font-display: "Bricolage Grotesque", -apple-system, BlinkMacSystemFont, sans-serif;
   --pm-font-body: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --pm-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
@@ -1998,6 +2020,106 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   }
 }
 
+/* Ambient Dock Color Collapse & Liquid Water-Recede Effects */
+@keyframes pmDockColorCollapse {
+  0% {
+    background-position: 0% 50%;
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.92;
+  }
+  62% {
+    background-position: 68% 50%;
+    opacity: 0.72;
+  }
+  100% {
+    background-position: 100% 50%;
+    opacity: 0;
+  }
+}
+
+.pm-dock-color-collapse {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--pm-dock-prev-color, var(--pm-ambient-1)) 44%, rgba(255, 255, 255, 0.08)) 0%,
+    color-mix(in srgb, var(--pm-ambient-2) 48%, rgba(255, 255, 255, 0.1)) 46%,
+    color-mix(in srgb, var(--pm-ambient-1) 42%, rgba(255, 255, 255, 0.08)) 100%
+  );
+  background-size: 240% 100%;
+  animation: pmDockColorCollapse 1.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes pmDockWaterSheen {
+  0% {
+    background-position: 100% 50%;
+    opacity: 0;
+  }
+  18% {
+    opacity: 0.85;
+  }
+  100% {
+    background-position: 0% 50%;
+    opacity: 0;
+  }
+}
+
+.pm-dock-water-recede-sheen {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    270deg,
+    color-mix(in srgb, var(--pm-ambient-1) 46%, rgba(255, 255, 255, 0.24)) 0%,
+    rgba(255, 255, 255, 0.12) 26%,
+    color-mix(in srgb, var(--pm-ambient-2) 22%, transparent) 58%,
+    transparent 100%
+  );
+  background-size: 210% 100%;
+  animation: pmDockWaterSheen 1.15s ease-out forwards;
+}
+
+@keyframes pmDockWaterCrest {
+  0% {
+    opacity: 0;
+    transform: scaleX(0.6);
+  }
+  14% {
+    opacity: 0.95;
+    transform: scaleX(1.25);
+  }
+  68% {
+    opacity: 0.75;
+    transform: scaleX(1.05);
+  }
+  100% {
+    opacity: 0;
+    transform: scaleX(0.5);
+  }
+}
+
+.pm-dock-water-recede-crest {
+  pointer-events: none;
+  position: absolute;
+  top: -10%;
+  bottom: -10%;
+  right: 0;
+  width: 56px;
+  transform-origin: right center;
+  border-radius: 9999px 0 0 9999px;
+  background: radial-gradient(
+    ellipse 95% 58% at 100% 50%,
+    rgba(255, 255, 255, 0.34) 0%,
+    color-mix(in srgb, var(--pm-ambient-1) 52%, transparent) 42%,
+    transparent 82%
+  );
+  filter: blur(4px);
+  animation: pmDockWaterCrest 1.15s ease-out forwards;
+}
+
 .pm-backdrop-static .pm-orb-1,
 .pm-backdrop-static .pm-orb-2,
 .pm-backdrop-static .pm-orb-3,
@@ -3076,6 +3198,9 @@ html.pm-solid-modern .pm-mobile-glass-header {
   .pm-cube-shade-out,
   .pm-cube-light-in,
   .pm-water-wash,
+  .pm-dock-color-collapse,
+  .pm-dock-water-recede-sheen,
+  .pm-dock-water-recede-crest,
   .pm-skip-tri-out,
   .pm-skip-bar-to-base,
   .pm-skip-tri-unfold,
@@ -3168,6 +3293,9 @@ html.pm-reduced-motion .pm-cube-prism,
 html.pm-reduced-motion .pm-cube-shade-out,
 html.pm-reduced-motion .pm-cube-light-in,
 html.pm-reduced-motion .pm-water-wash,
+html.pm-reduced-motion .pm-dock-color-collapse,
+html.pm-reduced-motion .pm-dock-water-recede-sheen,
+html.pm-reduced-motion .pm-dock-water-recede-crest,
 html.pm-reduced-motion .pm-skip-tri-out,
 html.pm-reduced-motion .pm-skip-bar-to-base,
 html.pm-reduced-motion .pm-skip-tri-unfold,
