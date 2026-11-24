@@ -132,20 +132,63 @@ function generateBrandPng(width = 256, height = 256) {
   ]);
 }
 
-const brandPng = generateBrandPng(256, 256);
-writeFileSync(resolve(buildDir, 'icon.png'), brandPng);
-writeFileSync(resolve(desktopDist, 'icon.png'), brandPng);
+const canonicalLogoPng = resolve(desktopRoot, '../../assets/pMusic-logo.png');
+const canonicalLogoSvg = resolve(desktopRoot, '../../assets/pMusic-icon.svg');
+if (existsSync(canonicalLogoSvg)) {
+  cpSync(canonicalLogoSvg, resolve(buildDir, 'icon.svg'));
+}
+if (existsSync(canonicalLogoPng)) {
+  cpSync(canonicalLogoPng, resolve(buildDir, 'icon.png'));
+  cpSync(canonicalLogoPng, resolve(desktopDist, 'icon.png'));
+} else {
+  const brandPng = generateBrandPng(256, 256);
+  writeFileSync(resolve(buildDir, 'icon.png'), brandPng);
+  writeFileSync(resolve(desktopDist, 'icon.png'), brandPng);
+}
 
 // Update src/main.ts to serve both static dist/ files AND /api/* over http://127.0.0.1:<port>
 const mainEntrySource = `import { createServer, type Server } from 'node:http';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu } from 'electron';
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, shell } from 'electron';
 import { createPMusicApiHandler } from '@pmusic/providers';
 
 let mainWindow: BrowserWindow | null = null;
 let loopbackServer: Server | null = null;
 let loopbackPort = 0;
+let pendingAuthCallbackUrl: string | null = null;
+
+function dispatchAuthCallbackUrl(url: string): void {
+  if (!url || !url.toLowerCase().startsWith('pmusic://')) return;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+    mainWindow.webContents.send('pmusic:auth-callback', url);
+    pendingAuthCallbackUrl = null;
+  } else {
+    pendingAuthCallbackUrl = url;
+  }
+}
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', (_event, argv) => {
+    const deepLink = argv.find((arg) => typeof arg === 'string' && arg.toLowerCase().startsWith('pmusic://'));
+    if (deepLink) {
+      dispatchAuthCallbackUrl(deepLink);
+    } else if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  dispatchAuthCallbackUrl(url);
+});
 
 const MIME_MAP: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -215,6 +258,16 @@ function sendMediaAction(type: string): void {
 ipcMain.handle('pmusic:get-api-base-url', () => \`http://127.0.0.1:\${loopbackPort}\`);
 ipcMain.handle('pmusic:get-auth-headers', () => ({}));
 ipcMain.handle('pmusic:update-discord', () => undefined);
+ipcMain.handle('pmusic:open-external-url', async (_event, url: string) => {
+  if (typeof url === 'string' && /^https?:\\/\\//i.test(url)) {
+    await shell.openExternal(url);
+  }
+});
+ipcMain.handle('pmusic:consume-pending-auth-callback', () => {
+  const url = pendingAuthCallbackUrl;
+  pendingAuthCallbackUrl = null;
+  return url;
+});
 ipcMain.handle(
   'pmusic:set-titlebar-overlay',
   (_event, opts: { color?: string; symbolColor?: string; height?: number }) => {
@@ -281,7 +334,25 @@ async function createMainWindow(): Promise<void> {
 }
 
 void app.whenReady().then(async () => {
+  try {
+    if (process.defaultApp && process.argv.length >= 2 && process.argv[1]) {
+      app.setAsDefaultProtocolClient('pmusic', process.execPath, [process.argv[1]]);
+    } else {
+      app.setAsDefaultProtocolClient('pmusic');
+    }
+  } catch {
+    // ignore
+  }
+  const initialDeepLink = process.argv.find(
+    (arg) => typeof arg === 'string' && arg.toLowerCase().startsWith('pmusic://')
+  );
+  if (initialDeepLink) {
+    pendingAuthCallbackUrl = initialDeepLink;
+  }
   await createMainWindow();
+  if (pendingAuthCallbackUrl) {
+    dispatchAuthCallbackUrl(pendingAuthCallbackUrl);
+  }
   try {
     globalShortcut.register('MediaPlayPause', () => sendMediaAction('play'));
     globalShortcut.register('MediaNextTrack', () => sendMediaAction('nexttrack'));
