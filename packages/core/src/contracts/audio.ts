@@ -194,10 +194,11 @@ export interface SafeCrossfadeConfig {
   durationSec: number;
 }
 
-/** Exact 6 Spanish presets reconciled across PROJECT.md, SCOPE.md, and Design spec */
+/** 7 EQ presets reconciled across PROJECT.md, SCOPE.md, and Design spec */
 export type UserEqPresetId =
   | 'flat'
   | 'urbano'
+  | 'bass_boosted'
   | 'vocal'
   | 'electronic'
   | 'acoustic'

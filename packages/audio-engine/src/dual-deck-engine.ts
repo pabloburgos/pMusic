@@ -985,7 +985,8 @@ export class DualDeckAudioEngine implements IAudioEngine {
       setAudioParamSmooth(active.trimGainNode?.gain, this.audioCtx, 1.0, 0.08);
       return;
     }
-    const deltaDb = Math.max(-6, Math.min(6, this.normalizationTargetDb - trackLoudnessDb));
+    // Cap upward boost at +3.5 dB so normalized tracks never clip or swell during crossfade overlap
+    const deltaDb = Math.max(-6, Math.min(3.5, this.normalizationTargetDb - trackLoudnessDb));
     const linear = Math.pow(10, deltaDb / 20);
     setAudioParamSmooth(active.trimGainNode?.gain, this.audioCtx, linear, 0.08);
   }
@@ -1113,8 +1114,13 @@ export class DualDeckAudioEngine implements IAudioEngine {
           setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, ch.inLowPassStartHz, 0.01);
         }
       } else if (plan.transitionType === 'eq_swap') {
-        setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -24, 0.01);
-        setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, -3, 0.01);
+        setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -28, 0.01);
+        setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, -2.5, 0.01);
+        if (incoming.sweepFilterNode) {
+          incoming.sweepFilterNode.type = 'highpass';
+          incoming.sweepFilterNode.Q.value = 0.75;
+          setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, 260, 0.01);
+        }
       } else if (plan.transitionType === 'filter_sweep' && incoming.sweepFilterNode) {
         incoming.sweepFilterNode.type = 'lowpass';
         incoming.sweepFilterNode.Q.value = 1.25;
@@ -1435,36 +1441,70 @@ export class DualDeckAudioEngine implements IAudioEngine {
             inGain = p < 0.55 ? Math.sin((p / 0.55) * 0.5 * Math.PI) * 0.92 : 0.92 + 0.08 * ((p - 0.55) / 0.45);
           }
         } else if (plan.transitionType === 'eq_swap') {
-          // Phase-locked club blend: gradual bring-in -> punchy midpoint bass swap -> clean exit
+          // Clean bass-cut crossfade: cut outgoing lows/kicks first, brief zero-clash pocket, then restore incoming lows
+          // Prevents double-kicks / rhythmic bass clashes when overlapping tracks have different BPMs
+          outGain = Math.cos(p * 0.5 * Math.PI);
+          inGain = Math.sin(p * 0.5 * Math.PI);
+
           if (p < 0.44) {
             const u = p / 0.44;
-            outGain = 1 - u * 0.1;
-            inGain = Math.sin(u * 0.5 * Math.PI) * 0.88;
-            setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -2 * u);
-            setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -24);
-            setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, -3 * (1 - u * 0.4));
-          } else if (p < 0.62) {
-            const u = (p - 0.44) / 0.18;
-            outGain = 0.9 - u * 0.12;
-            inGain = 0.88 + u * 0.12;
-            setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -2 - u * 22);
-            setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -24 + u * 24);
-            setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, -1.8 * (1 - u));
+            setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -28 * u);
+            setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -28);
+            setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, -2.5 * (1 - u * 0.5));
+            if (outgoing.sweepFilterNode) {
+              outgoing.sweepFilterNode.type = 'highpass';
+              outgoing.sweepFilterNode.Q.value = 0.75;
+              setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, 24 + u * 236);
+            }
+            if (incoming.sweepFilterNode) {
+              incoming.sweepFilterNode.type = 'highpass';
+              incoming.sweepFilterNode.Q.value = 0.75;
+              setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, 260);
+            }
+          } else if (p < 0.52) {
+            // Brief zero-clash low-end pocket so kicks at different BPMs never collide
+            setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -28);
+            setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -28);
+            setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, -1.2);
+            if (outgoing.sweepFilterNode) {
+              outgoing.sweepFilterNode.type = 'highpass';
+              outgoing.sweepFilterNode.Q.value = 0.8;
+              setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, 260);
+            }
+            if (incoming.sweepFilterNode) {
+              incoming.sweepFilterNode.type = 'highpass';
+              incoming.sweepFilterNode.Q.value = 0.75;
+              setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, 260);
+            }
+          } else if (p < 0.68) {
+            const u = (p - 0.52) / 0.16;
+            setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -28);
+            setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -28 * (1 - u));
+            setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, -1.2 * (1 - u));
+            if (outgoing.sweepFilterNode) {
+              outgoing.sweepFilterNode.type = 'highpass';
+              outgoing.sweepFilterNode.Q.value = 0.85;
+              setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, 260 + u * 240);
+            }
+            if (incoming.sweepFilterNode) {
+              incoming.sweepFilterNode.type = 'highpass';
+              incoming.sweepFilterNode.Q.value = 0.707;
+              setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, 260 - u * 236);
+            }
           } else {
-            const u = (p - 0.62) / 0.38;
-            outGain = 0.78 * Math.cos(u * 0.5 * Math.PI);
-            inGain = 1.0;
-            setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -24);
+            const u = (p - 0.68) / 0.32;
+            setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -28);
             setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, 0);
             setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, 0);
             if (outgoing.sweepFilterNode) {
               outgoing.sweepFilterNode.type = 'highpass';
               outgoing.sweepFilterNode.Q.value = 0.9;
-              setAudioParamSmooth(
-                outgoing.sweepFilterNode.frequency,
-                this.audioCtx,
-                35 + u * 340
-              );
+              setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, 500 + u * 450);
+            }
+            if (incoming.sweepFilterNode) {
+              incoming.sweepFilterNode.type = 'lowpass';
+              incoming.sweepFilterNode.Q.value = 0.707;
+              setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, 20000);
             }
           }
         } else if (plan.transitionType === 'filter_sweep') {
@@ -1498,6 +1538,29 @@ export class DualDeckAudioEngine implements IAudioEngine {
 
           setAudioParamSmooth(outgoing.delaySendNode?.gain, this.audioCtx, sendVal, 0.025);
           setAudioParamSmooth(outgoing.delayFeedbackNode?.gain, this.audioCtx, Math.min(0.75, fbVal), 0.025);
+        }
+
+        // Sum-normalized gain ceiling: prevents overlapping decks + normalization from summing louder than a single track
+        const powerSum = Math.hypot(outGain, inGain);
+        if (powerSum > 1.0) {
+          outGain /= powerSum;
+          inGain /= powerSum;
+        }
+        const linearSum = outGain + inGain;
+        if (linearSum > 1.04) {
+          const atten = 1.04 / linearSum;
+          outGain *= atten;
+          inGain *= atten;
+        }
+
+        // Smoothly attenuate any active upward normalization boost during overlap so volume stays level at end of crossfade
+        if (this.normalizationEnabled) {
+          const overlapFactor = Math.sin(p * Math.PI);
+          const outTrimNow = outgoing.trimGainNode?.gain.value ?? 1.0;
+          if (outTrimNow > 1.0) {
+            const targetOutTrim = 1.0 + (outTrimNow - 1.0) * (1 - 0.55 * overlapFactor);
+            setAudioParamSmooth(outgoing.trimGainNode?.gain, this.audioCtx, targetOutTrim, 0.05);
+          }
         }
 
         setAudioParamSmooth(outgoing.gainNode?.gain, this.audioCtx, outGain);

@@ -236,7 +236,24 @@ body,
   line-height: 1.45;
   letter-spacing: -0.01em;
   overflow-x: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   transition: background-color 280ms var(--ease-out), color 220ms var(--ease-out);
+}
+
+input,
+textarea,
+[contenteditable="true"],
+.pm-selectable {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+img,
+svg,
+button {
+  -webkit-user-drag: none;
 }
 
 h1,

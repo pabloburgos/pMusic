@@ -91,12 +91,13 @@ describe('USER_EQ_PRESETS & Audio/DJ defaults', () => {
     }
   });
 
-  it('defines exact 6 Spanish EQ presets with 5 bands within [-12, +12] dB', () => {
+  it('defines exact 7 Spanish EQ presets with 5 bands within [-12, +12] dB', () => {
     expect(Object.isFrozen(USER_EQ_PRESETS)).toBe(true);
-    expect(USER_EQ_PRESETS).toHaveLength(6);
+    expect(USER_EQ_PRESETS).toHaveLength(7);
     expect(USER_EQ_PRESETS.map((p) => p.label)).toEqual([
       'Plano',
       'Urbano / Graves',
+      'Bass Boosted',
       'Vocal',
       'Electrónica',
       'Acústico',
@@ -105,6 +106,7 @@ describe('USER_EQ_PRESETS & Audio/DJ defaults', () => {
     expect(USER_EQ_PRESETS.map((p) => p.id)).toEqual([
       'flat',
       'urbano',
+      'bass_boosted',
       'vocal',
       'electronic',
       'acoustic',

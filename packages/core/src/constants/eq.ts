@@ -24,6 +24,12 @@ export const USER_EQ_PRESETS: readonly UserEqPreset[] = Object.freeze([
     bandsDb: Object.freeze([5.5, 3.0, -1.0, 1.5, 3.0] as const),
   }),
   Object.freeze({
+    id: 'bass_boosted',
+    label: 'Bass Boosted',
+    description: 'Subgraves y pegada de bajos reforzados al máximo',
+    bandsDb: Object.freeze([9.0, 6.0, -0.5, 1.0, 2.0] as const),
+  }),
+  Object.freeze({
     id: 'vocal',
     label: 'Vocal',
     description: 'Realza la claridad de voces y letras',

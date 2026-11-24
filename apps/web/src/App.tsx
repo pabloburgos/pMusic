@@ -574,8 +574,8 @@ const PMusicMainApp: React.FC = () => {
     >
       {/* Unified Desktop Header & Integrated Frameless Windows Drag Bar (borderless unified canvas) */}
       {!isMobileViewport && (
-        <header className="pm-drag-region pm-canvas relative z-30 flex h-12 w-full shrink-0 items-center justify-between gap-3 px-3">
-          <div className="pm-no-drag relative z-10 flex items-center gap-2">
+        <header className="pm-canvas relative z-30 flex h-12 w-full shrink-0 items-center gap-2 px-3">
+          <div className="pm-no-drag relative z-20 flex shrink-0 items-center gap-2">
             <button
               type="button"
               aria-label="Ir al inicio"
@@ -591,7 +591,7 @@ const PMusicMainApp: React.FC = () => {
                 aria-label="Volver"
                 data-testid="back-detail-btn"
                 onClick={() => closeDetailView()}
-                className="pm-no-drag pm-btn-secondary pm-pressable pointer-events-auto relative z-20 inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-semibold"
+                className="pm-no-drag pm-btn-secondary pm-pressable pointer-events-auto relative z-20 inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full px-3 text-xs font-semibold"
               >
                 <ArrowLeft className="pointer-events-none h-3.5 w-3.5" />
                 <span className="pointer-events-none">Volver</span>
@@ -599,7 +599,9 @@ const PMusicMainApp: React.FC = () => {
             )}
           </div>
 
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="pm-drag-region h-full min-w-4 flex-1" aria-hidden="true" />
+
+          <div className="pm-no-drag relative z-20 flex shrink-0 items-center justify-center">
             <button
               type="button"
               data-testid="top-center-search-btn"
@@ -616,8 +618,10 @@ const PMusicMainApp: React.FC = () => {
             </button>
           </div>
 
+          <div className="pm-drag-region h-full min-w-4 flex-1" aria-hidden="true" />
+
           <div
-            className={`pm-no-drag relative z-10 flex items-center gap-1.5 ${
+            className={`pm-no-drag relative z-20 flex shrink-0 items-center gap-1.5 ${
               isElectronDesktop ? 'mr-[138px]' : ''
             }`}
           >
