@@ -88,14 +88,14 @@ export type NowPlayingSubTab = 'Portada' | 'Letras' | 'Cola';
 export type SearchScopeTab = 'Todo' | 'Canciones' | 'Artistas' | 'Álbumes' | 'Playlists';
 export type LibraryCategoryTab = 'Todo' | 'Playlists' | 'Me gusta' | 'Descargas' | 'Historial';
 export type OfflineDownloadStatus = 'idle' | 'downloading' | 'downloaded' | 'error';
-export type PMusicSurfaceStyle = 'liquid-glass' | 'frosted-glass' | 'simple';
+export type PMusicSurfaceStyle = 'pmusic-balloon' | 'liquid-glass' | 'frosted-glass' | 'simple';
 
 function applySurfaceStyleClasses(style: PMusicSurfaceStyle): void {
   if (typeof document === 'undefined') return;
   const cls = document.documentElement.classList;
-  cls.remove('pm-surface-original');
+  cls.toggle('pm-surface-balloon', style === 'pmusic-balloon');
   cls.toggle('pm-surface-liquid', style === 'liquid-glass');
-  cls.toggle('pm-surface-frosted', style === 'frosted-glass');
+  cls.toggle('pm-surface-frosted', style === 'frosted-glass' || style === 'pmusic-balloon');
   cls.toggle('pm-surface-simple', style === 'simple');
   cls.toggle('pm-liquid-glass-all', style === 'liquid-glass');
   cls.toggle('pm-solid-modern', style === 'simple');
@@ -341,6 +341,7 @@ const decodedAudioAnalyzedIds = new Set<string>();
 const decodedAudioInFlightIds = new Set<string>();
 
 export type LyricsVisualStyle =
+  | 'balloon'
   | 'classic'
   | 'wordflow'
   | 'kinetic'
@@ -1874,7 +1875,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
     const resolvedSurfaceStyle: PMusicSurfaceStyle =
       hydratedPrefs &&
-      (hydratedPrefs.surfaceStyle === 'liquid-glass' ||
+      (hydratedPrefs.surfaceStyle === 'pmusic-balloon' ||
+        hydratedPrefs.surfaceStyle === 'liquid-glass' ||
         hydratedPrefs.surfaceStyle === 'frosted-glass' ||
         hydratedPrefs.surfaceStyle === 'simple')
         ? hydratedPrefs.surfaceStyle
@@ -1973,6 +1975,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
             lyricsSize: hydratedPrefs.lyricsSize ?? prev.lyricsSize,
             lyricsBlurEnabled: Boolean(hydratedPrefs.lyricsBlurEnabled ?? prev.lyricsBlurEnabled),
             lyricsStyle:
+              hydratedPrefs.lyricsStyle === 'balloon' ||
               hydratedPrefs.lyricsStyle === 'classic' ||
               hydratedPrefs.lyricsStyle === 'wordflow' ||
               hydratedPrefs.lyricsStyle === 'kinetic' ||

@@ -118,6 +118,7 @@ const LYRICS_STYLE_OPTIONS: readonly {
   desc: string;
   previewClass: string;
 }[] = [
+  { id: 'balloon', label: 'pMusic Globo', desc: 'Letras gorditas que se inflan y flotan como globos', previewClass: 'pm-balloon-font font-extrabold' },
   { id: 'classic', label: 'Clásico', desc: 'Barrido suave palabra a palabra', previewClass: 'font-sans' },
   { id: 'wordflow', label: 'Palabra Viva', desc: 'Cada palabra salta y varía al ritmo', previewClass: 'font-extrabold tracking-tight' },
   { id: 'kinetic', label: 'Cinético', desc: 'Rimas y punchlines con impacto visual', previewClass: 'font-black' },
@@ -596,6 +597,7 @@ export const NowPlayingSheet: React.FC = () => {
         const lineChanged = curLineIdx !== lastRenderedLyricIdxRef.current;
         const wholeChanged = Math.floor(rendered) !== lastWholeSecRef.current;
         const isAnimatedNonClassic =
+          lyricsStyleRef.current === 'balloon' ||
           lyricsStyleRef.current === 'wordflow' ||
           lyricsStyleRef.current === 'typewriter' ||
           lyricsStyleRef.current === 'neon' ||
@@ -1615,7 +1617,11 @@ export const NowPlayingSheet: React.FC = () => {
                         smoothPosMs - line.timeMs > 3200;
 
                       const lyricSizeClass =
-                        lyricsStyle === 'kinetic' || lyricsStyle === 'wordflow'
+                        lyricsStyle === 'balloon'
+                          ? isActive
+                            ? 'pm-balloon-font text-[29px] leading-[1.22] md:text-[40px] md:leading-[1.18]'
+                            : 'pm-balloon-font text-[20px] leading-[1.32] md:text-[25px]'
+                          : lyricsStyle === 'kinetic' || lyricsStyle === 'wordflow'
                           ? isActive
                             ? 'text-[26px] leading-[1.2] md:text-[34px] md:leading-[1.18]'
                             : 'text-[19px] leading-[1.32] md:text-[23px]'
@@ -1716,7 +1722,48 @@ export const NowPlayingSheet: React.FC = () => {
                           >
                             <span className="flex-1">
                               {isActive && words.length > 0 ? (
-                                lyricsStyle === 'wordflow' ? (
+                                lyricsStyle === 'balloon' ? (
+                                  perWordTiming.map(({ word, wp }, wIdx) => {
+                                    const isPastWord = wp >= 0.995;
+                                    const isCurWord = wp > 0.005 && wp < 0.995;
+                                    const isBigWord = word.length >= 6 || wIdx % 3 === 0;
+                                    const scaleVar = isBigWord ? '1.26' : wIdx % 2 === 0 ? '1.16' : '1.20';
+                                    const tiltVar =
+                                      wIdx % 4 === 0
+                                        ? '-2.6deg'
+                                        : wIdx % 4 === 1
+                                          ? '2.2deg'
+                                          : wIdx % 4 === 2
+                                            ? '-1.5deg'
+                                            : '2.8deg';
+                                    const liftVar = isBigWord ? '-6px' : '-4px';
+                                    const delayVar = `-${((wIdx * 0.43) % 2.6).toFixed(2)}s`;
+                                    return (
+                                      <React.Fragment key={`${idx}-${wIdx}`}>
+                                        <span
+                                          className={`pm-balloon-word ${
+                                            isCurWord
+                                              ? 'pm-balloon-word-active'
+                                              : isPastWord
+                                                ? 'pm-balloon-word-past'
+                                                : 'pm-balloon-word-future'
+                                          }`}
+                                          style={
+                                            {
+                                              '--pm-balloon-scale': scaleVar,
+                                              '--pm-balloon-tilt': tiltVar,
+                                              '--pm-balloon-lift': liftVar,
+                                              animationDelay: delayVar,
+                                            } as React.CSSProperties
+                                          }
+                                        >
+                                          {word}
+                                        </span>
+                                        {wIdx < words.length - 1 ? ' ' : ''}
+                                      </React.Fragment>
+                                    );
+                                  })
+                                ) : lyricsStyle === 'wordflow' ? (
                                   perWordTiming.map(({ word, wp }, wIdx) => {
                                     const isPastWord = wp >= 0.995;
                                     const isCurWord = wp > 0.005 && wp < 0.995;
