@@ -88,14 +88,14 @@ export type NowPlayingSubTab = 'Portada' | 'Letras' | 'Cola';
 export type SearchScopeTab = 'Todo' | 'Canciones' | 'Artistas' | 'Álbumes' | 'Playlists';
 export type LibraryCategoryTab = 'Todo' | 'Playlists' | 'Me gusta' | 'Descargas' | 'Historial';
 export type OfflineDownloadStatus = 'idle' | 'downloading' | 'downloaded' | 'error';
-export type PMusicSurfaceStyle = 'pmusic-balloon' | 'liquid-glass' | 'frosted-glass' | 'simple';
+export type PMusicSurfaceStyle = 'liquid-glass' | 'frosted-glass' | 'simple';
 
 function applySurfaceStyleClasses(style: PMusicSurfaceStyle): void {
   if (typeof document === 'undefined') return;
   const cls = document.documentElement.classList;
-  cls.toggle('pm-surface-balloon', style === 'pmusic-balloon');
+  cls.remove('pm-surface-balloon');
   cls.toggle('pm-surface-liquid', style === 'liquid-glass');
-  cls.toggle('pm-surface-frosted', style === 'frosted-glass' || style === 'pmusic-balloon');
+  cls.toggle('pm-surface-frosted', style === 'frosted-glass');
   cls.toggle('pm-surface-simple', style === 'simple');
   cls.toggle('pm-liquid-glass-all', style === 'liquid-glass');
   cls.toggle('pm-solid-modern', style === 'simple');
@@ -341,7 +341,6 @@ const decodedAudioAnalyzedIds = new Set<string>();
 const decodedAudioInFlightIds = new Set<string>();
 
 export type LyricsVisualStyle =
-  | 'balloon'
   | 'classic'
   | 'wordflow'
   | 'kinetic'
@@ -501,6 +500,7 @@ export interface PMusicStoreState {
   authOnboardingOpen: boolean;
   needsProfileSetup: boolean;
   userProfile: UserProfile | null;
+  authCallbackError: string | null;
   wrappedModalOpen: boolean;
   wrappedSummary: WrappedSummary | null;
   wrappedSeasonActive: boolean;
@@ -1742,6 +1742,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   authOnboardingOpen: false,
   needsProfileSetup: false,
   userProfile: null,
+  authCallbackError: null,
   wrappedModalOpen: false,
   wrappedSummary: null,
   wrappedSeasonActive: isWrappedSeason(),
@@ -1875,8 +1876,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
     const resolvedSurfaceStyle: PMusicSurfaceStyle =
       hydratedPrefs &&
-      (hydratedPrefs.surfaceStyle === 'pmusic-balloon' ||
-        hydratedPrefs.surfaceStyle === 'liquid-glass' ||
+      (hydratedPrefs.surfaceStyle === 'liquid-glass' ||
         hydratedPrefs.surfaceStyle === 'frosted-glass' ||
         hydratedPrefs.surfaceStyle === 'simple')
         ? hydratedPrefs.surfaceStyle
@@ -1975,7 +1975,6 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
             lyricsSize: hydratedPrefs.lyricsSize ?? prev.lyricsSize,
             lyricsBlurEnabled: Boolean(hydratedPrefs.lyricsBlurEnabled ?? prev.lyricsBlurEnabled),
             lyricsStyle:
-              hydratedPrefs.lyricsStyle === 'balloon' ||
               hydratedPrefs.lyricsStyle === 'classic' ||
               hydratedPrefs.lyricsStyle === 'wordflow' ||
               hydratedPrefs.lyricsStyle === 'kinetic' ||
@@ -3893,6 +3892,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   },
 
   handleAuthCallbackUrl: async (callbackUrl) => {
+    set({ authCallbackError: null });
     try {
       const auth = await syncEngine.completeOAuthCallback?.(callbackUrl);
       if (auth?.connected) {
@@ -3909,6 +3909,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           userProfile: profile,
           authOnboardingOpen: false,
           needsProfileSetup: !profile,
+          authCallbackError: null,
           onlineDevices: syncEngine.getOnlineDevices(),
           likedTracks: libraryStore.getLikedTracks(),
           playlists: libraryStore.getPlaylists(),
@@ -3922,11 +3923,13 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           targetDeviceId: '*',
           type: 'request_state',
         });
+      } else {
+        set({ authCallbackError: 'No se recibió una sesión válida de Google. Inténtalo de nuevo.' });
       }
     } catch (err) {
-      get().showToast(
-        err instanceof Error ? err.message : 'No se pudo completar el inicio con Google'
-      );
+      const msg = err instanceof Error ? err.message : 'No se pudo completar el inicio con Google';
+      set({ authCallbackError: msg });
+      get().showToast(msg);
     }
   },
 
@@ -4542,3 +4545,24 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   },
   };
 });
+
+// Attach native Electron & Android OAuth callback listeners immediately on module load
+// so Google OAuth callbacks are NEVER missed while initApp() is still hydrating.
+if (typeof window !== 'undefined') {
+  let lastHandledAuthUrl = '';
+  const dispatchOAuthOnce = (cbUrl: string) => {
+    if (!cbUrl || cbUrl === lastHandledAuthUrl) return;
+    lastHandledAuthUrl = cbUrl;
+    void usePMusicStore.getState().handleAuthCallbackUrl(cbUrl);
+  };
+  (window as any).__pmusicHandleAuthCallback = dispatchOAuthOnce;
+  const desktopBridge = (window as any).pmusicDesktop;
+  if (desktopBridge?.onAuthCallback) {
+    desktopBridge.onAuthCallback(dispatchOAuthOnce);
+  }
+  if (desktopBridge?.consumePendingAuthCallback) {
+    void desktopBridge.consumePendingAuthCallback().then((pending: string | null) => {
+      if (pending) dispatchOAuthOnce(pending);
+    });
+  }
+}

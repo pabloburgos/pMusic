@@ -32,6 +32,7 @@ export const AuthOnboardingModal: React.FC = () => {
     needsProfileSetup,
     authState: syncAuth,
     userProfile,
+    authCallbackError,
     signInWithGoogle,
     signInSupabase: signInCloud,
     signUpSupabase: signUpCloud,
@@ -259,16 +260,15 @@ export const AuthOnboardingModal: React.FC = () => {
             </button>
           </form>
         ) : step === 'choice' ? (
-          <div className="flex flex-col items-center space-y-9">
-            {/* Pure pMusic brand centerpiece */}
-            <div className="pm-ag-enter-1 flex flex-col items-center gap-4">
-              <PMusicLogo size={76} variant="icon" />
-              <PMusicLogo size={34} variant="wordmark-only" />
+          <div className="flex flex-col items-center space-y-10">
+            {/* Pure big pMusic wordmark only */}
+            <div className="pm-ag-enter-1 flex flex-col items-center">
+              <PMusicLogo size={54} variant="wordmark-only" />
             </div>
 
-            {errorMsg && (
+            {(errorMsg || authCallbackError) && (
               <p className="w-full rounded-2xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-center text-xs text-white/80">
-                {errorMsg}
+                {errorMsg || authCallbackError}
               </p>
             )}
 

@@ -344,12 +344,16 @@ async function startLoopbackServer(): Promise<number> {
       }
     });
     srv.on('error', reject);
-    srv.listen(0, '127.0.0.1', () => {
+    const onListening = () => {
       const addr = srv.address();
       loopbackPort = typeof addr === 'object' && addr ? addr.port : 0;
       loopbackServer = srv;
       resolvePort(loopbackPort);
+    };
+    srv.once('error', () => {
+      srv.listen(0, '127.0.0.1', onListening);
     });
+    srv.listen(47820, '127.0.0.1', onListening);
   });
 }
 

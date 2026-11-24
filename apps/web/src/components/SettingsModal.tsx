@@ -354,45 +354,7 @@ export const SettingsModal: React.FC = () => {
                     </button>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-                    <button
-                      type="button"
-                      data-testid="surface-style-pmusic-balloon"
-                      aria-pressed={surfaceStyle === 'pmusic-balloon'}
-                      onClick={() => setSurfaceStyle('pmusic-balloon')}
-                      className={`pm-surface-card pm-card-lift flex flex-col gap-2 rounded-[14px] p-3.5 text-left ${
-                        surfaceStyle === 'pmusic-balloon'
-                          ? 'ring-2 ring-[var(--pm-accent-primary)]'
-                          : ''
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-1.5">
-                        <span className="text-xs font-bold pm-text-primary">
-                          pMusic Balloon
-                        </span>
-                        {surfaceStyle === 'pmusic-balloon' && (
-                          <span className="pm-btn-primary inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full">
-                            <Check className="h-2.5 w-2.5" />
-                          </span>
-                        )}
-                      </div>
-                      <div className="relative flex h-11 items-center gap-2 overflow-hidden rounded-lg border border-white/14 bg-white/10 px-3 backdrop-blur-md">
-                        <span
-                          className="h-5 w-11 rounded-full bg-[var(--pm-accent-primary)]"
-                          style={{
-                            boxShadow:
-                              'inset 0 2px 4px rgba(255,255,255,0.48), inset 0 -3px 5px rgba(0,0,0,0.34)',
-                          }}
-                        />
-                        <span className="text-[13px] font-extrabold tracking-tight text-white">
-                          pMusic
-                        </span>
-                      </div>
-                      <p className="text-[11px] pm-text-secondary">
-                        Tarjetas rectangulares Frosted Glass con tipografía y negritas gordas estilo globo pMusic
-                      </p>
-                    </button>
-
+                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
                     <button
                       type="button"
                       data-testid="surface-style-liquid-glass"
