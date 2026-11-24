@@ -36,6 +36,9 @@ interface ElectronDesktopWindowBridge {
     symbolColor?: string;
     height?: number;
   }) => Promise<void>;
+  toggleFullscreen?: () => Promise<boolean>;
+  getFullscreen?: () => Promise<boolean>;
+  onFullscreenChange?: (cb: (isFs: boolean) => void) => Unsubscribe;
   onMediaShortcut?: (cb: (action: NativeMediaAction) => void) => Unsubscribe;
   vaultGet?: (key: string) => Promise<string | null>;
   vaultSet?: (key: string, value: string) => Promise<void>;
@@ -95,6 +98,86 @@ export async function setDesktopTitleBarOverlay(opts: {
   if (typeof window === 'undefined') return;
   const win = window as unknown as { pmusicDesktop?: ElectronDesktopWindowBridge };
   await win.pmusicDesktop?.setTitleBarOverlay?.(opts);
+}
+
+let androidFullscreenState = false;
+const androidFsListeners = new Set<(isFs: boolean) => void>();
+
+export async function toggleRealFullscreen(): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+  const win = window as unknown as {
+    pmusicDesktop?: ElectronDesktopWindowBridge;
+    PMusicNative?: { setImmersiveFullscreen?: (enabled: boolean) => void };
+  };
+  if (win.pmusicDesktop?.toggleFullscreen) {
+    return win.pmusicDesktop.toggleFullscreen();
+  }
+  if (win.PMusicNative?.setImmersiveFullscreen) {
+    androidFullscreenState = !androidFullscreenState;
+    try {
+      win.PMusicNative.setImmersiveFullscreen(androidFullscreenState);
+    } catch {
+      // ignore native toggle error
+    }
+    for (const cb of androidFsListeners) cb(androidFullscreenState);
+    return androidFullscreenState;
+  }
+  if (typeof document !== 'undefined') {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen?.();
+        return false;
+      }
+      if (typeof document.documentElement?.requestFullscreen === 'function') {
+        await document.documentElement.requestFullscreen();
+        return Boolean(document.fullscreenElement);
+      }
+    } catch {
+      return Boolean(document.fullscreenElement);
+    }
+  }
+  return false;
+}
+
+export async function getRealFullscreen(): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+  const win = window as unknown as {
+    pmusicDesktop?: ElectronDesktopWindowBridge;
+    PMusicNative?: { setImmersiveFullscreen?: (enabled: boolean) => void };
+  };
+  if (win.pmusicDesktop?.getFullscreen) {
+    return win.pmusicDesktop.getFullscreen();
+  }
+  if (win.PMusicNative?.setImmersiveFullscreen) {
+    return androidFullscreenState;
+  }
+  if (typeof document !== 'undefined') {
+    return Boolean(document.fullscreenElement);
+  }
+  return false;
+}
+
+export function onRealFullscreenChange(cb: (isFs: boolean) => void): Unsubscribe {
+  if (typeof window === 'undefined') return () => {};
+  const win = window as unknown as {
+    pmusicDesktop?: ElectronDesktopWindowBridge;
+    PMusicNative?: { setImmersiveFullscreen?: (enabled: boolean) => void };
+  };
+  if (win.pmusicDesktop?.onFullscreenChange) {
+    return win.pmusicDesktop.onFullscreenChange(cb);
+  }
+  if (win.PMusicNative?.setImmersiveFullscreen) {
+    androidFsListeners.add(cb);
+    return () => {
+      androidFsListeners.delete(cb);
+    };
+  }
+  if (typeof document !== 'undefined') {
+    const handler = () => cb(Boolean(document.fullscreenElement));
+    document.addEventListener('fullscreenchange', handler);
+    return () => document.removeEventListener('fullscreenchange', handler);
+  }
+  return () => {};
 }
 
 class BrowserOfflineStorageBridge implements IOfflineStorageBridge {
@@ -227,7 +310,14 @@ export function createPlatformBridge(): IPlatformBridge {
     async buildStreamUrl(videoId: string, quality: AudioStreamQuality = 'high'): Promise<string> {
       const offlineUrl = await offlineStorage.getAudioUrl(videoId);
       if (offlineUrl) return offlineUrl;
-      const base = desktopBridge?.getApiBaseUrl ? await desktopBridge.getApiBaseUrl() : '';
+      let base = desktopBridge?.getApiBaseUrl ? await desktopBridge.getApiBaseUrl() : '';
+      if (!base && typeof window !== 'undefined') {
+        const nativeBridge = (window as unknown as { PMusicNative?: { getStreamBaseUrl?: () => string } }).PMusicNative;
+        const nativeBase = nativeBridge?.getStreamBaseUrl?.();
+        if (typeof nativeBase === 'string' && nativeBase.startsWith('http://127.0.0.1:')) {
+          base = nativeBase;
+        }
+      }
       const authHeaders = desktopBridge?.getAuthHeaders ? await desktopBridge.getAuthHeaders() : {};
       const token = authHeaders['X-PMusic-Token'] ?? authHeaders['x-pmusic-token'];
       const tokenQuery = token ? `&token=${encodeURIComponent(token)}` : '';

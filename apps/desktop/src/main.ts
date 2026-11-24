@@ -392,6 +392,13 @@ async function createMainWindow(): Promise<void> {
   } else {
     await mainWindow.loadFile(join(__dirname, '../dist/index.html'));
   }
+
+  mainWindow.on('enter-full-screen', () => {
+    mainWindow?.webContents.send('pmusic:fullscreen-changed', true);
+  });
+  mainWindow.on('leave-full-screen', () => {
+    mainWindow?.webContents.send('pmusic:fullscreen-changed', false);
+  });
 }
 
 ipcMain.handle('pmusic:get-api-base-url', () => `http://127.0.0.1:${loopbackPort}`);
@@ -434,6 +441,16 @@ ipcMain.handle('pmusic:consume-pending-auth-callback', () => {
   const url = pendingAuthCallbackUrl;
   pendingAuthCallbackUrl = null;
   return url;
+});
+ipcMain.handle('pmusic:toggle-fullscreen', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  const next = !mainWindow.isFullScreen();
+  mainWindow.setFullScreen(next);
+  return mainWindow.isFullScreen();
+});
+ipcMain.handle('pmusic:get-fullscreen', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  return mainWindow.isFullScreen();
 });
 
 void app.whenReady().then(async () => {

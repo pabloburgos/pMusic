@@ -227,6 +227,7 @@ export function getLivePlaybackPosition(): {
   isEnded: boolean;
   isSeeking: boolean;
   isTransitioning: boolean;
+  transitionProgress01: number;
   incomingPositionSec?: number;
   incomingDurationSec?: number;
 } {
@@ -368,6 +369,17 @@ export type TrackMenuState = {
 
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
 let cloudPrefsSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let cloudLibrarySyncTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleLibraryCloudSync(): void {
+  if (cloudLibrarySyncTimer) clearTimeout(cloudLibrarySyncTimer);
+  cloudLibrarySyncTimer = setTimeout(() => {
+    cloudLibrarySyncTimer = null;
+    if (syncEngine.getAuthState().connected) {
+      void syncEngine.syncNow();
+    }
+  }, 600);
+}
 
 function applyAmbientPaletteForTrack(track: Track | null): void {
   applyAmbientPaletteFromCover(track);
@@ -762,15 +774,25 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       : baseEngine;
     const snap = audioEngine.getLivePlaybackSnapshot();
 
-    const safeDur =
-      Number.isFinite(snap.durationSec) && snap.durationSec > 2
+    const useIncomingClock = Boolean(
+      engineState.isTransitioning &&
+        engineState.transitionProgress01 >= 0.5 &&
+        typeof snap.incomingPositionSec === 'number' &&
+        typeof snap.incomingDurationSec === 'number' &&
+        snap.incomingDurationSec > 0
+    );
+
+    const safeDur = useIncomingClock
+      ? snap.incomingDurationSec!
+      : Number.isFinite(snap.durationSec) && snap.durationSec > 2
         ? snap.durationSec
         : Number.isFinite(engineState.durationSec) && engineState.durationSec > 2
           ? engineState.durationSec
           : get().currentTrack.durationSec;
 
-    const rawPos =
-      snap.positionSec > 0 || engineState.positionSec === 0
+    const rawPos = useIncomingClock
+      ? snap.incomingPositionSec!
+      : snap.positionSec > 0 || engineState.positionSec === 0
         ? snap.positionSec
         : engineState.positionSec;
     const safePos =
@@ -1062,6 +1084,14 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
     syncEngine.onAuthStateChanged((auth) => {
       set({ authState: auth, onlineDevices: syncEngine.getOnlineDevices() });
+    });
+
+    syncEngine.onLibraryChanged((table) => {
+      if (table === 'playlists' || table === 'playlist_tracks') {
+        set({ playlists: libraryStore.getPlaylists() });
+      } else if (table === 'liked_tracks') {
+        set({ likedTracks: libraryStore.getLikedTracks() });
+      }
     });
 
     syncEngine.onRemoteCommand((cmd) => {
@@ -1370,6 +1400,16 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         nextQueueIndex = 0;
       }
 
+      const liveSnap = audioEngine.getLivePlaybackSnapshot();
+      const handoffPosSec =
+        typeof liveSnap.incomingPositionSec === 'number'
+          ? liveSnap.incomingPositionSec
+          : plan.cueInSec;
+      const handoffDurSec =
+        typeof liveSnap.incomingDurationSec === 'number' && liveSnap.incomingDurationSec > 2
+          ? liveSnap.incomingDurationSec
+          : nextTrack.durationSec;
+
       set({
         currentTrack: nextTrack,
         lastTrackDirection: 'next',
@@ -1377,8 +1417,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         recommendedQueue: nextRecommended,
         sessionPrevStack: updatedPrevStack,
         queueIndex: nextQueueIndex,
-        positionSec: plan.cueInSec,
-        durationSec: nextTrack.durationSec,
+        positionSec: handoffPosSec,
+        durationSec: handoffDurSec,
         isPlaying: true,
         activeTransitionPlan: null,
         currentLyrics: null,
@@ -1387,7 +1427,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       });
 
       suppressedAutoTransitionTrackId = null;
-      lastObservedPlayback = { trackId: nextTrack.id, posSec: plan.cueInSec };
+      lastObservedPlayback = { trackId: nextTrack.id, posSec: handoffPosSec };
       applyAmbientPaletteForTrack(nextTrack);
       void get().loadLyricsForTrack(nextTrack);
       if (nextRecommended.length < 6) {
@@ -1449,7 +1489,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
       const handoffDelayMs = Math.max(
         380,
-        Math.round(plan.transitionDurationSec * 480)
+        Math.round(plan.transitionDurationSec * 500)
       );
       handoffTimer = setTimeout(() => {
         if (!isCancelled()) {
@@ -2139,10 +2179,15 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
     const rpcStatus = await defaultPlatformBridge.getDiscordRpcStatus?.();
     const restoredAuth = await syncEngine.restoreSession();
+    const restoredProfile = restoredAuth.connected
+      ? ((await syncEngine.getProfile?.()) ?? null)
+      : null;
 
     set((prev) => ({
       ...(isMobileHardwareVolumeRuntime() ? { volume: 1.0 } : {}),
       authState: restoredAuth,
+      userProfile: restoredProfile,
+      needsProfileSetup: restoredAuth.connected && !restoredProfile,
       playlists: libraryStore.getPlaylists(),
       likedTracks: libraryStore.getLikedTracks(),
       playHistory: libraryStore.getPlayHistory(),
@@ -2299,37 +2344,22 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       }
     }
 
-    // Restore Supabase session & show first-launch onboarding if guest
-    try {
-      const restored = await syncEngine.restoreSession?.();
-      if (restored?.connected) {
-        const profile = (await syncEngine.getProfile?.()) ?? null;
-        set({
-          authState: restored,
-          userProfile: profile,
-          needsProfileSetup: !profile,
-          onlineDevices: syncEngine.getOnlineDevices(),
-          likedTracks: libraryStore.getLikedTracks(),
-          playlists: libraryStore.getPlaylists(),
-        });
-      } else {
-        const isTestEnv =
-          Boolean((import.meta as any).vitest) ||
-          (import.meta as any).env?.MODE === 'test';
-        let dismissed = false;
-        try {
-          dismissed =
-            typeof localStorage !== 'undefined' &&
-            localStorage.getItem('pmusic.onboarding.dismissed') === '1';
-        } catch {
-          dismissed = false;
-        }
-        if (!isTestEnv && !dismissed) {
-          set({ authOnboardingOpen: true });
-        }
+    // Show first-launch onboarding if guest (session already restored above)
+    if (!restoredAuth.connected) {
+      const isTestEnv =
+        Boolean((import.meta as any).vitest) ||
+        (import.meta as any).env?.MODE === 'test';
+      let dismissed = false;
+      try {
+        dismissed =
+          typeof localStorage !== 'undefined' &&
+          localStorage.getItem('pmusic.onboarding.dismissed') === '1';
+      } catch {
+        dismissed = false;
       }
-    } catch {
-      // ignore offline session restore errors
+      if (!isTestEnv && !dismissed) {
+        set({ authOnboardingOpen: true });
+      }
     }
   },
 
@@ -3763,12 +3793,14 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       tracks,
     });
     set({ playlists: libraryStore.getPlaylists() });
+    scheduleLibraryCloudSync();
     return created;
   },
 
   renamePlaylist: async (playlistId, name) => {
     await libraryStore.updatePlaylist(playlistId, { name });
     set({ playlists: libraryStore.getPlaylists() });
+    scheduleLibraryCloudSync();
   },
 
   deletePlaylist: async (playlistId) => {
@@ -3782,6 +3814,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           ? null
           : prev.activeDetailView,
     }));
+    scheduleLibraryCloudSync();
   },
 
   duplicatePlaylist: async (playlistId) => {
@@ -3793,6 +3826,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       tracks: [...src.tracks],
     });
     set({ playlists: libraryStore.getPlaylists() });
+    scheduleLibraryCloudSync();
     get().showToast(`Playlist «${created.name}» creada`);
     return created;
   },
@@ -3809,6 +3843,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       }
     }
     set({ playlists: libraryStore.getPlaylists() });
+    if (added > 0) scheduleLibraryCloudSync();
     get().showToast(
       added > 0
         ? `${added} ${added === 1 ? 'pista añadida' : 'pistas añadidas'} a «${dst.name}»`
@@ -3823,6 +3858,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     await libraryStore.addTrackToPlaylist(playlistId, track);
     if (!alreadyIn) {
       await recommendationEngine.recordSignal(track, 'add_to_playlist');
+      scheduleLibraryCloudSync();
     }
     set({
       playlists: libraryStore.getPlaylists(),
@@ -3840,12 +3876,14 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   removeTrackFromPlaylist: async (playlistId, trackId) => {
     await libraryStore.removeTrackFromPlaylist(playlistId, trackId);
     set({ playlists: libraryStore.getPlaylists() });
+    scheduleLibraryCloudSync();
     get().showToast('Eliminada de la playlist');
   },
 
   reorderPlaylistTrack: async (playlistId, fromIndex, toIndex) => {
     await libraryStore.reorderPlaylistTrack(playlistId, fromIndex, toIndex);
     set({ playlists: libraryStore.getPlaylists() });
+    scheduleLibraryCloudSync();
   },
 
   likeTrackIfNeeded: async (track) => {
@@ -3964,6 +4002,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       affinityProfile: recommendationEngine.getAffinityProfile(),
       homeShelves: shelves,
     });
+    scheduleLibraryCloudSync();
   },
 
   downloadTrackOffline: async (track) => {
@@ -4081,6 +4120,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       importUrlInput: '',
       activeTab: 'Biblioteca',
     });
+    scheduleLibraryCloudSync();
   },
 
   configureSupabase: async (url, anonKey, deviceName) => {
@@ -4698,6 +4738,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       playlists: libraryStore.getPlaylists(),
       likedTracks: libraryStore.getLikedTracks(),
     });
+    scheduleLibraryCloudSync();
     get().showToast(`Copia restaurada (${count} elementos)`);
     return count;
   },
@@ -4915,5 +4956,14 @@ if (typeof window !== 'undefined') {
     void desktopBridge.consumePendingAuthCallback().then((pending: string | null) => {
       if (pending) dispatchOAuthOnce(pending);
     });
+  }
+  const androidNative = (window as any).PMusicNative;
+  if (androidNative?.consumePendingAuthCallback) {
+    try {
+      const pending = androidNative.consumePendingAuthCallback();
+      if (pending) dispatchOAuthOnce(pending);
+    } catch {
+      // ignore
+    }
   }
 }

@@ -1864,32 +1864,27 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   animation: pmDockHeartIn 750ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-/* Gaussian Blur Crossfade for NowPlaying Big Title & Artist */
+/* Gaussian Blur Crossfade for NowPlaying Big Title & Artist centered around 50% midpoint */
 @keyframes pmMetaBlurOut {
-  0% {
+  0%, 24% {
     opacity: 1;
     filter: blur(0px);
     transform: translateY(0) scale(1);
   }
-  52% {
+  52%, 100% {
     opacity: 0;
     filter: blur(10px);
-    transform: translateY(-4px) scale(0.98);
-  }
-  100% {
-    opacity: 0;
-    filter: blur(10px);
-    transform: translateY(-4px) scale(0.98);
+    transform: translateY(-3px) scale(0.985);
   }
 }
 
 @keyframes pmMetaBlurIn {
-  0%, 28% {
+  0%, 40% {
     opacity: 0;
     filter: blur(10px);
-    transform: translateY(4px) scale(1.02);
+    transform: translateY(3px) scale(1.015);
   }
-  86%, 100% {
+  74%, 100% {
     opacity: 1;
     filter: blur(0px);
     transform: translateY(0) scale(1);

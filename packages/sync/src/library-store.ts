@@ -28,6 +28,19 @@ const STORAGE_KEYS = {
   outbox: 'pmusic.lib.outbox',
 } as const;
 
+export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function generateUuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.floor(Math.random() * 16);
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 export function createDefaultPreferencesStorage(): IPreferencesStorageBridge {
   const fallbackMap = new Map<string, string>();
   return {
@@ -161,6 +174,71 @@ export class LibraryStore {
     return [...this.playlists];
   }
 
+  public async ensureUuidPlaylistIds(): Promise<boolean> {
+    let changed = false;
+    this.playlists = this.playlists.map((pl) => {
+      if (UUID_RE.test(pl.id)) return pl;
+      changed = true;
+      return { ...pl, id: generateUuid() };
+    });
+    if (changed) {
+      await this.storage.setItem(STORAGE_KEYS.playlists, JSON.stringify(this.playlists));
+      this.emitTableChanged('playlists');
+    }
+    return changed;
+  }
+
+  public async upsertRemotePlaylist(remote: {
+    id: string;
+    name: string;
+    description?: string;
+    coverUrl?: string;
+    source?: PlaylistRecordSource;
+    sourceUrl?: string;
+    tracks: Track[];
+    createdAt?: string;
+    updatedAt?: string;
+  }): Promise<PlaylistRecord> {
+    const normRemoteName = remote.name.trim().toLowerCase();
+    const matchIdx = this.playlists.findIndex(
+      (p) =>
+        p.id === remote.id ||
+        (normRemoteName.length > 0 && p.name.trim().toLowerCase() === normRemoteName)
+    );
+    const nowIso = new Date().toISOString();
+    const existing = matchIdx >= 0 ? this.playlists[matchIdx]! : null;
+    const record: PlaylistRecord = {
+      id: remote.id,
+      name: remote.name.trim() || existing?.name || 'Playlist',
+      description: remote.description ?? existing?.description ?? '',
+      coverUrl:
+        remote.coverUrl ??
+        remote.tracks[0]?.thumbnailUrl ??
+        existing?.coverUrl,
+      source: remote.source ?? existing?.source ?? 'local',
+      sourceUrl: remote.sourceUrl ?? existing?.sourceUrl,
+      tracks: [...remote.tracks],
+      createdAt: remote.createdAt ?? existing?.createdAt ?? nowIso,
+      updatedAt: remote.updatedAt ?? existing?.updatedAt ?? nowIso,
+    };
+
+    if (matchIdx >= 0) {
+      this.playlists = this.playlists.map((p, idx) => (idx === matchIdx ? record : p));
+    } else {
+      this.playlists = [record, ...this.playlists];
+    }
+    await this.storage.setItem(STORAGE_KEYS.playlists, JSON.stringify(this.playlists));
+    this.emitTableChanged('playlists');
+    return record;
+  }
+
+  public async upsertRemoteLikedTrack(rec: LikedTrackRecord): Promise<void> {
+    if (this.isTrackLiked(rec.trackId)) return;
+    this.likedTracks = [rec, ...this.likedTracks];
+    await this.storage.setItem(STORAGE_KEYS.liked, JSON.stringify(this.likedTracks));
+    this.emitTableChanged('liked_tracks');
+  }
+
   public async createPlaylist(input: {
     name: string;
     description?: string;
@@ -171,10 +249,7 @@ export class LibraryStore {
   }): Promise<PlaylistRecord> {
     const nowIso = new Date().toISOString();
     const record: PlaylistRecord = {
-      id:
-        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-          ? crypto.randomUUID()
-          : `pl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      id: generateUuid(),
       name: input.name.trim() || 'Nueva playlist',
       description: input.description?.trim() ?? '',
       coverUrl: input.coverUrl ?? input.tracks?.[0]?.thumbnailUrl,

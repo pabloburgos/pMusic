@@ -19,6 +19,7 @@ import type {
 } from '@pmusic/core';
 import {
   LibraryStore,
+  UUID_RE,
   createDefaultPreferencesStorage,
 } from './library-store.ts';
 
@@ -82,6 +83,10 @@ export class SyncEngine implements ISyncEngine {
   private cmdSeq = 0;
   private readonly seenCmdIds = new Set<string>();
   private readonly pendingTransferAcks = new Map<string, (acked: boolean) => void>();
+  private authListenerRegistered = false;
+  private syncInFlight: Promise<void> | null = null;
+  private syncPendingAgain = false;
+  private realtimeSyncTimer: ReturnType<typeof setTimeout> | null = null;
 
   private readonly remoteCommandListeners = new Set<(cmd: RemoteCommand) => void>();
   private readonly devicesListeners = new Set<(devices: DevicePresenceState[]) => void>();
@@ -275,27 +280,30 @@ export class SyncEngine implements ISyncEngine {
       if (session?.user) {
         this.updateAuthState(this.extractAuthMeta(session.user));
         await this.connectRealtime();
-        void this.syncNow();
+        await this.syncNow();
       }
-      this.supabaseBackend.client.auth.onAuthStateChange((_event, nextSession) => {
-        if (nextSession?.user) {
-          const changed = this.authState.userId !== nextSession.user.id || !this.authState.connected;
-          this.updateAuthState(this.extractAuthMeta(nextSession.user));
-          if (changed) {
-            void this.connectRealtime();
-            void this.syncNow();
+      if (!this.authListenerRegistered) {
+        this.authListenerRegistered = true;
+        this.supabaseBackend.client.auth.onAuthStateChange((_event, nextSession) => {
+          if (nextSession?.user) {
+            const changed = this.authState.userId !== nextSession.user.id || !this.authState.connected;
+            this.updateAuthState(this.extractAuthMeta(nextSession.user));
+            if (changed) {
+              void this.connectRealtime();
+              void this.syncNow();
+            }
+          } else if (this.authState.connected) {
+            this.updateAuthState({
+              userId: null,
+              email: null,
+              connected: false,
+              displayName: null,
+              avatarUrl: null,
+            });
+            void this.disconnectRealtime();
           }
-        } else if (this.authState.connected) {
-          this.updateAuthState({
-            userId: null,
-            email: null,
-            connected: false,
-            displayName: null,
-            avatarUrl: null,
-          });
-          void this.disconnectRealtime();
-        }
-      });
+        });
+      }
     } catch {
       // Keep local-only gracefully if offline
     }
@@ -424,7 +432,7 @@ export class SyncEngine implements ISyncEngine {
         if (data.session?.user) {
           this.updateAuthState(this.extractAuthMeta(data.session.user));
           await this.connectRealtime();
-          void this.syncNow();
+          await this.syncNow();
           return this.getAuthState();
         }
       }
@@ -444,7 +452,7 @@ export class SyncEngine implements ISyncEngine {
         if (data.session?.user) {
           this.updateAuthState(this.extractAuthMeta(data.session.user));
           await this.connectRealtime();
-          void this.syncNow();
+          await this.syncNow();
           return this.getAuthState();
         }
       }
@@ -723,6 +731,13 @@ export class SyncEngine implements ISyncEngine {
         (change) => {
           const table = change.table as SyncTableName;
           this.emitLibraryChanged(table);
+          if (table === 'playlists' || table === 'playlist_tracks' || table === 'liked_tracks') {
+            if (this.realtimeSyncTimer) clearTimeout(this.realtimeSyncTimer);
+            this.realtimeSyncTimer = setTimeout(() => {
+              this.realtimeSyncTimer = null;
+              void this.syncNow();
+            }, 450);
+          }
         }
       );
 
@@ -1115,13 +1130,85 @@ export class SyncEngine implements ISyncEngine {
   }
 
   public async syncNow(): Promise<void> {
-    const pending = this.libraryStore.outbox.getPending();
+    if (this.syncInFlight) {
+      this.syncPendingAgain = true;
+      return this.syncInFlight;
+    }
+    const task = (async () => {
+      do {
+        this.syncPendingAgain = false;
+        await this.runSyncNowInternal();
+      } while (this.syncPendingAgain);
+    })().finally(() => {
+      this.syncInFlight = null;
+    });
+    this.syncInFlight = task;
+    return task;
+  }
+
+  private async runSyncNowInternal(): Promise<void> {
     if (!this.supabaseBackend || !this.authState.connected || !this.authState.userId) {
       return;
     }
+    const client = this.supabaseBackend.client;
     const userId = this.authState.userId;
 
-    // 1. Push local liked tracks to Supabase cloud (best-effort, idempotent upsert)
+    await this.libraryStore.ensureUuidPlaylistIds();
+    const pending = this.libraryStore.outbox.getPending();
+
+    const deletedPlaylistIds = new Set<string>();
+    const upsertedPlaylistIds = new Set<string>();
+    const deletedLikedIds = new Set<string>();
+
+    for (const mut of pending) {
+      const p = mut.payload as Record<string, unknown> | undefined;
+      if (mut.table === 'playlists') {
+        const id = typeof p?.id === 'string' ? p.id : '';
+        if (!id) continue;
+        if (mut.action === 'delete') {
+          deletedPlaylistIds.add(id);
+          upsertedPlaylistIds.delete(id);
+        } else if (mut.action === 'upsert') {
+          upsertedPlaylistIds.add(id);
+          deletedPlaylistIds.delete(id);
+        }
+      } else if (mut.table === 'liked_tracks') {
+        const trackId = typeof p?.trackId === 'string' ? p.trackId : '';
+        if (!trackId) continue;
+        if (mut.action === 'delete') {
+          deletedLikedIds.add(trackId);
+        } else if (mut.action === 'upsert') {
+          deletedLikedIds.delete(trackId);
+        }
+      }
+    }
+
+    let hadError = false;
+
+    // 1. Apply pending deletes first
+    try {
+      for (const delPlId of deletedPlaylistIds) {
+        if (!UUID_RE.test(delPlId)) continue;
+        const { error } = await client
+          .from('playlists')
+          .delete()
+          .eq('id', delPlId)
+          .eq('user_id', userId);
+        if (error) hadError = true;
+      }
+      for (const delTrackId of deletedLikedIds) {
+        const { error } = await client
+          .from('liked_tracks')
+          .delete()
+          .eq('track_id', delTrackId)
+          .eq('user_id', userId);
+        if (error) hadError = true;
+      }
+    } catch {
+      hadError = true;
+    }
+
+    // 2. Sync liked_tracks bidirectionally
     try {
       const localLikes = this.libraryStore.getLikedTracks();
       if (localLikes.length > 0) {
@@ -1131,103 +1218,216 @@ export class SyncEngine implements ISyncEngine {
           track_data: l.track,
           liked_at: l.likedAt,
         }));
-        await this.supabaseBackend.client
+        const { error: upsertLikeErr } = await client
           .from('liked_tracks')
           .upsert(rows, { onConflict: 'user_id,track_id' });
+        if (upsertLikeErr) hadError = true;
       }
-      // 2. Pull any remote liked tracks not yet present locally
-      const { data: remoteLikes } = await this.supabaseBackend.client
+      const { data: remoteLikes, error: pullLikeErr } = await client
         .from('liked_tracks')
-        .select('track_id,track_data')
+        .select('track_id,track_data,liked_at')
         .eq('user_id', userId)
         .order('liked_at', { ascending: false })
         .limit(200);
-      if (Array.isArray(remoteLikes)) {
+      if (pullLikeErr) {
+        hadError = true;
+      } else if (Array.isArray(remoteLikes)) {
         const localSet = new Set(localLikes.map((l) => l.trackId));
         for (const row of remoteLikes) {
-          if (row.track_id && row.track_data && !localSet.has(row.track_id)) {
-            await this.libraryStore.toggleLikeTrack(row.track_data as Track);
+          const tid = typeof row.track_id === 'string' ? row.track_id : '';
+          if (tid && row.track_data && !localSet.has(tid) && !deletedLikedIds.has(tid)) {
+            await this.libraryStore.upsertRemoteLikedTrack({
+              trackId: tid,
+              track: row.track_data as Track,
+              likedAt: String(row.liked_at ?? new Date().toISOString()),
+            });
           }
         }
       }
     } catch {
-      // Non-fatal if table grants or network are offline
+      hadError = true;
     }
 
-    // 3. Push & pull playlists (auto-merge local playlists on sign-in)
+    // 3. Sync playlists & playlist_tracks bidirectionally
     try {
-      const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const { data: remotePlaylists, error: pullPlErr } = await client
+        .from('playlists')
+        .select('id,name,description,cover_url,source,source_url,created_at,updated_at')
+        .eq('user_id', userId)
+        .order('updated_at', { ascending: false })
+        .limit(60);
+
+      const { data: remoteTrackRows, error: pullTracksErr } = await client
+        .from('playlist_tracks')
+        .select('playlist_id,track_id,position,track_data')
+        .eq('user_id', userId)
+        .order('position', { ascending: true })
+        .limit(2000);
+
+      if (pullPlErr || pullTracksErr) {
+        hadError = true;
+      }
+
+      const remoteTracksByPlaylistId = new Map<string, Track[]>();
+      if (Array.isArray(remoteTrackRows)) {
+        for (const rt of remoteTrackRows) {
+          const pid = String(rt.playlist_id ?? '');
+          const td = rt.track_data as Track | null;
+          if (!pid || !td || !td.id) continue;
+          const list = remoteTracksByPlaylistId.get(pid) ?? [];
+          list.push(td);
+          remoteTracksByPlaylistId.set(pid, list);
+        }
+      }
+
+      const remoteById = new Map<string, any>();
+      const remoteByName = new Map<string, any>();
+      for (const rpl of remotePlaylists ?? []) {
+        const rid = String(rpl.id);
+        const rname = String(rpl.name ?? '').trim().toLowerCase();
+        remoteById.set(rid, rpl);
+        if (rname && !remoteByName.has(rname)) {
+          remoteByName.set(rname, rpl);
+        }
+      }
+
+      const matchedRemoteIds = new Set<string>();
       const localPlaylists = this.libraryStore.getPlaylists();
-      for (const pl of localPlaylists.slice(0, 40)) {
-        if (!uuidRe.test(pl.id)) continue;
-        await this.supabaseBackend.client.from('playlists').upsert(
+
+      for (const pl of localPlaylists.slice(0, 60)) {
+        const normName = pl.name.trim().toLowerCase();
+        const matchedRemote =
+          remoteById.get(pl.id) ??
+          (normName ? remoteByName.get(normName) : undefined);
+        if (matchedRemote) {
+          matchedRemoteIds.add(String(matchedRemote.id));
+        }
+        const cloudId = matchedRemote ? String(matchedRemote.id) : pl.id;
+        if (!UUID_RE.test(cloudId)) continue;
+
+        const remoteTracks = remoteTracksByPlaylistId.get(cloudId) ?? [];
+        const hasPendingUpsert = upsertedPlaylistIds.has(pl.id);
+        let tracksToPush = pl.tracks;
+
+        if (matchedRemote && !hasPendingUpsert) {
+          const remoteUpdatedMs = Date.parse(String(matchedRemote.updated_at ?? '')) || 0;
+          const localUpdatedMs = Date.parse(pl.updatedAt) || 0;
+          const remoteIdsSig = remoteTracks.map((t) => t.id).join(',');
+          const localIdsSig = pl.tracks.map((t) => t.id).join(',');
+
+          if (remoteTracks.length > 0 && remoteIdsSig !== localIdsSig) {
+            if (pl.tracks.length === 0 || remoteUpdatedMs >= localUpdatedMs) {
+              await this.libraryStore.upsertRemotePlaylist({
+                id: cloudId,
+                name: String(matchedRemote.name ?? pl.name),
+                description: String(matchedRemote.description ?? ''),
+                coverUrl: (matchedRemote.cover_url as string | null) ?? undefined,
+                source: (matchedRemote.source as any) ?? 'local',
+                sourceUrl: (matchedRemote.source_url as string | null) ?? undefined,
+                tracks: remoteTracks,
+                createdAt: matchedRemote.created_at ? String(matchedRemote.created_at) : pl.createdAt,
+                updatedAt: matchedRemote.updated_at ? String(matchedRemote.updated_at) : pl.updatedAt,
+              });
+              continue;
+            }
+            const seenT = new Set(pl.tracks.map((t) => t.id));
+            tracksToPush = [...pl.tracks, ...remoteTracks.filter((t) => !seenT.has(t.id))];
+            await this.libraryStore.upsertRemotePlaylist({
+              id: cloudId,
+              name: pl.name,
+              description: pl.description,
+              coverUrl: pl.coverUrl ?? tracksToPush[0]?.thumbnailUrl,
+              source: pl.source,
+              sourceUrl: pl.sourceUrl,
+              tracks: tracksToPush,
+              createdAt: pl.createdAt,
+              updatedAt: pl.updatedAt,
+            });
+          } else if (cloudId !== pl.id) {
+            await this.libraryStore.upsertRemotePlaylist({
+              id: cloudId,
+              name: pl.name,
+              description: pl.description,
+              coverUrl: pl.coverUrl,
+              source: pl.source,
+              sourceUrl: pl.sourceUrl,
+              tracks: tracksToPush,
+              createdAt: pl.createdAt,
+              updatedAt: pl.updatedAt,
+            });
+          }
+        }
+
+        const { error: plUpsertErr } = await client.from('playlists').upsert(
           {
-            id: pl.id,
+            id: cloudId,
             user_id: userId,
             name: pl.name.slice(0, 140),
             description: (pl.description ?? '').slice(0, 500),
-            cover_url: pl.coverUrl ?? null,
+            cover_url: pl.coverUrl ?? tracksToPush[0]?.thumbnailUrl ?? null,
             source: pl.source ?? 'local',
             source_url: pl.sourceUrl ?? null,
           },
           { onConflict: 'id' }
         );
-        if (pl.tracks.length > 0) {
-          const trackRows = pl.tracks.slice(0, 200).map((t, idx) => ({
-            playlist_id: pl.id,
+        if (plUpsertErr) {
+          hadError = true;
+          continue;
+        }
+
+        if (tracksToPush.length > 0) {
+          const trackRows = tracksToPush.slice(0, 300).map((t, idx) => ({
+            playlist_id: cloudId,
             user_id: userId,
             track_id: t.id,
             position: idx,
             track_data: t,
           }));
-          await this.supabaseBackend.client
+          const { error: ptErr } = await client
             .from('playlist_tracks')
             .upsert(trackRows, { onConflict: 'playlist_id,track_id' });
+          if (ptErr) hadError = true;
+        }
+
+        if (hasPendingUpsert && remoteTracks.length > 0) {
+          const keepIds = new Set(tracksToPush.map((t) => t.id));
+          const removedIds = remoteTracks
+            .map((t) => t.id)
+            .filter((tid) => !keepIds.has(tid));
+          if (removedIds.length > 0) {
+            const { error: delTrackErr } = await client
+              .from('playlist_tracks')
+              .delete()
+              .eq('playlist_id', cloudId)
+              .eq('user_id', userId)
+              .in('track_id', removedIds);
+            if (delTrackErr) hadError = true;
+          }
         }
       }
 
-      const { data: remotePlaylists } = await this.supabaseBackend.client
-        .from('playlists')
-        .select('id,name,description,cover_url,source,source_url')
-        .eq('user_id', userId)
-        .order('updated_at', { ascending: false })
-        .limit(40);
-      if (Array.isArray(remotePlaylists) && remotePlaylists.length > 0) {
-        const localIds = new Set(localPlaylists.map((p) => p.id));
-        const localNames = new Set(localPlaylists.map((p) => p.name.trim().toLowerCase()));
-        for (const rpl of remotePlaylists) {
-          if (localIds.has(rpl.id) || localNames.has(String(rpl.name ?? '').trim().toLowerCase())) {
-            continue;
-          }
-          const { data: rTracks } = await this.supabaseBackend.client
-            .from('playlist_tracks')
-            .select('track_data,position')
-            .eq('playlist_id', rpl.id)
-            .order('position', { ascending: true })
-            .limit(200);
-          const tracks = Array.isArray(rTracks)
-            ? rTracks.map((rt) => rt.track_data as Track).filter(Boolean)
-            : [];
-          await this.libraryStore.createPlaylist({
-            name: String(rpl.name ?? 'Playlist'),
-            description: String(rpl.description ?? ''),
-            coverUrl: (rpl.cover_url as string | null) ?? undefined,
-            source: (rpl.source as any) ?? 'local',
-            sourceUrl: (rpl.source_url as string | null) ?? undefined,
-            tracks,
-          });
-        }
+      for (const rpl of remotePlaylists ?? []) {
+        const rid = String(rpl.id);
+        if (matchedRemoteIds.has(rid) || deletedPlaylistIds.has(rid)) continue;
+        const tracks = remoteTracksByPlaylistId.get(rid) ?? [];
+        await this.libraryStore.upsertRemotePlaylist({
+          id: rid,
+          name: String(rpl.name ?? 'Playlist'),
+          description: String(rpl.description ?? ''),
+          coverUrl: (rpl.cover_url as string | null) ?? undefined,
+          source: (rpl.source as any) ?? 'local',
+          sourceUrl: (rpl.source_url as string | null) ?? undefined,
+          tracks,
+          createdAt: rpl.created_at ? String(rpl.created_at) : undefined,
+          updatedAt: rpl.updated_at ? String(rpl.updated_at) : undefined,
+        });
       }
     } catch {
-      // Non-fatal if offline or schema grants pending
+      hadError = true;
     }
 
-    const processedIds: string[] = [];
-    for (const mut of pending) {
-      processedIds.push(mut.id);
-    }
-    if (processedIds.length > 0) {
-      await this.libraryStore.outbox.clearProcessed(processedIds);
+    if (!hadError && pending.length > 0) {
+      await this.libraryStore.outbox.clearProcessed(pending.map((m) => m.id));
     }
   }
 

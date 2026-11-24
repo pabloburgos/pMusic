@@ -10,8 +10,10 @@ import {
   Laptop,
   ListMusic,
   Loader2,
+  Maximize,
   MessageSquareQuote,
   Mic2,
+  Minimize,
   MoreHorizontal,
   Pause,
   Play,
@@ -56,8 +58,11 @@ import {
   type LyricsVisualStyle,
 } from '../store/usePMusicStore.ts';
 import {
+  getRealFullscreen,
   isElectronDesktopRuntime,
+  onRealFullscreenChange,
   setDesktopTitleBarOverlay,
+  toggleRealFullscreen,
 } from '../platform/web-bridge.ts';
 import { getThemeDefinition } from '../utils/themes.ts';
 import { ArtistLinks } from './ArtistLinks.tsx';
@@ -229,6 +234,22 @@ export const NowPlayingSheet: React.FC = () => {
   const lyricsLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lyricsPointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const [smoothPosSec, setSmoothPosSec] = useState(positionSec);
+  const [sheetDisplayDurSec, setSheetDisplayDurSec] = useState(durationSec);
+  const [isRealFullscreen, setIsRealFullscreen] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void getRealFullscreen().then((fs) => {
+      if (active) setIsRealFullscreen(fs);
+    });
+    const unsub = onRealFullscreenChange((fs) => {
+      setIsRealFullscreen(fs);
+    });
+    return () => {
+      active = false;
+      unsub();
+    };
+  }, []);
 
   useEffect(() => {
     if (!nowPlayingOpen || nowPlayingTab !== 'Letras') {
@@ -255,6 +276,8 @@ export const NowPlayingSheet: React.FC = () => {
   const lastCrossfadedTrackIdRef = useRef<string | null>(null);
   const lyricsScrollResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSheetBarPctRef = useRef<number>(0);
+  const sheetDisplayDurSecRef = useRef<number>(durationSec);
+  const lastSheetRewindAtMsRef = useRef<number>(0);
   const sheetBarRewindRef = useRef<{
     fromPct: number;
     startMs: number;
@@ -455,12 +478,29 @@ export const NowPlayingSheet: React.FC = () => {
   useEffect(() => {
     const now = typeof performance !== 'undefined' ? performance.now() : 0;
     const trackChanged = syncClockRef.current.trackId !== currentTrack.id;
+    const live = getLivePlaybackPosition();
+    if (isPlaying && nowPlayingOpen && live.isTransitioning && !trackChanged) {
+      return;
+    }
     const seekJumped = Math.abs(positionSec - syncClockRef.current.renderedPosSec) > 0.85;
-    const effDur = Math.max(1, durationSec);
-    const liveSnap = !isPlaying && !trackChanged && !seekJumped ? getLivePlaybackPosition() : null;
-    const basePos =
-      liveSnap && Number.isFinite(liveSnap.positionSec) && liveSnap.positionSec > 0
-        ? Math.max(positionSec, liveSnap.positionSec)
+    const useIncoming = Boolean(
+      live.isTransitioning &&
+        live.transitionProgress01 >= 0.5 &&
+        typeof live.incomingPositionSec === 'number' &&
+        typeof live.incomingDurationSec === 'number' &&
+        live.incomingDurationSec > 0
+    );
+    const effDur = useIncoming
+      ? live.incomingDurationSec!
+      : Math.max(1, durationSec);
+    if (Math.abs(sheetDisplayDurSecRef.current - effDur) > 0.5) {
+      sheetDisplayDurSecRef.current = effDur;
+      setSheetDisplayDurSec(effDur);
+    }
+    const basePos = useIncoming
+      ? live.incomingPositionSec!
+      : !isPlaying && !trackChanged && !seekJumped && Number.isFinite(live.positionSec) && live.positionSec > 0
+        ? Math.max(positionSec, live.positionSec)
         : positionSec;
     const clampedPos = Math.max(0, Math.min(effDur, basePos));
     syncClockRef.current.posSec = clampedPos;
@@ -481,18 +521,21 @@ export const NowPlayingSheet: React.FC = () => {
         trackChanged &&
         !reducedMotionPref &&
         now - sheetManualSeekAtMsRef.current > 350 &&
+        now - lastSheetRewindAtMsRef.current > 900 &&
         !sheetBarRewindRef.current &&
         lastSheetBarPctRef.current - pct > 8
       ) {
+        lastSheetRewindAtMsRef.current = now;
         sheetBarRewindRef.current = {
           fromPct: lastSheetBarPctRef.current,
           startMs: now,
-          durationMs: 700,
+          durationMs: 750,
         };
       } else if (!sheetBarRewindRef.current) {
         lastSheetBarPctRef.current = pct;
         if (progressInputRef.current) {
           progressInputRef.current.style.setProperty('--pm-fill', `${pct.toFixed(2)}%`);
+          progressInputRef.current.max = String(Math.max(1, Math.round(effDur)));
           progressInputRef.current.value = String(Math.min(Math.round(effDur), Math.round(clampedPos)));
         }
       }
@@ -505,18 +548,18 @@ export const NowPlayingSheet: React.FC = () => {
           : formatDurationSec(effDur);
       }
     }
-  }, [positionSec, currentTrack.id, isPlaying, durationSec, reducedMotionPref]);
+  }, [positionSec, currentTrack.id, isPlaying, nowPlayingOpen, durationSec, reducedMotionPref]);
 
   useEffect(() => {
     showRemainingTimeRef.current = showRemainingTime;
-    const effDur = Math.max(1, durationSec);
+    const effDur = Math.max(1, sheetDisplayDurSecRef.current || durationSec);
     const cur = syncClockRef.current.renderedPosSec;
     if (progressRemainRef.current) {
       progressRemainRef.current.textContent = showRemainingTime
         ? `-${formatDurationSec(Math.max(0, effDur - cur))}`
         : formatDurationSec(effDur);
     }
-  }, [showRemainingTime, durationSec]);
+  }, [showRemainingTime, durationSec, sheetDisplayDurSec]);
 
   useEffect(() => {
     if (
@@ -531,6 +574,7 @@ export const NowPlayingSheet: React.FC = () => {
       const live = getLivePlaybackPosition();
       const useIncoming = Boolean(
         live.isTransitioning &&
+          live.transitionProgress01 >= 0.5 &&
           typeof live.incomingPositionSec === 'number' &&
           typeof live.incomingDurationSec === 'number' &&
           live.incomingDurationSec > 0
@@ -538,6 +582,10 @@ export const NowPlayingSheet: React.FC = () => {
       const effDur = useIncoming
         ? live.incomingDurationSec!
         : Math.max(1, live.durationSec || durationSec);
+      if (Math.abs(sheetDisplayDurSecRef.current - effDur) > 0.5) {
+        sheetDisplayDurSecRef.current = effDur;
+        setSheetDisplayDurSec(effDur);
+      }
       const rawPos = useIncoming
         ? live.incomingPositionSec!
         : Number.isFinite(live.positionSec)
@@ -567,13 +615,15 @@ export const NowPlayingSheet: React.FC = () => {
       if (
         !reducedMotionPref &&
         now - sheetManualSeekAtMsRef.current > 350 &&
+        now - lastSheetRewindAtMsRef.current > 900 &&
         !sheetBarRewindRef.current &&
         lastSheetBarPctRef.current - livePct > 8
       ) {
+        lastSheetRewindAtMsRef.current = now;
         sheetBarRewindRef.current = {
           fromPct: lastSheetBarPctRef.current,
           startMs: now,
-          durationMs: 700,
+          durationMs: 750,
         };
       }
 
@@ -594,6 +644,7 @@ export const NowPlayingSheet: React.FC = () => {
 
       if (progressInputRef.current) {
         progressInputRef.current.style.setProperty('--pm-fill', `${visualPct.toFixed(2)}%`);
+        progressInputRef.current.max = String(Math.max(1, Math.round(effDur)));
         progressInputRef.current.value = String(
           Math.min(Math.round(effDur), Math.round((visualPct / 100) * effDur))
         );
@@ -787,22 +838,26 @@ export const NowPlayingSheet: React.FC = () => {
 
   const isLiked = likedTracks.some((l) => l.trackId === currentTrack.id);
   const dlStatus = offlineDownloads[currentTrack.id] ?? 'idle';
+  const activeSheetDurSec = Math.max(1, sheetDisplayDurSec || durationSec);
   const progressPct = Math.max(
     0,
-    Math.min(100, (smoothPosSec / Math.max(1, durationSec)) * 100)
+    Math.min(100, (smoothPosSec / activeSheetDurSec) * 100)
   );
+  const activeSheetFillPct = sheetBarRewindRef.current
+    ? lastSheetBarPctRef.current
+    : progressPct;
   const volumePct = Math.round(volume * 100);
   const cueStartPct =
-    djMode.enabled && activeTransitionPlan && durationSec > 10
-      ? Math.max(0, Math.min(96, (activeTransitionPlan.cueOutSec / durationSec) * 100))
+    djMode.enabled && activeTransitionPlan && activeSheetDurSec > 10
+      ? Math.max(0, Math.min(96, (activeTransitionPlan.cueOutSec / activeSheetDurSec) * 100))
       : null;
   const cueWidthPct =
-    djMode.enabled && activeTransitionPlan && durationSec > 10
+    djMode.enabled && activeTransitionPlan && activeSheetDurSec > 10
       ? Math.max(
           2.5,
           Math.min(
             100 - (cueStartPct ?? 0),
-            (activeTransitionPlan.transitionDurationSec / durationSec) * 100
+            (activeTransitionPlan.transitionDurationSec / activeSheetDurSec) * 100
           )
         )
       : 0;
@@ -819,7 +874,7 @@ export const NowPlayingSheet: React.FC = () => {
         ? 'Repetir playlist (siguiente: repetir una)'
         : 'Activar repetición de playlist';
 
-  const remainingSec = Math.max(0, durationSec - smoothPosSec);
+  const remainingSec = Math.max(0, activeSheetDurSec - smoothPosSec);
   const cfActive = Boolean(
     isTransitioning &&
       outgoingTransitionTrack &&
@@ -842,8 +897,8 @@ export const NowPlayingSheet: React.FC = () => {
     <div
       className={`flex flex-col items-center ${
         compact
-          ? 'w-full gap-3.5 xl:gap-4'
-          : 'mx-auto flex h-full w-full max-w-[420px] justify-center gap-5 pb-4 md:h-auto md:justify-center md:gap-5 md:py-0'
+          ? 'w-full gap-3 xl:gap-3.5'
+          : 'mx-auto flex h-full w-full max-w-[420px] justify-center gap-4 pb-4 md:h-auto md:justify-center md:gap-4 md:py-0'
       }`}
     >
       {/* Large Borderless Centerpiece Artwork with pMusic Fractal Ink-Bleed Transition */}
@@ -910,22 +965,22 @@ export const NowPlayingSheet: React.FC = () => {
         )}
       </div>
 
-      {/* Minimalist Title, Full Multi-Artist Line & Borderless Actions */}
+      {/* Minimalist Title, Full Multi-Artist Line & Borderless Actions (Exact Height Parity in Transition & Resting) */}
       <div
         key={
           cfActive || isPostCrossfadeSameTrack
             ? 'cf-meta-stage'
             : `meta-${incomingPreviewTrack?.id ?? currentTrack.id}`
         }
-        className={`${cfActive || isPostCrossfadeSameTrack ? '' : 'pm-track-meta-in'} flex w-full flex-col gap-0.5`}
+        className={`${cfActive || isPostCrossfadeSameTrack ? '' : 'pm-track-meta-in'} flex w-full flex-col gap-0`}
       >
         {cfActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
           <>
-            <div className="flex h-9 w-full items-center justify-between gap-2">
-              <div className="relative min-w-0 flex-1">
+            <div className="flex h-[30px] w-full items-center justify-between gap-2">
+              <div className="relative h-[28px] min-w-0 flex-1 overflow-hidden">
                 <h1
                   aria-hidden="true"
-                  className="pointer-events-none absolute inset-0 truncate text-[21px] font-bold leading-snug tracking-tight text-white md:text-[23px]"
+                  className="pointer-events-none absolute inset-0 truncate text-[21px] font-bold leading-[1.12] tracking-tight text-white md:text-[23px]"
                   style={{
                     animation: `pmMetaBlurOut ${cfAnimDurationSec}s ease-in-out forwards`,
                   }}
@@ -933,7 +988,7 @@ export const NowPlayingSheet: React.FC = () => {
                   {outgoingTransitionTrack.title}
                 </h1>
                 <h1
-                  className="truncate text-[21px] font-bold leading-snug tracking-tight text-white md:text-[23px]"
+                  className="truncate text-[21px] font-bold leading-[1.12] tracking-tight text-white md:text-[23px]"
                   style={{
                     animation: `pmMetaBlurIn ${cfAnimDurationSec}s ease-in-out forwards`,
                   }}
@@ -948,7 +1003,7 @@ export const NowPlayingSheet: React.FC = () => {
                   aria-label={isLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
                   aria-pressed={isLiked}
                   onClick={() => void toggleLike(currentTrack)}
-                  className={`pm-pressable relative flex h-9 w-9 items-center justify-center rounded-full transition-colors hover:bg-white/[0.10] ${
+                  className={`pm-pressable relative flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-white/[0.10] ${
                     isLiked ? 'text-[#FB7185]' : 'text-white/85 hover:text-white'
                   }`}
                 >
@@ -962,7 +1017,7 @@ export const NowPlayingSheet: React.FC = () => {
                       : 'Descargar para escuchar offline'
                   }
                   onClick={() => void downloadTrackOffline(currentTrack)}
-                  className="pm-pressable hidden h-9 w-9 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/[0.10] hover:text-white md:flex"
+                  className="pm-pressable hidden h-8 w-8 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/[0.10] hover:text-white md:flex"
                 >
                   {dlStatus === 'downloading' ? (
                     <Loader2 className="h-4.5 w-4.5 animate-spin text-white" />
@@ -979,17 +1034,17 @@ export const NowPlayingSheet: React.FC = () => {
                     const r = e.currentTarget.getBoundingClientRect();
                     openTrackMenu(currentTrack, r.left - 210, r.bottom + 8);
                   }}
-                  className="pm-pressable flex h-9 w-9 items-center justify-center rounded-full text-white/85 transition-colors hover:bg-white/[0.10] hover:text-white"
+                  className="pm-pressable flex h-8 w-8 items-center justify-center rounded-full text-white/85 transition-colors hover:bg-white/[0.10] hover:text-white"
                 >
                   <MoreHorizontal className="h-5 w-5" />
                 </button>
               </div>
             </div>
 
-            <div className="relative min-h-[20px] w-full text-[14px] leading-[1.3] text-white/70">
+            <div className="relative h-[20px] w-full overflow-hidden text-[14px] leading-[1.2] text-white/70">
               <div
                 aria-hidden="true"
-                className="pointer-events-none absolute inset-0 flex items-center gap-x-1.5 truncate"
+                className="pointer-events-none absolute inset-0 flex items-center gap-x-1.5 whitespace-nowrap"
                 style={{
                   animation: `pmMetaBlurOut ${cfAnimDurationSec}s ease-in-out forwards`,
                 }}
@@ -1009,7 +1064,7 @@ export const NowPlayingSheet: React.FC = () => {
                 )}
               </div>
               <div
-                className="flex items-center gap-x-1.5 truncate"
+                className="flex h-[20px] items-center gap-x-1.5 whitespace-nowrap"
                 style={{
                   animation: `pmMetaBlurIn ${cfAnimDurationSec}s ease-in-out forwards`,
                 }}
@@ -1032,8 +1087,8 @@ export const NowPlayingSheet: React.FC = () => {
           </>
         ) : (
           <>
-            <div className="flex h-9 w-full items-center justify-between gap-2">
-              <h1 className="min-w-0 flex-1 truncate text-[21px] font-bold leading-snug tracking-tight text-white md:text-[23px]">
+            <div className="flex h-[30px] w-full items-center justify-between gap-2">
+              <h1 className="min-w-0 flex-1 truncate text-[21px] font-bold leading-[1.12] tracking-tight text-white md:text-[23px]">
                 {currentTrack.title}
               </h1>
 
@@ -1048,7 +1103,7 @@ export const NowPlayingSheet: React.FC = () => {
                     }
                     void toggleLike(currentTrack);
                   }}
-                  className={`pm-pressable relative flex h-9 w-9 items-center justify-center overflow-visible rounded-full transition-colors hover:bg-white/[0.10] ${
+                  className={`pm-pressable relative flex h-8 w-8 items-center justify-center overflow-visible rounded-full transition-colors hover:bg-white/[0.10] ${
                     isLiked ? 'text-[#FB7185]' : 'text-white/85 hover:text-white'
                   }`}
                 >
@@ -1092,7 +1147,7 @@ export const NowPlayingSheet: React.FC = () => {
                       : 'Descargar para escuchar offline'
                   }
                   onClick={() => void downloadTrackOffline(currentTrack)}
-                  className="pm-pressable hidden h-9 w-9 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/[0.10] hover:text-white md:flex"
+                  className="pm-pressable hidden h-8 w-8 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/[0.10] hover:text-white md:flex"
                 >
                   {dlStatus === 'downloading' ? (
                     <Loader2 className="h-4.5 w-4.5 animate-spin text-white" />
@@ -1110,18 +1165,18 @@ export const NowPlayingSheet: React.FC = () => {
                     const r = e.currentTarget.getBoundingClientRect();
                     openTrackMenu(currentTrack, r.left - 210, r.bottom + 8);
                   }}
-                  className="pm-pressable flex h-9 w-9 items-center justify-center rounded-full text-white/85 transition-colors hover:bg-white/[0.10] hover:text-white"
+                  className="pm-pressable flex h-8 w-8 items-center justify-center rounded-full text-white/85 transition-colors hover:bg-white/[0.10] hover:text-white"
                 >
                   <MoreHorizontal className="h-5 w-5" />
                 </button>
               </div>
             </div>
 
-            {/* Full-Width Artist · Album Line so multi-artist collaborations match transition spacing */}
-            <div className="flex min-h-[20px] w-full flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[14px] leading-[1.3] text-white/70">
+            {/* Full-Width Artist · Album Line using span link so HIG button min-height never inflates row height */}
+            <div className="flex h-[20px] w-full items-center gap-x-1.5 overflow-hidden whitespace-nowrap text-[14px] leading-[1.2] text-white/70">
               <ArtistLinks
                 artists={currentTrack.artists}
-                className="flex flex-wrap !py-0 !leading-[1.3]"
+                className="flex !py-0 !leading-[1.2]"
                 onBeforeNavigate={() => setNowPlayingOpen(false)}
                 linkClassName="hover:text-white hover:underline"
               />
@@ -1130,8 +1185,9 @@ export const NowPlayingSheet: React.FC = () => {
                   <span aria-hidden="true" className="opacity-50">
                     ·
                   </span>
-                  <button
-                    type="button"
+                  <span
+                    role="link"
+                    tabIndex={0}
                     onClick={() => {
                       const album = currentTrack.album;
                       setNowPlayingOpen(false);
@@ -1142,10 +1198,23 @@ export const NowPlayingSheet: React.FC = () => {
                         });
                       }
                     }}
-                    className="min-w-0 truncate text-left text-white/55 hover:text-white hover:underline"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        const album = currentTrack.album;
+                        setNowPlayingOpen(false);
+                        if (album?.id) {
+                          void openAlbumDetail(album.id, {
+                            title: album.name,
+                            artist: currentTrack.artists[0]?.name,
+                          });
+                        }
+                      }
+                    }}
+                    className="min-w-0 cursor-pointer truncate text-left text-white/55 hover:text-white hover:underline"
                   >
                     {currentTrack.album.name}
-                  </button>
+                  </span>
                 </>
               )}
             </div>
@@ -1178,10 +1247,13 @@ export const NowPlayingSheet: React.FC = () => {
             role="slider"
             aria-label="Progreso de la canción"
             min={0}
-            max={Math.max(1, Math.round(durationSec))}
-            value={Math.min(Math.round(durationSec), Math.round(smoothPosSec))}
+            max={Math.max(1, Math.round(activeSheetDurSec))}
+            value={Math.min(
+              Math.round(activeSheetDurSec),
+              Math.round((activeSheetFillPct / 100) * activeSheetDurSec)
+            )}
             onChange={(e) => {
-              const effDur = Math.max(1, durationSec);
+              const effDur = activeSheetDurSec;
               const next = Math.max(0, Math.min(effDur, Number(e.target.value)));
               const pct = Math.min(100, Math.max(0, (next / effDur) * 100));
               sheetManualSeekAtMsRef.current =
@@ -1206,7 +1278,7 @@ export const NowPlayingSheet: React.FC = () => {
               setSmoothPosSec(next);
               seekTo(next);
             }}
-            style={{ '--pm-fill': `${progressPct}%` } as React.CSSProperties}
+            style={{ '--pm-fill': `${activeSheetFillPct}%` } as React.CSSProperties}
             className="pm-range-pill relative z-10 w-full cursor-pointer"
           />
         </div>
@@ -1231,7 +1303,7 @@ export const NowPlayingSheet: React.FC = () => {
             <span ref={progressRemainRef}>
               {showRemainingTime
                 ? `-${formatDurationSec(remainingSec)}`
-                : formatDurationSec(durationSec)}
+                : formatDurationSec(activeSheetDurSec)}
             </span>
           </button>
         </div>
@@ -1499,12 +1571,12 @@ export const NowPlayingSheet: React.FC = () => {
           }
         }}
         className={`pm-drag-region relative z-20 flex shrink-0 items-center justify-between px-4 pt-[max(0.6rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-1 md:px-8 md:pb-2 ${
-          isElectronDesktop ? 'pr-[152px] md:pr-[152px]' : ''
+          isElectronDesktop && !isRealFullscreen ? 'pr-[152px] md:pr-[152px]' : ''
         }`}
       >
-        {/* Mobile Portada: clean centered top grabber capsule (tappable or swipe down to close) */}
+        {/* Mobile Portada: clean centered top grabber capsule + fullscreen button */}
         {nowPlayingTab === 'Portada' ? (
-          <div className="flex w-full items-center justify-center py-1 md:hidden">
+          <div className="relative flex w-full items-center justify-center py-1 md:hidden">
             <button
               type="button"
               aria-label="Bajar reproductor"
@@ -1512,6 +1584,18 @@ export const NowPlayingSheet: React.FC = () => {
               className="flex h-7 w-16 items-center justify-center rounded-full"
             >
               <span className="h-1 w-10 rounded-full bg-white/35" />
+            </button>
+            <button
+              type="button"
+              aria-label={isRealFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa real'}
+              onClick={() => void toggleRealFullscreen().then(setIsRealFullscreen)}
+              className="pm-pressable absolute right-0 flex h-8 w-8 items-center justify-center rounded-full bg-white/[0.08] text-white/80 hover:bg-white/[0.16] hover:text-white"
+            >
+              {isRealFullscreen ? (
+                <Minimize className="h-3.5 w-3.5" />
+              ) : (
+                <Maximize className="h-3.5 w-3.5" />
+              )}
             </button>
           </div>
         ) : (
@@ -1559,7 +1643,7 @@ export const NowPlayingSheet: React.FC = () => {
           </div>
         )}
 
-        {/* Desktop Minimal Left Dismiss Pill (NO ugly centered Portada/Letras/Cola pill bar on top) */}
+        {/* Desktop Minimal Left Dismiss Pill */}
         <button
           type="button"
           aria-label="Cerrar reproductor"
@@ -1570,7 +1654,26 @@ export const NowPlayingSheet: React.FC = () => {
           <span>Minimizar</span>
         </button>
 
-        <div aria-hidden="true" className="hidden w-20 md:block" />
+        <button
+          type="button"
+          data-testid="toggle-real-fullscreen-btn"
+          aria-label={isRealFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa real'}
+          title={isRealFullscreen ? 'Salir de pantalla completa (F11 / Esc)' : 'Pantalla completa real (F11)'}
+          onClick={() => void toggleRealFullscreen().then(setIsRealFullscreen)}
+          className="pm-pressable pm-no-drag hidden items-center gap-1.5 rounded-full bg-white/[0.08] px-3.5 py-1.5 text-xs font-semibold text-white/90 transition-colors hover:bg-white/[0.16] md:inline-flex"
+        >
+          {isRealFullscreen ? (
+            <>
+              <Minimize className="h-3.5 w-3.5" />
+              <span>Salir pantalla completa</span>
+            </>
+          ) : (
+            <>
+              <Maximize className="h-3.5 w-3.5" />
+              <span>Pantalla completa</span>
+            </>
+          )}
+        </button>
       </header>
 
       {/* Main Content */}

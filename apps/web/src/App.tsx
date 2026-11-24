@@ -12,8 +12,10 @@ import {
   ListMusic,
   ListStart,
   Loader2,
+  Maximize,
   Maximize2,
   Mic2,
+  Minimize,
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
@@ -46,7 +48,12 @@ import {
   usePMusicStore,
   type MainNavTab,
 } from './store/usePMusicStore.ts';
-import { isElectronDesktopRuntime } from './platform/web-bridge.ts';
+import {
+  getRealFullscreen,
+  isElectronDesktopRuntime,
+  onRealFullscreenChange,
+  toggleRealFullscreen,
+} from './platform/web-bridge.ts';
 import { PMusicLogo } from './components/PMusicLogo.tsx';
 import { SpotlightSearchModal } from './components/SpotlightSearchModal.tsx';
 import { AppToast, TrackContextMenu } from './components/TrackMenu.tsx';
@@ -197,10 +204,25 @@ const PMusicMainApp: React.FC = () => {
   const [dockDisplayDurSec, setDockDisplayDurSec] = useState<number>(durationSec);
   const [islandMenuOpen, setIslandMenuOpen] = useState(false);
   const [isDockReceding, setIsDockReceding] = useState(false);
+  const [isRealFullscreen, setIsRealFullscreen] = useState(false);
   const [dockColorWave, setDockColorWave] = useState<{ key: string; prevColor: string } | null>(
     null
   );
   const isElectronDesktop = isElectronDesktopRuntime();
+
+  useEffect(() => {
+    let active = true;
+    void getRealFullscreen().then((fs) => {
+      if (active) setIsRealFullscreen(fs);
+    });
+    const unsub = onRealFullscreenChange((fs) => {
+      setIsRealFullscreen(fs);
+    });
+    return () => {
+      active = false;
+      unsub();
+    };
+  }, []);
 
   const swipeStartXRef = useRef<number | null>(null);
   const heartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -319,10 +341,14 @@ const PMusicMainApp: React.FC = () => {
   useEffect(() => {
     const now = typeof performance !== 'undefined' ? performance.now() : 0;
     const trackChanged = dockClockRef.current.trackId !== currentTrack.id;
-    const seekJumped = Math.abs(positionSec - dockClockRef.current.renderedPosSec) > 0.85;
     const curLive = getLivePlaybackPosition();
+    if (isPlaying && !isMobileViewport && curLive.isTransitioning && !trackChanged) {
+      return;
+    }
+    const seekJumped = Math.abs(positionSec - dockClockRef.current.renderedPosSec) > 0.85;
     const usingIncoming = Boolean(
       curLive.isTransitioning &&
+        curLive.transitionProgress01 >= 0.5 &&
         typeof curLive.incomingPositionSec === 'number' &&
         typeof curLive.incomingDurationSec === 'number' &&
         curLive.incomingDurationSec > 0
@@ -330,9 +356,9 @@ const PMusicMainApp: React.FC = () => {
     const effDur = usingIncoming
       ? curLive.incomingDurationSec!
       : Math.max(1, durationSec);
-    if (!usingIncoming && Math.abs(dockDisplayDurSecRef.current - durationSec) > 0.5) {
-      dockDisplayDurSecRef.current = durationSec;
-      setDockDisplayDurSec(durationSec);
+    if (Math.abs(dockDisplayDurSecRef.current - effDur) > 0.5) {
+      dockDisplayDurSecRef.current = effDur;
+      setDockDisplayDurSec(effDur);
     }
     const basePos = usingIncoming ? curLive.incomingPositionSec! : positionSec;
     const clampedPos = Math.max(0, Math.min(effDur, basePos));
@@ -400,7 +426,7 @@ const PMusicMainApp: React.FC = () => {
         if (classicRangeRef.current) classicRangeRef.current.style.setProperty('--pm-fill', pctStr);
       }
     }
-  }, [positionSec, currentTrack.id, isPlaying, durationSec, reducedMotionPref]);
+  }, [positionSec, currentTrack.id, isPlaying, isMobileViewport, durationSec, reducedMotionPref]);
 
   useEffect(() => {
     if ((!isPlaying && !isDockReceding) || isMobileViewport || typeof requestAnimationFrame !== 'function') {
@@ -414,6 +440,7 @@ const PMusicMainApp: React.FC = () => {
       const live = getLivePlaybackPosition();
       const useIncoming = Boolean(
         live.isTransitioning &&
+          live.transitionProgress01 >= 0.5 &&
           typeof live.incomingPositionSec === 'number' &&
           typeof live.incomingDurationSec === 'number' &&
           live.incomingDurationSec > 0
@@ -606,7 +633,17 @@ const PMusicMainApp: React.FC = () => {
         return;
       }
 
+      if (e.key === 'F11') {
+        e.preventDefault();
+        void toggleRealFullscreen().then(setIsRealFullscreen);
+        return;
+      }
+
       if (e.key === 'Escape') {
+        if (isRealFullscreen) {
+          void toggleRealFullscreen().then(setIsRealFullscreen);
+          return;
+        }
         if (spotlightOpen) setSpotlightOpen(false);
         else if (djPopoverOpen) setDjPopoverOpen(false);
         else if (eqSheetOpen) setEqSheetOpen(false);
@@ -689,6 +726,7 @@ const PMusicMainApp: React.FC = () => {
     onlineDevices,
     importModalOpen,
     settingsOpen,
+    isRealFullscreen,
     durationSec,
     positionSec,
     volume,
@@ -780,14 +818,14 @@ const PMusicMainApp: React.FC = () => {
     { id: 'Social', label: 'Social', icon: <Users className="h-[18px] w-[18px]" /> },
   ];
   const dockHoverSec =
-    dockHoverPct !== null ? (dockHoverPct / 100) * Math.max(1, durationSec) : null;
+    dockHoverPct !== null ? (dockHoverPct / 100) * activeDockDurSec : null;
 
   const seekFromClientX = (clientX: number) => {
     const el = dockBarRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
     const pct = Math.max(0, Math.min(1, (clientX - rect.left) / Math.max(1, rect.width)));
-    const nextSec = Math.round(pct * Math.max(1, durationSec));
+    const nextSec = Math.round(pct * activeDockDurSec);
     dockClockRef.current = {
       posSec: nextSec,
       renderedPosSec: nextSec,
@@ -880,9 +918,23 @@ const PMusicMainApp: React.FC = () => {
 
           <div
             className={`pm-no-drag relative z-20 flex shrink-0 items-center gap-1.5 ${
-              isElectronDesktop ? 'mr-[138px]' : ''
+              isElectronDesktop && !isRealFullscreen ? 'mr-[138px]' : ''
             }`}
           >
+            <button
+              type="button"
+              data-testid="desktop-fullscreen-btn"
+              aria-label={isRealFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}
+              title={isRealFullscreen ? 'Salir de pantalla completa (F11)' : 'Pantalla completa (F11)'}
+              onClick={() => void toggleRealFullscreen().then(setIsRealFullscreen)}
+              className="pm-no-drag pm-btn-secondary pm-pressable inline-flex h-8 w-8 items-center justify-center rounded-full"
+            >
+              {isRealFullscreen ? (
+                <Minimize className="h-3.5 w-3.5" />
+              ) : (
+                <Maximize className="h-3.5 w-3.5" />
+              )}
+            </button>
             {sleepTimerMode !== 'off' && (
               <button
                 type="button"

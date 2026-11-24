@@ -457,6 +457,16 @@ ipcMain.handle('pmusic:consume-pending-auth-callback', () => {
   pendingAuthCallbackUrl = null;
   return url;
 });
+ipcMain.handle('pmusic:toggle-fullscreen', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  const next = !mainWindow.isFullScreen();
+  mainWindow.setFullScreen(next);
+  return mainWindow.isFullScreen();
+});
+ipcMain.handle('pmusic:get-fullscreen', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  return mainWindow.isFullScreen();
+});
 ipcMain.handle(
   'pmusic:set-titlebar-overlay',
   (_event, opts: { color?: string; symbolColor?: string; height?: number }) => {
@@ -529,6 +539,13 @@ async function createMainWindow(): Promise<void> {
 
   const targetUrl = process.env.PMUSIC_DEV_URL || \`http://127.0.0.1:\${port}\`;
   await mainWindow.loadURL(targetUrl);
+
+  mainWindow.on('enter-full-screen', () => {
+    mainWindow?.webContents.send('pmusic:fullscreen-changed', true);
+  });
+  mainWindow.on('leave-full-screen', () => {
+    mainWindow?.webContents.send('pmusic:fullscreen-changed', false);
+  });
 }
 
 void app.whenReady().then(async () => {

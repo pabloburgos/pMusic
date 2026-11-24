@@ -264,9 +264,13 @@ describe('@pmusic/web UI', () => {
     render(<App />);
     expect(screen.queryByText(/MEZCLANDO · DJ/i)).toBeNull();
     expect(screen.queryByText(/Entrando ·/i)).toBeNull();
-    expect(screen.getByTestId('ink-bleed-cover')).toBeDefined();
+    const inkCover = screen.getByTestId('ink-bleed-cover');
+    expect(inkCover).toBeDefined();
+    expect(inkCover.querySelectorAll('circle').length).toBe(0);
+    expect(inkCover.querySelectorAll('feTurbulence').length).toBeGreaterThan(0);
     expect(screen.getByTestId('backdrop-slot-0')).toBeDefined();
     expect(screen.getByTestId('backdrop-slot-1')).toBeDefined();
+    expect(screen.getByTestId('toggle-real-fullscreen-btn')).toBeDefined();
 
     // Activate DJ Mode, then toggle OFF and ensure synchronous cleanup
     act(() => {

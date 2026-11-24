@@ -208,6 +208,7 @@ export interface LivePlaybackSnapshot {
   isEnded: boolean;
   isSeeking: boolean;
   isTransitioning: boolean;
+  transitionProgress01: number;
   incomingPositionSec?: number;
   incomingDurationSec?: number;
 }
@@ -252,6 +253,8 @@ export class DualDeckAudioEngine implements IAudioEngine {
   private lastObservedTime = -1;
   private lastProgressWallMs = 0;
   private lastRecoveryNudgeWallMs = 0;
+  private audioUnlockAttached = false;
+  private audioUnlockCleanup: (() => void) | null = null;
 
   private userEqConfig: UserEqConfig = {
     enabled: true,
@@ -283,7 +286,33 @@ export class DualDeckAudioEngine implements IAudioEngine {
       (async (track: Track) => `/api/stream/${encodeURIComponent(track.id)}?quality=high`);
   }
 
+  public unlockAudioContext(): void {
+    if (this.audioCtx && this.audioCtx.state === 'suspended') {
+      try {
+        void this.audioCtx.resume().catch(() => {});
+      } catch {
+        // ignore in restricted audio contexts
+      }
+    }
+  }
+
   public async init(): Promise<void> {
+    if (
+      !this.audioUnlockAttached &&
+      typeof window !== 'undefined' &&
+      typeof window.addEventListener === 'function'
+    ) {
+      this.audioUnlockAttached = true;
+      const unlock = () => this.unlockAudioContext();
+      window.addEventListener('pointerdown', unlock, { passive: true });
+      window.addEventListener('touchstart', unlock, { passive: true });
+      window.addEventListener('keydown', unlock, { passive: true });
+      this.audioUnlockCleanup = () => {
+        window.removeEventListener('pointerdown', unlock);
+        window.removeEventListener('touchstart', unlock);
+        window.removeEventListener('keydown', unlock);
+      };
+    }
     if (this.deckA && this.deckB) return;
 
     this.deckA = this.createDeckElement('A');
@@ -490,6 +519,8 @@ export class DualDeckAudioEngine implements IAudioEngine {
       // Critical invariant #1: crossOrigin="anonymous" MUST be set before src
       audio.crossOrigin = 'anonymous';
       audio.preload = 'auto';
+      (audio as HTMLAudioElement & { playsInline?: boolean }).playsInline = true;
+      audio.setAttribute?.('playsinline', '');
       audio.dataset.deck = id;
       audio.style.display = 'none';
       document.body?.appendChild(audio);
@@ -774,6 +805,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
   }
 
   public async loadAndPlay(track: Track, startSec = 0): Promise<void> {
+    this.unlockAudioContext();
     await this.init();
     this.cancelActiveTransition();
     const loadGen = ++this.loadGeneration;
@@ -874,6 +906,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
   }
 
   public async play(): Promise<void> {
+    this.unlockAudioContext();
     await this.init();
     if (this.audioCtx && this.audioCtx.state === 'suspended') {
       try {
@@ -1171,6 +1204,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
         }
       };
 
+      this.unlockAudioContext();
       await playAudioWithTimeout(incoming.audio, 3500);
       if (!this.isTransitioning) return;
       this.incomingStartedPlaying = true;
@@ -1853,6 +1887,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
       isEnded: audio ? Boolean(audio.ended) : false,
       isSeeking: audio ? Boolean(audio.seeking) : false,
       isTransitioning: this.isTransitioning,
+      transitionProgress01: this.transitionProgress01,
       incomingPositionSec,
       incomingDurationSec,
     };
@@ -1906,6 +1941,9 @@ export class DualDeckAudioEngine implements IAudioEngine {
       clearInterval(this.watchdogTimer);
       this.watchdogTimer = null;
     }
+    this.audioUnlockCleanup?.();
+    this.audioUnlockCleanup = null;
+    this.audioUnlockAttached = false;
     this.loadGeneration++;
     this.cancelActiveTransition();
     this.pause();

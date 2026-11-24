@@ -23,6 +23,15 @@ contextBridge.exposeInMainWorld('pmusicDesktop', {
     symbolColor?: string;
     height?: number;
   }): Promise<void> => ipcRenderer.invoke('pmusic:set-titlebar-overlay', opts),
+  toggleFullscreen: (): Promise<boolean> => ipcRenderer.invoke('pmusic:toggle-fullscreen'),
+  getFullscreen: (): Promise<boolean> => ipcRenderer.invoke('pmusic:get-fullscreen'),
+  onFullscreenChange: (cb: (isFs: boolean) => void): (() => void) => {
+    const handler = (_event: unknown, isFs: boolean) => cb(Boolean(isFs));
+    ipcRenderer.on('pmusic:fullscreen-changed', handler);
+    return () => {
+      ipcRenderer.removeListener('pmusic:fullscreen-changed', handler);
+    };
+  },
   openExternalUrl: (url: string): Promise<void> =>
     ipcRenderer.invoke('pmusic:open-external-url', url),
   getOAuthRedirectUrl: (): Promise<string> =>

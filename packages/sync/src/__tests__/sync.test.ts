@@ -89,4 +89,48 @@ describe('@pmusic/sync', () => {
     expect(updatedPeer?.is_playing).toBe(true);
     expect(updatedPeer?.track_title).toContain('Me Muevo Con Dios');
   });
+
+  it('normalizes legacy playlist IDs to UUIDs and upserts remote playlists & likes preserving exact cloud IDs without outbox duplication', async () => {
+    const store = new LibraryStore();
+    await store.hydrate();
+
+    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const remoteId = '11111111-2222-4333-8444-555555555555';
+    const track2: Track = {
+      ...SAMPLE_TRACK,
+      id: 'dz:999',
+      title: 'Cangrinaje',
+    };
+
+    const syncedPl = await store.upsertRemotePlaylist({
+      id: remoteId,
+      name: 'Cloud Mix',
+      description: 'Synced from desktop',
+      tracks: [SAMPLE_TRACK],
+    });
+    expect(syncedPl.id).toBe(remoteId);
+    expect(store.getPlaylists()).toHaveLength(1);
+    expect(store.outbox.getPending()).toHaveLength(0);
+
+    // Updating the same cloud playlist with new tracks preserves the exact remote ID and avoids duplicates
+    const updatedPl = await store.upsertRemotePlaylist({
+      id: remoteId,
+      name: 'Cloud Mix',
+      tracks: [SAMPLE_TRACK, track2],
+    });
+    expect(updatedPl.id).toBe(remoteId);
+    expect(store.getPlaylists()).toHaveLength(1);
+    expect(store.getPlaylists()[0]?.tracks).toHaveLength(2);
+
+    await store.upsertRemoteLikedTrack({
+      trackId: track2.id,
+      track: track2,
+      likedAt: new Date().toISOString(),
+    });
+    expect(store.isTrackLiked(track2.id)).toBe(true);
+    expect(store.outbox.getPending()).toHaveLength(0);
+
+    const localCreated = await store.createPlaylist({ name: 'Local UUID Check', tracks: [] });
+    expect(uuidRe.test(localCreated.id)).toBe(true);
+  });
 });

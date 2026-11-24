@@ -157,8 +157,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="31"
-    android:versionName="0.17.5">
+    android:versionCode="32"
+    android:versionName="0.17.6">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -326,12 +326,17 @@ import android.webkit.WebViewClient;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.InetAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -348,6 +353,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -433,6 +440,10 @@ public class MainActivity extends Activity {
     private String pendingAuthCallbackUrl = null;
     private int safeInsetTopDp = 0;
     private int safeInsetBottomDp = 0;
+    private ServerSocket localStreamServer = null;
+    private volatile int localStreamPort = 0;
+    private volatile boolean streamServerRunning = false;
+    private final ExecutorService streamExecutor = Executors.newCachedThreadPool();
     private final Object streamCacheLock = new Object();
     private volatile long ytBotCooldownUntilMs = 0L;
     private String lastStreamId;
@@ -546,6 +557,43 @@ public class MainActivity extends Activity {
                 String val = pendingAuthCallbackUrl;
                 pendingAuthCallbackUrl = null;
                 return val != null ? val : "";
+            }
+
+            @android.webkit.JavascriptInterface
+            public String getStreamBaseUrl() {
+                return localStreamPort > 0 ? ("http://127.0.0.1:" + localStreamPort) : "";
+            }
+
+            @android.webkit.JavascriptInterface
+            public void setImmersiveFullscreen(final boolean enabled) {
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        Window w = getWindow();
+                        if (w == null) return;
+                        if (Build.VERSION.SDK_INT >= 30) {
+                            android.view.WindowInsetsController ctrl = w.getInsetsController();
+                            if (ctrl != null) {
+                                if (enabled) {
+                                    ctrl.hide(WindowInsets.Type.systemBars());
+                                    ctrl.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                                } else {
+                                    ctrl.show(WindowInsets.Type.systemBars());
+                                }
+                            }
+                        } else {
+                            int baseFlags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+                            if (enabled) {
+                                baseFlags |= View.SYSTEM_UI_FLAG_FULLSCREEN
+                                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
+                            }
+                            w.getDecorView().setSystemUiVisibility(baseFlags);
+                        }
+                    }
+                });
             }
         }, "PMusicNative");
         webView.setWebViewClient(new WebViewClient() {
@@ -667,7 +715,209 @@ public class MainActivity extends Activity {
         }
 
         handleDeepLinkIntent(getIntent());
+        startLocalStreamServer();
         webView.loadUrl("https://appassets.pmusic.local/index.html");
+    }
+
+    @Override
+    protected void onDestroy() {
+        streamServerRunning = false;
+        try {
+            if (localStreamServer != null) localStreamServer.close();
+        } catch (Exception ignored) {
+        }
+        streamExecutor.shutdownNow();
+        super.onDestroy();
+    }
+
+    private void startLocalStreamServer() {
+        if (streamServerRunning && localStreamPort > 0) return;
+        try {
+            localStreamServer = new ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"));
+            localStreamPort = localStreamServer.getLocalPort();
+            streamServerRunning = true;
+            Thread acceptor = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    while (streamServerRunning && localStreamServer != null && !localStreamServer.isClosed()) {
+                        try {
+                            final Socket client = localStreamServer.accept();
+                            streamExecutor.execute(new Runnable() {
+                                @Override
+                                public void run() {
+                                    handleLoopbackClient(client);
+                                }
+                            });
+                        } catch (Exception ignored) {
+                            if (!streamServerRunning) break;
+                        }
+                    }
+                }
+            }, "PMusicLoopbackServer");
+            acceptor.setDaemon(true);
+            acceptor.start();
+        } catch (Exception ignored) {
+            localStreamPort = 0;
+        }
+    }
+
+    private void handleLoopbackClient(Socket client) {
+        HttpURLConnection conn = null;
+        try {
+            client.setSoTimeout(15000);
+            BufferedReader reader = new BufferedReader(new InputStreamReader(client.getInputStream(), StandardCharsets.US_ASCII));
+            String reqLine = reader.readLine();
+            if (reqLine == null || reqLine.trim().isEmpty()) return;
+            String[] tokens = reqLine.split(" ");
+            String method = tokens.length >= 1 ? tokens[0].trim().toUpperCase(Locale.ROOT) : "GET";
+            String target = tokens.length >= 2 ? tokens[1].trim() : "/";
+
+            Map<String, String> reqHeaders = new HashMap<String, String>();
+            String line;
+            while ((line = reader.readLine()) != null && !line.isEmpty()) {
+                int colon = line.indexOf(':');
+                if (colon > 0) {
+                    reqHeaders.put(line.substring(0, colon).trim().toLowerCase(Locale.ROOT), line.substring(colon + 1).trim());
+                }
+            }
+
+            OutputStream out = client.getOutputStream();
+            if ("OPTIONS".equals(method)) {
+                String optResp = "HTTP/1.1 204 No Content\\r\\n"
+                        + "Access-Control-Allow-Origin: *\\r\\n"
+                        + "Access-Control-Allow-Methods: GET, HEAD, OPTIONS\\r\\n"
+                        + "Access-Control-Allow-Headers: Range, Content-Type, Accept\\r\\n"
+                        + "Access-Control-Expose-Headers: Content-Range, Content-Length, Accept-Ranges\\r\\n"
+                        + "Connection: close\\r\\n\\r\\n";
+                out.write(optResp.getBytes(StandardCharsets.US_ASCII));
+                out.flush();
+                return;
+            }
+
+            Uri uri = Uri.parse("http://127.0.0.1" + target);
+            String path = uri.getPath();
+            if (path == null || !path.startsWith("/api/stream/")) {
+                out.write("HTTP/1.1 404 Not Found\\r\\nAccess-Control-Allow-Origin: *\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n".getBytes(StandardCharsets.US_ASCII));
+                out.flush();
+                return;
+            }
+
+            String rawTrackId = Uri.decode(path.substring("/api/stream/".length()));
+            String qTitle = uri.getQueryParameter("title");
+            String qArtist = uri.getQueryParameter("artist");
+            String qDurStr = uri.getQueryParameter("durationSec");
+            int qDurSec = 0;
+            if (qDurStr != null && !qDurStr.trim().isEmpty()) {
+                try {
+                    qDurSec = Math.round(Float.parseFloat(qDurStr.trim()));
+                } catch (Exception ignored) {
+                }
+            }
+
+            String cacheKey = (rawTrackId != null ? rawTrackId : "") + "::" + (qTitle != null ? qTitle.trim() : "");
+            ResolvedStream fullStream = getOrResolveFullStream(cacheKey, rawTrackId, qTitle, qArtist, qDurSec);
+            if (fullStream == null) {
+                out.write("HTTP/1.1 503 Service Unavailable\\r\\nAccess-Control-Allow-Origin: *\\r\\nContent-Type: application/json\\r\\nContent-Length: 30\\r\\nConnection: close\\r\\n\\r\\n{\\"error\\":\\"stream_unavailable\\"}".getBytes(StandardCharsets.UTF_8));
+                out.flush();
+                return;
+            }
+
+            boolean isHead = "HEAD".equals(method);
+            String clientRange = getHeaderIgnoreCase(reqHeaders, "range");
+            boolean hasClientRange = clientRange != null && !clientRange.trim().isEmpty();
+            String rangeToSend = null;
+            if (hasClientRange) {
+                rangeToSend = clientRange.trim();
+                Matcher om = OPEN_RANGE_PATTERN.matcher(rangeToSend);
+                if (om.matches()) {
+                    try {
+                        long startByte = Long.parseLong(om.group(1));
+                        long endByte = startByte + 1572863L;
+                        rangeToSend = "bytes=" + startByte + "-" + endByte;
+                    } catch (Exception ignored) {
+                    }
+                }
+            }
+
+            ResolvedStream active = fullStream;
+            for (int attempt = 0; attempt < 2; attempt++) {
+                conn = (HttpURLConnection) new URL(active.url).openConnection();
+                conn.setRequestMethod(isHead ? "HEAD" : "GET");
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(25000);
+                conn.setInstanceFollowRedirects(true);
+                conn.setRequestProperty("User-Agent", active.userAgent);
+                if (rangeToSend != null) {
+                    conn.setRequestProperty("Range", rangeToSend);
+                }
+                conn.setRequestProperty("Accept", "*/*");
+                conn.setRequestProperty("Connection", "close");
+
+                int code = conn.getResponseCode();
+                if (code == 200 || code == 206) {
+                    String upstreamLen = conn.getHeaderField("Content-Length");
+                    String upstreamRange = conn.getHeaderField("Content-Range");
+                    int outStatus = (!hasClientRange && code == 206) ? 200 : code;
+                    String outReason = outStatus == 206 ? "Partial Content" : "OK";
+
+                    StringBuilder sb = new StringBuilder();
+                    sb.append("HTTP/1.1 ").append(outStatus).append(' ').append(outReason).append("\\r\\n");
+                    sb.append("Access-Control-Allow-Origin: *\\r\\n");
+                    sb.append("Access-Control-Allow-Methods: GET, HEAD, OPTIONS\\r\\n");
+                    sb.append("Access-Control-Allow-Headers: Range, Content-Type, Accept\\r\\n");
+                    sb.append("Access-Control-Expose-Headers: Content-Range, Content-Length, Accept-Ranges\\r\\n");
+                    sb.append("Accept-Ranges: bytes\\r\\n");
+                    sb.append("Cache-Control: no-cache\\r\\n");
+                    sb.append("Content-Type: ").append(active.mime).append("\\r\\n");
+                    if (upstreamLen != null) sb.append("Content-Length: ").append(upstreamLen).append("\\r\\n");
+                    if (outStatus == 206 && upstreamRange != null) {
+                        sb.append("Content-Range: ").append(upstreamRange).append("\\r\\n");
+                    }
+                    sb.append("Connection: close\\r\\n\\r\\n");
+                    out.write(sb.toString().getBytes(StandardCharsets.US_ASCII));
+
+                    if (!isHead) {
+                        InputStream in = conn.getInputStream();
+                        byte[] buf = new byte[16384];
+                        int r;
+                        while ((r = in.read(buf)) != -1) {
+                            out.write(buf, 0, r);
+                        }
+                        in.close();
+                    }
+                    out.flush();
+                    conn.disconnect();
+                    conn = null;
+                    return;
+                }
+                conn.disconnect();
+                conn = null;
+                if ((code == 403 || code == 410) && attempt == 0) {
+                    synchronized (fullStreamCache) {
+                        fullStreamCache.remove(cacheKey);
+                    }
+                    ResolvedStream refreshed = getOrResolveFullStream(cacheKey, rawTrackId, qTitle, qArtist, qDurSec);
+                    if (refreshed == null) break;
+                    active = refreshed;
+                } else {
+                    break;
+                }
+            }
+            out.write("HTTP/1.1 502 Bad Gateway\\r\\nAccess-Control-Allow-Origin: *\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n".getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+        } catch (Exception ignored) {
+        } finally {
+            if (conn != null) {
+                try {
+                    conn.disconnect();
+                } catch (Exception ignored2) {
+                }
+            }
+            try {
+                client.close();
+            } catch (Exception ignored3) {
+            }
+        }
     }
 
     @Override
@@ -759,7 +1009,7 @@ public class MainActivity extends Activity {
         try {
             boolean ytAllowed = System.currentTimeMillis() >= ytBotCooldownUntilMs;
             if (ytAllowed && rawTrackId != null && YT_ID_PATTERN.matcher(rawTrackId).matches()) {
-                ResolvedStream direct = fetchYoutubeIosPlayerStream(rawTrackId);
+                ResolvedStream direct = fetchYoutubeIosPlayerStream(rawTrackId, qDurationSec);
                 if (direct != null) return direct;
             }
 
@@ -793,24 +1043,25 @@ public class MainActivity extends Activity {
                 List<Candidate> ytmCandidates = searchYtMusicSongs(focusedQuery, strippedTitle, primaryArtist, targetDur);
                 for (int i = 0; i < Math.min(3, ytmCandidates.size()); i++) {
                     if (System.currentTimeMillis() < ytBotCooldownUntilMs) break;
-                    ResolvedStream rs = fetchYoutubeIosPlayerStream(ytmCandidates.get(i).videoId);
+                    ResolvedStream rs = fetchYoutubeIosPlayerStream(ytmCandidates.get(i).videoId, targetDur);
                     if (rs != null) return rs;
                 }
 
-                // 2) Fallback: Standard YouTube search (WEB)
-                if (System.currentTimeMillis() >= ytBotCooldownUntilMs) {
-                    List<Candidate> ytCandidates = searchStandardYoutube(focusedQuery + " audio", strippedTitle, primaryArtist, targetDur);
+                // 2) Fallback: Standard YouTube search (WEB) matching Desktop strategies
+                String[] ytQueries = primaryArtist.isEmpty()
+                        ? new String[] { strippedTitle + " audio", strippedTitle }
+                        : new String[] {
+                            primaryArtist + " - " + strippedTitle + " audio",
+                            primaryArtist + " " + strippedTitle + " topic",
+                            focusedQuery + " audio",
+                            focusedQuery
+                        };
+                for (int q = 0; q < ytQueries.length; q++) {
+                    if (System.currentTimeMillis() < ytBotCooldownUntilMs) break;
+                    List<Candidate> ytCandidates = searchStandardYoutube(ytQueries[q], strippedTitle, primaryArtist, targetDur);
                     for (int i = 0; i < Math.min(3, ytCandidates.size()); i++) {
                         if (System.currentTimeMillis() < ytBotCooldownUntilMs) break;
-                        ResolvedStream rs = fetchYoutubeIosPlayerStream(ytCandidates.get(i).videoId);
-                        if (rs != null) return rs;
-                    }
-                }
-                if (System.currentTimeMillis() >= ytBotCooldownUntilMs) {
-                    List<Candidate> ytDirectCandidates = searchStandardYoutube(focusedQuery, strippedTitle, primaryArtist, targetDur);
-                    for (int i = 0; i < Math.min(3, ytDirectCandidates.size()); i++) {
-                        if (System.currentTimeMillis() < ytBotCooldownUntilMs) break;
-                        ResolvedStream rs = fetchYoutubeIosPlayerStream(ytDirectCandidates.get(i).videoId);
+                        ResolvedStream rs = fetchYoutubeIosPlayerStream(ytCandidates.get(i).videoId, targetDur);
                         if (rs != null) return rs;
                     }
                 }
@@ -1027,11 +1278,39 @@ public class MainActivity extends Activity {
         return results;
     }
 
-    private ResolvedStream fetchYoutubeIosPlayerStream(String videoId) {
+    private boolean isStreamableUrl(String streamUrl, String userAgent) {
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL(streamUrl).openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(3500);
+            conn.setReadTimeout(3500);
+            conn.setInstanceFollowRedirects(true);
+            conn.setRequestProperty("User-Agent", userAgent);
+            conn.setRequestProperty("Range", "bytes=0-65535");
+            conn.setRequestProperty("Accept", "*/*");
+            conn.setRequestProperty("Connection", "close");
+            int code = conn.getResponseCode();
+            String ctype = conn.getContentType();
+            boolean html = ctype != null && ctype.toLowerCase(Locale.ROOT).startsWith("text/html");
+            return (code == 200 || code == 206) && !html;
+        } catch (Exception ignored) {
+            return false;
+        } finally {
+            if (conn != null) {
+                try {
+                    conn.disconnect();
+                } catch (Exception ignored2) {
+                }
+            }
+        }
+    }
+
+    private ResolvedStream fetchYoutubeIosPlayerStream(String videoId, int expectedDurSec) {
         int[] botRejects = new int[] { 0 };
-        String[] modes = new String[] { "ANDROID_VR", "TV_EMBED", "IOS", "ANDROID", "MWEB" };
+        String[] modes = new String[] { "ANDROID", "ANDROID_21", "IOS", "ANDROID_VR", "MWEB" };
         for (int i = 0; i < modes.length; i++) {
-            ResolvedStream stream = fetchYoutubeClientPlayerStream(videoId, modes[i], botRejects);
+            ResolvedStream stream = fetchYoutubeClientPlayerStream(videoId, expectedDurSec, modes[i], botRejects);
             if (stream != null) {
                 ytBotCooldownUntilMs = 0L;
                 return stream;
@@ -1043,12 +1322,32 @@ public class MainActivity extends Activity {
         return null;
     }
 
-    private ResolvedStream fetchYoutubeClientPlayerStream(String videoId, String clientMode, int[] botRejects) {
+    private static boolean formatMatchesExpectedDuration(JSONObject f, int expectedDurSec) {
+        if (expectedDurSec < 45) return true;
+        long approxMs = f.optLong("approxDurationMs", 0L);
+        if (approxMs <= 10000L) return true;
+        double approxSec = approxMs / 1000.0;
+        return Math.abs(approxSec - expectedDurSec) <= Math.max(35.0, expectedDurSec * 0.4);
+    }
+
+    private ResolvedStream fetchYoutubeClientPlayerStream(String videoId, int expectedDurSec, String clientMode, int[] botRejects) {
         try {
             JSONObject client = new JSONObject();
             JSONObject thirdParty = null;
             String ua;
-            if ("ANDROID_VR".equals(clientMode)) {
+            if ("ANDROID".equals(clientMode)) {
+                client.put("clientName", "ANDROID");
+                client.put("clientVersion", "20.10.38");
+                client.put("androidSdkVersion", 34);
+                ua = "com.google.android.youtube/20.10.38 (Linux; U; Android 14) gzip";
+            } else if ("ANDROID_21".equals(clientMode)) {
+                client.put("clientName", "ANDROID");
+                client.put("clientVersion", "21.02.34");
+                client.put("osName", "Android");
+                client.put("osVersion", "15");
+                client.put("androidSdkVersion", 35);
+                ua = "com.google.android.youtube/21.02.34 (Linux; U; Android 15) gzip";
+            } else if ("ANDROID_VR".equals(clientMode)) {
                 client.put("clientName", "ANDROID_VR");
                 client.put("clientVersion", "1.60.19");
                 client.put("deviceMake", "Oculus");
@@ -1057,12 +1356,6 @@ public class MainActivity extends Activity {
                 client.put("osVersion", "12L");
                 client.put("androidSdkVersion", 32);
                 ua = "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip";
-            } else if ("TV_EMBED".equals(clientMode)) {
-                client.put("clientName", "TVHTML5_SIMPLY_EMBEDDED_PLAYER");
-                client.put("clientVersion", "2.0");
-                thirdParty = new JSONObject();
-                thirdParty.put("embedUrl", "https://www.youtube.com");
-                ua = YT_WEB_UA;
             } else if ("IOS".equals(clientMode)) {
                 client.put("clientName", "IOS");
                 client.put("clientVersion", "20.10.4");
@@ -1071,11 +1364,6 @@ public class MainActivity extends Activity {
                 client.put("osName", "iPhone");
                 client.put("osVersion", "18.3.2.22D82");
                 ua = YT_IOS_UA;
-            } else if ("ANDROID".equals(clientMode)) {
-                client.put("clientName", "ANDROID");
-                client.put("clientVersion", "20.10.38");
-                client.put("androidSdkVersion", 34);
-                ua = "com.google.android.youtube/20.10.38 (Linux; U; Android 14) gzip";
             } else {
                 client.put("clientName", "MWEB");
                 client.put("clientVersion", "2.20250310.01.00");
@@ -1110,51 +1398,70 @@ public class MainActivity extends Activity {
             JSONObject streamingData = root.optJSONObject("streamingData");
             if (streamingData == null) return null;
 
-            String bestUrl = null;
-            String bestMime = null;
-            long bestScore = -1;
+            List<Candidate> progOrder = new ArrayList<Candidate>();
+            final List<ResolvedStream> orderedCandidates = new ArrayList<ResolvedStream>();
 
+            // 1) Collect progressive formats (itag 18 / mp4) FIRST — verified 200/206 on YouTube CDN
+            JSONArray progressive = streamingData.optJSONArray("formats");
+            if (progressive != null) {
+                List<JSONObject> progList = new ArrayList<JSONObject>();
+                for (int i = 0; i < progressive.length(); i++) {
+                    JSONObject f = progressive.optJSONObject(i);
+                    if (f == null) continue;
+                    String url = f.optString("url", "");
+                    if (!url.startsWith("http") || !formatMatchesExpectedDuration(f, expectedDurSec)) continue;
+                    progList.add(f);
+                }
+                Collections.sort(progList, new Comparator<JSONObject>() {
+                    @Override
+                    public int compare(JSONObject a, JSONObject b) {
+                        boolean aPref = a.optInt("itag", 0) == 18 || a.optString("mimeType", "").toLowerCase(Locale.ROOT).contains("mp4");
+                        boolean bPref = b.optInt("itag", 0) == 18 || b.optString("mimeType", "").toLowerCase(Locale.ROOT).contains("mp4");
+                        if (aPref != bPref) return bPref ? 1 : -1;
+                        return Long.compare(b.optLong("bitrate", 0L), a.optLong("bitrate", 0L));
+                    }
+                });
+                for (int i = 0; i < progList.size(); i++) {
+                    JSONObject f = progList.get(i);
+                    String mimeRaw = f.optString("mimeType", "").toLowerCase(Locale.ROOT);
+                    String mime = mimeRaw.isEmpty() ? "video/mp4" : mimeRaw.split(";")[0].trim();
+                    orderedCandidates.add(new ResolvedStream(f.optString("url", ""), mime, ua, System.currentTimeMillis() + STREAM_CACHE_TTL_MS));
+                }
+            }
+
+            // 2) Fallback: adaptive audio formats (audio/mp4 preferred)
             JSONArray adaptive = streamingData.optJSONArray("adaptiveFormats");
             if (adaptive != null) {
+                List<JSONObject> adapList = new ArrayList<JSONObject>();
                 for (int i = 0; i < adaptive.length(); i++) {
                     JSONObject f = adaptive.optJSONObject(i);
                     if (f == null) continue;
                     String url = f.optString("url", "");
                     String mimeRaw = f.optString("mimeType", "").toLowerCase(Locale.ROOT);
-                    if (!url.startsWith("http") || !mimeRaw.startsWith("audio/")) continue;
-                    long tier = mimeRaw.contains("mp4") ? 2000000000L : 1000000000L;
-                    long bitrate = f.optLong("bitrate", 0);
-                    long sc = tier + bitrate;
-                    if (sc > bestScore) {
-                        bestScore = sc;
-                        bestUrl = url;
-                        bestMime = mimeRaw.split(";")[0].trim();
+                    if (!url.startsWith("http") || !mimeRaw.startsWith("audio/") || !formatMatchesExpectedDuration(f, expectedDurSec)) continue;
+                    adapList.add(f);
+                }
+                Collections.sort(adapList, new Comparator<JSONObject>() {
+                    @Override
+                    public int compare(JSONObject a, JSONObject b) {
+                        boolean aMp4 = a.optString("mimeType", "").toLowerCase(Locale.ROOT).contains("mp4");
+                        boolean bMp4 = b.optString("mimeType", "").toLowerCase(Locale.ROOT).contains("mp4");
+                        if (aMp4 != bMp4) return bMp4 ? 1 : -1;
+                        return Long.compare(b.optLong("bitrate", 0L), a.optLong("bitrate", 0L));
                     }
+                });
+                for (int i = 0; i < adapList.size(); i++) {
+                    JSONObject f = adapList.get(i);
+                    String mimeRaw = f.optString("mimeType", "").toLowerCase(Locale.ROOT);
+                    orderedCandidates.add(new ResolvedStream(f.optString("url", ""), mimeRaw.split(";")[0].trim(), ua, System.currentTimeMillis() + STREAM_CACHE_TTL_MS));
                 }
             }
 
-            if (bestUrl == null) {
-                JSONArray progressive = streamingData.optJSONArray("formats");
-                if (progressive != null) {
-                    for (int i = 0; i < progressive.length(); i++) {
-                        JSONObject f = progressive.optJSONObject(i);
-                        if (f == null) continue;
-                        String url = f.optString("url", "");
-                        String mimeRaw = f.optString("mimeType", "").toLowerCase(Locale.ROOT);
-                        if (!url.startsWith("http")) continue;
-                        long tier = mimeRaw.contains("mp4") ? 500000000L : 100000000L;
-                        long sc = tier + f.optLong("bitrate", 0);
-                        if (sc > bestScore) {
-                            bestScore = sc;
-                            bestUrl = url;
-                            bestMime = mimeRaw.isEmpty() ? "video/mp4" : mimeRaw.split(";")[0].trim();
-                        }
-                    }
+            for (int i = 0; i < orderedCandidates.size(); i++) {
+                ResolvedStream cand = orderedCandidates.get(i);
+                if (isStreamableUrl(cand.url, cand.userAgent)) {
+                    return cand;
                 }
-            }
-
-            if (bestUrl != null) {
-                return new ResolvedStream(bestUrl, bestMime != null ? bestMime : "audio/mp4", ua, System.currentTimeMillis() + STREAM_CACHE_TTL_MS);
             }
         } catch (Exception ignored) {
         }
@@ -1174,8 +1481,9 @@ public class MainActivity extends Activity {
     ) {
         String clientRange = getHeaderIgnoreCase(reqHeaders, "range");
         boolean hasClientRange = clientRange != null && !clientRange.trim().isEmpty();
-        String rangeToSend = hasClientRange ? clientRange.trim() : "bytes=0-";
+        String rangeToSend = null;
         if (hasClientRange) {
+            rangeToSend = clientRange.trim();
             Matcher om = OPEN_RANGE_PATTERN.matcher(rangeToSend);
             if (om.matches()) {
                 try {
@@ -1199,7 +1507,9 @@ public class MainActivity extends Activity {
                 conn.setReadTimeout(25000);
                 conn.setInstanceFollowRedirects(true);
                 conn.setRequestProperty("User-Agent", active.userAgent);
-                conn.setRequestProperty("Range", rangeToSend);
+                if (rangeToSend != null) {
+                    conn.setRequestProperty("Range", rangeToSend);
+                }
                 conn.setRequestProperty("Accept", "*/*");
                 conn.setRequestProperty("Connection", "close");
 
@@ -1353,6 +1663,17 @@ public class MainActivity extends Activity {
             if (combined.contains(aTokens.get(i))) {
                 artistHit = true;
                 break;
+            }
+        }
+        if (!artistHit) {
+            String normArt = normText(targetArtist);
+            if ((normArt.contains("cruz cafune") && combined.contains("cruzzi"))
+                    || (normArt.contains("cruzzi") && combined.contains("cruz cafune"))
+                    || (normArt.contains("la pantera") && combined.contains("lapantera"))
+                    || (normArt.contains("bad bunny") && combined.contains("benito"))
+                    || (normArt.contains("d valentino") && combined.contains("dvalentino"))
+                    || (normArt.contains("lucho rk") && combined.contains("luchork"))) {
+                artistHit = true;
             }
         }
         if (artistHit) {
