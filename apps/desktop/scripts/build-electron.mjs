@@ -179,24 +179,20 @@ function dispatchAuthCallbackUrl(url: string): void {
 async function startOAuthCallbackServer(): Promise<number> {
   if (oauthServer && oauthPort > 0) return oauthPort;
   const htmlDone = \`<!doctype html>
-<html lang="es"><head><meta charset="utf-8"><title>pMusic — Sesión iniciada</title>
+<html lang="es"><head><meta charset="utf-8"><title>pMusic</title>
 <style>
-  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#050508;color:#fff;font-family:system-ui,-apple-system,sans-serif}
-  .card{padding:36px 42px;border-radius:24px;border:1px solid rgba(255,255,255,.12);background:linear-gradient(160deg,#0f0f17,#07070b);text-align:center;box-shadow:0 24px 60px rgba(0,0,0,.65);max-width:380px}
-  .dot{width:52px;height:52px;margin:0 auto 16px;border-radius:16px;background:rgba(52,211,153,.14);border:1px solid rgba(52,211,153,.4);display:flex;align-items:center;justify-content:center;font-size:24px;color:#34d399}
-  h1{margin:0 0 8px;font-size:20px;font-weight:700}
-  p{margin:0;font-size:13px;color:rgba(255,255,255,.65);line-height:1.5}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#050507;color:#fff;font-family:system-ui,-apple-system,sans-serif}
+  .box{display:flex;flex-direction:column;align-items:center;gap:14px;animation:fade .5s cubic-bezier(.16,1,.3,1) both}
+  .dot{width:44px;height:44px;border-radius:999px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);display:flex;align-items:center;justify-content:center;font-size:18px;color:#fff}
+  .txt{font-size:13px;color:rgba(255,255,255,.6)}
+  @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 </style></head><body>
-<div class="card">
-  <div class="dot">✓</div>
-  <h1>Sesión conectada</h1>
-  <p>Volviendo a pMusic automáticamente... Ya puedes cerrar esta pestaña.</p>
-</div>
+<div class="box"><div class="dot">✓</div><div class="txt">pMusic</div></div>
 <script>
   if (location.hash && location.hash.includes('access_token')) {
     fetch('/auth/hash', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: location.href }).catch(()=>{});
   }
-  setTimeout(() => { try { window.close(); } catch {} }, 1200);
+  setTimeout(() => { try { window.close(); } catch {} }, 1000);
 </script></body></html>\`;
 
   const tryListen = (port: number) =>
@@ -248,14 +244,14 @@ function createSplashWindow(): void {
   const iconB64 = iconPath ? readFileSync(iconPath).toString('base64') : '';
 
   splashWindow = new BrowserWindow({
-    width: 400,
-    height: 270,
+    width: 340,
+    height: 230,
     frame: false,
     resizable: false,
     movable: true,
     alwaysOnTop: true,
     center: true,
-    backgroundColor: '#050508',
+    backgroundColor: '#050507',
     show: true,
     skipTaskbar: false,
     webPreferences: { contextIsolation: true, nodeIntegration: false },
@@ -263,18 +259,15 @@ function createSplashWindow(): void {
 
   const splashHtml = \`<!doctype html><html><head><meta charset="utf-8"><style>
     *{box-sizing:border-box}
-    body{margin:0;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 28%, rgba(250,35,59,.22), transparent 62%), #050508;color:#fff;font-family:system-ui,-apple-system,sans-serif;overflow:hidden;border:1px solid rgba(255,255,255,.12);border-radius:20px;user-select:none;-webkit-app-region:drag}
-    .icon{width:84px;height:84px;border-radius:22px;box-shadow:0 16px 40px rgba(0,0,0,.7), 0 0 32px rgba(250,35,59,.22);animation:pulse 2.2s ease-in-out infinite}
-    .title{margin-top:16px;font-size:20px;font-weight:800;letter-spacing:-0.02em}
-    .sub{margin-top:4px;font-size:11.5px;color:rgba(255,255,255,.55);letter-spacing:0.08em;text-transform:uppercase}
-    .bar{margin-top:22px;width:190px;height:3px;border-radius:99px;background:rgba(255,255,255,.1);overflow:hidden;position:relative}
-    .bar::after{content:'';position:absolute;inset:0;width:42%;border-radius:99px;background:linear-gradient(90deg,transparent,#fa233b,#fff,transparent);animation:slide 1.15s cubic-bezier(.4,0,.2,1) infinite}
+    body{margin:0;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 35%, rgba(255,255,255,.09), transparent 62%), #050507;color:#fff;overflow:hidden;border:1px solid rgba(255,255,255,.1);border-radius:20px;user-select:none;-webkit-app-region:drag}
+    .icon{width:76px;height:76px;border-radius:20px;box-shadow:0 18px 42px rgba(0,0,0,.8);animation:enter .55s cubic-bezier(.16,1,.3,1) both, float 3s ease-in-out .55s infinite}
+    .bar{margin-top:26px;width:136px;height:2px;border-radius:99px;background:rgba(255,255,255,.1);overflow:hidden;position:relative}
+    .bar::after{content:'';position:absolute;inset:0;width:44%;border-radius:99px;background:linear-gradient(90deg,transparent,#ffffff,transparent);animation:slide 1.15s cubic-bezier(.4,0,.2,1) infinite}
+    @keyframes enter{from{opacity:0;transform:translateY(10px) scale(.94)}to{opacity:1;transform:none}}
+    @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
     @keyframes slide{0%{transform:translateX(-110%)}100%{transform:translateX(260%)}}
-    @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}
   </style></head><body>
     \${iconB64 ? \`<img class="icon" src="data:image/png;base64,\${iconB64}" />\` : ''}
-    <div class="title">pMusic</div>
-    <div class="sub">Iniciando motor de audio</div>
     <div class="bar"></div>
   </body></html>\`;
 

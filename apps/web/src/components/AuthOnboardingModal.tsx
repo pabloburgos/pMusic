@@ -1,21 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import {
-  Check,
-  Disc3,
-  Laptop,
-  Loader2,
-  Mail,
-  ShieldCheck,
-  Sparkles,
-  User,
-  X,
-} from 'lucide-react';
+import { Check, Loader2, Mail, User, X } from 'lucide-react';
 import { usePMusicStore } from '../store/usePMusicStore.ts';
 import { PMusicLogo } from './PMusicLogo.tsx';
 
 function GoogleLogo() {
   return (
-    <svg className="h-5 w-5 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+    <svg className="h-[18px] w-[18px] shrink-0" viewBox="0 0 24 24" aria-hidden="true">
       <path
         fill="#4285F4"
         d="M23.49 12.27c0-.79-.07-1.54-.2-2.27H12v4.3h6.45c-.28 1.48-1.12 2.74-2.38 3.58v2.98h3.85c2.25-2.07 3.57-5.12 3.57-8.59z"
@@ -159,354 +149,241 @@ export const AuthOnboardingModal: React.FC = () => {
 
   return (
     <div
-      className="pm-no-drag fixed inset-0 z-[140] flex flex-col overflow-y-auto bg-[#040407] text-white"
+      className="pm-no-drag fixed inset-0 z-[140] flex flex-col items-center justify-center overflow-hidden bg-[#050507] px-6 text-white"
       role="dialog"
       aria-modal="true"
-      aria-label="Acceso pMusic"
+      aria-label="pMusic"
     >
-      {/* Subtle futuristic studio grid + monochrome/crimson radial aura */}
+      <style>{`
+        @keyframes pmAgFadeUp {
+          0% { opacity: 0; transform: translate3d(0, 18px, 0) scale(0.985); filter: blur(6px); }
+          100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: blur(0); }
+        }
+        @keyframes pmAgOrbFloat {
+          0%, 100% { transform: translate3d(-50%, 0, 0) scale(1); opacity: 0.14; }
+          50% { transform: translate3d(-50%, -18px, 0) scale(1.08); opacity: 0.22; }
+        }
+        .pm-ag-enter-1 { animation: pmAgFadeUp 620ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+        .pm-ag-enter-2 { animation: pmAgFadeUp 680ms cubic-bezier(0.16, 1, 0.3, 1) 90ms both; }
+        .pm-ag-enter-3 { animation: pmAgFadeUp 740ms cubic-bezier(0.16, 1, 0.3, 1) 170ms both; }
+        .pm-ag-orb { animation: pmAgOrbFloat 7s ease-in-out infinite; }
+      `}</style>
+
+      {/* Pure monochrome Antigravity-style breathing light field */}
       <div
         aria-hidden="true"
-        className="pointer-events-none fixed inset-0 opacity-[0.07]"
-        style={{
-          backgroundImage:
-            'linear-gradient(to right, rgba(255,255,255,0.5) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.5) 1px, transparent 1px)',
-          backgroundSize: '64px 64px',
-        }}
-      />
-      <div
-        aria-hidden="true"
-        className="pointer-events-none fixed -top-40 left-1/2 h-[420px] w-[720px] -translate-x-1/2 rounded-full opacity-25 blur-[110px]"
+        className="pm-ag-orb pointer-events-none fixed left-1/2 top-[16%] h-[420px] w-[540px] rounded-full blur-[120px]"
         style={{
           background:
-            'radial-gradient(circle, rgba(250,35,59,0.55) 0%, rgba(124,58,237,0.28) 50%, transparent 75%)',
+            'radial-gradient(circle, rgba(255,255,255,0.22) 0%, rgba(180,190,220,0.08) 48%, transparent 74%)',
         }}
       />
 
-      {/* Top Navigation Bar — positioned safely below the 48px Windows titlebar overlay */}
-      <header className="pm-no-drag relative z-30 flex w-full shrink-0 items-center justify-between px-6 pb-3 pt-[max(3.5rem,var(--pm-safe-top,env(safe-area-inset-top)))] sm:px-10">
-        <div className="flex items-center gap-3">
-          <PMusicLogo size={26} variant="wordmark-only" />
-          <span className="hidden rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/55 sm:inline-block">
-            Audio Studio
-          </span>
-        </div>
+      {/* Clean Close button positioned safely below 48px Windows titlebar */}
+      {!needsProfileSetup && (
+        <button
+          type="button"
+          onClick={() => setAuthOnboardingOpen(false)}
+          className="pm-no-drag fixed right-6 top-[max(3.6rem,var(--pm-safe-top,env(safe-area-inset-top)))] z-50 inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-white/12 bg-white/[0.05] text-white/65 transition hover:border-white/25 hover:bg-white/[0.1] hover:text-white active:scale-95"
+          aria-label="Cerrar"
+        >
+          <X className="pointer-events-none h-4 w-4" />
+        </button>
+      )}
 
-        {!needsProfileSetup && (
-          <button
-            type="button"
-            onClick={() => setAuthOnboardingOpen(false)}
-            className="pm-no-drag relative z-40 inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-white/15 bg-white/[0.06] text-white/75 transition hover:border-white/30 hover:bg-white/[0.12] hover:text-white active:scale-95"
-            aria-label="Cerrar pantalla de acceso"
-          >
-            <X className="pointer-events-none h-4 w-4" />
-          </button>
-        )}
-      </header>
-
-      {/* Full-Screen Architectural Split Layout */}
-      <div className="relative z-10 mx-auto flex w-full max-w-6xl flex-1 items-center px-6 pb-12 pt-4 sm:px-10">
-        <div className="grid w-full grid-cols-1 items-center gap-12 lg:grid-cols-12">
-          {/* Left Showcase Column (Desktop) */}
-          <div className="hidden space-y-8 lg:col-span-6 lg:block">
-            <div className="inline-flex items-center gap-4">
-              <PMusicLogo size={72} variant="icon" />
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#ff5a6e]">
-                  Ecosistema pMusic
-                </p>
-                <h1 className="mt-1 text-4xl font-bold tracking-tight text-white">
-                  Tu música, sincronizada al milisegundo.
-                </h1>
-              </div>
-            </div>
-
-            <p className="max-w-md text-sm leading-relaxed text-white/60">
-              Conecta tu PC y tu móvil en una misma sesión en vivo, conserva tu biblioteca en la
-              nube y construye automáticamente tu <span className="text-white">Wrapped</span> anual.
-            </p>
-
-            <div className="grid max-w-md gap-3">
-              <div className="flex items-center gap-3.5 rounded-2xl border border-white/[0.08] bg-white/[0.025] px-4 py-3.5">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-emerald-400">
-                  <Laptop className="h-4 w-4" />
-                </span>
-                <div>
-                  <div className="text-xs font-semibold text-white">pMusic Connect</div>
-                  <div className="text-[11px] text-white/55">
-                    Transfiere la reproducción y controla el volumen entre PC y Android.
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3.5 rounded-2xl border border-white/[0.08] bg-white/[0.025] px-4 py-3.5">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-[#ff5a6e]">
-                  <Disc3 className="h-4 w-4" />
-                </span>
-                <div>
-                  <div className="text-xs font-semibold text-white">Wrapped Anual Privado</div>
-                  <div className="text-[11px] text-white/55">
-                    Minutos, artistas, géneros y racha registrados en segundo plano.
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3.5 rounded-2xl border border-white/[0.08] bg-white/[0.025] px-4 py-3.5">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-sky-400">
-                  <ShieldCheck className="h-4 w-4" />
-                </span>
-                <div>
-                  <div className="text-xs font-semibold text-white">Cuenta independiente</div>
-                  <div className="text-[11px] text-white/55">
-                    Cada cuenta tiene sus playlists, likes y perfil @usuario privados.
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Right / Center Studio Auth Surface */}
-          <div className="mx-auto w-full max-w-md lg:col-span-6 lg:ml-auto lg:mr-0">
-            <div className="rounded-[24px] border border-white/[0.11] bg-[#0a0b10]/95 p-7 shadow-[0_32px_90px_rgba(0,0,0,0.75)] sm:p-8">
-              {needsProfileSetup ? (
-                <form onSubmit={handleProfileSubmit} className="space-y-5">
-                  <div className="flex items-center gap-4">
-                    {syncAuth.avatarUrl ? (
-                      <img
-                        src={syncAuth.avatarUrl}
-                        alt={displayName || 'Perfil'}
-                        className="h-14 w-14 rounded-2xl border border-white/20 object-cover"
-                      />
-                    ) : (
-                      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/10 text-lg font-bold text-white">
-                        {(displayName || syncAuth.email || 'P').slice(0, 1).toUpperCase()}
-                      </div>
-                    )}
-                    <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-400">
-                        Cuenta verificada
-                      </p>
-                      <h2 className="text-xl font-bold text-white">Configura tu @usuario</h2>
-                    </div>
-                  </div>
-
-                  <p className="text-xs leading-relaxed text-white/60">
-                    Tus playlists y Me gusta locales ya se están fusionando automáticamente. Tu
-                    @usuario te identificará en Blend y Jam.
-                  </p>
-
-                  <div className="space-y-3.5">
-                    <div>
-                      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-white/55">
-                        Nombre visible
-                      </label>
-                      <input
-                        type="text"
-                        value={displayName}
-                        onChange={(e) => setDisplayName(e.target.value)}
-                        placeholder="Tu nombre"
-                        required
-                        maxLength={60}
-                        className="w-full rounded-xl border border-white/12 bg-white/[0.04] px-4 py-3 text-sm text-white outline-none transition focus:border-white/35"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-white/55">
-                        Identificador único
-                      </label>
-                      <div className="relative">
-                        <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-sm font-semibold text-white/45">
-                          @
-                        </span>
-                        <input
-                          type="text"
-                          value={username}
-                          onChange={(e) =>
-                            setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9._]/g, ''))
-                          }
-                          placeholder="tu.usuario"
-                          required
-                          minLength={3}
-                          maxLength={24}
-                          className="w-full rounded-xl border border-white/12 bg-white/[0.04] py-3 pl-8 pr-10 text-sm text-white outline-none transition focus:border-white/35"
-                        />
-                        <span className="absolute right-3.5 top-1/2 -translate-y-1/2">
-                          {usernameStatus === 'checking' && (
-                            <Loader2 className="h-4 w-4 animate-spin text-white/50" />
-                          )}
-                          {usernameStatus === 'ok' && <Check className="h-4 w-4 text-emerald-400" />}
-                          {usernameStatus === 'taken' && <X className="h-4 w-4 text-rose-400" />}
-                        </span>
-                      </div>
-                      {usernameStatus === 'taken' && (
-                        <p className="mt-1 text-xs text-rose-400">Ese @usuario ya está en uso.</p>
-                      )}
-                    </div>
-                  </div>
-
-                  {errorMsg && (
-                    <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3.5 py-2.5 text-xs text-rose-300">
-                      {errorMsg}
-                    </p>
-                  )}
-
-                  <button
-                    type="submit"
-                    disabled={busy || usernameStatus === 'taken'}
-                    className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-white px-4 py-3.5 text-sm font-bold text-zinc-950 transition hover:bg-zinc-200 disabled:opacity-50"
-                  >
-                    {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                    Guardar y entrar a pMusic
-                  </button>
-                </form>
-              ) : step === 'choice' ? (
-                <div className="space-y-6">
-                  <div className="space-y-2">
-                    <div className="mb-4 flex items-center gap-3 lg:hidden">
-                      <PMusicLogo size={48} variant="icon" />
-                    </div>
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/45">
-                      Acceso seguro
-                    </p>
-                    <h2 className="text-2xl font-bold tracking-tight text-white">
-                      Inicia sesión en pMusic
-                    </h2>
-                    <p className="text-xs leading-relaxed text-white/60">
-                      Accede con tu cuenta de Google o correo para sincronizar tus dispositivos y
-                      guardar tu historial.
-                    </p>
-                  </div>
-
-                  {errorMsg && (
-                    <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3.5 py-2.5 text-xs text-rose-300">
-                      {errorMsg}
-                    </p>
-                  )}
-
-                  <div className="space-y-3">
-                    <button
-                      type="button"
-                      onClick={handleGoogle}
-                      disabled={busy}
-                      className="flex w-full cursor-pointer items-center justify-center gap-3 rounded-xl bg-white px-4 py-3.5 text-sm font-semibold text-zinc-950 shadow-sm transition hover:bg-zinc-200 active:scale-[0.99] disabled:opacity-60"
-                    >
-                      {busy ? (
-                        <Loader2 className="h-4 w-4 animate-spin text-zinc-700" />
-                      ) : (
-                        <GoogleLogo />
-                      )}
-                      Continuar con Google
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setErrorMsg(null);
-                        setStep('email');
-                      }}
-                      disabled={busy}
-                      className="flex w-full cursor-pointer items-center justify-center gap-2.5 rounded-xl border border-white/15 bg-white/[0.04] px-4 py-3.5 text-sm font-semibold text-white transition hover:border-white/25 hover:bg-white/[0.08] active:scale-[0.99]"
-                    >
-                      <Mail className="h-4 w-4 text-white/75" />
-                      Entrar o crear cuenta con correo
-                    </button>
-                  </div>
-
-                  <div className="border-t border-white/[0.08] pt-4">
-                    <button
-                      type="button"
-                      onClick={() => continueAsGuest()}
-                      disabled={busy}
-                      className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-xs font-medium text-white/55 transition hover:bg-white/[0.04] hover:text-white"
-                    >
-                      <User className="h-3.5 w-3.5" />
-                      Continuar como invitado (solo local)
-                    </button>
-                  </div>
-                </div>
+      <div className="relative z-10 w-full max-w-[360px]">
+        {needsProfileSetup ? (
+          <form onSubmit={handleProfileSubmit} className="pm-ag-enter-1 space-y-6">
+            <div className="flex flex-col items-center gap-3">
+              {syncAuth.avatarUrl ? (
+                <img
+                  src={syncAuth.avatarUrl}
+                  alt=""
+                  className="h-16 w-16 rounded-full border border-white/20 object-cover"
+                />
               ) : (
-                <form onSubmit={handleEmailSubmit} className="space-y-5">
-                  <div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setErrorMsg(null);
-                        setStep('choice');
-                      }}
-                      className="cursor-pointer text-xs font-medium text-white/55 transition hover:text-white"
-                    >
-                      ← Volver a opciones
-                    </button>
-                    <h2 className="mt-2.5 text-xl font-bold text-white">
-                      {emailMode === 'signup' ? 'Crear cuenta pMusic' : 'Iniciar sesión'}
-                    </h2>
-                  </div>
-
-                  <div className="grid grid-cols-2 rounded-xl border border-white/10 bg-white/[0.03] p-1">
-                    <button
-                      type="button"
-                      onClick={() => setEmailMode('signup')}
-                      className={`cursor-pointer rounded-lg py-2 text-xs font-semibold transition ${
-                        emailMode === 'signup'
-                          ? 'bg-white text-zinc-950'
-                          : 'text-white/60 hover:text-white'
-                      }`}
-                    >
-                      Crear cuenta
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setEmailMode('signin')}
-                      className={`cursor-pointer rounded-lg py-2 text-xs font-semibold transition ${
-                        emailMode === 'signin'
-                          ? 'bg-white text-zinc-950'
-                          : 'text-white/60 hover:text-white'
-                      }`}
-                    >
-                      Ya tengo cuenta
-                    </button>
-                  </div>
-
-                  <div className="space-y-3">
-                    <input
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="tu@correo.com"
-                      required
-                      className="w-full rounded-xl border border-white/12 bg-white/[0.04] px-4 py-3 text-sm text-white outline-none transition focus:border-white/35"
-                    />
-                    <input
-                      type="password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Contraseña (mín. 6 caracteres)"
-                      required
-                      minLength={6}
-                      className="w-full rounded-xl border border-white/12 bg-white/[0.04] px-4 py-3 text-sm text-white outline-none transition focus:border-white/35"
-                    />
-                  </div>
-
-                  {errorMsg && (
-                    <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3.5 py-2.5 text-xs text-rose-300">
-                      {errorMsg}
-                    </p>
-                  )}
-
-                  <button
-                    type="submit"
-                    disabled={busy}
-                    className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-white px-4 py-3.5 text-sm font-bold text-zinc-950 transition hover:bg-zinc-200 disabled:opacity-50"
-                  >
-                    {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-                    {emailMode === 'signup' ? 'Crear cuenta' : 'Entrar'}
-                  </button>
-                </form>
+                <PMusicLogo size={60} variant="icon" />
               )}
+              <PMusicLogo size={26} variant="wordmark-only" />
             </div>
+
+            <div className="space-y-3">
+              <input
+                type="text"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="Nombre"
+                required
+                maxLength={60}
+                className="w-full rounded-2xl border border-white/12 bg-white/[0.04] px-4 py-3.5 text-sm text-white placeholder-white/35 outline-none transition focus:border-white/35"
+              />
+              <div className="relative">
+                <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-sm text-white/40">
+                  @
+                </span>
+                <input
+                  type="text"
+                  value={username}
+                  onChange={(e) =>
+                    setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9._]/g, ''))
+                  }
+                  placeholder="usuario"
+                  required
+                  minLength={3}
+                  maxLength={24}
+                  className="w-full rounded-2xl border border-white/12 bg-white/[0.04] py-3.5 pl-8 pr-10 text-sm text-white placeholder-white/35 outline-none transition focus:border-white/35"
+                />
+                <span className="absolute right-3.5 top-1/2 -translate-y-1/2">
+                  {usernameStatus === 'checking' && (
+                    <Loader2 className="h-4 w-4 animate-spin text-white/45" />
+                  )}
+                  {usernameStatus === 'ok' && <Check className="h-4 w-4 text-white" />}
+                  {usernameStatus === 'taken' && <X className="h-4 w-4 text-white/45" />}
+                </span>
+              </div>
+            </div>
+
+            {errorMsg && (
+              <p className="rounded-2xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-center text-xs text-white/80">
+                {errorMsg}
+              </p>
+            )}
+
+            <button
+              type="submit"
+              disabled={busy || usernameStatus === 'taken'}
+              className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-full bg-white px-5 py-3.5 text-sm font-semibold text-black transition hover:bg-white/90 active:scale-[0.985] disabled:opacity-50"
+            >
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+              Continuar
+            </button>
+          </form>
+        ) : step === 'choice' ? (
+          <div className="flex flex-col items-center space-y-9">
+            {/* Pure pMusic brand centerpiece */}
+            <div className="pm-ag-enter-1 flex flex-col items-center gap-4">
+              <PMusicLogo size={76} variant="icon" />
+              <PMusicLogo size={34} variant="wordmark-only" />
+            </div>
+
+            {errorMsg && (
+              <p className="w-full rounded-2xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-center text-xs text-white/80">
+                {errorMsg}
+              </p>
+            )}
+
+            <div className="pm-ag-enter-2 w-full space-y-3">
+              <button
+                type="button"
+                onClick={handleGoogle}
+                disabled={busy}
+                className="flex w-full cursor-pointer items-center justify-center gap-3 rounded-full bg-white px-5 py-3.5 text-sm font-semibold text-black shadow-[0_12px_36px_rgba(255,255,255,0.12)] transition hover:bg-white/90 active:scale-[0.985] disabled:opacity-60"
+              >
+                {busy ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-black/70" />
+                ) : (
+                  <GoogleLogo />
+                )}
+                Continuar con Google
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setErrorMsg(null);
+                  setStep('email');
+                }}
+                disabled={busy}
+                className="flex w-full cursor-pointer items-center justify-center gap-2.5 rounded-full border border-white/14 bg-white/[0.04] px-5 py-3.5 text-sm font-medium text-white transition hover:border-white/25 hover:bg-white/[0.08] active:scale-[0.985]"
+              >
+                <Mail className="h-4 w-4 text-white/70" />
+                Correo electrónico
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => continueAsGuest()}
+              disabled={busy}
+              className="pm-ag-enter-3 inline-flex cursor-pointer items-center gap-2 rounded-full px-4 py-2 text-xs font-medium text-white/45 transition hover:text-white/85"
+            >
+              <User className="h-3.5 w-3.5" />
+              Invitado
+            </button>
           </div>
-        </div>
+        ) : (
+          <form onSubmit={handleEmailSubmit} className="pm-ag-enter-1 space-y-5">
+            <div className="flex flex-col items-center gap-3">
+              <PMusicLogo size={30} variant="wordmark-only" />
+              <div className="inline-flex rounded-full border border-white/10 bg-white/[0.03] p-1">
+                <button
+                  type="button"
+                  onClick={() => setEmailMode('signup')}
+                  className={`cursor-pointer rounded-full px-4 py-1.5 text-xs font-medium transition ${
+                    emailMode === 'signup' ? 'bg-white text-black' : 'text-white/55 hover:text-white'
+                  }`}
+                >
+                  Crear cuenta
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEmailMode('signin')}
+                  className={`cursor-pointer rounded-full px-4 py-1.5 text-xs font-medium transition ${
+                    emailMode === 'signin' ? 'bg-white text-black' : 'text-white/55 hover:text-white'
+                  }`}
+                >
+                  Iniciar sesión
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="Correo electrónico"
+                required
+                className="w-full rounded-2xl border border-white/12 bg-white/[0.04] px-4 py-3.5 text-sm text-white placeholder-white/35 outline-none transition focus:border-white/35"
+              />
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Contraseña"
+                required
+                minLength={6}
+                className="w-full rounded-2xl border border-white/12 bg-white/[0.04] px-4 py-3.5 text-sm text-white placeholder-white/35 outline-none transition focus:border-white/35"
+              />
+            </div>
+
+            {errorMsg && (
+              <p className="rounded-2xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-center text-xs text-white/80">
+                {errorMsg}
+              </p>
+            )}
+
+            <button
+              type="submit"
+              disabled={busy}
+              className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-full bg-white px-5 py-3.5 text-sm font-semibold text-black transition hover:bg-white/90 active:scale-[0.985] disabled:opacity-50"
+            >
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+              {emailMode === 'signup' ? 'Crear cuenta' : 'Entrar'}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setErrorMsg(null);
+                setStep('choice');
+              }}
+              className="w-full cursor-pointer py-1 text-center text-xs text-white/45 transition hover:text-white"
+            >
+              ← Volver
+            </button>
+          </form>
+        )}
       </div>
     </div>
   );

@@ -48,6 +48,8 @@ export class SupabaseSyncBackend {
       auth: {
         persistSession: true,
         autoRefreshToken: true,
+        detectSessionInUrl: false,
+        flowType: 'pkce',
         ...(storage ? { storage } : {}),
       },
     });
