@@ -157,8 +157,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="30"
-    android:versionName="0.17.4">
+    android:versionCode="31"
+    android:versionName="0.17.5">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 

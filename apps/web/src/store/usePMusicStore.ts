@@ -227,6 +227,8 @@ export function getLivePlaybackPosition(): {
   isEnded: boolean;
   isSeeking: boolean;
   isTransitioning: boolean;
+  incomingPositionSec?: number;
+  incomingDurationSec?: number;
 } {
   return audioEngine.getLivePlaybackSnapshot();
 }

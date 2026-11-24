@@ -1763,155 +1763,13 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   transform-style: preserve-3d;
 }
 
-/* ── True Hardware-Accelerated 6-Face Morphing-Corner 3D Cube & Dock Prism (60/120fps GPU) ── */
-.pm-cube-viewport {
-  container-type: size;
-  perspective: 960px;
-  overflow: visible;
-}
-
+/* ── True Hardware-Accelerated Dock Prism (60/120fps GPU) ── */
 .pm-cube-prism {
   position: relative;
   width: 100%;
   height: 100%;
   transform-style: preserve-3d;
   will-change: transform;
-}
-
-@keyframes pmCubeFromTop {
-  0% {
-    transform: translateZ(-50cqh) rotateX(0deg) rotateY(0deg);
-  }
-  46% {
-    transform: translateZ(-76cqh) rotateX(-46deg) rotateY(15deg);
-  }
-  100% {
-    transform: translateZ(-50cqh) rotateX(-90deg) rotateY(0deg);
-  }
-}
-
-@keyframes pmCubeFromBottom {
-  0% {
-    transform: translateZ(-50cqh) rotateX(0deg) rotateY(0deg);
-  }
-  46% {
-    transform: translateZ(-76cqh) rotateX(46deg) rotateY(-15deg);
-  }
-  100% {
-    transform: translateZ(-50cqh) rotateX(90deg) rotateY(0deg);
-  }
-}
-
-@keyframes pmCubeFromRight {
-  0% {
-    transform: translateZ(-50cqh) rotateY(0deg) rotateX(0deg);
-  }
-  46% {
-    transform: translateZ(-76cqh) rotateY(-46deg) rotateX(13deg);
-  }
-  100% {
-    transform: translateZ(-50cqh) rotateY(-90deg) rotateX(0deg);
-  }
-}
-
-@keyframes pmCubeFromLeft {
-  0% {
-    transform: translateZ(-50cqh) rotateY(0deg) rotateX(0deg);
-  }
-  46% {
-    transform: translateZ(-76cqh) rotateY(46deg) rotateX(-13deg);
-  }
-  100% {
-    transform: translateZ(-50cqh) rotateY(90deg) rotateX(0deg);
-  }
-}
-
-.pm-cube-face-front {
-  position: absolute;
-  inset: 0;
-  backface-visibility: hidden;
-  transform: rotateX(0deg) translateZ(50cqh);
-}
-
-.pm-cube-face-back {
-  position: absolute;
-  inset: 0;
-  backface-visibility: hidden;
-  transform: rotateY(180deg) translateZ(50cqh);
-}
-
-.pm-cube-face-top {
-  position: absolute;
-  inset: 0;
-  backface-visibility: hidden;
-  transform: rotateX(90deg) translateZ(50cqh);
-}
-
-.pm-cube-face-bottom {
-  position: absolute;
-  inset: 0;
-  backface-visibility: hidden;
-  transform: rotateX(-90deg) translateZ(50cqh);
-}
-
-.pm-cube-face-right {
-  position: absolute;
-  inset: 0;
-  backface-visibility: hidden;
-  transform: rotateY(90deg) translateZ(50cqh);
-}
-
-.pm-cube-face-left {
-  position: absolute;
-  inset: 0;
-  backface-visibility: hidden;
-  transform: rotateY(-90deg) translateZ(50cqh);
-}
-
-@keyframes pmCubeCornerMorph {
-  0% {
-    border-radius: 16px;
-  }
-  14% {
-    border-radius: 2px;
-  }
-  84% {
-    border-radius: 2px;
-  }
-  100% {
-    border-radius: 16px;
-  }
-}
-
-.pm-cube-corner-morph {
-  animation: pmCubeCornerMorph 4s cubic-bezier(0.32, 0.05, 0.22, 1) forwards;
-}
-
-@keyframes pmCubeSideWallVis {
-  0% {
-    opacity: 0;
-  }
-  12% {
-    opacity: 1;
-  }
-  88% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-  }
-}
-
-.pm-cube-side-wall {
-  border-radius: 2px;
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.22) 0%,
-    rgba(24, 24, 32, 0.94) 45%,
-    rgba(8, 8, 14, 0.99) 100%
-  );
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
-  animation: pmCubeSideWallVis 4s linear forwards;
 }
 
 @keyframes pmCubeShadeOut {
@@ -2038,45 +1896,7 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   }
 }
 
-/* GPU-Composited Seam-Free & Zero-Flicker Fluid Water Currents */
-@keyframes pmWaterCurrentA {
-  0% {
-    opacity: 0;
-    transform: translate3d(-4%, 3%, 0) scale(1.22);
-  }
-  25% {
-    opacity: 0.36;
-  }
-  85%, 100% {
-    opacity: 0.55;
-    transform: translate3d(-2%, -2%, 0) scale(1.32);
-  }
-}
-
-@keyframes pmWaterCurrentB {
-  0%, 10% {
-    opacity: 0;
-    transform: translate3d(4%, -3%, 0) scale(1.24) scaleX(-1);
-  }
-  42% {
-    opacity: 0.24;
-  }
-  92%, 100% {
-    opacity: 0.35;
-    transform: translate3d(3%, 2%, 0) scale(1.34) scaleX(-1);
-  }
-}
-
-@keyframes pmWaterOverlayFadeOut {
-  0% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-  }
-}
-
-/* Ambient Dock Color Collapse & Liquid Water-Recede Effects */
+/* Ambient Dock Color Collapse & Tranquil Liquid Water-Recede Effects */
 @keyframes pmDockColorCollapse {
   0% {
     background-position: 0% 50%;
@@ -2135,7 +1955,7 @@ html.pm-solid-modern .pm-spotlight-backdrop {
     transparent 100%
   );
   background-size: 210% 100%;
-  animation: pmDockWaterSheen 1.15s ease-out forwards;
+  animation: pmDockWaterSheen 1.35s ease-out forwards;
 }
 
 @keyframes pmDockWaterCrest {
@@ -2173,7 +1993,7 @@ html.pm-solid-modern .pm-spotlight-backdrop {
     transparent 82%
   );
   filter: blur(4px);
-  animation: pmDockWaterCrest 1.15s ease-out forwards;
+  animation: pmDockWaterCrest 1.35s ease-out forwards;
 }
 
 .pm-backdrop-static .pm-orb-1,
@@ -3240,8 +3060,6 @@ html.pm-solid-modern .pm-mobile-glass-header {
   .pm-cube-prism,
   .pm-cube-shade-out,
   .pm-cube-light-in,
-  .pm-cube-corner-morph,
-  .pm-cube-side-wall,
   .pm-dock-heart-out,
   .pm-dock-heart-in,
   .pm-dock-color-collapse,
@@ -3338,8 +3156,6 @@ html.pm-reduced-motion .pm-water-eddy-b,
 html.pm-reduced-motion .pm-cube-prism,
 html.pm-reduced-motion .pm-cube-shade-out,
 html.pm-reduced-motion .pm-cube-light-in,
-html.pm-reduced-motion .pm-cube-corner-morph,
-html.pm-reduced-motion .pm-cube-side-wall,
 html.pm-reduced-motion .pm-dock-heart-out,
 html.pm-reduced-motion .pm-dock-heart-in,
 html.pm-reduced-motion .pm-dock-color-collapse,

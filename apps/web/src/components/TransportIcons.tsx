@@ -7,24 +7,24 @@ interface TransportIconProps {
 }
 
 export const RoundedPlayIcon: React.FC<{ className?: string }> = ({
-  className = 'h-5 w-5',
+  className = 'h-6 w-6',
 }) => (
   <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
-    <path d="M7.8 4.4C6.5 3.65 5 4.58 5 6.08V17.92C5 19.42 6.5 20.35 7.8 19.6L18.4 13.68C19.72 12.94 19.72 11.06 18.4 10.32L7.8 4.4Z" />
+    <path d="M6.4 3.4C5.0 2.58 3.4 3.6 3.4 5.2V18.8C3.4 20.4 5.0 21.42 6.4 20.6L19.4 13.8C20.85 13.04 20.85 10.96 19.4 10.2L6.4 3.4Z" />
   </svg>
 );
 
 export const RoundedPauseIcon: React.FC<{ className?: string }> = ({
-  className = 'h-5 w-5',
+  className = 'h-6 w-6',
 }) => (
   <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
-    <rect x="5.5" y="4.2" width="4.8" height="15.6" rx="2.4" />
-    <rect x="13.7" y="4.2" width="4.8" height="15.6" rx="2.4" />
+    <rect x="4.6" y="3" width="5.6" height="18" rx="2.8" />
+    <rect x="13.8" y="3" width="5.6" height="18" rx="2.8" />
   </svg>
 );
 
 export const AnimatedSkipForwardIcon: React.FC<TransportIconProps> = ({
-  className = 'h-4 w-4',
+  className = 'h-5 w-5',
   animate = false,
 }) => (
   <svg
@@ -35,28 +35,28 @@ export const AnimatedSkipForwardIcon: React.FC<TransportIconProps> = ({
   >
     {/* Incoming twin rounded chevron gliding in behind the outgoing chevron */}
     <path
-      d="M5.6 5.4 C4.6 4.78 3.5 5.5 3.5 6.68 V17.32 C3.5 18.5 4.6 19.22 5.6 18.6 L14.4 13.28 C15.38 12.69 15.38 11.31 14.4 10.72 L5.6 5.4 Z"
+      d="M4.8 4.4 C3.7 3.72 2.4 4.52 2.4 5.82 V18.18 C2.4 19.48 3.7 20.28 4.8 19.6 L14.8 13.42 C15.88 12.76 15.88 11.24 14.8 10.58 L4.8 4.4 Z"
       className={animate ? 'pm-skip-chevron-in' : 'opacity-0'}
     />
     {/* Primary rounded chevron shooting forward through the bumper */}
     <path
-      d="M5.6 5.4 C4.6 4.78 3.5 5.5 3.5 6.68 V17.32 C3.5 18.5 4.6 19.22 5.6 18.6 L14.4 13.28 C15.38 12.69 15.38 11.31 14.4 10.72 L5.6 5.4 Z"
+      d="M4.8 4.4 C3.7 3.72 2.4 4.52 2.4 5.82 V18.18 C2.4 19.48 3.7 20.28 4.8 19.6 L14.8 13.42 C15.88 12.76 15.88 11.24 14.8 10.58 L4.8 4.4 Z"
       className={animate ? 'pm-skip-chevron-out' : ''}
     />
     {/* Right vertical rounded pill bumper with magnetic recoil */}
     <rect
-      x="17.2"
-      y="5"
-      width="2.8"
-      height="14"
-      rx="1.4"
+      x="17.8"
+      y="4.2"
+      width="3.2"
+      height="15.6"
+      rx="1.6"
       className={animate ? 'pm-skip-bumper-next' : ''}
     />
   </svg>
 );
 
 export const AnimatedSkipBackIcon: React.FC<TransportIconProps> = ({
-  className = 'h-4 w-4',
+  className = 'h-5 w-5',
   animate = false,
 }) => (
   <svg
@@ -67,21 +67,21 @@ export const AnimatedSkipBackIcon: React.FC<TransportIconProps> = ({
   >
     {/* Left vertical rounded pill bumper with magnetic recoil */}
     <rect
-      x="4"
-      y="5"
-      width="2.8"
-      height="14"
-      rx="1.4"
+      x="3.0"
+      y="4.2"
+      width="3.2"
+      height="15.6"
+      rx="1.6"
       className={animate ? 'pm-skip-bumper-prev' : ''}
     />
     {/* Incoming twin left-pointing rounded chevron gliding in from right */}
     <path
-      d="M18.4 5.4 C19.4 4.78 20.5 5.5 20.5 6.68 V17.32 C20.5 18.5 19.4 19.22 18.4 18.6 L9.6 13.28 C8.62 12.69 8.62 11.31 9.6 10.72 L18.4 5.4 Z"
+      d="M19.2 4.4 C20.3 3.72 21.6 4.52 21.6 5.82 V18.18 C21.6 19.48 20.3 20.28 19.2 19.6 L9.2 13.42 C8.12 12.76 8.12 11.24 9.2 10.58 L19.2 4.4 Z"
       className={animate ? 'pm-skip-back-chevron-in' : 'opacity-0'}
     />
     {/* Primary left-pointing rounded chevron darting through the bumper */}
     <path
-      d="M18.4 5.4 C19.4 4.78 20.5 5.5 20.5 6.68 V17.32 C20.5 18.5 19.4 19.22 18.4 18.6 L9.6 13.28 C8.62 12.69 8.62 11.31 9.6 10.72 L18.4 5.4 Z"
+      d="M19.2 4.4 C20.3 3.72 21.6 4.52 21.6 5.82 V18.18 C21.6 19.48 20.3 20.28 19.2 19.6 L9.2 13.42 C8.12 12.76 8.12 11.24 9.2 10.58 L19.2 4.4 Z"
       className={animate ? 'pm-skip-back-chevron-out' : ''}
     />
   </svg>

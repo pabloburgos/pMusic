@@ -208,6 +208,8 @@ export interface LivePlaybackSnapshot {
   isEnded: boolean;
   isSeeking: boolean;
   isTransitioning: boolean;
+  incomingPositionSec?: number;
+  incomingDurationSec?: number;
 }
 
 export class DualDeckAudioEngine implements IAudioEngine {
@@ -236,6 +238,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
   private normalizationEnabled = true;
   private normalizationTargetDb = -11;
   private isTransitioning = false;
+  private incomingStartedPlaying = false;
   private activeTransitionType?: DjTransitionType;
   private transitionProgress01 = 0;
   private transitionTimer: ReturnType<typeof setInterval> | null = null;
@@ -1079,6 +1082,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
     const incoming = this.getDeck(incomingId);
 
     this.isTransitioning = true;
+    this.incomingStartedPlaying = false;
     this.activeTransitionType = plan.transitionType;
     this.transitionProgress01 = 0;
 
@@ -1169,6 +1173,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
 
       await playAudioWithTimeout(incoming.audio, 3500);
       if (!this.isTransitioning) return;
+      this.incomingStartedPlaying = true;
       if (incoming.audio.paused) {
         incoming.audio.addEventListener?.('canplay', ensureIncomingPlaying, { once: true });
       }
@@ -1687,6 +1692,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
           }
           this.activeDeck = incomingId;
           this.isTransitioning = false;
+          this.incomingStartedPlaying = false;
           this.activeTransitionType = undefined;
           this.transitionProgress01 = 1;
           this.isPlaying = true;
@@ -1757,6 +1763,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
     }
     const wasTransitioning = this.isTransitioning;
     this.isTransitioning = false;
+    this.incomingStartedPlaying = false;
     this.activeTransitionType = undefined;
     this.transitionProgress01 = 0;
     this.playbackRate = 1.0;
@@ -1821,6 +1828,22 @@ export class DualDeckAudioEngine implements IAudioEngine {
       rawPos = audio.currentTime;
     }
     const clampedPos = dur > 0 ? Math.max(0, Math.min(dur, rawPos)) : Math.max(0, rawPos);
+    let incomingPositionSec: number | undefined;
+    let incomingDurationSec: number | undefined;
+    if (this.isTransitioning && this.incomingStartedPlaying && this.deckA && this.deckB) {
+      const inDeck = this.getDeck(this.getInactiveDeckId());
+      const inAudioDur =
+        Number.isFinite(inDeck.audio.duration) && inDeck.audio.duration > 1
+          ? inDeck.audio.duration
+          : 0;
+      const inDur = inAudioDur > 0 ? inAudioDur : (inDeck.track?.durationSec ?? 0);
+      const rawInPos =
+        Number.isFinite(inDeck.audio.currentTime) && inDeck.audio.currentTime >= 0
+          ? inDeck.audio.currentTime
+          : 0;
+      incomingDurationSec = inDur;
+      incomingPositionSec = inDur > 0 ? Math.max(0, Math.min(inDur, rawInPos)) : Math.max(0, rawInPos);
+    }
     return {
       positionSec: clampedPos,
       durationSec: dur,
@@ -1830,6 +1853,8 @@ export class DualDeckAudioEngine implements IAudioEngine {
       isEnded: audio ? Boolean(audio.ended) : false,
       isSeeking: audio ? Boolean(audio.seeking) : false,
       isTransitioning: this.isTransitioning,
+      incomingPositionSec,
+      incomingDurationSec,
     };
   }
 

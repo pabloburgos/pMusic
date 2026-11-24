@@ -194,6 +194,7 @@ const PMusicMainApp: React.FC = () => {
     'prev' | 'next' | 'play' | 'shuffle' | 'repeat' | null
   >(null);
   const [smoothDockPosSec, setSmoothDockPosSec] = useState<number>(positionSec);
+  const [dockDisplayDurSec, setDockDisplayDurSec] = useState<number>(durationSec);
   const [islandMenuOpen, setIslandMenuOpen] = useState(false);
   const [isDockReceding, setIsDockReceding] = useState(false);
   const [dockColorWave, setDockColorWave] = useState<{ key: string; prevColor: string } | null>(
@@ -207,8 +208,11 @@ const PMusicMainApp: React.FC = () => {
   const ambientFillRef = useRef<HTMLDivElement | null>(null);
   const islandFillRef = useRef<HTMLDivElement | null>(null);
   const waveFillRef = useRef<HTMLDivElement | null>(null);
+  const classicRangeRef = useRef<HTMLInputElement | null>(null);
   const islandMenuRef = useRef<HTMLDivElement | null>(null);
   const scrubDraggingRef = useRef(false);
+  const manualSeekAtMsRef = useRef<number>(0);
+  const dockDisplayDurSecRef = useRef<number>(durationSec);
   const lastRenderedPctRef = useRef<number>(0);
   const dockRecedeRef = useRef<{ fromPct: number; startMs: number; durationMs: number } | null>(
     null
@@ -316,8 +320,22 @@ const PMusicMainApp: React.FC = () => {
     const now = typeof performance !== 'undefined' ? performance.now() : 0;
     const trackChanged = dockClockRef.current.trackId !== currentTrack.id;
     const seekJumped = Math.abs(positionSec - dockClockRef.current.renderedPosSec) > 0.85;
-    const effDur = Math.max(1, durationSec);
-    const clampedPos = Math.max(0, Math.min(effDur, positionSec));
+    const curLive = getLivePlaybackPosition();
+    const usingIncoming = Boolean(
+      curLive.isTransitioning &&
+        typeof curLive.incomingPositionSec === 'number' &&
+        typeof curLive.incomingDurationSec === 'number' &&
+        curLive.incomingDurationSec > 0
+    );
+    const effDur = usingIncoming
+      ? curLive.incomingDurationSec!
+      : Math.max(1, durationSec);
+    if (!usingIncoming && Math.abs(dockDisplayDurSecRef.current - durationSec) > 0.5) {
+      dockDisplayDurSecRef.current = durationSec;
+      setDockDisplayDurSec(durationSec);
+    }
+    const basePos = usingIncoming ? curLive.incomingPositionSec! : positionSec;
+    const clampedPos = Math.max(0, Math.min(effDur, basePos));
     const targetPct = Math.max(0, Math.min(100, (clampedPos / effDur) * 100));
     const pctStr = `${targetPct.toFixed(4)}%`;
 
@@ -339,11 +357,22 @@ const PMusicMainApp: React.FC = () => {
         }
       }
 
-      if (!reducedMotionPref && !scrubDraggingRef.current && lastRenderedPctRef.current - targetPct > 8) {
+      if (dockRecedeRef.current) {
+        dockClockRef.current.renderedPosSec = clampedPos;
+        setSmoothDockPosSec(clampedPos);
+        return;
+      }
+
+      if (
+        !reducedMotionPref &&
+        !scrubDraggingRef.current &&
+        now - manualSeekAtMsRef.current > 350 &&
+        lastRenderedPctRef.current - targetPct > 8
+      ) {
         dockRecedeRef.current = {
           fromPct: lastRenderedPctRef.current,
           startMs: now,
-          durationMs: 1150,
+          durationMs: 1350,
         };
         setIsDockReceding(true);
         dockClockRef.current.renderedPosSec = clampedPos;
@@ -359,6 +388,7 @@ const PMusicMainApp: React.FC = () => {
       if (ambientFillRef.current) ambientFillRef.current.style.width = pctStr;
       if (islandFillRef.current) islandFillRef.current.style.width = pctStr;
       if (waveFillRef.current) waveFillRef.current.style.width = pctStr;
+      if (classicRangeRef.current) classicRangeRef.current.style.setProperty('--pm-fill', pctStr);
     } else if (seekJumped || !isPlaying) {
       dockClockRef.current.renderedPosSec = clampedPos;
       setSmoothDockPosSec(clampedPos);
@@ -367,6 +397,7 @@ const PMusicMainApp: React.FC = () => {
         if (ambientFillRef.current) ambientFillRef.current.style.width = pctStr;
         if (islandFillRef.current) islandFillRef.current.style.width = pctStr;
         if (waveFillRef.current) waveFillRef.current.style.width = pctStr;
+        if (classicRangeRef.current) classicRangeRef.current.style.setProperty('--pm-fill', pctStr);
       }
     }
   }, [positionSec, currentTrack.id, isPlaying, durationSec, reducedMotionPref]);
@@ -381,21 +412,52 @@ const PMusicMainApp: React.FC = () => {
 
     const step = (now: number) => {
       const live = getLivePlaybackPosition();
-      const effDur = Math.max(1, live.durationSec || durationSec);
-      const rawPos = Number.isFinite(live.positionSec)
-        ? live.positionSec
-        : dockClockRef.current.posSec;
+      const useIncoming = Boolean(
+        live.isTransitioning &&
+          typeof live.incomingPositionSec === 'number' &&
+          typeof live.incomingDurationSec === 'number' &&
+          live.incomingDurationSec > 0
+      );
+      const effDur = useIncoming
+        ? live.incomingDurationSec!
+        : Math.max(1, live.durationSec || durationSec);
+      const rawPos = useIncoming
+        ? live.incomingPositionSec!
+        : Number.isFinite(live.positionSec)
+          ? live.positionSec
+          : dockClockRef.current.posSec;
       const rendered = Math.max(0, Math.min(effDur, rawPos));
       dockClockRef.current.renderedPosSec = rendered;
 
-      const liveTargetPct = Math.max(0, Math.min(100, (rendered / effDur) * 100));
-      let visualPct = liveTargetPct;
+      if (Math.abs(dockDisplayDurSecRef.current - effDur) > 0.5) {
+        dockDisplayDurSecRef.current = effDur;
+        setDockDisplayDurSec(effDur);
+      }
 
+      const liveTargetPct = Math.max(0, Math.min(100, (rendered / effDur) * 100));
+      if (
+        !reducedMotionPref &&
+        !scrubDraggingRef.current &&
+        now - manualSeekAtMsRef.current > 350 &&
+        !dockRecedeRef.current &&
+        lastRenderedPctRef.current - liveTargetPct > 8
+      ) {
+        dockRecedeRef.current = {
+          fromPct: lastRenderedPctRef.current,
+          startMs: now,
+          durationMs: 1350,
+        };
+        setIsDockReceding(true);
+      }
+
+      let visualPct = liveTargetPct;
       if (dockRecedeRef.current) {
         const elapsed = now - dockRecedeRef.current.startMs;
         const t = Math.max(0, Math.min(1, elapsed / dockRecedeRef.current.durationMs));
-        const ease = 1 - Math.pow(1 - t, 3.2);
-        visualPct = dockRecedeRef.current.fromPct + (liveTargetPct - dockRecedeRef.current.fromPct) * ease;
+        const ease = 1 - Math.pow(1 - t, 2.7);
+        visualPct =
+          dockRecedeRef.current.fromPct +
+          (liveTargetPct - dockRecedeRef.current.fromPct) * ease;
         if (t >= 1) {
           dockRecedeRef.current = null;
           visualPct = liveTargetPct;
@@ -408,6 +470,7 @@ const PMusicMainApp: React.FC = () => {
       if (ambientFillRef.current) ambientFillRef.current.style.width = pctStr;
       if (islandFillRef.current) islandFillRef.current.style.width = pctStr;
       if (waveFillRef.current) waveFillRef.current.style.width = pctStr;
+      if (classicRangeRef.current) classicRangeRef.current.style.setProperty('--pm-fill', pctStr);
 
       const curIntSec = Math.floor(rendered);
       if (curIntSec !== lastIntSec || now - lastStateSyncMs >= 220) {
@@ -421,7 +484,7 @@ const PMusicMainApp: React.FC = () => {
     };
     rafId = requestAnimationFrame(step);
     return () => cancelAnimationFrame(rafId);
-  }, [isPlaying, isDockReceding, isMobileViewport, durationSec]);
+  }, [isPlaying, isDockReceding, isMobileViewport, durationSec, reducedMotionPref]);
 
   const triggerDockTransportAnim = (
     kind: 'prev' | 'next' | 'play' | 'shuffle' | 'repeat'
@@ -651,11 +714,13 @@ const PMusicMainApp: React.FC = () => {
 
   const isLiked = likedTracks.some((l) => l.trackId === currentTrack.id);
   const dlStatus = offlineDownloads[currentTrack.id] ?? 'idle';
+  const activeDockDurSec = Math.max(1, dockDisplayDurSec || durationSec);
   const liveDockPosSec = isMobileViewport ? positionSec : smoothDockPosSec;
   const progressPct = Math.max(
     0,
-    Math.min(100, (liveDockPosSec / Math.max(1, durationSec)) * 100)
+    Math.min(100, (liveDockPosSec / activeDockDurSec) * 100)
   );
+  const activeFillPct = dockRecedeRef.current ? lastRenderedPctRef.current : progressPct;
   const volumePct = Math.round(volume * 100);
   const upNextQueue = queue.slice(queueIndex + 1, queueIndex + 25);
   const cueStartPct =
@@ -729,12 +794,16 @@ const PMusicMainApp: React.FC = () => {
       trackId: currentTrack.id,
       atMs: typeof performance !== 'undefined' ? performance.now() : 0,
     };
+    manualSeekAtMsRef.current =
+      typeof performance !== 'undefined' ? performance.now() : Date.now();
     dockRecedeRef.current = null;
     setIsDockReceding(false);
     lastRenderedPctRef.current = pct * 100;
     const pctStr = `${(pct * 100).toFixed(4)}%`;
     if (ambientFillRef.current) ambientFillRef.current.style.width = pctStr;
     if (islandFillRef.current) islandFillRef.current.style.width = pctStr;
+    if (waveFillRef.current) waveFillRef.current.style.width = pctStr;
+    if (classicRangeRef.current) classicRangeRef.current.style.setProperty('--pm-fill', pctStr);
     if (waveFillRef.current) waveFillRef.current.style.width = pctStr;
     setSmoothDockPosSec(nextSec);
     seekTo(nextSec);
@@ -1821,7 +1890,7 @@ const PMusicMainApp: React.FC = () => {
                 data-testid="ambient-progress-fill"
                 className="pointer-events-none absolute inset-y-0 left-0 z-0 overflow-hidden transition-[background-color] duration-700"
                 style={{
-                  width: `${progressPct}%`,
+                  width: `${activeFillPct}%`,
                   backgroundColor:
                     'color-mix(in srgb, var(--pm-ambient-1) 36%, rgba(255, 255, 255, 0.08))',
                 }}
@@ -1857,7 +1926,7 @@ const PMusicMainApp: React.FC = () => {
                   ref={islandFillRef}
                   className="h-full rounded-full"
                   style={{
-                    width: `${progressPct}%`,
+                    width: `${activeFillPct}%`,
                     background:
                       'linear-gradient(90deg, color-mix(in srgb, var(--pm-ambient-1) 80%, var(--pm-accent-primary)) 0%, var(--pm-accent-primary) 100%)',
                     boxShadow:
@@ -1877,7 +1946,7 @@ const PMusicMainApp: React.FC = () => {
                   ref={waveFillRef}
                   className="h-full rounded-r-full"
                   style={{
-                    width: `${progressPct}%`,
+                    width: `${activeFillPct}%`,
                     background:
                       'linear-gradient(90deg, color-mix(in srgb, var(--pm-ambient-2) 70%, var(--pm-accent-primary)) 0%, color-mix(in srgb, var(--pm-ambient-1) 85%, white) 100%)',
                     boxShadow:
@@ -1931,6 +2000,11 @@ const PMusicMainApp: React.FC = () => {
               value={Math.min(Math.round(durationSec), Math.round(liveDockPosSec))}
               onChange={(e) => {
                 const next = Number(e.target.value);
+                manualSeekAtMsRef.current =
+                  typeof performance !== 'undefined' ? performance.now() : Date.now();
+                dockRecedeRef.current = null;
+                setIsDockReceding(false);
+                lastRenderedPctRef.current = Math.max(0, Math.min(100, (next / activeDockDurSec) * 100));
                 setSmoothDockPosSec(next);
                 seekTo(next);
               }}
@@ -2163,7 +2237,7 @@ const PMusicMainApp: React.FC = () => {
                 }`}
               >
                 <AnimatedShuffleIcon
-                  className="h-3.5 w-3.5"
+                  className="h-4 w-4"
                   animate={dockTransportAnim === 'shuffle' && !reducedMotionPref}
                 />
                 {shuffleEnabled && (
@@ -2182,10 +2256,10 @@ const PMusicMainApp: React.FC = () => {
                   triggerDockTransportAnim('prev');
                   void prevTrack();
                 }}
-                className="pm-pressable pm-hover relative inline-flex h-9 w-9 items-center justify-center overflow-visible rounded-full pm-text-primary active:scale-90"
+                className="pm-pressable pm-hover relative inline-flex h-10 w-10 items-center justify-center overflow-visible rounded-full pm-text-primary active:scale-90"
               >
                 <AnimatedSkipBackIcon
-                  className="h-4 w-4"
+                  className="h-[21px] w-[21px]"
                   animate={dockTransportAnim === 'prev' && !reducedMotionPref}
                 />
               </button>
@@ -2198,7 +2272,7 @@ const PMusicMainApp: React.FC = () => {
                   triggerDockTransportAnim('play');
                   void togglePlayPause();
                 }}
-                className="pm-btn-primary pm-pressable relative flex h-10 w-10 items-center justify-center overflow-visible rounded-full shadow-lg transition-transform duration-200 hover:scale-105 active:scale-90"
+                className="pm-btn-primary pm-pressable relative flex h-[42px] w-[42px] items-center justify-center overflow-visible rounded-full shadow-lg transition-transform duration-200 hover:scale-105 active:scale-90"
               >
                 {isBuffering ? (
                   <>
@@ -2206,19 +2280,19 @@ const PMusicMainApp: React.FC = () => {
                       aria-hidden="true"
                       className="pm-play-loading-ring pointer-events-none absolute -inset-1 rounded-full border-2 border-[var(--pm-accent-primary)]/45"
                     />
-                    <Loader2 data-testid="dock-play-loader" className="h-4.5 w-4.5 animate-spin" />
+                    <Loader2 data-testid="dock-play-loader" className="h-5 w-5 animate-spin" />
                   </>
                 ) : (
                   <>
                     <RoundedPauseIcon
-                      className={`absolute h-4.5 w-4.5 transition-all duration-200 ease-out ${
+                      className={`absolute h-[22px] w-[22px] transition-all duration-200 ease-out ${
                         isPlaying
                           ? 'scale-100 rotate-0 opacity-100 blur-0'
                           : 'scale-50 rotate-90 opacity-0 blur-[1px]'
                       }`}
                     />
                     <RoundedPlayIcon
-                      className={`absolute h-4.5 w-4.5 translate-x-[1px] transition-all duration-200 ease-out ${
+                      className={`absolute h-[22px] w-[22px] translate-x-[1px] transition-all duration-200 ease-out ${
                         !isPlaying
                           ? 'scale-100 rotate-0 opacity-100 blur-0'
                           : 'scale-50 -rotate-90 opacity-0 blur-[1px]'
@@ -2235,10 +2309,10 @@ const PMusicMainApp: React.FC = () => {
                   triggerDockTransportAnim('next');
                   void nextTrack();
                 }}
-                className="pm-pressable pm-hover relative inline-flex h-9 w-9 items-center justify-center overflow-visible rounded-full pm-text-primary active:scale-90"
+                className="pm-pressable pm-hover relative inline-flex h-10 w-10 items-center justify-center overflow-visible rounded-full pm-text-primary active:scale-90"
               >
                 <AnimatedSkipForwardIcon
-                  className="h-4 w-4"
+                  className="h-[21px] w-[21px]"
                   animate={dockTransportAnim === 'next' && !reducedMotionPref}
                 />
               </button>
@@ -2265,9 +2339,9 @@ const PMusicMainApp: React.FC = () => {
                   }`}
                 >
                   {repeatMode === 'one' ? (
-                    <Repeat1 className="h-3.5 w-3.5" />
+                    <Repeat1 className="h-4 w-4" />
                   ) : (
-                    <Repeat className="h-3.5 w-3.5" />
+                    <Repeat className="h-4 w-4" />
                   )}
                 </span>
                 {repeatMode !== 'off' && (
@@ -2297,20 +2371,29 @@ const PMusicMainApp: React.FC = () => {
                     />
                   )}
                   <input
+                    ref={classicRangeRef}
                     type="range"
                     role="slider"
                     aria-label="Posición de reproducción"
                     min={0}
-                    max={Math.max(1, Math.round(durationSec))}
-                    value={Math.min(Math.round(durationSec), Math.round(liveDockPosSec))}
+                    max={Math.max(1, Math.round(activeDockDurSec))}
+                    value={Math.min(Math.round(activeDockDurSec), Math.round(liveDockPosSec))}
                     onChange={(e) => {
                       const next = Number(e.target.value);
+                      manualSeekAtMsRef.current =
+                        typeof performance !== 'undefined' ? performance.now() : Date.now();
+                      dockRecedeRef.current = null;
+                      setIsDockReceding(false);
+                      lastRenderedPctRef.current = Math.max(
+                        0,
+                        Math.min(100, (next / activeDockDurSec) * 100)
+                      );
                       setSmoothDockPosSec(next);
                       seekTo(next);
                     }}
                     style={
                       {
-                        '--pm-fill': `${progressPct}%`,
+                        '--pm-fill': `${activeFillPct}%`,
                         '--pm-slider-active':
                           'color-mix(in srgb, var(--pm-ambient-1) 62%, var(--pm-accent-primary))',
                       } as React.CSSProperties
@@ -2319,7 +2402,7 @@ const PMusicMainApp: React.FC = () => {
                   />
                 </div>
                 <span className="tabular-nums w-9 shrink-0 select-none text-left text-[11px] font-medium pm-text-tertiary">
-                  {formatDurationSec(durationSec)}
+                  {formatDurationSec(activeDockDurSec)}
                 </span>
               </div>
             ) : (
@@ -2328,7 +2411,7 @@ const PMusicMainApp: React.FC = () => {
                 <span aria-hidden="true" className="opacity-50">
                   ·
                 </span>
-                <span>{formatDurationSec(durationSec)}</span>
+                <span>{formatDurationSec(activeDockDurSec)}</span>
               </div>
             )}
           </div>
@@ -2838,14 +2921,14 @@ const PMusicMainApp: React.FC = () => {
                   ) : (
                     <>
                       <RoundedPauseIcon
-                        className={`absolute h-4.5 w-4.5 transition-all duration-200 ease-out ${
+                        className={`absolute h-[22px] w-[22px] transition-all duration-200 ease-out ${
                           isPlaying
                             ? 'scale-100 rotate-0 opacity-100 blur-0'
                             : 'scale-50 rotate-90 opacity-0 blur-[1px]'
                         }`}
                       />
                       <RoundedPlayIcon
-                        className={`absolute h-4.5 w-4.5 translate-x-[1px] transition-all duration-200 ease-out ${
+                        className={`absolute h-[22px] w-[22px] translate-x-[1px] transition-all duration-200 ease-out ${
                           !isPlaying
                             ? 'scale-100 rotate-0 opacity-100 blur-0'
                             : 'scale-50 -rotate-90 opacity-0 blur-[1px]'
@@ -2865,7 +2948,7 @@ const PMusicMainApp: React.FC = () => {
                   className="pm-pressable relative flex h-10 w-10 items-center justify-center overflow-visible rounded-full pm-text-primary"
                 >
                   <AnimatedSkipForwardIcon
-                    className="h-4.5 w-4.5"
+                    className="h-5 w-5"
                     animate={dockTransportAnim === 'next' && !reducedMotionPref}
                   />
                 </button>

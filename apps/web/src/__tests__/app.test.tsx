@@ -240,7 +240,7 @@ describe('@pmusic/web UI', () => {
     expect(document.querySelector('.pm-skip-prev-hyper')).not.toBeNull();
   });
 
-  it('hides MEZCLANDO · DJ and Entrando takeover during plain crossfade, and deactivates DJ Mode synchronously', async () => {
+  it('hides MEZCLANDO · DJ and Entrando takeover during plain crossfade, renders ink-bleed cover and persistent dual backdrop slots, and deactivates DJ Mode synchronously', async () => {
     const t1 = usePMusicStore.getState().homeShelves[0]!.tracks![0]!;
     const t2 = usePMusicStore.getState().homeShelves[0]!.tracks![1]!;
 
@@ -250,6 +250,7 @@ describe('@pmusic/web UI', () => {
         isBuffering: false,
         isTransitioning: true,
         transitionProgress01: 0.45,
+        outgoingTransitionTrack: t1,
         incomingTransitionTrack: t2,
         currentTrack: t1,
         djMode: {
@@ -263,6 +264,9 @@ describe('@pmusic/web UI', () => {
     render(<App />);
     expect(screen.queryByText(/MEZCLANDO · DJ/i)).toBeNull();
     expect(screen.queryByText(/Entrando ·/i)).toBeNull();
+    expect(screen.getByTestId('ink-bleed-cover')).toBeDefined();
+    expect(screen.getByTestId('backdrop-slot-0')).toBeDefined();
+    expect(screen.getByTestId('backdrop-slot-1')).toBeDefined();
 
     // Activate DJ Mode, then toggle OFF and ensure synchronous cleanup
     act(() => {

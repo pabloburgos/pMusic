@@ -39,6 +39,7 @@ import {
   RoundedPauseIcon,
   RoundedPlayIcon,
 } from './TransportIcons.tsx';
+import { InkBleedCoverTransition } from './InkBleedCoverTransition.tsx';
 import {
   USER_EQ_FREQUENCIES_HZ,
   USER_EQ_PRESETS,
@@ -246,44 +247,29 @@ export const NowPlayingSheet: React.FC = () => {
     'prev' | 'next' | 'play' | 'shuffle' | 'repeat' | null
   >(null);
   const [heartBurstKey, setHeartBurstKey] = useState(0);
-  const [prevBackdrop, setPrevBackdrop] = useState<{
-    id: string;
-    coverUrl: string;
-    direction: 'next' | 'prev';
-  } | null>(null);
 
   const queueRowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const prevRowTopsRef = useRef<Map<string, number>>(new Map());
   const transportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const movedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const backdropTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastCrossfadedTrackIdRef = useRef<string | null>(null);
-  const lastBackdropTrackRef = useRef<{ id: string; coverUrl: string }>({
-    id: currentTrack.id,
-    coverUrl: currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl,
-  });
   const lyricsScrollResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const activeWaterRef = useRef<{
-    key: string;
-    url: string;
-    x1: number;
-    y1: number;
-    x2: number;
-    y2: number;
-    x3: number;
-    y3: number;
+  const lastSheetBarPctRef = useRef<number>(0);
+  const sheetBarRewindRef = useRef<{
+    fromPct: number;
+    startMs: number;
+    durationMs: number;
   } | null>(null);
-  const fadingWaterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [fadingWater, setFadingWater] = useState<{
-    key: string;
-    url: string;
-    x1: number;
-    y1: number;
-    x2: number;
-    y2: number;
-    x3: number;
-    y3: number;
-  } | null>(null);
+  const sheetManualSeekAtMsRef = useRef<number>(0);
+
+  const [backdropSlots, setBackdropSlots] = useState<{
+    active: 0 | 1;
+    urls: [string, string];
+    fadeMs: number;
+  }>(() => {
+    const initUrl = currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl;
+    return { active: 0, urls: [initUrl, initUrl], fadeMs: 1100 };
+  });
 
   const markLyricsUserScrolled = () => {
     setLyricsUserScrolled(true);
@@ -315,59 +301,33 @@ export const NowPlayingSheet: React.FC = () => {
     }
   }, [isTransitioning, incomingTransitionTrack]);
 
-  useEffect(() => {
-    const cfNow = Boolean(
-      isTransitioning &&
-        outgoingTransitionTrack &&
-        incomingTransitionTrack &&
-        outgoingTransitionTrack.id !== incomingTransitionTrack.id
-    );
-    if (cfNow && !reducedMotionPref) {
-      if (fadingWaterTimerRef.current) clearTimeout(fadingWaterTimerRef.current);
-      setFadingWater(null);
-      return;
-    }
-    if (activeWaterRef.current) {
-      const snap = activeWaterRef.current;
-      activeWaterRef.current = null;
-      setFadingWater(snap);
-      if (fadingWaterTimerRef.current) clearTimeout(fadingWaterTimerRef.current);
-      fadingWaterTimerRef.current = setTimeout(() => {
-        setFadingWater(null);
-      }, 780);
-    }
-  }, [isTransitioning, outgoingTransitionTrack, incomingTransitionTrack, reducedMotionPref]);
+  const cfActiveBackdrop = Boolean(
+    isTransitioning &&
+      outgoingTransitionTrack &&
+      incomingTransitionTrack &&
+      outgoingTransitionTrack.id !== incomingTransitionTrack.id
+  );
+  const cfDurBackdropSec = Math.max(1.2, transitionDurationSec || 4);
+  const targetBackdropUrl =
+    cfActiveBackdrop && incomingTransitionTrack
+      ? (incomingTransitionTrack.thumbnailHighUrl ?? incomingTransitionTrack.thumbnailUrl)
+      : (currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl);
 
   useEffect(() => {
-    return () => {
-      if (fadingWaterTimerRef.current) clearTimeout(fadingWaterTimerRef.current);
-    };
-  }, []);
-
-  useEffect(() => {
-    const nextUrl = currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl;
-    const prev = lastBackdropTrackRef.current;
-    if (prev.id !== currentTrack.id) {
-      // During or right after an active crossfade, let the water-merge overlay complete seamlessly without triggering a slide/flash cut
-      if (isTransitioning || lastCrossfadedTrackIdRef.current === currentTrack.id) {
-        if (backdropTimerRef.current) clearTimeout(backdropTimerRef.current);
-        setPrevBackdrop(null);
-        lastBackdropTrackRef.current = { id: currentTrack.id, coverUrl: nextUrl };
-        return;
-      }
-      setPrevBackdrop({
-        id: prev.id,
-        coverUrl: prev.coverUrl,
-        direction: lastTrackDirection === 'prev' ? 'prev' : 'next',
-      });
-      lastBackdropTrackRef.current = { id: currentTrack.id, coverUrl: nextUrl };
-      if (backdropTimerRef.current) clearTimeout(backdropTimerRef.current);
-      backdropTimerRef.current = setTimeout(() => setPrevBackdrop(null), 760);
-    }
-    return () => {
-      if (backdropTimerRef.current) clearTimeout(backdropTimerRef.current);
-    };
-  }, [currentTrack.id, currentTrack.thumbnailHighUrl, currentTrack.thumbnailUrl, lastTrackDirection, isTransitioning]);
+    setBackdropSlots((prev) => {
+      if (prev.urls[prev.active] === targetBackdropUrl) return prev;
+      const nextSlot: 0 | 1 = prev.active === 0 ? 1 : 0;
+      const nextUrls: [string, string] =
+        nextSlot === 0
+          ? [targetBackdropUrl, prev.urls[1]]
+          : [prev.urls[0], targetBackdropUrl];
+      return {
+        active: nextSlot,
+        urls: nextUrls,
+        fadeMs: cfActiveBackdrop ? Math.round(cfDurBackdropSec * 1000) : 950,
+      };
+    });
+  }, [targetBackdropUrl, cfActiveBackdrop, cfDurBackdropSec]);
 
   useEffect(() => {
     const isTouchOrSmall =
@@ -517,9 +477,24 @@ export const NowPlayingSheet: React.FC = () => {
       lastWholeSecRef.current = Math.floor(clampedPos);
       setSmoothPosSec(clampedPos);
       const pct = Math.min(100, Math.max(0, (clampedPos / effDur) * 100));
-      if (progressInputRef.current) {
-        progressInputRef.current.style.setProperty('--pm-fill', `${pct.toFixed(2)}%`);
-        progressInputRef.current.value = String(Math.min(Math.round(effDur), Math.round(clampedPos)));
+      if (
+        trackChanged &&
+        !reducedMotionPref &&
+        now - sheetManualSeekAtMsRef.current > 350 &&
+        !sheetBarRewindRef.current &&
+        lastSheetBarPctRef.current - pct > 8
+      ) {
+        sheetBarRewindRef.current = {
+          fromPct: lastSheetBarPctRef.current,
+          startMs: now,
+          durationMs: 700,
+        };
+      } else if (!sheetBarRewindRef.current) {
+        lastSheetBarPctRef.current = pct;
+        if (progressInputRef.current) {
+          progressInputRef.current.style.setProperty('--pm-fill', `${pct.toFixed(2)}%`);
+          progressInputRef.current.value = String(Math.min(Math.round(effDur), Math.round(clampedPos)));
+        }
       }
       if (progressTimeRef.current) {
         progressTimeRef.current.textContent = formatDurationSec(clampedPos);
@@ -530,7 +505,7 @@ export const NowPlayingSheet: React.FC = () => {
           : formatDurationSec(effDur);
       }
     }
-  }, [positionSec, currentTrack.id, isPlaying, durationSec]);
+  }, [positionSec, currentTrack.id, isPlaying, durationSec, reducedMotionPref]);
 
   useEffect(() => {
     showRemainingTimeRef.current = showRemainingTime;
@@ -554,10 +529,20 @@ export const NowPlayingSheet: React.FC = () => {
     let rafId = 0;
     const step = (now: number) => {
       const live = getLivePlaybackPosition();
-      const effDur = Math.max(1, live.durationSec || durationSec);
-      const rawPos = Number.isFinite(live.positionSec)
-        ? live.positionSec
-        : syncClockRef.current.posSec;
+      const useIncoming = Boolean(
+        live.isTransitioning &&
+          typeof live.incomingPositionSec === 'number' &&
+          typeof live.incomingDurationSec === 'number' &&
+          live.incomingDurationSec > 0
+      );
+      const effDur = useIncoming
+        ? live.incomingDurationSec!
+        : Math.max(1, live.durationSec || durationSec);
+      const rawPos = useIncoming
+        ? live.incomingPositionSec!
+        : Number.isFinite(live.positionSec)
+          ? live.positionSec
+          : syncClockRef.current.posSec;
       const lClock = lyricClockRef.current;
       if (lClock.trackId !== currentTrack.id || Math.abs(rawPos - lClock.smoothedPos) > 0.75) {
         lClock.trackId = currentTrack.id;
@@ -578,10 +563,40 @@ export const NowPlayingSheet: React.FC = () => {
       const rendered = Math.max(0, Math.min(effDur, lClock.smoothedPos));
 
       syncClockRef.current.renderedPosSec = rendered;
-      const pct = Math.min(100, Math.max(0, (rendered / effDur) * 100));
+      const livePct = Math.min(100, Math.max(0, (rendered / effDur) * 100));
+      if (
+        !reducedMotionPref &&
+        now - sheetManualSeekAtMsRef.current > 350 &&
+        !sheetBarRewindRef.current &&
+        lastSheetBarPctRef.current - livePct > 8
+      ) {
+        sheetBarRewindRef.current = {
+          fromPct: lastSheetBarPctRef.current,
+          startMs: now,
+          durationMs: 700,
+        };
+      }
+
+      let visualPct = livePct;
+      if (sheetBarRewindRef.current) {
+        const elapsed = now - sheetBarRewindRef.current.startMs;
+        const t = Math.max(0, Math.min(1, elapsed / sheetBarRewindRef.current.durationMs));
+        const ease = 1 - Math.pow(1 - t, 3.2);
+        visualPct =
+          sheetBarRewindRef.current.fromPct +
+          (livePct - sheetBarRewindRef.current.fromPct) * ease;
+        if (t >= 1) {
+          sheetBarRewindRef.current = null;
+          visualPct = livePct;
+        }
+      }
+      lastSheetBarPctRef.current = visualPct;
+
       if (progressInputRef.current) {
-        progressInputRef.current.style.setProperty('--pm-fill', `${pct.toFixed(2)}%`);
-        progressInputRef.current.value = String(Math.min(Math.round(effDur), Math.round(rendered)));
+        progressInputRef.current.style.setProperty('--pm-fill', `${visualPct.toFixed(2)}%`);
+        progressInputRef.current.value = String(
+          Math.min(Math.round(effDur), Math.round((visualPct / 100) * effDur))
+        );
       }
       if (progressTimeRef.current) {
         const txt = formatDurationSec(rendered);
@@ -812,7 +827,6 @@ export const NowPlayingSheet: React.FC = () => {
       outgoingTransitionTrack.id !== incomingTransitionTrack.id
   );
   const cfAnimDurationSec = Math.max(1.2, transitionDurationSec || 4);
-  const baseBackdropTrack = cfActive && outgoingTransitionTrack ? outgoingTransitionTrack : currentTrack;
 
   const incomingPreviewTrack =
     djMode.enabled &&
@@ -821,34 +835,6 @@ export const NowPlayingSheet: React.FC = () => {
     incomingTransitionTrack.id !== currentTrack.id
       ? incomingTransitionTrack
       : null;
-
-  const waterPools = (() => {
-    if (!cfActive || !incomingTransitionTrack || reducedMotionPref) return null;
-    const idStr = incomingTransitionTrack.id;
-    let hash = 7;
-    for (let i = 0; i < idStr.length; i++) {
-      hash = (hash * 31 + idStr.charCodeAt(i)) | 0;
-    }
-    const hAbs = Math.abs(hash);
-    const x1 = 15 + (hAbs % 62);
-    const y1 = 15 + ((hAbs >> 4) % 62);
-    const x2 = 88 - (hAbs % 62);
-    const y2 = 88 - ((hAbs >> 4) % 62);
-    const x3 = 18 + ((hAbs >> 8) % 64);
-    const y3 = 18 + ((hAbs >> 12) % 64);
-    const snap = {
-      url: incomingTransitionTrack.thumbnailHighUrl ?? incomingTransitionTrack.thumbnailUrl,
-      key: `water-${outgoingTransitionTrack?.id ?? ''}-${incomingTransitionTrack.id}`,
-      x1,
-      y1,
-      x2,
-      y2,
-      x3,
-      y3,
-    };
-    activeWaterRef.current = snap;
-    return snap;
-  })();
 
   const isPostCrossfadeSameTrack = lastCrossfadedTrackIdRef.current === currentTrack.id;
 
@@ -860,7 +846,7 @@ export const NowPlayingSheet: React.FC = () => {
           : 'mx-auto flex h-full w-full max-w-[420px] justify-center gap-5 pb-4 md:h-auto md:justify-center md:gap-5 md:py-0'
       }`}
     >
-      {/* Large Borderless Centerpiece Artwork with 6-face Morphing-Corner 3D Cube & swipe skip */}
+      {/* Large Borderless Centerpiece Artwork with pMusic Fractal Ink-Bleed Transition */}
       <div
         key={
           cfActive || isPostCrossfadeSameTrack
@@ -903,88 +889,18 @@ export const NowPlayingSheet: React.FC = () => {
         } ${isPlaying ? 'scale-100' : 'scale-[0.96]'}`}
       >
         {cfActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
-          (() => {
-            const seed = `${outgoingTransitionTrack.id}:${incomingTransitionTrack.id}`;
-            let hash = 13;
-            for (let i = 0; i < seed.length; i++) {
-              hash = (hash * 33 + seed.charCodeAt(i)) | 0;
+          <InkBleedCoverTransition
+            outgoingUrl={
+              outgoingTransitionTrack.thumbnailHighUrl ?? outgoingTransitionTrack.thumbnailUrl
             }
-            const dirs = [
-              { anim: 'pmCubeFromTop', face: 'pm-cube-face-top' },
-              { anim: 'pmCubeFromBottom', face: 'pm-cube-face-bottom' },
-              { anim: 'pmCubeFromRight', face: 'pm-cube-face-right' },
-              { anim: 'pmCubeFromLeft', face: 'pm-cube-face-left' },
-            ] as const;
-            const chosen = dirs[Math.abs(hash) % dirs.length] ?? dirs[0];
-            const outCover = outgoingTransitionTrack.thumbnailHighUrl ?? outgoingTransitionTrack.thumbnailUrl;
-            const inCover = incomingTransitionTrack.thumbnailHighUrl ?? incomingTransitionTrack.thumbnailUrl;
-            const sideFaces = [
-              'pm-cube-face-back',
-              'pm-cube-face-top',
-              'pm-cube-face-bottom',
-              'pm-cube-face-right',
-              'pm-cube-face-left',
-            ].filter((f) => f !== chosen.face);
-
-            return (
-              <div className="pm-cube-viewport relative h-full w-full">
-                <div
-                  className="pm-cube-prism"
-                  style={{
-                    animation: `${chosen.anim} ${cfAnimDurationSec}s cubic-bezier(0.32, 0.05, 0.22, 1) forwards`,
-                  }}
-                >
-                  <div
-                    className="pm-cube-face-front pm-cube-corner-morph overflow-hidden shadow-[0_26px_64px_rgba(0,0,0,0.58)]"
-                    style={{ animationDuration: `${cfAnimDurationSec}s` }}
-                  >
-                    <img
-                      src={outCover}
-                      alt={outgoingTransitionTrack.title}
-                      draggable={false}
-                      className="h-full w-full select-none object-cover"
-                    />
-                    <div
-                      aria-hidden="true"
-                      className="pm-cube-shade-out absolute inset-0"
-                      style={{ animationDuration: `${cfAnimDurationSec}s` }}
-                    />
-                  </div>
-                  <div
-                    className={`${chosen.face} pm-cube-corner-morph overflow-hidden shadow-[0_26px_64px_rgba(0,0,0,0.58)]`}
-                    style={{ animationDuration: `${cfAnimDurationSec}s` }}
-                  >
-                    <img
-                      src={inCover}
-                      alt={incomingTransitionTrack.title}
-                      draggable={false}
-                      className="h-full w-full select-none object-cover"
-                    />
-                    <div
-                      aria-hidden="true"
-                      className="pm-cube-light-in absolute inset-0"
-                      style={{ animationDuration: `${cfAnimDurationSec}s` }}
-                    />
-                  </div>
-                  {sideFaces.map((sideFace) => (
-                    <div
-                      key={sideFace}
-                      aria-hidden="true"
-                      className={`${sideFace} pm-cube-side-wall overflow-hidden`}
-                      style={{ animationDuration: `${cfAnimDurationSec}s` }}
-                    >
-                      <img
-                        src={outCover}
-                        alt=""
-                        draggable={false}
-                        className="h-full w-full scale-110 select-none object-cover opacity-20 blur-md"
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })()
+            outgoingTitle={outgoingTransitionTrack.title}
+            incomingUrl={
+              incomingTransitionTrack.thumbnailHighUrl ?? incomingTransitionTrack.thumbnailUrl
+            }
+            incomingTitle={incomingTransitionTrack.title}
+            seedKey={`${outgoingTransitionTrack.id}:${incomingTransitionTrack.id}`}
+            durationSec={cfAnimDurationSec}
+          />
         ) : (
           <img
             src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
@@ -1268,6 +1184,10 @@ export const NowPlayingSheet: React.FC = () => {
               const effDur = Math.max(1, durationSec);
               const next = Math.max(0, Math.min(effDur, Number(e.target.value)));
               const pct = Math.min(100, Math.max(0, (next / effDur) * 100));
+              sheetManualSeekAtMsRef.current =
+                typeof performance !== 'undefined' ? performance.now() : Date.now();
+              sheetBarRewindRef.current = null;
+              lastSheetBarPctRef.current = pct;
               if (progressInputRef.current) {
                 progressInputRef.current.style.setProperty('--pm-fill', `${pct.toFixed(2)}%`);
                 progressInputRef.current.value = String(Math.round(next));
@@ -1338,7 +1258,7 @@ export const NowPlayingSheet: React.FC = () => {
           }`}
         >
           <AnimatedShuffleIcon
-            className="h-4 w-4"
+            className="h-[18px] w-[18px]"
             animate={transportAnim === 'shuffle' && !reducedMotionPref}
           />
           {shuffleEnabled && (
@@ -1359,7 +1279,7 @@ export const NowPlayingSheet: React.FC = () => {
           className="pm-pressable relative flex h-12 w-12 items-center justify-center overflow-visible bg-transparent text-white/90 transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none"
         >
           <AnimatedSkipBackIcon
-            className="h-7 w-7"
+            className="h-8 w-8"
             filled
             animate={transportAnim === 'prev' && !reducedMotionPref}
           />
@@ -1386,14 +1306,14 @@ export const NowPlayingSheet: React.FC = () => {
           ) : (
             <>
               <RoundedPauseIcon
-                className={`absolute h-12 w-12 drop-shadow-[0_4px_14px_rgba(0,0,0,0.34)] transition-all duration-200 ease-out ${
+                className={`absolute h-[52px] w-[52px] drop-shadow-[0_4px_14px_rgba(0,0,0,0.34)] transition-all duration-200 ease-out ${
                   isPlaying
                     ? 'scale-100 rotate-0 opacity-100 blur-0'
                     : 'scale-50 rotate-90 opacity-0 blur-[1px]'
                 }`}
               />
               <RoundedPlayIcon
-                className={`absolute h-12 w-12 translate-x-[2px] drop-shadow-[0_4px_14px_rgba(0,0,0,0.34)] transition-all duration-200 ease-out ${
+                className={`absolute h-[52px] w-[52px] translate-x-[2px] drop-shadow-[0_4px_14px_rgba(0,0,0,0.34)] transition-all duration-200 ease-out ${
                   !isPlaying
                     ? 'scale-100 rotate-0 opacity-100 blur-0'
                     : 'scale-50 -rotate-90 opacity-0 blur-[1px]'
@@ -1413,7 +1333,7 @@ export const NowPlayingSheet: React.FC = () => {
           className="pm-pressable relative flex h-12 w-12 items-center justify-center overflow-visible bg-transparent text-white/90 transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none"
         >
           <AnimatedSkipForwardIcon
-            className="h-7 w-7"
+            className="h-8 w-8"
             filled
             animate={transportAnim === 'next' && !reducedMotionPref}
           />
@@ -1439,9 +1359,9 @@ export const NowPlayingSheet: React.FC = () => {
             }`}
           >
             {repeatMode === 'one' ? (
-              <Repeat1 className="h-4 w-4" />
+              <Repeat1 className="h-[18px] w-[18px]" />
             ) : (
-              <Repeat className="h-4 w-4" />
+              <Repeat className="h-[18px] w-[18px]" />
             )}
           </span>
           {repeatMode !== 'off' && (
@@ -1513,97 +1433,39 @@ export const NowPlayingSheet: React.FC = () => {
           transition: 'background 1800ms ease',
         }}
       >
-        {prevBackdrop && (
-          <div
-            key={`out-${prevBackdrop.id}`}
-            className={`pointer-events-none absolute -inset-24 ${
-              prevBackdrop.direction === 'prev'
-                ? 'pm-backdrop-out-prev'
-                : 'pm-backdrop-out-next'
-            }`}
-          >
-            <img
-              src={prevBackdrop.coverUrl}
-              alt=""
-              draggable={false}
-              className="pm-fluid-cover-a h-full w-full select-none object-cover opacity-75"
-            />
-          </div>
-        )}
-
-        <div
-          key={prevBackdrop ? `in-${currentTrack.id}` : 'persistent-water-base'}
-          className={`pointer-events-none absolute -inset-24 ${
-            prevBackdrop
-              ? lastTrackDirection === 'prev'
-                ? 'pm-backdrop-in-prev'
-                : 'pm-backdrop-in-next'
-              : ''
-          }`}
-        >
-          <img
-            data-testid="live-backdrop-img"
-            src={baseBackdropTrack.thumbnailHighUrl ?? baseBackdropTrack.thumbnailUrl}
-            alt=""
-            draggable={false}
-            className="pm-fluid-cover-a absolute inset-0 h-full w-full select-none object-cover opacity-55"
-          />
-          <img
-            src={baseBackdropTrack.thumbnailHighUrl ?? baseBackdropTrack.thumbnailUrl}
-            alt=""
-            draggable={false}
-            className="pm-fluid-cover-b absolute inset-0 h-full w-full -scale-x-100 select-none object-cover opacity-35"
-          />
-        </div>
-
-        {/* Living GPU-Composited Seam-Free Liquid Crossfade (no rotated box tiles, zero flicker) */}
-        {waterPools && (
-          <div
-            key={waterPools.key}
-            data-testid="live-water-merge"
-            className="pointer-events-none absolute -inset-24"
-          >
-            <img
-              src={waterPools.url}
-              alt=""
-              draggable={false}
-              className="pm-fluid-cover-a absolute inset-0 h-full w-full select-none object-cover"
+        {/* Persistent Double-Buffered Fluid Backdrop Slots (never remounted or animation-reset between tracks) */}
+        {([0, 1] as const).map((slotIdx) => {
+          const isSlotActive = backdropSlots.active === slotIdx;
+          return (
+            <div
+              key={`backdrop-slot-${slotIdx}`}
+              data-testid={`backdrop-slot-${slotIdx}`}
+              className="pointer-events-none absolute -inset-24 will-change-[opacity]"
               style={{
-                animation: `pmWaterCurrentA ${cfAnimDurationSec}s cubic-bezier(0.22, 1, 0.36, 1) forwards`,
+                opacity: isSlotActive ? 1 : 0,
+                transition: reducedMotionPref
+                  ? 'none'
+                  : `opacity ${backdropSlots.fadeMs}ms cubic-bezier(0.37, 0, 0.63, 1)`,
               }}
-            />
-            <img
-              src={waterPools.url}
-              alt=""
-              draggable={false}
-              className="pm-fluid-cover-b absolute inset-0 h-full w-full select-none object-cover"
-              style={{
-                animation: `pmWaterCurrentB ${cfAnimDurationSec}s ease-in-out forwards`,
-              }}
-            />
-          </div>
-        )}
-        {!waterPools && fadingWater && !reducedMotionPref && (
-          <div
-            key={`fade-${fadingWater.key}`}
-            aria-hidden="true"
-            className="pointer-events-none absolute -inset-24"
-            style={{ animation: 'pmWaterOverlayFadeOut 650ms ease-out forwards' }}
-          >
-            <img
-              src={fadingWater.url}
-              alt=""
-              draggable={false}
-              className="pm-fluid-cover-a absolute inset-0 h-full w-full select-none object-cover opacity-55"
-            />
-            <img
-              src={fadingWater.url}
-              alt=""
-              draggable={false}
-              className="pm-fluid-cover-b absolute inset-0 h-full w-full -scale-x-100 select-none object-cover opacity-35"
-            />
-          </div>
-        )}
+            >
+              <img
+                data-testid={isSlotActive ? 'live-backdrop-img' : undefined}
+                src={backdropSlots.urls[slotIdx]}
+                alt=""
+                draggable={false}
+                className="pm-fluid-cover-a absolute inset-0 h-full w-full select-none object-cover opacity-55"
+                style={slotIdx === 1 ? { animationDelay: '-6s' } : undefined}
+              />
+              <img
+                src={backdropSlots.urls[slotIdx]}
+                alt=""
+                draggable={false}
+                className="pm-fluid-cover-b absolute inset-0 h-full w-full -scale-x-100 select-none object-cover opacity-35"
+                style={slotIdx === 1 ? { animationDelay: '-9s' } : undefined}
+              />
+            </div>
+          );
+        })}
 
         {/* GPU-Composited Living Fluid Cover-Palette Orbs (True circles + closest-side fade = zero box seams) */}
         <div className="pm-orb-1 pointer-events-none absolute -left-[20vmax] -top-[16vmax] h-[78vmax] w-[78vmax] rounded-full mix-blend-screen" />
