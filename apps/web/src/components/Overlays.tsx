@@ -860,7 +860,7 @@ export const NowPlayingSheet: React.FC = () => {
           : 'mx-auto flex h-full w-full max-w-[420px] justify-center gap-5 pb-4 md:h-auto md:justify-center md:gap-5 md:py-0'
       }`}
     >
-      {/* Large Borderless Centerpiece Artwork with 3D Spatial Floating Card Orbit & swipe skip */}
+      {/* Large Borderless Centerpiece Artwork with 6-face Morphing-Corner 3D Cube & swipe skip */}
       <div
         key={
           cfActive || isPostCrossfadeSameTrack
@@ -896,7 +896,7 @@ export const NowPlayingSheet: React.FC = () => {
               : 'pm-cover-slide-next'
         } relative aspect-square ${
           cfActive ? 'overflow-visible bg-transparent' : 'overflow-hidden bg-[#111115] shadow-[0_26px_64px_rgba(0,0,0,0.58)]'
-        } rounded-[14px] transition-transform duration-300 ease-out md:rounded-[16px] ${
+        } rounded-[16px] transition-transform duration-300 ease-out ${
           compact
             ? 'w-[min(68vw,320px,36dvh)] xl:w-[min(68vw,346px,38dvh)]'
             : 'w-[min(86vw,356px,42dvh)] md:w-[min(74vw,340px,38dvh)] xl:w-[min(74vw,380px,42dvh)]'
@@ -909,53 +909,78 @@ export const NowPlayingSheet: React.FC = () => {
             for (let i = 0; i < seed.length; i++) {
               hash = (hash * 33 + seed.charCodeAt(i)) | 0;
             }
-            const orbitDirs = [
-              { outAnim: 'pmCardOutLeft', inAnim: 'pmCardInRight' },
-              { outAnim: 'pmCardOutRight', inAnim: 'pmCardInLeft' },
-              { outAnim: 'pmCardOutDown', inAnim: 'pmCardInTop' },
-              { outAnim: 'pmCardOutUp', inAnim: 'pmCardInBottom' },
+            const dirs = [
+              { anim: 'pmCubeFromTop', face: 'pm-cube-face-top' },
+              { anim: 'pmCubeFromBottom', face: 'pm-cube-face-bottom' },
+              { anim: 'pmCubeFromRight', face: 'pm-cube-face-right' },
+              { anim: 'pmCubeFromLeft', face: 'pm-cube-face-left' },
             ] as const;
-            const chosen = orbitDirs[Math.abs(hash) % orbitDirs.length] ?? orbitDirs[0];
+            const chosen = dirs[Math.abs(hash) % dirs.length] ?? dirs[0];
             const outCover = outgoingTransitionTrack.thumbnailHighUrl ?? outgoingTransitionTrack.thumbnailUrl;
             const inCover = incomingTransitionTrack.thumbnailHighUrl ?? incomingTransitionTrack.thumbnailUrl;
+            const sideFaces = [
+              'pm-cube-face-back',
+              'pm-cube-face-top',
+              'pm-cube-face-bottom',
+              'pm-cube-face-right',
+              'pm-cube-face-left',
+            ].filter((f) => f !== chosen.face);
 
             return (
-              <div className="pm-card-orbit-stage relative h-full w-full">
+              <div className="pm-cube-viewport relative h-full w-full">
                 <div
-                  className="pointer-events-none absolute inset-0 overflow-hidden rounded-[14px] bg-[#111115] shadow-[0_26px_64px_rgba(0,0,0,0.58)] md:rounded-[16px]"
+                  className="pm-cube-prism"
                   style={{
-                    animation: `${chosen.outAnim} ${cfAnimDurationSec}s cubic-bezier(0.32, 0.04, 0.22, 1) forwards`,
+                    animation: `${chosen.anim} ${cfAnimDurationSec}s cubic-bezier(0.32, 0.05, 0.22, 1) forwards`,
                   }}
                 >
-                  <img
-                    src={outCover}
-                    alt={outgoingTransitionTrack.title}
-                    draggable={false}
-                    className="h-full w-full select-none object-cover"
-                  />
                   <div
-                    aria-hidden="true"
-                    className="pm-cube-shade-out absolute inset-0"
+                    className="pm-cube-face-front pm-cube-corner-morph overflow-hidden shadow-[0_26px_64px_rgba(0,0,0,0.58)]"
                     style={{ animationDuration: `${cfAnimDurationSec}s` }}
-                  />
-                </div>
-                <div
-                  className="pointer-events-none absolute inset-0 overflow-hidden rounded-[14px] bg-[#111115] shadow-[0_26px_64px_rgba(0,0,0,0.58)] md:rounded-[16px]"
-                  style={{
-                    animation: `${chosen.inAnim} ${cfAnimDurationSec}s cubic-bezier(0.32, 0.04, 0.22, 1) forwards`,
-                  }}
-                >
-                  <img
-                    src={inCover}
-                    alt={incomingTransitionTrack.title}
-                    draggable={false}
-                    className="h-full w-full select-none object-cover"
-                  />
+                  >
+                    <img
+                      src={outCover}
+                      alt={outgoingTransitionTrack.title}
+                      draggable={false}
+                      className="h-full w-full select-none object-cover"
+                    />
+                    <div
+                      aria-hidden="true"
+                      className="pm-cube-shade-out absolute inset-0"
+                      style={{ animationDuration: `${cfAnimDurationSec}s` }}
+                    />
+                  </div>
                   <div
-                    aria-hidden="true"
-                    className="pm-card-orbit-sheen absolute -inset-1/2"
+                    className={`${chosen.face} pm-cube-corner-morph overflow-hidden shadow-[0_26px_64px_rgba(0,0,0,0.58)]`}
                     style={{ animationDuration: `${cfAnimDurationSec}s` }}
-                  />
+                  >
+                    <img
+                      src={inCover}
+                      alt={incomingTransitionTrack.title}
+                      draggable={false}
+                      className="h-full w-full select-none object-cover"
+                    />
+                    <div
+                      aria-hidden="true"
+                      className="pm-cube-light-in absolute inset-0"
+                      style={{ animationDuration: `${cfAnimDurationSec}s` }}
+                    />
+                  </div>
+                  {sideFaces.map((sideFace) => (
+                    <div
+                      key={sideFace}
+                      aria-hidden="true"
+                      className={`${sideFace} pm-cube-side-wall overflow-hidden`}
+                      style={{ animationDuration: `${cfAnimDurationSec}s` }}
+                    >
+                      <img
+                        src={outCover}
+                        alt=""
+                        draggable={false}
+                        className="h-full w-full scale-110 select-none object-cover opacity-20 blur-md"
+                      />
+                    </div>
+                  ))}
                 </div>
               </div>
             );
@@ -976,11 +1001,11 @@ export const NowPlayingSheet: React.FC = () => {
             ? 'cf-meta-stage'
             : `meta-${incomingPreviewTrack?.id ?? currentTrack.id}`
         }
-        className={`${cfActive || isPostCrossfadeSameTrack ? '' : 'pm-track-meta-in'} flex w-full flex-col gap-0.5 md:gap-1`}
+        className={`${cfActive || isPostCrossfadeSameTrack ? '' : 'pm-track-meta-in'} flex w-full flex-col gap-0.5`}
       >
         {cfActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
           <>
-            <div className="flex w-full items-center justify-between gap-2">
+            <div className="flex h-9 w-full items-center justify-between gap-2">
               <div className="relative min-w-0 flex-1">
                 <h1
                   aria-hidden="true"
@@ -1045,7 +1070,7 @@ export const NowPlayingSheet: React.FC = () => {
               </div>
             </div>
 
-            <div className="relative w-full text-[14px] leading-snug text-white/70">
+            <div className="relative min-h-[20px] w-full text-[14px] leading-[1.3] text-white/70">
               <div
                 aria-hidden="true"
                 className="pointer-events-none absolute inset-0 flex items-center gap-x-1.5 truncate"
@@ -1091,7 +1116,7 @@ export const NowPlayingSheet: React.FC = () => {
           </>
         ) : (
           <>
-            <div className="flex w-full items-center justify-between gap-2">
+            <div className="flex h-9 w-full items-center justify-between gap-2">
               <h1 className="min-w-0 flex-1 truncate text-[21px] font-bold leading-snug tracking-tight text-white md:text-[23px]">
                 {currentTrack.title}
               </h1>
@@ -1176,11 +1201,11 @@ export const NowPlayingSheet: React.FC = () => {
               </div>
             </div>
 
-            {/* Full-Width Artist · Album Line so multi-artist collaborations never truncate unnecessarily */}
-            <div className="flex w-full flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[14px] leading-snug text-white/70">
+            {/* Full-Width Artist · Album Line so multi-artist collaborations match transition spacing */}
+            <div className="flex min-h-[20px] w-full flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[14px] leading-[1.3] text-white/70">
               <ArtistLinks
                 artists={currentTrack.artists}
-                className="flex-wrap"
+                className="flex flex-wrap !py-0 !leading-[1.3]"
                 onBeforeNavigate={() => setNowPlayingOpen(false)}
                 linkClassName="hover:text-white hover:underline"
               />
@@ -3033,6 +3058,7 @@ export const AudioStudioSheet: React.FC = () => {
     setEqSheetOpen,
     setDjPopoverOpen,
     nowPlayingOpen,
+    playerBarStyle,
     userEq,
     safeCrossfade,
     djMode,
@@ -3065,7 +3091,7 @@ export const AudioStudioSheet: React.FC = () => {
       if (
         target instanceof Element &&
         target.closest(
-          '[data-testid="audio-studio-sheet"], [data-testid="eq-sheet"], [data-testid="dj-popover"], [data-testid="dock-eq-btn"], [data-testid="dock-dj-btn"], [data-testid="nowplaying-eq-btn"], [data-testid="nowplaying-dj-btn"], [data-testid="mobile-eq-btn"], [data-testid="mobile-dj-btn"]'
+          '[data-testid="audio-studio-sheet"], [data-testid="eq-sheet"], [data-testid="dj-popover"], [data-testid="dock-eq-btn"], [data-testid="dock-dj-btn"], [data-testid="nowplaying-eq-btn"], [data-testid="nowplaying-dj-btn"], [data-testid="mobile-eq-btn"], [data-testid="mobile-dj-btn"], [data-testid="island-effects-btn"], [data-testid="island-effect-dj"], [data-testid="island-effect-eq"]'
         )
       ) {
         return;
@@ -3101,8 +3127,12 @@ export const AudioStudioSheet: React.FC = () => {
         aria-modal="false"
         aria-label={audioPanelTab === 'dj' ? 'Modo Sesión DJ y Efectos' : 'Ecualizador y Crossfade'}
         data-testid={audioPanelTab === 'dj' ? 'dj-popover' : 'eq-sheet'}
-        className={`pm-glass-frosted-neutral pm-hud-dark pm-popover-enter fixed inset-x-0 bottom-0 z-[65] max-h-[82dvh] overflow-y-auto rounded-t-[28px] px-5 pt-3 pb-[max(1.5rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] pm-no-scrollbar sm:inset-x-auto sm:mx-0 sm:w-[376px] sm:rounded-[24px] sm:p-4 sm:right-6 ${
-          nowPlayingOpen ? 'sm:bottom-[74px]' : 'sm:bottom-[104px]'
+        className={`pm-glass-frosted-neutral pm-hud-dark pm-popover-enter fixed inset-x-0 bottom-0 z-[65] max-h-[82dvh] overflow-y-auto rounded-t-[28px] px-5 pt-3 pb-[max(1.5rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] pm-no-scrollbar sm:inset-x-auto sm:mx-0 sm:w-[376px] sm:rounded-[24px] sm:p-4 ${
+          nowPlayingOpen
+            ? 'sm:right-6 sm:bottom-[74px]'
+            : playerBarStyle === 'floating-island'
+              ? 'sm:right-[max(16px,calc(50%-440px))] sm:bottom-[94px]'
+              : 'sm:right-6 sm:bottom-[104px]'
         }`}
       >
         <div className="mb-3 flex items-center justify-between gap-2 sm:hidden">

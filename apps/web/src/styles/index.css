@@ -1763,16 +1763,11 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   transform-style: preserve-3d;
 }
 
-/* ── True Hardware-Accelerated 3D Spatial Floating Card Orbit & Dock Prism (60/120fps GPU) ── */
+/* ── True Hardware-Accelerated 6-Face Morphing-Corner 3D Cube & Dock Prism (60/120fps GPU) ── */
 .pm-cube-viewport {
   container-type: size;
-  perspective: 1100px;
+  perspective: 960px;
   overflow: visible;
-}
-
-.pm-card-orbit-stage {
-  perspective: 1100px;
-  transform-style: preserve-3d;
 }
 
 .pm-cube-prism {
@@ -1783,137 +1778,140 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   will-change: transform;
 }
 
-@keyframes pmCardOutLeft {
+@keyframes pmCubeFromTop {
   0% {
-    transform: translate3d(0, 0, 0) rotateY(0deg) rotateX(0deg) scale(1);
-    opacity: 1;
-    filter: blur(0px);
+    transform: translateZ(-50cqh) rotateX(0deg) rotateY(0deg);
+  }
+  46% {
+    transform: translateZ(-76cqh) rotateX(-46deg) rotateY(15deg);
   }
   100% {
-    transform: translate3d(-38%, -4%, -180px) rotateY(28deg) rotateX(6deg) scale(0.84);
-    opacity: 0;
-    filter: blur(4px);
+    transform: translateZ(-50cqh) rotateX(-90deg) rotateY(0deg);
   }
 }
 
-@keyframes pmCardInRight {
+@keyframes pmCubeFromBottom {
   0% {
-    transform: translate3d(38%, 4%, -150px) rotateY(-26deg) rotateX(-6deg) scale(0.86);
-    opacity: 0;
-    filter: blur(4px);
+    transform: translateZ(-50cqh) rotateX(0deg) rotateY(0deg);
   }
-  26% {
+  46% {
+    transform: translateZ(-76cqh) rotateX(46deg) rotateY(-15deg);
+  }
+  100% {
+    transform: translateZ(-50cqh) rotateX(90deg) rotateY(0deg);
+  }
+}
+
+@keyframes pmCubeFromRight {
+  0% {
+    transform: translateZ(-50cqh) rotateY(0deg) rotateX(0deg);
+  }
+  46% {
+    transform: translateZ(-76cqh) rotateY(-46deg) rotateX(13deg);
+  }
+  100% {
+    transform: translateZ(-50cqh) rotateY(-90deg) rotateX(0deg);
+  }
+}
+
+@keyframes pmCubeFromLeft {
+  0% {
+    transform: translateZ(-50cqh) rotateY(0deg) rotateX(0deg);
+  }
+  46% {
+    transform: translateZ(-76cqh) rotateY(46deg) rotateX(-13deg);
+  }
+  100% {
+    transform: translateZ(-50cqh) rotateY(90deg) rotateX(0deg);
+  }
+}
+
+.pm-cube-face-front {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  transform: rotateX(0deg) translateZ(50cqh);
+}
+
+.pm-cube-face-back {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  transform: rotateY(180deg) translateZ(50cqh);
+}
+
+.pm-cube-face-top {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  transform: rotateX(90deg) translateZ(50cqh);
+}
+
+.pm-cube-face-bottom {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  transform: rotateX(-90deg) translateZ(50cqh);
+}
+
+.pm-cube-face-right {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  transform: rotateY(90deg) translateZ(50cqh);
+}
+
+.pm-cube-face-left {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  transform: rotateY(-90deg) translateZ(50cqh);
+}
+
+@keyframes pmCubeCornerMorph {
+  0% {
+    border-radius: 16px;
+  }
+  14% {
+    border-radius: 2px;
+  }
+  84% {
+    border-radius: 2px;
+  }
+  100% {
+    border-radius: 16px;
+  }
+}
+
+.pm-cube-corner-morph {
+  animation: pmCubeCornerMorph 4s cubic-bezier(0.32, 0.05, 0.22, 1) forwards;
+}
+
+@keyframes pmCubeSideWallVis {
+  0% {
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  88% {
     opacity: 1;
   }
   100% {
-    transform: translate3d(0, 0, 0) rotateY(0deg) rotateX(0deg) scale(1);
-    opacity: 1;
-    filter: blur(0px);
-  }
-}
-
-@keyframes pmCardOutRight {
-  0% {
-    transform: translate3d(0, 0, 0) rotateY(0deg) rotateX(0deg) scale(1);
-    opacity: 1;
-    filter: blur(0px);
-  }
-  100% {
-    transform: translate3d(38%, -4%, -180px) rotateY(-28deg) rotateX(6deg) scale(0.84);
     opacity: 0;
-    filter: blur(4px);
   }
 }
 
-@keyframes pmCardInLeft {
-  0% {
-    transform: translate3d(-38%, 4%, -150px) rotateY(26deg) rotateX(-6deg) scale(0.86);
-    opacity: 0;
-    filter: blur(4px);
-  }
-  26% {
-    opacity: 1;
-  }
-  100% {
-    transform: translate3d(0, 0, 0) rotateY(0deg) rotateX(0deg) scale(1);
-    opacity: 1;
-    filter: blur(0px);
-  }
-}
-
-@keyframes pmCardOutDown {
-  0% {
-    transform: translate3d(0, 0, 0) rotateX(0deg) rotateY(0deg) scale(1);
-    opacity: 1;
-    filter: blur(0px);
-  }
-  100% {
-    transform: translate3d(-6%, 34%, -180px) rotateX(-24deg) rotateY(10deg) scale(0.84);
-    opacity: 0;
-    filter: blur(4px);
-  }
-}
-
-@keyframes pmCardInTop {
-  0% {
-    transform: translate3d(6%, -34%, -150px) rotateX(24deg) rotateY(-10deg) scale(0.86);
-    opacity: 0;
-    filter: blur(4px);
-  }
-  26% {
-    opacity: 1;
-  }
-  100% {
-    transform: translate3d(0, 0, 0) rotateX(0deg) rotateY(0deg) scale(1);
-    opacity: 1;
-    filter: blur(0px);
-  }
-}
-
-@keyframes pmCardOutUp {
-  0% {
-    transform: translate3d(0, 0, 0) rotateX(0deg) rotateY(0deg) scale(1);
-    opacity: 1;
-    filter: blur(0px);
-  }
-  100% {
-    transform: translate3d(6%, -34%, -180px) rotateX(24deg) rotateY(-10deg) scale(0.84);
-    opacity: 0;
-    filter: blur(4px);
-  }
-}
-
-@keyframes pmCardInBottom {
-  0% {
-    transform: translate3d(-6%, 34%, -150px) rotateX(-24deg) rotateY(10deg) scale(0.86);
-    opacity: 0;
-    filter: blur(4px);
-  }
-  26% {
-    opacity: 1;
-  }
-  100% {
-    transform: translate3d(0, 0, 0) rotateX(0deg) rotateY(0deg) scale(1);
-    opacity: 1;
-    filter: blur(0px);
-  }
-}
-
-@keyframes pmCardOrbitSheen {
-  0% {
-    opacity: 0.34;
-    transform: translate3d(-25%, -25%, 0) rotate(24deg);
-  }
-  65%, 100% {
-    opacity: 0;
-    transform: translate3d(35%, 35%, 0) rotate(24deg);
-  }
-}
-
-.pm-card-orbit-sheen {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.38) 0%, rgba(255, 255, 255, 0) 58%);
-  animation: pmCardOrbitSheen 4s ease-out forwards;
-  pointer-events: none;
+.pm-cube-side-wall {
+  border-radius: 2px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.22) 0%,
+    rgba(24, 24, 32, 0.94) 45%,
+    rgba(8, 8, 14, 0.99) 100%
+  );
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+  animation: pmCubeSideWallVis 4s linear forwards;
 }
 
 @keyframes pmCubeShadeOut {
@@ -1976,7 +1974,7 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   transform: rotateX(90deg) translateZ(26px);
 }
 
-/* Dock Heart Fade-Out before roll & Fade-In after song settles */
+/* Dock Heart Slow Silk Fade-Out before roll & Fade-In after song settles */
 @keyframes pmDockHeartOut {
   0% {
     opacity: 1;
@@ -1989,7 +1987,7 @@ html.pm-solid-modern .pm-spotlight-backdrop {
 }
 
 .pm-dock-heart-out {
-  animation: pmDockHeartOut 260ms ease-out forwards;
+  animation: pmDockHeartOut 650ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
   pointer-events: none;
 }
 
@@ -2005,7 +2003,7 @@ html.pm-solid-modern .pm-spotlight-backdrop {
 }
 
 .pm-dock-heart-in {
-  animation: pmDockHeartIn 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: pmDockHeartIn 750ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 /* Gaussian Blur Crossfade for NowPlaying Big Title & Artist */
@@ -3242,7 +3240,8 @@ html.pm-solid-modern .pm-mobile-glass-header {
   .pm-cube-prism,
   .pm-cube-shade-out,
   .pm-cube-light-in,
-  .pm-card-orbit-sheen,
+  .pm-cube-corner-morph,
+  .pm-cube-side-wall,
   .pm-dock-heart-out,
   .pm-dock-heart-in,
   .pm-dock-color-collapse,
@@ -3339,7 +3338,8 @@ html.pm-reduced-motion .pm-water-eddy-b,
 html.pm-reduced-motion .pm-cube-prism,
 html.pm-reduced-motion .pm-cube-shade-out,
 html.pm-reduced-motion .pm-cube-light-in,
-html.pm-reduced-motion .pm-card-orbit-sheen,
+html.pm-reduced-motion .pm-cube-corner-morph,
+html.pm-reduced-motion .pm-cube-side-wall,
 html.pm-reduced-motion .pm-dock-heart-out,
 html.pm-reduced-motion .pm-dock-heart-in,
 html.pm-reduced-motion .pm-dock-color-collapse,

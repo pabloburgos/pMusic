@@ -5,10 +5,12 @@ import {
   Compass,
   Disc3,
   Download,
+  GripVertical,
   Heart,
   Home,
   Library,
   ListMusic,
+  ListStart,
   Loader2,
   Maximize2,
   Mic2,
@@ -29,6 +31,7 @@ import {
   Volume2,
   VolumeX,
   Wifi,
+  X,
 } from 'lucide-react';
 import {
   AnimatedShuffleIcon,
@@ -37,7 +40,7 @@ import {
   RoundedPauseIcon,
   RoundedPlayIcon,
 } from './components/TransportIcons.tsx';
-import { formatDurationSec } from '@pmusic/core';
+import { formatDurationSec, type Track } from '@pmusic/core';
 import {
   getLivePlaybackPosition,
   usePMusicStore,
@@ -162,6 +165,11 @@ const PMusicMainApp: React.FC = () => {
     likeTrackIfNeeded,
     createPlaylist,
     addTrackToPlaylist,
+    moveQueueItem,
+    removeQueueItem,
+    addToQueue,
+    playNextInQueue,
+    searchTracksForPlaylist,
     openTrackMenu,
     showToast,
     downloadTrackOffline,
@@ -176,6 +184,12 @@ const PMusicMainApp: React.FC = () => {
   const [heartBurst, setHeartBurst] = useState(false);
   const [dockHeartBurstKey, setDockHeartBurstKey] = useState(0);
   const [dockHeartPhase, setDockHeartPhase] = useState<'idle' | 'fading-in'>('idle');
+  const [sidebarDragFromIdx, setSidebarDragFromIdx] = useState<number | null>(null);
+  const [sidebarDragOverIdx, setSidebarDragOverIdx] = useState<number | null>(null);
+  const [sidebarSearchQuery, setSidebarSearchQuery] = useState('');
+  const [sidebarSearchResults, setSidebarSearchResults] = useState<Track[]>([]);
+  const [sidebarSearchLoading, setSidebarSearchLoading] = useState(false);
+  const [sidebarAddedIds, setSidebarAddedIds] = useState<Record<string, boolean>>({});
   const [dockTransportAnim, setDockTransportAnim] = useState<
     'prev' | 'next' | 'play' | 'shuffle' | 'repeat' | null
   >(null);
@@ -262,11 +276,41 @@ const PMusicMainApp: React.FC = () => {
       if (dockHeartPhaseTimerRef.current) clearTimeout(dockHeartPhaseTimerRef.current);
       dockHeartPhaseTimerRef.current = setTimeout(() => {
         setDockHeartPhase('idle');
-      }, 360);
+      }, 820);
     } else if (lastDockCrossfadeIdRef.current && lastDockCrossfadeIdRef.current !== currentTrack.id) {
       lastDockCrossfadeIdRef.current = null;
     }
   }, [isTransitioning, outgoingTransitionTrack, incomingTransitionTrack, currentTrack.id, reducedMotionPref]);
+
+  useEffect(() => {
+    const q = sidebarSearchQuery.trim();
+    if (!q) {
+      setSidebarSearchResults([]);
+      setSidebarSearchLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setSidebarSearchLoading(true);
+    const timer = setTimeout(() => {
+      void searchTracksForPlaylist(q)
+        .then((tracks) => {
+          if (!cancelled) {
+            setSidebarSearchResults(tracks.slice(0, 5));
+            setSidebarSearchLoading(false);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setSidebarSearchResults([]);
+            setSidebarSearchLoading(false);
+          }
+        });
+    }, 220);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [sidebarSearchQuery, searchTracksForPlaylist]);
 
   useEffect(() => {
     const now = typeof performance !== 'undefined' ? performance.now() : 0;
@@ -613,7 +657,7 @@ const PMusicMainApp: React.FC = () => {
     Math.min(100, (liveDockPosSec / Math.max(1, durationSec)) * 100)
   );
   const volumePct = Math.round(volume * 100);
-  const upNextQueue = queue.slice(queueIndex + 1, queueIndex + 6);
+  const upNextQueue = queue.slice(queueIndex + 1, queueIndex + 25);
   const cueStartPct =
     djMode.enabled && activeTransitionPlan && durationSec > 10
       ? Math.max(0, Math.min(96, (activeTransitionPlan.cueOutSec / durationSec) * 100))
@@ -1495,7 +1539,7 @@ const PMusicMainApp: React.FC = () => {
               </div>
             )}
 
-            {/* Next in Queue Preview */}
+            {/* Next in Queue Preview with Drag-and-Drop Reorder + Quick Song Search */}
             <div className="space-y-2.5 border-t pm-border pt-4">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold pm-text-primary">
@@ -1513,45 +1557,188 @@ const PMusicMainApp: React.FC = () => {
                 </button>
               </div>
 
-              <div className="space-y-1">
-                {upNextQueue.map((track) => (
-                  <div
-                    key={track.id}
-                    draggable
-                    onDragStart={(e) => setDraggedTrack(e, track)}
-                    onDragEnd={() => clearDraggedTrack()}
-                    className="pm-hover flex w-full cursor-grab items-center gap-2.5 rounded-[8px] p-1.5 active:cursor-grabbing"
+              {/* Compact Quick Search to Add Songs Straight to Queue */}
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 pm-text-tertiary" />
+                <input
+                  type="text"
+                  data-testid="sidebar-queue-search-input"
+                  value={sidebarSearchQuery}
+                  onChange={(e) => setSidebarSearchQuery(e.target.value)}
+                  placeholder="Añadir canción a la cola…"
+                  aria-label="Buscar canción para añadir a la cola"
+                  className="w-full rounded-[10px] border pm-border bg-white/[0.04] py-1.5 pl-8 pr-7 text-[12px] pm-text-primary placeholder:pm-text-tertiary focus:border-white/25 focus:outline-none"
+                />
+                {sidebarSearchQuery.length > 0 && (
+                  <button
+                    type="button"
+                    aria-label="Limpiar búsqueda de cola"
+                    onClick={() => setSidebarSearchQuery('')}
+                    className="absolute right-1.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full pm-text-tertiary hover:bg-white/10 hover:text-[var(--pm-text-primary)]"
                   >
-                    <button
-                      type="button"
-                      aria-label={`Reproducir ${track.title}`}
-                      onClick={() => void playTrack(track, queue)}
-                      className="h-10 w-10 shrink-0 overflow-hidden rounded-[6px]"
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+
+              {sidebarSearchQuery.trim().length > 0 && (
+                <div
+                  data-testid="sidebar-queue-search-results"
+                  className="space-y-1 rounded-[12px] border pm-border bg-black/25 p-1.5"
+                >
+                  {sidebarSearchLoading ? (
+                    <div className="flex items-center justify-center py-3">
+                      <Loader2 className="h-4 w-4 animate-spin pm-text-tertiary" />
+                    </div>
+                  ) : sidebarSearchResults.length === 0 ? (
+                    <div className="py-2 text-center text-[11px] pm-text-tertiary">
+                      Sin resultados
+                    </div>
+                  ) : (
+                    sidebarSearchResults.map((resTrack) => {
+                      const wasAdded = Boolean(sidebarAddedIds[resTrack.id]);
+                      return (
+                        <div
+                          key={`sb-search-${resTrack.id}`}
+                          data-testid={`sidebar-queue-search-result-${resTrack.id}`}
+                          className="pm-hover flex items-center gap-2 rounded-[8px] p-1"
+                        >
+                          <img
+                            src={resTrack.thumbnailUrl}
+                            alt=""
+                            className="h-8 w-8 shrink-0 rounded-[5px] object-cover"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-[12px] font-medium pm-text-primary">
+                              {resTrack.title}
+                            </div>
+                            <div className="truncate text-[10.5px] pm-text-tertiary">
+                              {resTrack.artists.map((a) => a.name).join(', ')}
+                            </div>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-0.5">
+                            <button
+                              type="button"
+                              title="Reproducir a continuación"
+                              aria-label={`Poner ${resTrack.title} a continuación`}
+                              onClick={() => {
+                                playNextInQueue(resTrack);
+                                setSidebarAddedIds((p) => ({ ...p, [resTrack.id]: true }));
+                              }}
+                              className="pm-pressable flex h-6 w-6 items-center justify-center rounded-full pm-text-secondary hover:bg-white/15 hover:text-[var(--pm-text-primary)]"
+                            >
+                              <ListStart className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              title="Añadir al final de la cola"
+                              aria-label={`Añadir ${resTrack.title} a la cola`}
+                              onClick={() => {
+                                addToQueue(resTrack);
+                                setSidebarAddedIds((p) => ({ ...p, [resTrack.id]: true }));
+                              }}
+                              className="pm-pressable flex h-6 w-6 items-center justify-center rounded-full pm-text-secondary hover:bg-white/15 hover:text-[var(--pm-text-primary)]"
+                            >
+                              {wasAdded ? (
+                                <Check className="h-3.5 w-3.5 text-emerald-400" />
+                              ) : (
+                                <Plus className="h-3.5 w-3.5" />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+
+              <div className="space-y-1">
+                {upNextQueue.map((track, offset) => {
+                  const realIdx = queueIndex + 1 + offset;
+                  const isDropTarget =
+                    sidebarDragOverIdx === realIdx && sidebarDragFromIdx !== realIdx;
+                  return (
+                    <div
+                      key={`${track.id}-${realIdx}`}
+                      data-testid={`sidebar-queue-item-${track.id}`}
+                      draggable
+                      onDragStart={(e) => {
+                        setSidebarDragFromIdx(realIdx);
+                        setDraggedTrack(e, track);
+                      }}
+                      onDragOver={(e) => {
+                        if (sidebarDragFromIdx !== null) {
+                          e.preventDefault();
+                          if (sidebarDragOverIdx !== realIdx) {
+                            setSidebarDragOverIdx(realIdx);
+                          }
+                        }
+                      }}
+                      onDrop={(e) => {
+                        if (sidebarDragFromIdx !== null) {
+                          e.preventDefault();
+                          moveQueueItem(sidebarDragFromIdx, realIdx);
+                          setSidebarDragFromIdx(null);
+                          setSidebarDragOverIdx(null);
+                        }
+                      }}
+                      onDragEnd={() => {
+                        setSidebarDragFromIdx(null);
+                        setSidebarDragOverIdx(null);
+                        clearDraggedTrack();
+                      }}
+                      className={`pm-hover group/q flex w-full cursor-grab items-center gap-2 rounded-[8px] p-1.5 transition-colors active:cursor-grabbing ${
+                        isDropTarget ? 'border-t-2 border-[var(--pm-accent-primary)] bg-white/[0.06]' : ''
+                      } ${sidebarDragFromIdx === realIdx ? 'opacity-50' : ''}`}
                     >
-                      <img
-                        src={track.thumbnailUrl}
-                        alt=""
-                        draggable={false}
-                        className="pointer-events-none h-full w-full select-none object-cover"
+                      <GripVertical
+                        aria-hidden="true"
+                        className="h-3.5 w-3.5 shrink-0 pm-text-tertiary opacity-40 transition-opacity group-hover/q:opacity-90"
                       />
-                    </button>
-                    <div className="min-w-0 flex-1">
                       <button
                         type="button"
+                        aria-label={`Reproducir ${track.title}`}
                         onClick={() => void playTrack(track, queue)}
-                        className="block max-w-full truncate text-left text-[13px] font-medium pm-text-primary hover:underline"
+                        className="h-9 w-9 shrink-0 overflow-hidden rounded-[6px]"
                       >
-                        {track.title}
-                      </button>
-                      <div className="truncate text-[11.5px] pm-text-tertiary">
-                        <ArtistLinks
-                          artists={track.artists}
-                          linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
+                        <img
+                          src={track.thumbnailUrl}
+                          alt=""
+                          draggable={false}
+                          className="pointer-events-none h-full w-full select-none object-cover"
                         />
+                      </button>
+                      <div className="min-w-0 flex-1">
+                        <button
+                          type="button"
+                          onClick={() => void playTrack(track, queue)}
+                          className="block max-w-full truncate text-left text-[12.5px] font-medium pm-text-primary hover:underline"
+                        >
+                          {track.title}
+                        </button>
+                        <div className="truncate text-[11px] pm-text-tertiary">
+                          <ArtistLinks
+                            artists={track.artists}
+                            className="flex !py-0 !leading-[1.25]"
+                            linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
+                          />
+                        </div>
                       </div>
+                      <button
+                        type="button"
+                        aria-label={`Quitar ${track.title} de la cola`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeQueueItem(realIdx);
+                        }}
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full pm-text-tertiary opacity-0 transition-opacity hover:bg-white/10 hover:text-[var(--pm-text-primary)] group-hover/q:opacity-100"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </aside>
@@ -1789,10 +1976,12 @@ const PMusicMainApp: React.FC = () => {
                             />
                           </button>
                           <div className="min-w-0 max-w-[200px] xl:max-w-[240px]">
-                            <div className="block max-w-full truncate text-left text-[14px] font-semibold leading-[1.15] pm-text-primary">
-                              {trackItem.title}
+                            <div className="flex h-[17px] items-center">
+                              <div className="block max-w-full truncate text-left text-[14px] font-semibold leading-[1.15] pm-text-primary">
+                                {trackItem.title}
+                              </div>
                             </div>
-                            <div className="mt-[1px] flex items-center gap-1.5 truncate">
+                            <div className="mt-[2px] flex h-[15px] items-center gap-1.5 truncate">
                               {trackItem.isExplicit && (
                                 <span
                                   aria-label="Explícita"
@@ -1801,7 +1990,7 @@ const PMusicMainApp: React.FC = () => {
                                   E
                                 </span>
                               )}
-                              <div className="truncate text-[12px] leading-[1.2] pm-text-secondary">
+                              <div className="flex min-w-0 items-center truncate text-[12px] leading-[1.2] pm-text-secondary">
                                 {trackItem.artists.map((a) => a.name).join(', ')}
                               </div>
                             </div>
@@ -1840,7 +2029,7 @@ const PMusicMainApp: React.FC = () => {
               draggable
               onDragStart={(e) => setDraggedTrack(e, currentTrack)}
               onDragEnd={() => clearDraggedTrack()}
-              className="pm-dock-interactive pointer-events-auto inline-flex min-w-0 max-w-full cursor-grab items-center gap-3 active:cursor-grabbing"
+              className="pm-dock-interactive pointer-events-auto inline-flex h-[52px] min-w-0 max-w-full cursor-grab items-center gap-3 active:cursor-grabbing"
             >
               <button
                 type="button"
@@ -1876,14 +2065,16 @@ const PMusicMainApp: React.FC = () => {
               </button>
 
               <div className="min-w-0 max-w-[200px] xl:max-w-[240px]">
-                <button
-                  type="button"
-                  onClick={() => setNowPlayingOpen(true)}
-                  className="block max-w-full truncate text-left text-[14px] font-semibold leading-[1.15] pm-text-primary hover:underline"
-                >
-                  {currentTrack.title}
-                </button>
-                <div className="mt-[1px] flex items-center gap-1.5 truncate">
+                <div className="flex h-[17px] items-center">
+                  <button
+                    type="button"
+                    onClick={() => setNowPlayingOpen(true)}
+                    className="block max-w-full truncate text-left text-[14px] font-semibold leading-[1.15] pm-text-primary hover:underline"
+                  >
+                    {currentTrack.title}
+                  </button>
+                </div>
+                <div className="mt-[2px] flex h-[15px] items-center gap-1.5 truncate">
                   {currentTrack.isExplicit && (
                     <span
                       aria-label="Explícita"
@@ -1892,10 +2083,10 @@ const PMusicMainApp: React.FC = () => {
                       E
                     </span>
                   )}
-                  <div className="truncate text-[12px] leading-[1.2] pm-text-secondary">
+                  <div className="flex min-w-0 items-center truncate text-[12px] leading-[1.2] pm-text-secondary">
                     <ArtistLinks
                       artists={currentTrack.artists}
-                      className="!py-0 !leading-[1.2]"
+                      className="flex !py-0 !leading-[1.2]"
                       linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
                     />
                   </div>
@@ -2216,7 +2407,7 @@ const PMusicMainApp: React.FC = () => {
                     data-testid="island-effects-menu"
                     role="menu"
                     aria-label="Efectos y herramientas de reproducción"
-                    className="pm-glass-liquid pm-menu-pop pm-dock-interactive pointer-events-auto absolute right-0 bottom-[calc(100%+14px)] z-50 w-[264px] rounded-[22px] p-2.5 shadow-[0_22px_60px_rgba(0,0,0,0.68)]"
+                    className="pm-glass-frosted-neutral pm-hud-dark pm-menu-pop pm-dock-interactive pointer-events-auto absolute right-0 bottom-[calc(100%+14px)] z-50 w-[264px] rounded-[22px] border border-white/[0.14] p-2.5 shadow-[0_24px_64px_rgba(0,0,0,0.78)]"
                   >
                     <div className="mb-2 flex items-center justify-between px-1.5">
                       <span className="text-[11px] font-bold uppercase tracking-wider pm-text-tertiary">
@@ -2541,10 +2732,12 @@ const PMusicMainApp: React.FC = () => {
                               />
                             </button>
                             <div className="min-w-0 flex-1">
-                              <div className="block max-w-full truncate text-left text-[14px] font-semibold leading-[1.15] pm-text-primary">
-                                {trackItem.title}
+                              <div className="flex h-[17px] items-center">
+                                <div className="block max-w-full truncate text-left text-[14px] font-semibold leading-[1.15] pm-text-primary">
+                                  {trackItem.title}
+                                </div>
                               </div>
-                              <div className="mt-[1px] truncate text-xs leading-[1.2] pm-text-secondary">
+                              <div className="mt-[2px] flex h-[15px] items-center truncate text-xs leading-[1.2] pm-text-secondary">
                                 {trackItem.artists.map((a) => a.name).join(', ')}
                               </div>
                             </div>
@@ -2593,17 +2786,19 @@ const PMusicMainApp: React.FC = () => {
                       />
                     </button>
                     <div className="min-w-0 flex-1">
-                      <button
-                        type="button"
-                        onClick={() => setNowPlayingOpen(true)}
-                        className="block max-w-full truncate text-left text-[14px] font-semibold leading-[1.15] pm-text-primary hover:underline"
-                      >
-                        {currentTrack.title}
-                      </button>
-                      <div className="mt-[1px] truncate text-xs leading-[1.2] pm-text-secondary">
+                      <div className="flex h-[17px] items-center">
+                        <button
+                          type="button"
+                          onClick={() => setNowPlayingOpen(true)}
+                          className="block max-w-full truncate text-left text-[14px] font-semibold leading-[1.15] pm-text-primary hover:underline"
+                        >
+                          {currentTrack.title}
+                        </button>
+                      </div>
+                      <div className="mt-[2px] flex h-[15px] items-center truncate text-xs leading-[1.2] pm-text-secondary">
                         <ArtistLinks
                           artists={currentTrack.artists}
-                          className="!py-0 !leading-[1.2]"
+                          className="flex !py-0 !leading-[1.2]"
                           linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
                         />
                       </div>

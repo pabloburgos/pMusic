@@ -332,7 +332,7 @@ describe('@pmusic/web UI', () => {
 
   it('renders a compact 3-dots effects menu in Floating Island mode so right controls never overlap transport buttons', () => {
     act(() => {
-      usePMusicStore.setState({ playerBarStyle: 'floating-island' });
+      usePMusicStore.setState({ playerBarStyle: 'floating-island', nowPlayingOpen: false });
     });
     render(<App />);
 
@@ -343,9 +343,53 @@ describe('@pmusic/web UI', () => {
     fireEvent.click(effectsBtn);
     const menu = screen.getByTestId('island-effects-menu');
     expect(menu).toBeDefined();
+    expect(menu.className).toContain('pm-glass-frosted-neutral');
     expect(screen.getByTestId('island-effect-dj')).toBeDefined();
     expect(screen.getByTestId('island-effect-eq')).toBeDefined();
     expect(screen.getByTestId('island-effect-lyrics')).toBeDefined();
     expect(screen.getByTestId('island-effect-connect')).toBeDefined();
+
+    fireEvent.click(screen.getByTestId('island-effect-eq'));
+    const eqSheet = screen.getByTestId('eq-sheet');
+    expect(eqSheet.className).toContain('calc(50%-440px)');
+  });
+
+  it('supports drag-and-drop queue reordering and quick song search in the right sidebar queue panel', async () => {
+    const t1 = usePMusicStore.getState().homeShelves[0]!.tracks![0]!;
+    const t2 = usePMusicStore.getState().homeShelves[0]!.tracks![1]!;
+    const t3 = usePMusicStore.getState().homeShelves[0]!.tracks![2]!;
+
+    act(() => {
+      usePMusicStore.setState({
+        rightPanelOpen: true,
+        currentTrack: t1,
+        queue: [t1, t2, t3],
+        queueIndex: 0,
+        searchResults: {
+          query: '',
+          songs: [t3],
+          videos: [],
+          artists: [],
+          albums: [],
+          playlists: [],
+        },
+      });
+    });
+
+    render(<App />);
+    const item2 = screen.getByTestId(`sidebar-queue-item-${t2.id}`);
+    const item3 = screen.getByTestId(`sidebar-queue-item-${t3.id}`);
+
+    fireEvent.dragStart(item3);
+    fireEvent.dragOver(item2);
+    fireEvent.drop(item2);
+    expect(usePMusicStore.getState().queue.map((t) => t.id)).toEqual([t1.id, t3.id, t2.id]);
+
+    const searchInput = screen.getByTestId('sidebar-queue-search-input');
+    fireEvent.change(searchInput, { target: { value: t2.title.slice(0, 4) } });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 320));
+    });
+    expect(screen.getByTestId('sidebar-queue-search-results')).toBeDefined();
   });
 });
