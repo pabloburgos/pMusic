@@ -36,6 +36,8 @@ import {
   AnimatedShuffleIcon,
   AnimatedSkipBackIcon,
   AnimatedSkipForwardIcon,
+  RoundedPauseIcon,
+  RoundedPlayIcon,
 } from './TransportIcons.tsx';
 import {
   USER_EQ_FREQUENCIES_HZ,
@@ -261,6 +263,27 @@ export const NowPlayingSheet: React.FC = () => {
     coverUrl: currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl,
   });
   const lyricsScrollResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeWaterRef = useRef<{
+    key: string;
+    url: string;
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+    x3: number;
+    y3: number;
+  } | null>(null);
+  const fadingWaterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [fadingWater, setFadingWater] = useState<{
+    key: string;
+    url: string;
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+    x3: number;
+    y3: number;
+  } | null>(null);
 
   const markLyricsUserScrolled = () => {
     setLyricsUserScrolled(true);
@@ -291,6 +314,35 @@ export const NowPlayingSheet: React.FC = () => {
       lastCrossfadedTrackIdRef.current = incomingTransitionTrack.id;
     }
   }, [isTransitioning, incomingTransitionTrack]);
+
+  useEffect(() => {
+    const cfNow = Boolean(
+      isTransitioning &&
+        outgoingTransitionTrack &&
+        incomingTransitionTrack &&
+        outgoingTransitionTrack.id !== incomingTransitionTrack.id
+    );
+    if (cfNow && !reducedMotionPref) {
+      if (fadingWaterTimerRef.current) clearTimeout(fadingWaterTimerRef.current);
+      setFadingWater(null);
+      return;
+    }
+    if (activeWaterRef.current) {
+      const snap = activeWaterRef.current;
+      activeWaterRef.current = null;
+      setFadingWater(snap);
+      if (fadingWaterTimerRef.current) clearTimeout(fadingWaterTimerRef.current);
+      fadingWaterTimerRef.current = setTimeout(() => {
+        setFadingWater(null);
+      }, 780);
+    }
+  }, [isTransitioning, outgoingTransitionTrack, incomingTransitionTrack, reducedMotionPref]);
+
+  useEffect(() => {
+    return () => {
+      if (fadingWaterTimerRef.current) clearTimeout(fadingWaterTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     const nextUrl = currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl;
@@ -784,7 +836,7 @@ export const NowPlayingSheet: React.FC = () => {
     const y2 = 88 - ((hAbs >> 4) % 62);
     const x3 = 18 + ((hAbs >> 8) % 64);
     const y3 = 18 + ((hAbs >> 12) % 64);
-    return {
+    const snap = {
       url: incomingTransitionTrack.thumbnailHighUrl ?? incomingTransitionTrack.thumbnailUrl,
       key: `water-${outgoingTransitionTrack?.id ?? ''}-${incomingTransitionTrack.id}`,
       x1,
@@ -794,6 +846,8 @@ export const NowPlayingSheet: React.FC = () => {
       x3,
       y3,
     };
+    activeWaterRef.current = snap;
+    return snap;
   })();
 
   const isPostCrossfadeSameTrack = lastCrossfadedTrackIdRef.current === currentTrack.id;
@@ -806,7 +860,7 @@ export const NowPlayingSheet: React.FC = () => {
           : 'mx-auto flex h-full w-full max-w-[420px] justify-center gap-5 pb-4 md:h-auto md:justify-center md:gap-5 md:py-0'
       }`}
     >
-      {/* Large Borderless Centerpiece Artwork with true GPU 3D Cube roll & swipe skip */}
+      {/* Large Borderless Centerpiece Artwork with true 6-face Multi-Directional GPU 3D Cube */}
       <div
         key={
           cfActive
@@ -851,41 +905,83 @@ export const NowPlayingSheet: React.FC = () => {
         } ${isPlaying ? 'scale-100' : 'scale-[0.96]'}`}
       >
         {cfActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
-          <div className="pm-cube-viewport relative h-full w-full">
-            <div
-              className="pm-cube-prism"
-              style={{
-                animation: `pmCubeRollDown ${cfAnimDurationSec}s cubic-bezier(0.32, 0.05, 0.22, 1) forwards`,
-              }}
-            >
-              <div className="pm-cube-face-front overflow-hidden rounded-[14px] shadow-[0_26px_64px_rgba(0,0,0,0.58)] md:rounded-[16px]">
-                <img
-                  src={outgoingTransitionTrack.thumbnailHighUrl ?? outgoingTransitionTrack.thumbnailUrl}
-                  alt={outgoingTransitionTrack.title}
-                  draggable={false}
-                  className="h-full w-full select-none object-cover"
-                />
+          (() => {
+            const seed = `${outgoingTransitionTrack.id}:${incomingTransitionTrack.id}`;
+            let hash = 13;
+            for (let i = 0; i < seed.length; i++) {
+              hash = (hash * 33 + seed.charCodeAt(i)) | 0;
+            }
+            const dirs = [
+              { anim: 'pmCubeFromTop', face: 'pm-cube-face-top' },
+              { anim: 'pmCubeFromBottom', face: 'pm-cube-face-bottom' },
+              { anim: 'pmCubeFromRight', face: 'pm-cube-face-right' },
+              { anim: 'pmCubeFromLeft', face: 'pm-cube-face-left' },
+            ] as const;
+            const chosen = dirs[Math.abs(hash) % dirs.length] ?? dirs[0];
+            const outCover = outgoingTransitionTrack.thumbnailHighUrl ?? outgoingTransitionTrack.thumbnailUrl;
+            const inCover = incomingTransitionTrack.thumbnailHighUrl ?? incomingTransitionTrack.thumbnailUrl;
+            const sideFaces = [
+              'pm-cube-face-back',
+              'pm-cube-face-top',
+              'pm-cube-face-bottom',
+              'pm-cube-face-right',
+              'pm-cube-face-left',
+            ].filter((f) => f !== chosen.face);
+
+            return (
+              <div className="pm-cube-viewport relative h-full w-full">
                 <div
-                  aria-hidden="true"
-                  className="pm-cube-shade-out absolute inset-0"
-                  style={{ animationDuration: `${cfAnimDurationSec}s` }}
-                />
+                  className="pm-cube-prism"
+                  style={{
+                    animation: `${chosen.anim} ${cfAnimDurationSec}s cubic-bezier(0.32, 0.05, 0.22, 1) forwards`,
+                  }}
+                >
+                  <div className="pm-cube-face-front overflow-hidden rounded-[14px] shadow-[0_26px_64px_rgba(0,0,0,0.58)] md:rounded-[16px]">
+                    <img
+                      src={outCover}
+                      alt={outgoingTransitionTrack.title}
+                      draggable={false}
+                      className="h-full w-full select-none object-cover"
+                    />
+                    <div
+                      aria-hidden="true"
+                      className="pm-cube-shade-out absolute inset-0"
+                      style={{ animationDuration: `${cfAnimDurationSec}s` }}
+                    />
+                  </div>
+                  <div
+                    className={`${chosen.face} overflow-hidden rounded-[14px] shadow-[0_26px_64px_rgba(0,0,0,0.58)] md:rounded-[16px]`}
+                  >
+                    <img
+                      src={inCover}
+                      alt={incomingTransitionTrack.title}
+                      draggable={false}
+                      className="h-full w-full select-none object-cover"
+                    />
+                    <div
+                      aria-hidden="true"
+                      className="pm-cube-light-in absolute inset-0"
+                      style={{ animationDuration: `${cfAnimDurationSec}s` }}
+                    />
+                  </div>
+                  {sideFaces.map((sideFace) => (
+                    <div
+                      key={sideFace}
+                      aria-hidden="true"
+                      className={`${sideFace} pm-cube-side-wall overflow-hidden rounded-[14px] md:rounded-[16px]`}
+                    >
+                      <img
+                        src={outCover}
+                        alt=""
+                        draggable={false}
+                        className="h-full w-full scale-110 select-none object-cover opacity-20 blur-md"
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
-              <div className="pm-cube-face-top overflow-hidden rounded-[14px] shadow-[0_26px_64px_rgba(0,0,0,0.58)] md:rounded-[16px]">
-                <img
-                  src={incomingTransitionTrack.thumbnailHighUrl ?? incomingTransitionTrack.thumbnailUrl}
-                  alt={incomingTransitionTrack.title}
-                  draggable={false}
-                  className="h-full w-full select-none object-cover"
-                />
-                <div
-                  aria-hidden="true"
-                  className="pm-cube-light-in absolute inset-0"
-                  style={{ animationDuration: `${cfAnimDurationSec}s` }}
-                />
-              </div>
-            </div>
-          </div>
+            );
+          })()
         ) : (
           <img
             src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
@@ -907,58 +1003,92 @@ export const NowPlayingSheet: React.FC = () => {
         className={`${cfActive || isPostCrossfadeSameTrack ? '' : 'pm-track-meta-in'} flex w-full flex-col gap-0.5 md:gap-1`}
       >
         {cfActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
-          <div className="flex w-full items-center justify-between gap-2">
-            <div className="relative h-[56px] min-w-0 flex-1" style={{ perspective: '720px' }}>
-              <div
-                className="pm-cube-prism"
-                style={{
-                  animation: `pmDockPrismRoll ${cfAnimDurationSec}s cubic-bezier(0.32, 0.05, 0.22, 1) forwards`,
-                }}
-              >
-                <div className="pm-dock-face-front flex h-[56px] flex-col justify-center overflow-hidden">
-                  <h1 className="truncate text-[21px] font-bold leading-snug tracking-tight text-white md:text-[23px]">
-                    {outgoingTransitionTrack.title}
-                  </h1>
-                  <div className="truncate text-[14px] leading-snug text-white/70">
-                    {outgoingTransitionTrack.artists.map((a) => a.name).join(', ')}
-                  </div>
-                </div>
-                <div className="pm-dock-face-top flex h-[56px] flex-col justify-center overflow-hidden">
-                  <h1 className="truncate text-[21px] font-bold leading-snug tracking-tight text-white md:text-[23px]">
-                    {incomingTransitionTrack.title}
-                  </h1>
-                  <div className="truncate text-[14px] leading-snug text-white/70">
-                    {incomingTransitionTrack.artists.map((a) => a.name).join(', ')}
-                  </div>
-                </div>
+          <>
+            <div className="flex w-full items-center justify-between gap-2">
+              <div className="relative min-w-0 flex-1">
+                <h1
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 truncate text-[21px] font-bold leading-snug tracking-tight text-white md:text-[23px]"
+                  style={{
+                    animation: `pmMetaBlurOut ${cfAnimDurationSec}s ease-in-out forwards`,
+                  }}
+                >
+                  {outgoingTransitionTrack.title}
+                </h1>
+                <h1
+                  className="truncate text-[21px] font-bold leading-snug tracking-tight text-white md:text-[23px]"
+                  style={{
+                    animation: `pmMetaBlurIn ${cfAnimDurationSec}s ease-in-out forwards`,
+                  }}
+                >
+                  {incomingTransitionTrack.title}
+                </h1>
+              </div>
+
+              <div className="flex shrink-0 items-center gap-0.5">
+                <button
+                  type="button"
+                  aria-label={isLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
+                  aria-pressed={isLiked}
+                  onClick={() => void toggleLike(currentTrack)}
+                  className={`pm-pressable relative flex h-9 w-9 items-center justify-center rounded-full transition-colors hover:bg-white/[0.10] ${
+                    isLiked ? 'text-[#FB7185]' : 'text-white/85 hover:text-white'
+                  }`}
+                >
+                  <Heart className={`h-5 w-5 ${isLiked ? 'fill-current' : ''}`} />
+                </button>
+                <button
+                  type="button"
+                  aria-label={
+                    dlStatus === 'downloaded'
+                      ? 'Descargada offline'
+                      : 'Descargar para escuchar offline'
+                  }
+                  onClick={() => void downloadTrackOffline(currentTrack)}
+                  className="pm-pressable hidden h-9 w-9 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/[0.10] hover:text-white md:flex"
+                >
+                  {dlStatus === 'downloading' ? (
+                    <Loader2 className="h-4.5 w-4.5 animate-spin text-white" />
+                  ) : dlStatus === 'downloaded' ? (
+                    <Check className="h-4.5 w-4.5 text-[#34D399]" />
+                  ) : (
+                    <Download className="h-4.5 w-4.5" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Más opciones para ${currentTrack.title}`}
+                  onClick={(e) => {
+                    const r = e.currentTarget.getBoundingClientRect();
+                    openTrackMenu(currentTrack, r.left - 210, r.bottom + 8);
+                  }}
+                  className="pm-pressable flex h-9 w-9 items-center justify-center rounded-full text-white/85 transition-colors hover:bg-white/[0.10] hover:text-white"
+                >
+                  <MoreHorizontal className="h-5 w-5" />
+                </button>
               </div>
             </div>
 
-            <div className="flex shrink-0 items-center gap-0.5">
-              <button
-                type="button"
-                aria-label={isLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
-                aria-pressed={isLiked}
-                onClick={() => void toggleLike(currentTrack)}
-                className={`pm-pressable relative flex h-9 w-9 items-center justify-center rounded-full transition-colors hover:bg-white/[0.10] ${
-                  isLiked ? 'text-[#FB7185]' : 'text-white/85 hover:text-white'
-                }`}
-              >
-                <Heart className={`h-5 w-5 ${isLiked ? 'fill-current' : ''}`} />
-              </button>
-              <button
-                type="button"
-                aria-label={`Más opciones para ${currentTrack.title}`}
-                onClick={(e) => {
-                  const r = e.currentTarget.getBoundingClientRect();
-                  openTrackMenu(currentTrack, r.left - 210, r.bottom + 8);
+            <div className="relative w-full text-[14px] leading-snug text-white/70">
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 truncate"
+                style={{
+                  animation: `pmMetaBlurOut ${cfAnimDurationSec}s ease-in-out forwards`,
                 }}
-                className="pm-pressable flex h-9 w-9 items-center justify-center rounded-full text-white/85 transition-colors hover:bg-white/[0.10] hover:text-white"
               >
-                <MoreHorizontal className="h-5 w-5" />
-              </button>
+                {outgoingTransitionTrack.artists.map((a) => a.name).join(', ')}
+              </div>
+              <div
+                className="truncate"
+                style={{
+                  animation: `pmMetaBlurIn ${cfAnimDurationSec}s ease-in-out forwards`,
+                }}
+              >
+                {incomingTransitionTrack.artists.map((a) => a.name).join(', ')}
+              </div>
             </div>
-          </div>
+          </>
         ) : (
           <>
             <div className="flex w-full items-center justify-between gap-2">
@@ -1230,15 +1360,15 @@ export const NowPlayingSheet: React.FC = () => {
             </>
           ) : (
             <>
-              <Pause
-                className={`absolute h-12 w-12 fill-current drop-shadow-[0_4px_14px_rgba(0,0,0,0.34)] transition-all duration-200 ease-out ${
+              <RoundedPauseIcon
+                className={`absolute h-12 w-12 drop-shadow-[0_4px_14px_rgba(0,0,0,0.34)] transition-all duration-200 ease-out ${
                   isPlaying
                     ? 'scale-100 rotate-0 opacity-100 blur-0'
                     : 'scale-50 rotate-90 opacity-0 blur-[1px]'
                 }`}
               />
-              <Play
-                className={`absolute h-12 w-12 translate-x-[2px] fill-current drop-shadow-[0_4px_14px_rgba(0,0,0,0.34)] transition-all duration-200 ease-out ${
+              <RoundedPlayIcon
+                className={`absolute h-12 w-12 translate-x-[2px] drop-shadow-[0_4px_14px_rgba(0,0,0,0.34)] transition-all duration-200 ease-out ${
                   !isPlaying
                     ? 'scale-100 rotate-0 opacity-100 blur-0'
                     : 'scale-50 -rotate-90 opacity-0 blur-[1px]'
@@ -1401,7 +1531,7 @@ export const NowPlayingSheet: React.FC = () => {
           />
         </div>
 
-        {/* Living GPU-Composited "Two Waters Merging" Fluid Crossfade Currents (zero per-frame blur/mask repaints) */}
+        {/* Living GPU-Composited "Two Waters Mixing" Feathered Liquid Crossfade (zero circular borders or end cuts) */}
         {waterPools && (
           <div
             key={waterPools.key}
@@ -1409,14 +1539,14 @@ export const NowPlayingSheet: React.FC = () => {
             className="pointer-events-none absolute -inset-24"
           >
             <div
-              className="absolute h-[88vmax] w-[88vmax] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-full will-change-transform"
+              className="pm-water-wash absolute h-[145vmax] w-[145vmax] -translate-x-1/2 -translate-y-1/2 will-change-transform"
               style={
                 {
                   left: `${waterPools.x1}%`,
                   top: `${waterPools.y1}%`,
                   '--wx': '6%',
                   '--wy': '-5%',
-                  animation: `pmWaterBlobExpand ${(cfAnimDurationSec * 0.85).toFixed(2)}s cubic-bezier(0.22, 1, 0.36, 1) forwards`,
+                  animation: `pmWaterFlowMerge ${(cfAnimDurationSec * 0.92).toFixed(2)}s cubic-bezier(0.22, 1, 0.36, 1) forwards`,
                 } as React.CSSProperties
               }
             >
@@ -1428,14 +1558,14 @@ export const NowPlayingSheet: React.FC = () => {
               />
             </div>
             <div
-              className="absolute h-[84vmax] w-[84vmax] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-full will-change-transform"
+              className="pm-water-wash absolute h-[138vmax] w-[138vmax] -translate-x-1/2 -translate-y-1/2 will-change-transform"
               style={
                 {
                   left: `${waterPools.x2}%`,
                   top: `${waterPools.y2}%`,
                   '--wx': '-5%',
                   '--wy': '5%',
-                  animation: `pmWaterBlobExpand ${(cfAnimDurationSec * 0.85).toFixed(2)}s cubic-bezier(0.22, 1, 0.36, 1) ${(cfAnimDurationSec * 0.1).toFixed(2)}s both`,
+                  animation: `pmWaterFlowMerge ${(cfAnimDurationSec * 0.92).toFixed(2)}s cubic-bezier(0.22, 1, 0.36, 1) ${(cfAnimDurationSec * 0.08).toFixed(2)}s both`,
                 } as React.CSSProperties
               }
             >
@@ -1447,14 +1577,14 @@ export const NowPlayingSheet: React.FC = () => {
               />
             </div>
             <div
-              className="absolute h-[76vmax] w-[76vmax] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-full mix-blend-screen will-change-transform"
+              className="pm-water-wash absolute h-[128vmax] w-[128vmax] -translate-x-1/2 -translate-y-1/2 mix-blend-screen will-change-transform"
               style={
                 {
                   left: `${waterPools.x3}%`,
                   top: `${waterPools.y3}%`,
                   '--wx': '3%',
                   '--wy': '4%',
-                  animation: `pmWaterBlobExpand ${(cfAnimDurationSec * 0.78).toFixed(2)}s cubic-bezier(0.22, 1, 0.36, 1) ${(cfAnimDurationSec * 0.2).toFixed(2)}s both`,
+                  animation: `pmWaterFlowMerge ${(cfAnimDurationSec * 0.86).toFixed(2)}s cubic-bezier(0.22, 1, 0.36, 1) ${(cfAnimDurationSec * 0.16).toFixed(2)}s both`,
                 } as React.CSSProperties
               }
             >
@@ -1484,6 +1614,27 @@ export const NowPlayingSheet: React.FC = () => {
                 className="pm-fluid-cover-b absolute inset-0 h-full w-full -scale-x-100 select-none object-cover opacity-35"
               />
             </div>
+          </div>
+        )}
+        {!waterPools && fadingWater && !reducedMotionPref && (
+          <div
+            key={`fade-${fadingWater.key}`}
+            aria-hidden="true"
+            className="pointer-events-none absolute -inset-24"
+            style={{ animation: 'pmWaterOverlayFadeOut 750ms ease-out forwards' }}
+          >
+            <img
+              src={fadingWater.url}
+              alt=""
+              draggable={false}
+              className="pm-fluid-cover-a absolute inset-0 h-full w-full select-none object-cover opacity-55"
+            />
+            <img
+              src={fadingWater.url}
+              alt=""
+              draggable={false}
+              className="pm-fluid-cover-b absolute inset-0 h-full w-full -scale-x-100 select-none object-cover opacity-35"
+            />
           </div>
         )}
 

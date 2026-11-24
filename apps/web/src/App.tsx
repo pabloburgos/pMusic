@@ -17,8 +17,6 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
-  Pause,
-  Play,
   Plus,
   Repeat,
   Repeat1,
@@ -36,6 +34,8 @@ import {
   AnimatedShuffleIcon,
   AnimatedSkipBackIcon,
   AnimatedSkipForwardIcon,
+  RoundedPauseIcon,
+  RoundedPlayIcon,
 } from './components/TransportIcons.tsx';
 import { formatDurationSec } from '@pmusic/core';
 import {
@@ -1604,7 +1604,7 @@ const PMusicMainApp: React.FC = () => {
             {crossfadePairActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
               <div
                 key={`dock-prism-${outgoingTransitionTrack.id}-${incomingTransitionTrack.id}`}
-                className="pm-dock-prism-viewport pointer-events-auto relative w-full max-w-[350px]"
+                className="pm-dock-prism-viewport pointer-events-auto relative w-[350px] max-w-full"
               >
                 <div
                   className="pm-cube-prism"
@@ -1620,63 +1620,65 @@ const PMusicMainApp: React.FC = () => {
                     return (
                       <div
                         key={faceClass}
-                        className={`${faceClass} flex h-[52px] w-full items-center gap-3 overflow-hidden px-0.5`}
+                        className={`${faceClass} flex h-[52px] w-full items-center overflow-hidden`}
                       >
-                        <button
-                          type="button"
-                          aria-label="Abrir reproductor a pantalla completa"
-                          onClick={() => setNowPlayingOpen(true)}
-                          className="relative h-11 w-11 shrink-0 overflow-hidden rounded-[10px] shadow-md"
-                        >
-                          <img
-                            src={trackItem.thumbnailUrl}
-                            alt={trackItem.title}
-                            draggable={false}
-                            className="pointer-events-none h-full w-full select-none object-cover"
-                          />
-                        </button>
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-left text-[14px] font-semibold leading-tight pm-text-primary">
-                            {trackItem.title}
+                        <div className="relative inline-flex min-w-0 max-w-full items-center gap-3 rounded-[12px]">
+                          <button
+                            type="button"
+                            aria-label="Abrir reproductor a pantalla completa"
+                            onClick={() => setNowPlayingOpen(true)}
+                            className="relative h-11 w-11 shrink-0 overflow-hidden rounded-[10px] shadow-md"
+                          >
+                            <img
+                              src={trackItem.thumbnailUrl}
+                              alt={trackItem.title}
+                              draggable={false}
+                              className="pointer-events-none h-full w-full select-none object-cover"
+                            />
+                          </button>
+                          <div className="min-w-0 max-w-[200px] xl:max-w-[240px]">
+                            <div className="block max-w-full truncate text-left text-[14px] font-semibold leading-[1.25] pm-text-primary">
+                              {trackItem.title}
+                            </div>
+                            <div className="mt-0.5 flex items-center gap-1.5 truncate">
+                              {trackItem.isExplicit && (
+                                <span
+                                  aria-label="Explícita"
+                                  className="inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-[3px] bg-[var(--pm-text-secondary)]/20 text-[9px] font-extrabold leading-none pm-text-secondary"
+                                >
+                                  E
+                                </span>
+                              )}
+                              <div className="truncate text-[12px] leading-[1.35] pm-text-secondary">
+                                {trackItem.artists.map((a) => a.name).join(', ')}
+                              </div>
+                            </div>
                           </div>
-                          <div className="mt-0.5 flex items-center gap-1.5 truncate">
-                            {trackItem.isExplicit && (
-                              <span
-                                aria-label="Explícita"
-                                className="inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-[3px] bg-[var(--pm-text-secondary)]/20 text-[9px] font-extrabold leading-none pm-text-secondary"
-                              >
-                                E
-                              </span>
-                            )}
-                            <span className="truncate text-[12px] pm-text-secondary">
-                              {trackItem.artists.map((a) => a.name).join(', ')}
-                            </span>
-                          </div>
+                          <button
+                            type="button"
+                            aria-label={faceLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
+                            aria-pressed={faceLiked}
+                            onClick={() => void toggleLike(trackItem)}
+                            className={`pm-pressable pm-hover relative inline-flex shrink-0 items-center justify-center rounded-full p-2 ${
+                              faceLiked ? 'text-rose-500' : 'pm-text-secondary hover:text-[var(--pm-text-primary)]'
+                            }`}
+                          >
+                            <Heart className={`h-4 w-4 ${faceLiked ? 'fill-current' : ''}`} />
+                          </button>
+                          {isIncoming ? (
+                            <span
+                              aria-hidden="true"
+                              className="pm-cube-light-in absolute inset-0 rounded-[12px]"
+                              style={{ animationDuration: `${cfAnimDurationSec}s` }}
+                            />
+                          ) : (
+                            <span
+                              aria-hidden="true"
+                              className="pm-cube-shade-out absolute inset-0 rounded-[12px]"
+                              style={{ animationDuration: `${cfAnimDurationSec}s` }}
+                            />
+                          )}
                         </div>
-                        <button
-                          type="button"
-                          aria-label={faceLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
-                          aria-pressed={faceLiked}
-                          onClick={() => void toggleLike(trackItem)}
-                          className={`pm-pressable pm-hover relative inline-flex shrink-0 items-center justify-center rounded-full p-2 ${
-                            faceLiked ? 'text-rose-500' : 'pm-text-secondary hover:text-[var(--pm-text-primary)]'
-                          }`}
-                        >
-                          <Heart className={`h-4 w-4 ${faceLiked ? 'fill-current' : ''}`} />
-                        </button>
-                        {isIncoming ? (
-                          <span
-                            aria-hidden="true"
-                            className="pm-cube-light-in absolute inset-0 rounded-[12px]"
-                            style={{ animationDuration: `${cfAnimDurationSec}s` }}
-                          />
-                        ) : (
-                          <span
-                            aria-hidden="true"
-                            className="pm-cube-shade-out absolute inset-0 rounded-[12px]"
-                            style={{ animationDuration: `${cfAnimDurationSec}s` }}
-                          />
-                        )}
                       </div>
                     );
                   })}
@@ -1726,7 +1728,7 @@ const PMusicMainApp: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setNowPlayingOpen(true)}
-                  className="block max-w-full truncate text-left text-[14px] font-semibold leading-tight pm-text-primary hover:underline"
+                  className="block max-w-full truncate text-left text-[14px] font-semibold leading-[1.25] pm-text-primary hover:underline"
                 >
                   {currentTrack.title}
                 </button>
@@ -1739,7 +1741,7 @@ const PMusicMainApp: React.FC = () => {
                       E
                     </span>
                   )}
-                  <div className="truncate text-[12px] pm-text-secondary">
+                  <div className="truncate text-[12px] leading-[1.35] pm-text-secondary">
                     <ArtistLinks
                       artists={currentTrack.artists}
                       linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
@@ -1863,15 +1865,15 @@ const PMusicMainApp: React.FC = () => {
                   </>
                 ) : (
                   <>
-                    <Pause
-                      className={`absolute h-4.5 w-4.5 fill-current transition-all duration-200 ease-out ${
+                    <RoundedPauseIcon
+                      className={`absolute h-4.5 w-4.5 transition-all duration-200 ease-out ${
                         isPlaying
                           ? 'scale-100 rotate-0 opacity-100 blur-0'
                           : 'scale-50 rotate-90 opacity-0 blur-[1px]'
                       }`}
                     />
-                    <Play
-                      className={`absolute h-4.5 w-4.5 translate-x-[1px] fill-current transition-all duration-200 ease-out ${
+                    <RoundedPlayIcon
+                      className={`absolute h-4.5 w-4.5 translate-x-[1px] transition-all duration-200 ease-out ${
                         !isPlaying
                           ? 'scale-100 rotate-0 opacity-100 blur-0'
                           : 'scale-50 -rotate-90 opacity-0 blur-[1px]'
@@ -2186,10 +2188,10 @@ const PMusicMainApp: React.FC = () => {
                               />
                             </button>
                             <div className="min-w-0 flex-1">
-                              <div className="truncate text-left text-[14px] font-semibold leading-snug pm-text-primary">
+                              <div className="block max-w-full truncate text-left text-[14px] font-semibold leading-[1.25] pm-text-primary">
                                 {trackItem.title}
                               </div>
-                              <div className="truncate text-xs leading-normal pm-text-secondary">
+                              <div className="mt-0.5 truncate text-xs leading-[1.35] pm-text-secondary">
                                 {trackItem.artists.map((a) => a.name).join(', ')}
                               </div>
                             </div>
@@ -2241,11 +2243,11 @@ const PMusicMainApp: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => setNowPlayingOpen(true)}
-                        className="block max-w-full truncate text-left text-[14px] font-semibold leading-snug pm-text-primary hover:underline"
+                        className="block max-w-full truncate text-left text-[14px] font-semibold leading-[1.25] pm-text-primary hover:underline"
                       >
                         {currentTrack.title}
                       </button>
-                      <div className="truncate text-xs leading-normal pm-text-secondary">
+                      <div className="mt-0.5 truncate text-xs leading-[1.35] pm-text-secondary">
                         <ArtistLinks
                           artists={currentTrack.artists}
                           linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
@@ -2284,15 +2286,15 @@ const PMusicMainApp: React.FC = () => {
                     </>
                   ) : (
                     <>
-                      <Pause
-                        className={`absolute h-4.5 w-4.5 fill-current transition-all duration-200 ease-out ${
+                      <RoundedPauseIcon
+                        className={`absolute h-4.5 w-4.5 transition-all duration-200 ease-out ${
                           isPlaying
                             ? 'scale-100 rotate-0 opacity-100 blur-0'
                             : 'scale-50 rotate-90 opacity-0 blur-[1px]'
                         }`}
                       />
-                      <Play
-                        className={`absolute h-4.5 w-4.5 translate-x-[1px] fill-current transition-all duration-200 ease-out ${
+                      <RoundedPlayIcon
+                        className={`absolute h-4.5 w-4.5 translate-x-[1px] transition-all duration-200 ease-out ${
                           !isPlaying
                             ? 'scale-100 rotate-0 opacity-100 blur-0'
                             : 'scale-50 -rotate-90 opacity-0 blur-[1px]'

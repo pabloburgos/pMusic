@@ -6,40 +6,60 @@ interface TransportIconProps {
   filled?: boolean;
 }
 
+export const RoundedPlayIcon: React.FC<{ className?: string }> = ({
+  className = 'h-5 w-5',
+}) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
+    <path d="M7.8 4.4C6.5 3.65 5 4.58 5 6.08V17.92C5 19.42 6.5 20.35 7.8 19.6L18.4 13.68C19.72 12.94 19.72 11.06 18.4 10.32L7.8 4.4Z" />
+  </svg>
+);
+
+export const RoundedPauseIcon: React.FC<{ className?: string }> = ({
+  className = 'h-5 w-5',
+}) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
+    <rect x="5.5" y="4.2" width="4.8" height="15.6" rx="2.4" />
+    <rect x="13.7" y="4.2" width="4.8" height="15.6" rx="2.4" />
+  </svg>
+);
+
 export const AnimatedSkipForwardIcon: React.FC<TransportIconProps> = ({
   className = 'h-4 w-4',
   animate = false,
-  filled = false,
 }) => (
   <svg
     viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2}
-    strokeLinecap="round"
-    strokeLinejoin="round"
+    fill="currentColor"
     aria-hidden="true"
     className={`overflow-visible ${className} ${animate ? 'pm-skip-next-hyper' : ''}`}
   >
-    {/* Incoming triangle sliding from left to replace the outgoing one */}
-    <polygon
-      points="5 4 15 12 5 20 5 4"
-      fill={filled ? 'currentColor' : 'none'}
-      className={animate ? 'pm-skip-tri-in' : 'opacity-0'}
+    {/* Unfolding incoming triangle whose left spine morphs directly out of the travelling right bar */}
+    <path
+      d="M5.6 5.4 C4.6 4.78 3.5 5.5 3.5 6.68 V17.32 C3.5 18.5 4.6 19.22 5.6 18.6 L14.4 13.28 C15.38 12.69 15.38 11.31 14.4 10.72 L5.6 5.4 Z"
+      className={animate ? 'pm-skip-tri-unfold' : 'opacity-0'}
     />
-    {/* Primary triangle darting into the bumper bar */}
-    <polygon
-      points="5 4 15 12 5 20 5 4"
-      fill={filled ? 'currentColor' : 'none'}
+    {/* Fresh replacement vertical pill bar snapping into place on the right */}
+    <rect
+      x="17.2"
+      y="5"
+      width="2.8"
+      height="14"
+      rx="1.4"
+      className={animate ? 'pm-skip-bar-new' : 'opacity-0'}
+    />
+    {/* Primary rounded filled triangle shooting forward */}
+    <path
+      d="M5.6 5.4 C4.6 4.78 3.5 5.5 3.5 6.68 V17.32 C3.5 18.5 4.6 19.22 5.6 18.6 L14.4 13.28 C15.38 12.69 15.38 11.31 14.4 10.72 L5.6 5.4 Z"
       className={animate ? 'pm-skip-tri-out' : ''}
     />
-    {/* Vertical bumper bar reacting on impact */}
-    <line
-      x1="19"
-      y1="5"
-      x2="19"
-      y2="19"
-      className={animate ? 'pm-skip-bar-bump' : ''}
+    {/* Vertical pill bar gliding left to become the spine/base of the incoming triangle */}
+    <rect
+      x="17.2"
+      y="5"
+      width="2.8"
+      height="14"
+      rx="1.4"
+      className={animate ? 'pm-skip-bar-to-base' : ''}
     />
   </svg>
 );
@@ -47,37 +67,26 @@ export const AnimatedSkipForwardIcon: React.FC<TransportIconProps> = ({
 export const AnimatedSkipBackIcon: React.FC<TransportIconProps> = ({
   className = 'h-4 w-4',
   animate = false,
-  filled = false,
 }) => (
   <svg
     viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2}
-    strokeLinecap="round"
-    strokeLinejoin="round"
+    fill="currentColor"
     aria-hidden="true"
     className={`overflow-visible ${className} ${animate ? 'pm-skip-prev-hyper' : ''}`}
   >
-    {/* Vertical bumper bar reacting on impact */}
-    <line
-      x1="5"
-      y1="19"
-      x2="5"
-      y2="5"
-      className={animate ? 'pm-skip-back-bar-bump' : ''}
+    {/* Left vertical rounded pill bumper bar reacting with elastic sticky adhesion */}
+    <rect
+      x="4"
+      y="5"
+      width="2.8"
+      height="14"
+      rx="1.4"
+      className={animate ? 'pm-skip-back-sticky-bar' : ''}
     />
-    {/* Incoming triangle sliding from right */}
-    <polygon
-      points="19 20 9 12 19 4 19 20"
-      fill={filled ? 'currentColor' : 'none'}
-      className={animate ? 'pm-skip-back-tri-in' : 'opacity-0'}
-    />
-    {/* Primary triangle darting left into the bar */}
-    <polygon
-      points="19 20 9 12 19 4 19 20"
-      fill={filled ? 'currentColor' : 'none'}
-      className={animate ? 'pm-skip-back-tri-out' : ''}
+    {/* Left-pointing rounded triangle pulling & sticking against the bar before snapping back */}
+    <path
+      d="M18.4 5.4 C19.4 4.78 20.5 5.5 20.5 6.68 V17.32 C20.5 18.5 19.4 19.22 18.4 18.6 L9.6 13.28 C8.62 12.69 8.62 11.31 9.6 10.72 L18.4 5.4 Z"
+      className={animate ? 'pm-skip-back-sticky-tri' : ''}
     />
   </svg>
 );
