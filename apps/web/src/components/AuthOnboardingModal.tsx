@@ -261,9 +261,9 @@ export const AuthOnboardingModal: React.FC = () => {
           </form>
         ) : step === 'choice' ? (
           <div className="flex flex-col items-center space-y-10">
-            {/* Pure big pMusic wordmark only */}
+            {/* Pure big animated motion-graphics pMusic wordmark only */}
             <div className="pm-ag-enter-1 flex flex-col items-center">
-              <PMusicLogo size={54} variant="wordmark-only" />
+              <PMusicLogo size={62} variant="wordmark-only" animated />
             </div>
 
             {(errorMsg || authCallbackError) && (

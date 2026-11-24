@@ -5,10 +5,12 @@ import {
   Disc3,
   Download,
   Gamepad2,
+  Laptop,
   Palette,
   RefreshCw,
   Settings,
   Sliders,
+  Sparkles,
   Timer,
   Upload,
   X,
@@ -275,6 +277,75 @@ export const SettingsModal: React.FC = () => {
             <span>Cerrar</span>
           </button>
         </header>
+
+        {/* Mobile Interactive Quick Control Deck (1-tap tactile studio controls) */}
+        <div className="grid shrink-0 grid-cols-3 gap-2 border-b pm-border px-3 py-2.5 md:hidden">
+          <button
+            type="button"
+            onClick={() => void toggleDjMode(!djMode.enabled)}
+            className={`pm-pressable flex flex-col items-start justify-between rounded-2xl border p-2.5 text-left transition-all active:scale-95 ${
+              djMode.enabled
+                ? 'border-emerald-400/45 bg-emerald-500/15 text-emerald-300'
+                : 'pm-border bg-white/[0.04] pm-text-secondary'
+            }`}
+          >
+            <div className="flex w-full items-center justify-between">
+              <Sparkles className="h-4 w-4" />
+              <span
+                className={`h-2 w-2 rounded-full ${
+                  djMode.enabled ? 'bg-emerald-400 animate-pulse' : 'bg-white/25'
+                }`}
+              />
+            </div>
+            <div className="mt-2">
+              <div className="text-[11px] font-bold leading-tight pm-text-primary">Modo DJ</div>
+              <div className="text-[10px] opacity-75">{djMode.enabled ? 'Activo' : 'Apagado'}</div>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setEqEnabled(!userEq.enabled)}
+            className={`pm-pressable flex flex-col items-start justify-between rounded-2xl border p-2.5 text-left transition-all active:scale-95 ${
+              userEq.enabled
+                ? 'border-[var(--pm-accent-primary)]/50 bg-[var(--pm-accent-primary)]/15 pm-text-primary'
+                : 'pm-border bg-white/[0.04] pm-text-secondary'
+            }`}
+          >
+            <div className="flex w-full items-center justify-between">
+              <Sliders className="h-4 w-4" />
+              <span className="inline-flex items-end gap-0.5 h-3">
+                <span className={`w-0.5 rounded-full bg-current ${userEq.enabled ? 'h-3' : 'h-1.5 opacity-40'}`} />
+                <span className={`w-0.5 rounded-full bg-current ${userEq.enabled ? 'h-2' : 'h-1.5 opacity-40'}`} />
+                <span className={`w-0.5 rounded-full bg-current ${userEq.enabled ? 'h-3' : 'h-1.5 opacity-40'}`} />
+              </span>
+            </div>
+            <div className="mt-2">
+              <div className="text-[11px] font-bold leading-tight pm-text-primary">EQ DSP</div>
+              <div className="text-[10px] opacity-75">{userEq.enabled ? userEq.preset : 'Plano'}</div>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setSettingsOpen(false);
+              setDevicesSheetOpen(true);
+            }}
+            className="pm-pressable flex flex-col items-start justify-between rounded-2xl border pm-border bg-white/[0.04] p-2.5 text-left pm-text-secondary transition-all active:scale-95"
+          >
+            <div className="flex w-full items-center justify-between">
+              <Laptop className="h-4 w-4 text-emerald-400" />
+              <span className="rounded-full bg-white/10 px-1.5 py-0.5 text-[9px] font-bold pm-text-primary">
+                {onlineDevices.length}
+              </span>
+            </div>
+            <div className="mt-2">
+              <div className="text-[11px] font-bold leading-tight pm-text-primary">Connect</div>
+              <div className="text-[10px] opacity-75">Dispositivos</div>
+            </div>
+          </button>
+        </div>
 
         {/* Body: Mobile Pill Tabs / Desktop Left Sidebar + Right Interactive Pane */}
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">

@@ -157,8 +157,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="20"
-    android:versionName="0.14.5">
+    android:versionCode="21"
+    android:versionName="0.15.0">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -1029,7 +1029,7 @@ public class MainActivity extends Activity {
 
     private ResolvedStream fetchYoutubeIosPlayerStream(String videoId) {
         int[] botRejects = new int[] { 0 };
-        String[] modes = new String[] { "IOS", "ANDROID", "MWEB" };
+        String[] modes = new String[] { "ANDROID_VR", "TV_EMBED", "IOS", "ANDROID", "MWEB" };
         for (int i = 0; i < modes.length; i++) {
             ResolvedStream stream = fetchYoutubeClientPlayerStream(videoId, modes[i], botRejects);
             if (stream != null) {
@@ -1038,7 +1038,7 @@ public class MainActivity extends Activity {
             }
         }
         if (botRejects[0] >= modes.length) {
-            ytBotCooldownUntilMs = System.currentTimeMillis() + 45000L;
+            ytBotCooldownUntilMs = System.currentTimeMillis() + 30000L;
         }
         return null;
     }
@@ -1046,8 +1046,24 @@ public class MainActivity extends Activity {
     private ResolvedStream fetchYoutubeClientPlayerStream(String videoId, String clientMode, int[] botRejects) {
         try {
             JSONObject client = new JSONObject();
+            JSONObject thirdParty = null;
             String ua;
-            if ("IOS".equals(clientMode)) {
+            if ("ANDROID_VR".equals(clientMode)) {
+                client.put("clientName", "ANDROID_VR");
+                client.put("clientVersion", "1.60.19");
+                client.put("deviceMake", "Oculus");
+                client.put("deviceModel", "Quest 3");
+                client.put("osName", "Android");
+                client.put("osVersion", "12L");
+                client.put("androidSdkVersion", 32);
+                ua = "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip";
+            } else if ("TV_EMBED".equals(clientMode)) {
+                client.put("clientName", "TVHTML5_SIMPLY_EMBEDDED_PLAYER");
+                client.put("clientVersion", "2.0");
+                thirdParty = new JSONObject();
+                thirdParty.put("embedUrl", "https://www.youtube.com");
+                ua = YT_WEB_UA;
+            } else if ("IOS".equals(clientMode)) {
                 client.put("clientName", "IOS");
                 client.put("clientVersion", "20.10.4");
                 client.put("deviceMake", "Apple");
@@ -1069,6 +1085,9 @@ public class MainActivity extends Activity {
             client.put("gl", "ES");
             JSONObject context = new JSONObject();
             context.put("client", client);
+            if (thirdParty != null) {
+                context.put("thirdParty", thirdParty);
+            }
             JSONObject payload = new JSONObject();
             payload.put("videoId", videoId);
             payload.put("context", context);

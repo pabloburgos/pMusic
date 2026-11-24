@@ -134,8 +134,12 @@ function generateBrandPng(width = 256, height = 256) {
 
 const canonicalLogoPng = resolve(desktopRoot, '../../assets/pMusic-logo.png');
 const canonicalLogoSvg = resolve(desktopRoot, '../../assets/pMusic-icon.svg');
+const canonicalWordmarkSvg = resolve(desktopRoot, '../../assets/pMusic-wordmark.svg');
 if (existsSync(canonicalLogoSvg)) {
   cpSync(canonicalLogoSvg, resolve(buildDir, 'icon.svg'));
+}
+if (existsSync(canonicalWordmarkSvg)) {
+  cpSync(canonicalWordmarkSvg, resolve(desktopDist, 'wordmark.svg'));
 }
 if (existsSync(canonicalLogoPng)) {
   cpSync(canonicalLogoPng, resolve(buildDir, 'icon.png'));
@@ -168,7 +172,18 @@ function dispatchAuthCallbackUrl(url: string): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
-    mainWindow.focus();
+    // Force Windows to bring pMusic to the foreground over the browser (fixes orange taskbar flash)
+    try {
+      mainWindow.setAlwaysOnTop(true);
+      mainWindow.focus();
+      setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.setAlwaysOnTop(false);
+        }
+      }, 350);
+    } catch {
+      mainWindow.focus();
+    }
     mainWindow.webContents.send('pmusic:auth-callback', url);
     pendingAuthCallbackUrl = null;
   } else {
@@ -236,16 +251,16 @@ async function startOAuthCallbackServer(): Promise<number> {
 }
 
 function createSplashWindow(): void {
-  const iconCandidates = [
-    join(__dirname, '../dist/icon.png'),
-    join(__dirname, '../build/icon.png'),
-  ];
-  const iconPath = iconCandidates.find((p) => existsSync(p));
-  const iconB64 = iconPath ? readFileSync(iconPath).toString('base64') : '';
+  const wmPath = join(__dirname, '../dist/wordmark.svg');
+  const rawWmSvg = existsSync(wmPath)
+    ? readFileSync(wmPath, 'utf-8')
+        .replace(/currentColor/g, '#FFFFFF')
+        .replace('<svg ', '<svg class="wm" ')
+    : '';
 
   splashWindow = new BrowserWindow({
-    width: 340,
-    height: 230,
+    width: 420,
+    height: 260,
     frame: false,
     resizable: false,
     movable: true,
@@ -259,15 +274,24 @@ function createSplashWindow(): void {
 
   const splashHtml = \`<!doctype html><html><head><meta charset="utf-8"><style>
     *{box-sizing:border-box}
-    body{margin:0;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 35%, rgba(255,255,255,.09), transparent 62%), #050507;color:#fff;overflow:hidden;border:1px solid rgba(255,255,255,.1);border-radius:20px;user-select:none;-webkit-app-region:drag}
-    .icon{width:76px;height:76px;border-radius:20px;box-shadow:0 18px 42px rgba(0,0,0,.8);animation:enter .55s cubic-bezier(.16,1,.3,1) both, float 3s ease-in-out .55s infinite}
-    .bar{margin-top:26px;width:136px;height:2px;border-radius:99px;background:rgba(255,255,255,.1);overflow:hidden;position:relative}
-    .bar::after{content:'';position:absolute;inset:0;width:44%;border-radius:99px;background:linear-gradient(90deg,transparent,#ffffff,transparent);animation:slide 1.15s cubic-bezier(.4,0,.2,1) infinite}
-    @keyframes enter{from{opacity:0;transform:translateY(10px) scale(.94)}to{opacity:1;transform:none}}
-    @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+    body{margin:0;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#050507;color:#fff;overflow:hidden;border:1px solid rgba(255,255,255,.11);border-radius:22px;user-select:none;-webkit-app-region:drag;position:relative}
+    .aura{position:absolute;width:300px;height:300px;border-radius:999px;background:radial-gradient(circle,rgba(255,255,255,.16) 0%,rgba(190,200,225,.05) 45%,transparent 70%);filter:blur(28px);animation:auraPulse 3s ease-in-out infinite}
+    .ring{position:absolute;width:120px;height:120px;border-radius:999px;border:1px solid rgba(255,255,255,.22);animation:ringExpand 1.6s cubic-bezier(.16,1,.3,1) forwards}
+    .wm-wrap{position:relative;z-index:2;animation:wmReveal 950ms cubic-bezier(.16,1,.3,1) both}
+    .wm{width:210px;height:auto;display:block;filter:drop-shadow(0 12px 32px rgba(255,255,255,.18))}
+    .wm path{stroke:#fff;stroke-width:3.5;stroke-dasharray:1800;stroke-dashoffset:1800;fill-opacity:0;animation:drawPath 1.05s cubic-bezier(.22,1,.36,1) forwards, fillPath .7s cubic-bezier(.16,1,.3,1) .42s forwards}
+    .bar{position:relative;z-index:2;margin-top:30px;width:148px;height:2px;border-radius:99px;background:rgba(255,255,255,.1);overflow:hidden}
+    .bar::after{content:'';position:absolute;inset:0;width:46%;border-radius:99px;background:linear-gradient(90deg,transparent,#ffffff,transparent);animation:slide 1.1s cubic-bezier(.4,0,.2,1) infinite}
+    @keyframes auraPulse{0%,100%{transform:scale(.95);opacity:.65}50%{transform:scale(1.12);opacity:1}}
+    @keyframes ringExpand{0%{transform:scale(.5);opacity:.65}100%{transform:scale(2.8);opacity:0}}
+    @keyframes wmReveal{0%{opacity:0;transform:translateY(14px) scale(.92);filter:blur(8px)}100%{opacity:1;transform:none;filter:blur(0)}}
+    @keyframes drawPath{0%{stroke-dashoffset:1800;stroke-opacity:.95}70%{stroke-dashoffset:0;stroke-opacity:.9}100%{stroke-dashoffset:0;stroke-opacity:0}}
+    @keyframes fillPath{0%{fill-opacity:0}100%{fill-opacity:1}}
     @keyframes slide{0%{transform:translateX(-110%)}100%{transform:translateX(260%)}}
   </style></head><body>
-    \${iconB64 ? \`<img class="icon" src="data:image/png;base64,\${iconB64}" />\` : ''}
+    <div class="aura"></div>
+    <div class="ring"></div>
+    <div class="wm-wrap">\${rawWmSvg}</div>
     <div class="bar"></div>
   </body></html>\`;
 
