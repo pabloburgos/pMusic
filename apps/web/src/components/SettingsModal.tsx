@@ -10,7 +10,6 @@ import {
   RefreshCw,
   Settings,
   Sliders,
-  Sparkles,
   Timer,
   Upload,
   X,
@@ -25,6 +24,7 @@ import {
   PMUSIC_ACCENT_PRESETS,
   PMUSIC_THEMES,
 } from '../utils/themes.ts';
+import { PMusicSwitch } from './PMusicSwitch.tsx';
 
 type SettingsCategoryId =
   | 'apariencia'
@@ -53,38 +53,26 @@ const SwitchRow: React.FC<{
   description: string;
   checked: boolean;
   disabled?: boolean;
+  testId?: string;
   onToggle: () => void;
-}> = ({ title, description, checked, disabled, onToggle }) => (
+}> = ({ title, description, checked, disabled, testId, onToggle }) => (
   <div
     onClick={() => {
       if (!disabled) onToggle();
     }}
-    className={`flex items-center justify-between gap-4 py-2.5 ${disabled ? 'opacity-60' : 'cursor-pointer'}`}
+    className={`flex items-center justify-between gap-4 py-3 ${disabled ? 'opacity-60' : 'cursor-pointer'}`}
   >
     <div className="min-w-0 flex-1">
-      <div className="text-[13.5px] font-bold pm-text-primary">{title}</div>
-      <div className="text-xs leading-snug pm-text-secondary">{description}</div>
+      <div className="text-[13.5px] font-bold leading-snug pm-text-primary">{title}</div>
+      <div className="mt-0.5 text-xs leading-snug pm-text-secondary">{description}</div>
     </div>
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={title}
+    <PMusicSwitch
+      checked={checked}
       disabled={disabled}
-      onClick={(e) => {
-        e.stopPropagation();
-        onToggle();
-      }}
-      className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full p-0.5 transition-colors duration-200 disabled:opacity-50 ${
-        checked ? 'bg-[var(--pm-accent-primary)]' : 'bg-white/15 ring-1 ring-inset ring-white/15'
-      }`}
-    >
-      <span
-        className={`h-6 w-6 rounded-full bg-white shadow-md transition-transform duration-200 ${
-          checked ? 'translate-x-5' : 'translate-x-0'
-        }`}
-      />
-    </button>
+      testId={testId}
+      ariaLabel={title}
+      onChange={onToggle}
+    />
   </div>
 );
 
@@ -259,7 +247,7 @@ export const SettingsModal: React.FC = () => {
           <div className="flex items-center gap-2.5">
             <Settings className="h-5 w-5 pm-text-primary" />
             <div>
-              <h2 className="text-base font-bold leading-tight pm-text-primary sm:text-lg">
+              <h2 className="text-[17px] font-bold leading-tight pm-text-primary sm:text-lg">
                 Configuración de pMusic
               </h2>
               <p className="hidden text-[11.5px] pm-text-tertiary sm:block">
@@ -267,92 +255,36 @@ export const SettingsModal: React.FC = () => {
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            aria-label="Cerrar ajustes"
-            onClick={() => setSettingsOpen(false)}
-            className="pm-btn-secondary inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold"
-          >
-            <X className="h-3.5 w-3.5" />
-            <span>Cerrar</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setSettingsOpen(false);
+                setDevicesSheetOpen(true);
+              }}
+              className="pm-btn-secondary inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold md:hidden"
+            >
+              <Laptop className="h-3.5 w-3.5 text-emerald-400" />
+              <span>{onlineDevices.length}</span>
+            </button>
+            <button
+              type="button"
+              aria-label="Cerrar ajustes"
+              onClick={() => setSettingsOpen(false)}
+              className="pm-btn-secondary inline-flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold sm:h-auto sm:w-auto sm:gap-1.5 sm:px-3.5 sm:py-1.5"
+            >
+              <X className="h-4 w-4 sm:h-3.5 sm:w-3.5" />
+              <span className="hidden sm:inline">Cerrar</span>
+            </button>
+          </div>
         </header>
 
-        {/* Mobile Interactive Quick Control Deck (1-tap tactile studio controls) */}
-        <div className="grid shrink-0 grid-cols-3 gap-2 border-b pm-border px-3 py-2.5 md:hidden">
-          <button
-            type="button"
-            onClick={() => void toggleDjMode(!djMode.enabled)}
-            className={`pm-pressable flex flex-col items-start justify-between rounded-2xl border p-2.5 text-left transition-all active:scale-95 ${
-              djMode.enabled
-                ? 'border-emerald-400/45 bg-emerald-500/15 text-emerald-300'
-                : 'pm-border bg-white/[0.04] pm-text-secondary'
-            }`}
-          >
-            <div className="flex w-full items-center justify-between">
-              <Sparkles className="h-4 w-4" />
-              <span
-                className={`h-2 w-2 rounded-full ${
-                  djMode.enabled ? 'bg-emerald-400 animate-pulse' : 'bg-white/25'
-                }`}
-              />
-            </div>
-            <div className="mt-2">
-              <div className="text-[11px] font-bold leading-tight pm-text-primary">Modo DJ</div>
-              <div className="text-[10px] opacity-75">{djMode.enabled ? 'Activo' : 'Apagado'}</div>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setEqEnabled(!userEq.enabled)}
-            className={`pm-pressable flex flex-col items-start justify-between rounded-2xl border p-2.5 text-left transition-all active:scale-95 ${
-              userEq.enabled
-                ? 'border-[var(--pm-accent-primary)]/50 bg-[var(--pm-accent-primary)]/15 pm-text-primary'
-                : 'pm-border bg-white/[0.04] pm-text-secondary'
-            }`}
-          >
-            <div className="flex w-full items-center justify-between">
-              <Sliders className="h-4 w-4" />
-              <span className="inline-flex items-end gap-0.5 h-3">
-                <span className={`w-0.5 rounded-full bg-current ${userEq.enabled ? 'h-3' : 'h-1.5 opacity-40'}`} />
-                <span className={`w-0.5 rounded-full bg-current ${userEq.enabled ? 'h-2' : 'h-1.5 opacity-40'}`} />
-                <span className={`w-0.5 rounded-full bg-current ${userEq.enabled ? 'h-3' : 'h-1.5 opacity-40'}`} />
-              </span>
-            </div>
-            <div className="mt-2">
-              <div className="text-[11px] font-bold leading-tight pm-text-primary">EQ DSP</div>
-              <div className="text-[10px] opacity-75">{userEq.enabled ? userEq.preset : 'Plano'}</div>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setSettingsOpen(false);
-              setDevicesSheetOpen(true);
-            }}
-            className="pm-pressable flex flex-col items-start justify-between rounded-2xl border pm-border bg-white/[0.04] p-2.5 text-left pm-text-secondary transition-all active:scale-95"
-          >
-            <div className="flex w-full items-center justify-between">
-              <Laptop className="h-4 w-4 text-emerald-400" />
-              <span className="rounded-full bg-white/10 px-1.5 py-0.5 text-[9px] font-bold pm-text-primary">
-                {onlineDevices.length}
-              </span>
-            </div>
-            <div className="mt-2">
-              <div className="text-[11px] font-bold leading-tight pm-text-primary">Connect</div>
-              <div className="text-[10px] opacity-75">Dispositivos</div>
-            </div>
-          </button>
-        </div>
-
-        {/* Body: Mobile Pill Tabs / Desktop Left Sidebar + Right Interactive Pane */}
+        {/* Body: Clean Mobile Scrollable Category Pills / Desktop Left Sidebar + Right Pane */}
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
           <nav
             role="tablist"
             aria-label="Categorías de ajustes"
-            className="flex shrink-0 gap-1.5 overflow-x-auto border-b pm-border px-3 py-2.5 md:w-[232px] md:flex-col md:gap-1 md:border-r md:border-b-0 md:p-3 pm-no-scrollbar"
+            className="flex shrink-0 gap-1.5 overflow-x-auto border-b pm-border px-3.5 py-2.5 md:w-[232px] md:flex-col md:gap-1 md:border-r md:border-b-0 md:p-3 pm-no-scrollbar"
           >
             {CATEGORIES.map((cat) => {
               const active = activeCategory === cat.id;
@@ -364,7 +296,9 @@ export const SettingsModal: React.FC = () => {
                   data-testid={`settings-category-${cat.id}`}
                   aria-selected={active}
                   onClick={() => setActiveCategory(cat.id)}
-                  className={`flex shrink-0 items-center gap-2 rounded-full px-3.5 py-2 text-left text-xs font-bold transition-all md:rounded-[12px] md:px-3 md:py-2.5 ${
+                  className={`${
+                    cat.id === 'discord' ? 'hidden md:flex' : 'flex'
+                  } shrink-0 items-center gap-2 rounded-full px-4 py-2 text-left text-xs font-bold transition-all md:rounded-[12px] md:px-3 md:py-2.5 ${
                     active ? 'pm-btn-primary shadow-sm' : 'pm-text-secondary pm-hover'
                   }`}
                 >
@@ -511,30 +445,14 @@ export const SettingsModal: React.FC = () => {
                     </button>
                   </div>
 
-                  <div className="border-t pm-border pt-3">
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[13px] font-bold pm-text-primary">
-                          Fondo fluido vivo en Reproductor
-                        </div>
-                        <p className="text-xs pm-text-secondary">
-                          Desplaza y respira el desenfoque de la portada al ritmo de los graves
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        role="switch"
-                        data-testid="ambient-motion-toggle"
-                        aria-checked={ambientMotionEnabled}
-                        aria-label="Movimiento y ritmo del fondo en Reproductor"
-                        onClick={() => setAmbientMotionEnabled(!ambientMotionEnabled)}
-                        className={`shrink-0 rounded-full px-4 py-1.5 text-xs font-bold transition-all ${
-                          ambientMotionEnabled ? 'pm-btn-primary' : 'pm-btn-secondary'
-                        }`}
-                      >
-                        {ambientMotionEnabled ? 'Animado' : 'Estático'}
-                      </button>
-                    </div>
+                  <div className="border-t pm-border pt-2">
+                    <SwitchRow
+                      title="Fondo fluido vivo en Reproductor"
+                      description="Desplaza y respira el desenfoque de la portada al ritmo de los graves"
+                      checked={ambientMotionEnabled}
+                      testId="ambient-motion-toggle"
+                      onToggle={() => setAmbientMotionEnabled(!ambientMotionEnabled)}
+                    />
                   </div>
                 </section>
 
@@ -594,10 +512,10 @@ export const SettingsModal: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Customizable Dock Style */}
+                {/* Customizable Dock Style (Desktop only) */}
                 <section
                   data-surface="content"
-                  className="pm-surface-card space-y-3 rounded-[16px] p-4"
+                  className="pm-surface-card hidden space-y-3 rounded-[16px] p-4 md:block"
                 >
                   <div>
                     <div className="text-sm font-bold pm-text-primary">
@@ -921,8 +839,8 @@ export const SettingsModal: React.FC = () => {
                   data-surface="content"
                   className="pm-surface-card space-y-4 rounded-[16px] p-4"
                 >
-                  <div className="flex items-center justify-between">
-                    <div>
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="min-w-0 flex-1">
                       <div className="text-sm font-bold pm-text-primary">
                         Ecualizador gráfico de 5 bandas
                       </div>
@@ -930,17 +848,11 @@ export const SettingsModal: React.FC = () => {
                         Ajusta bajos, presencia vocal y brillo en vivo
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={userEq.enabled}
-                      onClick={() => setEqEnabled(!userEq.enabled)}
-                      className={`rounded-full px-4 py-1.5 text-xs font-bold ${
-                        userEq.enabled ? 'pm-btn-primary' : 'pm-btn-secondary'
-                      }`}
-                    >
-                      {userEq.enabled ? 'Activo' : 'Apagado'}
-                    </button>
+                    <PMusicSwitch
+                      checked={userEq.enabled}
+                      ariaLabel="Ecualizador gráfico de 5 bandas"
+                      onChange={() => setEqEnabled(!userEq.enabled)}
+                    />
                   </div>
 
                   <div className="flex flex-wrap gap-1.5">
@@ -960,14 +872,19 @@ export const SettingsModal: React.FC = () => {
                     ))}
                   </div>
 
-                  <div className="grid grid-cols-5 gap-2.5 pt-1">
+                  <div className="flex flex-col gap-2 pt-1 sm:grid sm:grid-cols-5 sm:gap-2.5">
                     {USER_EQ_FREQUENCIES_HZ.map((freq, idx) => {
                       const val = userEq.bandsDb[idx] ?? 0;
                       const pct = Math.round(((val + 12) / 24) * 100);
                       const label = freq >= 1000 ? `${(freq / 1000).toFixed(1)}k` : `${freq}`;
                       return (
-                        <div key={freq} className="pm-panel space-y-1.5 rounded-[12px] p-2.5 text-center">
-                          <div className="text-[11px] font-bold pm-text-tertiary">{label}Hz</div>
+                        <div
+                          key={freq}
+                          className="pm-panel flex items-center gap-3 rounded-[12px] px-3 py-2 sm:flex-col sm:items-stretch sm:gap-1.5 sm:p-2.5 sm:text-center"
+                        >
+                          <div className="w-12 shrink-0 text-left text-[11px] font-bold pm-text-tertiary sm:w-auto sm:text-center">
+                            {label}Hz
+                          </div>
                           <input
                             type="range"
                             min={-12}
@@ -977,9 +894,9 @@ export const SettingsModal: React.FC = () => {
                             value={val}
                             onChange={(e) => setEqBandGain(idx, Number(e.target.value))}
                             style={{ '--pm-fill': `${pct}%` } as React.CSSProperties}
-                            className="w-full"
+                            className="flex-1 sm:w-full"
                           />
-                          <div className="tabular-nums text-[11px] font-bold pm-text-primary">
+                          <div className="tabular-nums w-12 shrink-0 text-right text-[11px] font-bold pm-text-primary sm:w-auto sm:text-center">
                             {val > 0 ? `+${val}` : val} dB
                           </div>
                         </div>
@@ -1766,7 +1683,7 @@ export const SettingsModal: React.FC = () => {
                     </button>
                   </div>
 
-                  <div className="border-t pm-border pt-3">
+                  <div className="hidden border-t pm-border pt-3 md:block">
                     <div className="mb-2 text-xs font-bold pm-text-primary">
                       Atajos de teclado
                     </div>

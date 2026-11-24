@@ -165,10 +165,10 @@ export const InkBleedCoverTransition: React.FC<InkBleedCoverTransitionProps> = (
       const p = 0.5 - 0.5 * Math.cos(Math.PI * pRaw);
 
       if (incomingImgRef.current) {
-        const scale = 0.96 + 0.04 * p;
-        const opacity = 0.88 + 0.12 * p;
+        // Keep incoming cover strictly >= 1.0 scale and opaque so outer rounded edges never flash dark
+        const scale = 1.035 - 0.035 * p;
         incomingImgRef.current.style.transform = `translate3d(0, 0, 0) scale(${scale.toFixed(4)})`;
-        incomingImgRef.current.style.opacity = opacity.toFixed(3);
+        incomingImgRef.current.style.opacity = '1';
       }
 
       const canPaintCanvas = Boolean(
@@ -272,9 +272,9 @@ export const InkBleedCoverTransition: React.FC<InkBleedCoverTransitionProps> = (
   return (
     <div
       data-testid="ink-bleed-cover"
-      className="relative h-full w-full overflow-hidden rounded-[16px] bg-[#111115] shadow-[0_26px_64px_rgba(0,0,0,0.58)]"
+      className="relative h-full w-full overflow-hidden rounded-[16px] shadow-[0_26px_64px_rgba(0,0,0,0.58)]"
     >
-      {/* Back Layer: Incoming track emerging smoothly from behind with GPU compositor motion */}
+      {/* Back Layer: Incoming track emerging cleanly edge-to-edge (scale >= 1.0 prevents black borders) */}
       <img
         ref={incomingImgRef}
         src={incomingUrl}
@@ -282,8 +282,8 @@ export const InkBleedCoverTransition: React.FC<InkBleedCoverTransitionProps> = (
         draggable={false}
         className="h-full w-full select-none object-cover will-change-transform"
         style={{
-          transform: 'translate3d(0, 0, 0) scale(0.96)',
-          opacity: 0.88,
+          transform: 'translate3d(0, 0, 0) scale(1.035)',
+          opacity: 1,
         }}
       />
 

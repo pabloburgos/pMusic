@@ -30,6 +30,36 @@ const STORAGE_KEYS = {
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+export function normalizePlaylistNameKey(name: string): string {
+  return (name ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function normalizeTrackDuplicateKey(t: Track): string {
+  const title = (t.title ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const artist = (t.artists?.[0]?.name ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  return `${title}::${artist}`;
+}
+
+export function mergePlaylistTracksUnique(
+  primary: readonly Track[],
+  secondary: readonly Track[]
+): Track[] {
+  const out: Track[] = [];
+  const seenIds = new Set<string>();
+  const seenMeta = new Set<string>();
+  const pushTrack = (t: Track | null | undefined) => {
+    if (!t?.id) return;
+    const metaKey = normalizeTrackDuplicateKey(t);
+    if (seenIds.has(t.id) || (metaKey !== '::' && seenMeta.has(metaKey))) return;
+    seenIds.add(t.id);
+    if (metaKey !== '::') seenMeta.add(metaKey);
+    out.push(t);
+  };
+  for (const t of primary) pushTrack(t);
+  for (const t of secondary) pushTrack(t);
+  return out;
+}
+
 export function generateUuid(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -158,6 +188,7 @@ export class LibraryStore {
     ]);
 
     this.playlists = this.safeParseArray<PlaylistRecord>(rawPlaylists);
+    await this.deduplicatePlaylists();
     this.likedTracks = this.safeParseArray<LikedTrackRecord>(rawLiked);
     this.playHistory = this.safeParseArray<PlayHistoryRecord>(rawHistory);
     this.affinities = this.safeParseArray<ArtistAffinityRecord>(rawAffinity);
@@ -168,6 +199,59 @@ export class LibraryStore {
         this.deviceSession = null;
       }
     }
+  }
+
+  /**
+   * Consolidates duplicate local/remote playlists sharing the same normalized name,
+   * preserving the richest tracklist (e.g. 32 songs beats stale 18-song duplicates).
+   */
+  public async deduplicatePlaylists(): Promise<boolean> {
+    if (this.playlists.length <= 1) return false;
+    const groups = new Map<string, PlaylistRecord[]>();
+    const unkeyed: PlaylistRecord[] = [];
+    for (const pl of this.playlists) {
+      const key = normalizePlaylistNameKey(pl.name);
+      if (!key) {
+        unkeyed.push(pl);
+        continue;
+      }
+      const list = groups.get(key) ?? [];
+      list.push(pl);
+      groups.set(key, list);
+    }
+
+    let changed = false;
+    const deduped: PlaylistRecord[] = [...unkeyed];
+    for (const group of groups.values()) {
+      if (group.length === 1) {
+        deduped.push(group[0]!);
+        continue;
+      }
+      changed = true;
+      const sorted = [...group].sort((a, b) => {
+        if (b.tracks.length !== a.tracks.length) {
+          return b.tracks.length - a.tracks.length;
+        }
+        return (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0);
+      });
+      const keeper = sorted[0]!;
+      let mergedTracks = [...keeper.tracks];
+      for (const extra of sorted.slice(1)) {
+        mergedTracks = mergePlaylistTracksUnique(mergedTracks, extra.tracks);
+      }
+      deduped.push({
+        ...keeper,
+        tracks: mergedTracks,
+        coverUrl: keeper.coverUrl ?? mergedTracks[0]?.thumbnailUrl,
+      });
+    }
+
+    if (changed) {
+      this.playlists = deduped;
+      await this.storage.setItem(STORAGE_KEYS.playlists, JSON.stringify(this.playlists));
+      this.emitTableChanged('playlists');
+    }
+    return changed;
   }
 
   public getPlaylists(): PlaylistRecord[] {
@@ -199,11 +283,11 @@ export class LibraryStore {
     createdAt?: string;
     updatedAt?: string;
   }): Promise<PlaylistRecord> {
-    const normRemoteName = remote.name.trim().toLowerCase();
+    const normRemoteName = normalizePlaylistNameKey(remote.name);
     const matchIdx = this.playlists.findIndex(
       (p) =>
         p.id === remote.id ||
-        (normRemoteName.length > 0 && p.name.trim().toLowerCase() === normRemoteName)
+        (normRemoteName.length > 0 && normalizePlaylistNameKey(p.name) === normRemoteName)
     );
     const nowIso = new Date().toISOString();
     const existing = matchIdx >= 0 ? this.playlists[matchIdx]! : null;

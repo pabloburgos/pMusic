@@ -133,4 +133,66 @@ describe('@pmusic/sync', () => {
     const localCreated = await store.createPlaylist({ name: 'Local UUID Check', tracks: [] });
     expect(uuidRe.test(localCreated.id)).toBe(true);
   });
+
+  it('consolidates duplicate playlists sharing normalized names while preserving the richest 32-track superset', async () => {
+    const store = new LibraryStore();
+    await store.hydrate();
+
+    const makeTrack = (idx: number): Track => ({
+      ...SAMPLE_TRACK,
+      id: `dz:${1000 + idx}`,
+      title: `Track ${idx}`,
+    });
+    const full32 = Array.from({ length: 32 }, (_, i) => makeTrack(i));
+    const stale18 = full32.slice(0, 18);
+
+    const dup1Id = '22222222-2222-4222-8222-222222222221';
+    const dup2Id = '22222222-2222-4222-8222-222222222222';
+    // Seed raw storage with duplicate rows before hydrating
+    const rawKey = 'pmusic.lib.playlists';
+    const fakeStorage = {
+      map: new Map<string, string>([
+        [
+          rawKey,
+          JSON.stringify([
+            {
+              id: dup2Id,
+              name: ' lapanera ',
+              description: '',
+              source: 'local',
+              tracks: stale18,
+              createdAt: '2026-11-20T10:00:00.000Z',
+              updatedAt: '2026-11-24T12:00:00.000Z',
+            },
+            {
+              id: dup1Id,
+              name: 'LaPanera',
+              description: '',
+              source: 'local',
+              tracks: full32,
+              createdAt: '2026-11-20T10:00:00.000Z',
+              updatedAt: '2026-11-23T12:00:00.000Z',
+            },
+          ]),
+        ],
+      ]),
+      async getItem(k: string) {
+        return this.map.get(k) ?? null;
+      },
+      async setItem(k: string, v: string) {
+        this.map.set(k, v);
+      },
+      async removeItem(k: string) {
+        this.map.delete(k);
+      },
+    };
+
+    const dedupStore = new LibraryStore(fakeStorage);
+    await dedupStore.hydrate();
+
+    const playlists = dedupStore.getPlaylists();
+    expect(playlists).toHaveLength(1);
+    expect(playlists[0]?.name).toBe('LaPanera');
+    expect(playlists[0]?.tracks).toHaveLength(32);
+  });
 });

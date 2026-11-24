@@ -732,18 +732,25 @@ export class RecommendationEngine implements IRecommendationEngine {
       const exact =
         normQuery.length > 0 &&
         (normName === normQuery || (collapsedQuery.length >= 4 && collapsedName === collapsedQuery))
-          ? 195
-          : 0;
-      const partial =
-        exact === 0 && normQuery.length > 0 && (normName.includes(normQuery) || normQuery.includes(normName))
-          ? 70
+          ? 660
           : 0;
       const artistWordSet = new Set(tokenizeNormalized(artist.name));
       const allTokensInArtist =
-        queryTokens.length > 0 && queryTokens.every((t) => artistWordSet.has(t)) ? 170 : 0;
-      const affinity = this.getEffectiveAffinity(artist.name) * 0.4;
+        queryTokens.length > 0 && queryTokens.every((t) => artistWordSet.has(t)) ? 560 : 0;
+      const rawAffinity = this.getEffectiveAffinity(artist.name);
+      const favoritePrefixBoost =
+        normQuery.length >= 3 &&
+        rawAffinity >= 2 &&
+        (normName.startsWith(normQuery) || collapsedName.startsWith(collapsedQuery))
+          ? 560 + Math.min(200, rawAffinity * 20)
+          : 0;
+      const partial =
+        exact === 0 && normQuery.length > 0 && (normName.includes(normQuery) || normQuery.includes(normName))
+          ? 140
+          : 0;
+      const affinity = rawAffinity * 12;
       const sceneBonus = this.scoreArtistSceneBonus(artist, trackSceneMap) * 0.6;
-      const score = Math.max(exact, allTokensInArtist, partial) + affinity + sceneBonus;
+      const score = Math.max(exact, allTokensInArtist, favoritePrefixBoost, partial) + affinity + sceneBonus;
       if (score > bestScore) {
         bestScore = score;
         bestCandidate = { kind: 'artist', item: artist };
@@ -757,13 +764,22 @@ export class RecommendationEngine implements IRecommendationEngine {
         song.artists.map((a) => a.name),
         song.album?.name
       );
+      const normTitle = normalizeSearchText(song.title);
+      const titleWordSet = new Set(tokenizeNormalized(song.title));
+      const titleWordHits = queryTokens.filter((t) => titleWordSet.has(t)).length;
+      const isTitleMatched =
+        normQuery.length > 0 &&
+        (normTitle === normQuery ||
+          (normQuery.length >= 3 && normTitle.startsWith(normQuery)) ||
+          titleWordHits > 0);
+      const cappedQueryMatch = isTitleMatched ? queryMatch + 160 : Math.min(queryMatch, 320);
       const artistAffinity =
         song.artists.reduce(
           (m, a) => Math.max(m, this.getEffectiveAffinity(a.name)),
           0
         ) * 0.35;
       const sceneFit = spanishDom ? this.scoreTrackSceneFit(song) * 2.5 : 0;
-      const score = queryMatch + artistAffinity + sceneFit;
+      const score = cappedQueryMatch + artistAffinity + sceneFit;
       if (score > bestScore) {
         bestScore = score;
         bestCandidate = { kind: 'song', item: song };

@@ -1393,10 +1393,9 @@ input[type="range"].pm-eq-vertical {
 }
 
 /* Apple HIG Hit-Target Enforcement: 44x44px mobile (<768px), 28x28px desktop (>=768px) */
-button,
-[role="button"],
+button:not([role="switch"]):not(.pm-text-btn):not(.pm-compact-btn),
+[role="button"]:not(.pm-text-btn):not(.pm-compact-btn),
 [role="tab"],
-[role="switch"],
 input[type="range"],
 input[type="search"],
 input[type="text"],
@@ -1407,10 +1406,9 @@ input[type="password"] {
 }
 
 @media (max-width: 767px) {
-  button,
-  [role="button"],
+  button:not([role="switch"]):not(.pm-text-btn):not(.pm-compact-btn),
+  [role="button"]:not(.pm-text-btn):not(.pm-compact-btn),
   [role="tab"],
-  [role="switch"],
   input[type="range"],
   input[type="search"],
   input[type="text"],
@@ -1419,6 +1417,12 @@ input[type="password"] {
     min-width: 44px;
     min-height: 44px;
   }
+}
+
+[role="switch"].pm-switch-control,
+.pm-text-btn {
+  min-width: 0 !important;
+  min-height: 0 !important;
 }
 
 /* Hide duplicate native WebKit search clear button inside styled search bars */
@@ -1652,6 +1656,71 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   }
 }
 
+/* ── Dedicated Flicker-Free Mobile Canvas2D Backdrop Glows (Zero filter:blur, zero mix-blend) ── */
+@keyframes pmMobileGlowDrift1 {
+  0%, 100% {
+    transform: translate3d(-10%, -8%, 0) scale(1.04);
+    opacity: 0.72;
+  }
+  50% {
+    transform: translate3d(10%, 8%, 0) scale(1.18);
+    opacity: 0.88;
+  }
+}
+
+@keyframes pmMobileGlowDrift2 {
+  0%, 100% {
+    transform: translate3d(10%, 10%, 0) scale(1.06);
+    opacity: 0.68;
+  }
+  50% {
+    transform: translate3d(-10%, -8%, 0) scale(1.2);
+    opacity: 0.84;
+  }
+}
+
+.pm-mobile-glow-1 {
+  background: radial-gradient(
+    circle closest-side at 50% 50%,
+    var(--pm-ambient-1) 0%,
+    color-mix(in srgb, var(--pm-ambient-1) 42%, transparent) 52%,
+    transparent 96%
+  );
+  opacity: 0.78;
+  animation: pmMobileGlowDrift1 14s ease-in-out infinite;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+.pm-mobile-glow-2 {
+  background: radial-gradient(
+    circle closest-side at 50% 50%,
+    var(--pm-ambient-2) 0%,
+    color-mix(in srgb, var(--pm-ambient-2) 42%, transparent) 52%,
+    transparent 96%
+  );
+  opacity: 0.72;
+  animation: pmMobileGlowDrift2 18s ease-in-out infinite;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+.pm-mobile-glow-3 {
+  background: radial-gradient(
+    circle closest-side at 50% 50%,
+    var(--pm-ambient-3) 0%,
+    color-mix(in srgb, var(--pm-ambient-3) 38%, transparent) 55%,
+    transparent 96%
+  );
+  opacity: 0.56;
+  backface-visibility: hidden;
+}
+
+.pm-backdrop-static .pm-mobile-glow-1,
+.pm-backdrop-static .pm-mobile-glow-2 {
+  animation: none !important;
+}
+
 /* ── Living GPU-Composited Fluid Color Orbs (Zero filter:blur, 60fps silky on Android WebView & Desktop) ── */
 @keyframes pmOrbDrift1 {
   0%, 100% {
@@ -1867,16 +1936,16 @@ html.pm-solid-modern .pm-spotlight-backdrop {
 /* Unified Dock 3D Prism (rotates Cover + Title + Explicit + Artists together) */
 .pm-dock-prism-viewport {
   perspective: 720px;
-  height: 52px;
+  height: 56px;
   overflow: visible;
 }
 
 @keyframes pmDockPrismRoll {
   0% {
-    transform: translateZ(-26px) rotateX(0deg);
+    transform: translateZ(-28px) rotateX(0deg);
   }
   100% {
-    transform: translateZ(-26px) rotateX(-90deg);
+    transform: translateZ(-28px) rotateX(-90deg);
   }
 }
 
@@ -1884,14 +1953,14 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   position: absolute;
   inset: 0;
   backface-visibility: hidden;
-  transform: rotateX(0deg) translateZ(26px);
+  transform: rotateX(0deg) translateZ(28px);
 }
 
 .pm-dock-face-top {
   position: absolute;
   inset: 0;
   backface-visibility: hidden;
-  transform: rotateX(90deg) translateZ(26px);
+  transform: rotateX(90deg) translateZ(28px);
 }
 
 /* Dock Heart Slow Silk Fade-Out before roll & Fade-In after song settles */
@@ -1926,27 +1995,27 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   animation: pmDockHeartIn 750ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-/* Gaussian Blur Crossfade for NowPlaying Big Title & Artist centered around 50% midpoint */
+/* Sequential Gaussian Blur Crossfade: outgoing fades & blurs completely BEFORE incoming reveals */
 @keyframes pmMetaBlurOut {
-  0%, 24% {
+  0%, 16% {
     opacity: 1;
     filter: blur(0px);
     transform: translateY(0) scale(1);
   }
-  52%, 100% {
+  46%, 100% {
     opacity: 0;
-    filter: blur(10px);
-    transform: translateY(-3px) scale(0.985);
+    filter: blur(12px);
+    transform: translateY(-4px) scale(0.985);
   }
 }
 
 @keyframes pmMetaBlurIn {
-  0%, 40% {
+  0%, 52% {
     opacity: 0;
-    filter: blur(10px);
-    transform: translateY(3px) scale(1.015);
+    filter: blur(12px);
+    transform: translateY(4px) scale(1.015);
   }
-  74%, 100% {
+  84%, 100% {
     opacity: 1;
     filter: blur(0px);
     transform: translateY(0) scale(1);

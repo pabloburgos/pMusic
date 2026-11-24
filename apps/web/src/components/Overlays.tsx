@@ -66,7 +66,9 @@ import {
   toggleRealFullscreen,
 } from '../platform/web-bridge.ts';
 import { getThemeDefinition } from '../utils/themes.ts';
+import { getCachedPaletteCss } from '../utils/cover-color.ts';
 import { ArtistLinks } from './ArtistLinks.tsx';
+import { PMusicSwitch } from './PMusicSwitch.tsx';
 import { clearDraggedTrack, setDraggedTrack } from '../utils/track-dnd.ts';
 
 function normalizeLyricToken(raw: string): string {
@@ -291,12 +293,130 @@ export const NowPlayingSheet: React.FC = () => {
 
   const [backdropSlots, setBackdropSlots] = useState<{
     active: 0 | 1;
+    prev: 0 | 1 | null;
     urls: [string, string];
     fadeMs: number;
+    linear: boolean;
+    fadeReady: boolean;
   }>(() => {
     const initUrl = currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl;
-    return { active: 0, urls: [initUrl, initUrl], fadeMs: 1100 };
+    return {
+      active: 0,
+      prev: null,
+      urls: [initUrl, initUrl],
+      fadeMs: 1100,
+      linear: false,
+      fadeReady: true,
+    };
   });
+  const backdropActiveRef = useRef<{ active: 0 | 1; urls: [string, string] }>({
+    active: 0,
+    urls: [
+      currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl,
+      currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl,
+    ],
+  });
+  backdropActiveRef.current = { active: backdropSlots.active, urls: backdropSlots.urls };
+  const mobileBackdropCanvasRefs = useRef<[HTMLCanvasElement | null, HTMLCanvasElement | null]>([
+    null,
+    null,
+  ]);
+  const [isMobileBackdrop, setIsMobileBackdrop] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    if (window.location?.hostname === 'appassets.pmusic.local') return true;
+    return (
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(max-width: 767px), (hover: none) and (pointer: coarse)').matches
+    );
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const mq = window.matchMedia('(max-width: 767px), (hover: none) and (pointer: coarse)');
+    const update = () => {
+      setIsMobileBackdrop(
+        window.location?.hostname === 'appassets.pmusic.local' || mq.matches
+      );
+    };
+    update();
+    if (typeof mq.addEventListener === 'function') {
+      mq.addEventListener('change', update);
+      return () => mq.removeEventListener('change', update);
+    }
+    return undefined;
+  }, []);
+
+  const paintMobileMipmapSlot = (
+    slotIdx: 0 | 1,
+    img: HTMLImageElement | null,
+    fallbackUrl: string
+  ) => {
+    const canvas = mobileBackdropCanvasRefs.current[slotIdx];
+    if (!canvas) return;
+    let ctx: CanvasRenderingContext2D | null = null;
+    try {
+      ctx = canvas.getContext('2d');
+    } catch {
+      ctx = null;
+    }
+    if (!ctx) return;
+    const cw = canvas.width;
+    const ch = canvas.height;
+    ctx.clearRect(0, 0, cw, ch);
+    if (img && img.complete && img.naturalWidth > 0 && typeof document !== 'undefined') {
+      try {
+        // 2-step hardware mipmap downsample (96->32) avoids Android WebView Skia filter:blur flicker
+        const iw = img.naturalWidth;
+        const ih = img.naturalHeight;
+        const side = Math.min(iw, ih);
+        const sx = (iw - side) * 0.5;
+        const sy = (ih - side) * 0.5;
+        const step = document.createElement('canvas');
+        step.width = 96;
+        step.height = 96;
+        const sctx = step.getContext('2d');
+        if (sctx) {
+          sctx.imageSmoothingEnabled = true;
+          if ('imageSmoothingQuality' in sctx) sctx.imageSmoothingQuality = 'high';
+          sctx.drawImage(img, sx, sy, side, side, 0, 0, 96, 96);
+          ctx.imageSmoothingEnabled = true;
+          if ('imageSmoothingQuality' in ctx) ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(step, 0, 0, cw, ch);
+          return;
+        }
+      } catch {
+        // fall through to palette wash
+      }
+    }
+    const [c1, c2, c3] = getCachedPaletteCss(fallbackUrl);
+    const g = ctx.createLinearGradient(0, 0, cw, ch);
+    g.addColorStop(0, c1);
+    g.addColorStop(0.55, c2);
+    g.addColorStop(1, c3);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, cw, ch);
+  };
+
+  useEffect(() => {
+    if (!nowPlayingOpen || !isMobileBackdrop || typeof Image === 'undefined') return;
+    const slot = backdropActiveRef.current.active;
+    const url = backdropActiveRef.current.urls[slot];
+    if (!url) return;
+    let cancelled = false;
+    const img = new Image();
+    img.decoding = 'async';
+    const commit = (ok: boolean) => {
+      if (cancelled) return;
+      paintMobileMipmapSlot(slot, ok ? img : null, url);
+    };
+    img.onload = () => commit(true);
+    img.onerror = () => commit(false);
+    img.src = url;
+    if (img.complete && img.naturalWidth > 0) commit(true);
+    return () => {
+      cancelled = true;
+    };
+  }, [nowPlayingOpen, isMobileBackdrop]);
 
   const markLyricsUserScrolled = () => {
     setLyricsUserScrolled(true);
@@ -341,20 +461,92 @@ export const NowPlayingSheet: React.FC = () => {
       : (currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl);
 
   useEffect(() => {
-    setBackdropSlots((prev) => {
-      if (prev.urls[prev.active] === targetBackdropUrl) return prev;
-      const nextSlot: 0 | 1 = prev.active === 0 ? 1 : 0;
+    const curState = backdropActiveRef.current;
+    if (curState.urls[curState.active] === targetBackdropUrl) return;
+
+    let cancelled = false;
+    let rafA = 0;
+    let rafB = 0;
+
+    const commitSlotSwap = (decodedImg: HTMLImageElement | null) => {
+      if (cancelled) return;
+      const liveState = backdropActiveRef.current;
+      if (liveState.urls[liveState.active] === targetBackdropUrl) return;
+      const nextSlot: 0 | 1 = liveState.active === 0 ? 1 : 0;
       const nextUrls: [string, string] =
         nextSlot === 0
-          ? [targetBackdropUrl, prev.urls[1]]
-          : [prev.urls[0], targetBackdropUrl];
-      return {
+          ? [targetBackdropUrl, liveState.urls[1]]
+          : [liveState.urls[0], targetBackdropUrl];
+
+      if (isMobileBackdrop) {
+        paintMobileMipmapSlot(nextSlot, decodedImg, targetBackdropUrl);
+      }
+
+      const canRafFade =
+        !reducedMotionPref &&
+        typeof requestAnimationFrame === 'function' &&
+        typeof document !== 'undefined';
+
+      setBackdropSlots({
         active: nextSlot,
+        prev: liveState.active,
         urls: nextUrls,
         fadeMs: cfActiveBackdrop ? Math.round(cfDurBackdropSec * 1000) : 950,
+        linear: cfActiveBackdrop,
+        fadeReady: !canRafFade,
+      });
+
+      if (canRafFade) {
+        rafA = requestAnimationFrame(() => {
+          rafB = requestAnimationFrame(() => {
+            if (!cancelled) {
+              setBackdropSlots((s) =>
+                s.active === nextSlot ? { ...s, fadeReady: true } : s
+              );
+            }
+          });
+        });
+      }
+    };
+
+    if (typeof Image === 'undefined' || !targetBackdropUrl) {
+      commitSlotSwap(null);
+      return () => {
+        cancelled = true;
       };
-    });
-  }, [targetBackdropUrl, cfActiveBackdrop, cfDurBackdropSec]);
+    }
+
+    let settled = false;
+    const finish = (img: HTMLImageElement | null) => {
+      if (settled || cancelled) return;
+      settled = true;
+      clearTimeout(safetyTimer);
+      commitSlotSwap(img);
+    };
+
+    const img = new Image();
+    img.decoding = 'async';
+    const safetyTimer = setTimeout(() => finish(null), 420);
+    img.onload = () => {
+      if (typeof img.decode === 'function') {
+        void img.decode().catch(() => {}).finally(() => finish(img));
+      } else {
+        finish(img);
+      }
+    };
+    img.onerror = () => finish(null);
+    img.src = targetBackdropUrl;
+    if (img.complete && img.naturalWidth > 0) {
+      finish(img);
+    }
+
+    return () => {
+      cancelled = true;
+      clearTimeout(safetyTimer);
+      if (rafA && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafA);
+      if (rafB && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafB);
+    };
+  }, [targetBackdropUrl, cfActiveBackdrop, cfDurBackdropSec, isMobileBackdrop, reducedMotionPref]);
 
   useEffect(() => {
     const isTouchOrSmall =
@@ -1547,7 +1739,7 @@ export const NowPlayingSheet: React.FC = () => {
       }}
       className="pm-sheet-spring-in pm-dark-sliders fixed inset-0 z-50 flex h-dvh w-screen flex-col overflow-hidden bg-[#070709] text-[#F5F5F7]"
     >
-      {/* Apple Music Style Living Fluid Cover Backdrop (Fixed & Oversized so zero unfiltered edges ever appear) */}
+      {/* Apple Music Style Living Fluid Cover Backdrop (Flicker-Free Canvas2D Mipmap on Mobile/Android) */}
       <div
         ref={backdropBeatRef}
         data-testid="live-backdrop-container"
@@ -1559,48 +1751,85 @@ export const NowPlayingSheet: React.FC = () => {
           background:
             'radial-gradient(circle at 20% 24%, var(--pm-ambient-1), transparent 58%), radial-gradient(circle at 80% 76%, var(--pm-ambient-2), transparent 60%), linear-gradient(180deg, var(--pm-ambient-3) 0%, #070709 100%)',
           transform: 'scale(var(--pm-beat-scale, 1))',
-          transition: 'background 1800ms ease',
         }}
       >
-        {/* Persistent Double-Buffered Fluid Backdrop Slots (never remounted or animation-reset between tracks) */}
+        {/* Persistent Double-Buffered Fluid Backdrop Slots (pre-decoded, stacked cleanly with zero mid-fade dip) */}
         {([0, 1] as const).map((slotIdx) => {
           const isSlotActive = backdropSlots.active === slotIdx;
+          const isSlotPrev = backdropSlots.prev === slotIdx;
+          const slotOpacity = isSlotActive
+            ? backdropSlots.fadeReady
+              ? 1
+              : 0
+            : isSlotPrev
+              ? 1
+              : 0;
           return (
             <div
               key={`backdrop-slot-${slotIdx}`}
               data-testid={`backdrop-slot-${slotIdx}`}
               className="pointer-events-none absolute -inset-24 will-change-[opacity]"
               style={{
-                opacity: isSlotActive ? 1 : 0,
-                transition: reducedMotionPref
-                  ? 'none'
-                  : `opacity ${backdropSlots.fadeMs}ms cubic-bezier(0.37, 0, 0.63, 1)`,
+                zIndex: isSlotActive ? 2 : isSlotPrev ? 1 : 0,
+                opacity: slotOpacity,
+                transition:
+                  reducedMotionPref || !isSlotActive
+                    ? 'none'
+                    : `opacity ${backdropSlots.fadeMs}ms ${
+                        backdropSlots.linear ? 'linear' : 'cubic-bezier(0.37, 0, 0.63, 1)'
+                      }`,
               }}
             >
-              <img
-                data-testid={isSlotActive ? 'live-backdrop-img' : undefined}
-                src={backdropSlots.urls[slotIdx]}
-                alt=""
-                draggable={false}
-                className="pm-fluid-cover-a absolute inset-0 h-full w-full select-none object-cover opacity-55"
-                style={slotIdx === 1 ? { animationDelay: '-6s' } : undefined}
-              />
-              <img
-                src={backdropSlots.urls[slotIdx]}
-                alt=""
-                draggable={false}
-                className="pm-fluid-cover-b absolute inset-0 h-full w-full -scale-x-100 select-none object-cover opacity-35"
-                style={slotIdx === 1 ? { animationDelay: '-9s' } : undefined}
-              />
+              {isMobileBackdrop ? (
+                <canvas
+                  ref={(el) => {
+                    mobileBackdropCanvasRefs.current[slotIdx] = el;
+                  }}
+                  width={32}
+                  height={32}
+                  data-testid={isSlotActive ? 'live-backdrop-img' : undefined}
+                  aria-hidden="true"
+                  className="pointer-events-none h-full w-full scale-110 select-none opacity-65"
+                />
+              ) : (
+                <>
+                  <img
+                    data-testid={isSlotActive ? 'live-backdrop-img' : undefined}
+                    src={backdropSlots.urls[slotIdx]}
+                    alt=""
+                    draggable={false}
+                    className="pm-fluid-cover-a absolute inset-0 h-full w-full select-none object-cover opacity-55"
+                    style={slotIdx === 1 ? { animationDelay: '-6s' } : undefined}
+                  />
+                  <img
+                    src={backdropSlots.urls[slotIdx]}
+                    alt=""
+                    draggable={false}
+                    className="pm-fluid-cover-b absolute inset-0 h-full w-full -scale-x-100 select-none object-cover opacity-35"
+                    style={slotIdx === 1 ? { animationDelay: '-9s' } : undefined}
+                  />
+                </>
+              )}
             </div>
           );
         })}
 
-        {/* GPU-Composited Living Fluid Cover-Palette Orbs (True circles + closest-side fade = zero box seams) */}
-        <div className="pm-orb-1 pointer-events-none absolute -left-[20vmax] -top-[16vmax] h-[78vmax] w-[78vmax] rounded-full mix-blend-screen" />
-        <div className="pm-orb-2 pointer-events-none absolute -bottom-[18vmax] -right-[16vmax] h-[82vmax] w-[82vmax] rounded-full mix-blend-screen" />
-        <div className="pm-orb-3 pointer-events-none absolute left-[10%] top-[22%] h-[68vmax] w-[68vmax] rounded-full mix-blend-screen" />
-        <div className="pm-orb-sheen pointer-events-none absolute inset-[-12%] rounded-full mix-blend-overlay" />
+        {isMobileBackdrop ? (
+          /* Mobile Android WebView GPU-Safe Radial Color Glows (Zero mix-blend, zero filter:blur) */
+          <div className="pointer-events-none absolute inset-0" style={{ zIndex: 3 }}>
+            <div className="pm-mobile-glow-1 pointer-events-none absolute -left-[18vmax] -top-[14vmax] h-[72vmax] w-[72vmax] rounded-full" />
+            <div className="pm-mobile-glow-2 pointer-events-none absolute -bottom-[16vmax] -right-[14vmax] h-[76vmax] w-[76vmax] rounded-full" />
+            <div className="pm-mobile-glow-3 pointer-events-none absolute left-[12%] top-[24%] h-[62vmax] w-[62vmax] rounded-full" />
+          </div>
+        ) : (
+          /* Desktop GPU-Composited Living Fluid Cover-Palette Orbs */
+          <div className="pointer-events-none absolute inset-0" style={{ zIndex: 3 }}>
+            <div className="pm-orb-1 pointer-events-none absolute -left-[20vmax] -top-[16vmax] h-[78vmax] w-[78vmax] rounded-full mix-blend-screen" />
+            <div className="pm-orb-2 pointer-events-none absolute -bottom-[18vmax] -right-[16vmax] h-[82vmax] w-[82vmax] rounded-full mix-blend-screen" />
+            <div className="pm-orb-3 pointer-events-none absolute left-[10%] top-[22%] h-[68vmax] w-[68vmax] rounded-full mix-blend-screen" />
+            <div className="pm-orb-sheen pointer-events-none absolute inset-[-12%] rounded-full mix-blend-overlay" />
+          </div>
+        )}
       </div>
 
       {/* Apple HIG Bright Media Scrim (34% dark wash for vivid fluid colors with legible text) */}
@@ -3217,23 +3446,13 @@ export const AudioStudioSheet: React.FC = () => {
                     : 'Algoritmo inteligente por pista'}
                 </p>
               </div>
-              <button
-                type="button"
-                role="switch"
-                data-testid="dj-mode-toggle"
-                aria-checked={djMode.enabled}
-                aria-label="Activar Modo Sesión DJ"
-                onClick={() => void toggleDjMode()}
-                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 transition-colors ${
-                  djMode.enabled ? 'bg-white' : 'bg-white/25'
-                }`}
-              >
-                <span
-                  className={`h-5 w-5 rounded-full shadow-sm transition-transform duration-200 ${
-                    djMode.enabled ? 'translate-x-5 bg-[#070709]' : 'translate-x-0 bg-white'
-                  }`}
-                />
-              </button>
+              <PMusicSwitch
+                variant="hud"
+                testId="dj-mode-toggle"
+                checked={djMode.enabled}
+                ariaLabel="Activar Modo Sesión DJ"
+                onChange={() => void toggleDjMode()}
+              />
             </div>
 
             {/* Curated Radio Full DJ Button */}
@@ -3372,24 +3591,12 @@ export const AudioStudioSheet: React.FC = () => {
                   Moldea el sonido banda por banda
                 </p>
               </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={userEq.enabled}
-                aria-label="Activar ecualizador"
-                onClick={() => setEqEnabled(!userEq.enabled)}
-                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 transition-colors ${
-                  userEq.enabled ? 'bg-white' : 'bg-white/25'
-                }`}
-              >
-                <span
-                  className={`h-5 w-5 rounded-full shadow-sm transition-transform duration-200 ${
-                    userEq.enabled
-                      ? 'translate-x-5 bg-[#0A0A0F]'
-                      : 'translate-x-0 bg-white'
-                  }`}
-                />
-              </button>
+              <PMusicSwitch
+                variant="hud"
+                checked={userEq.enabled}
+                ariaLabel="Activar ecualizador"
+                onChange={() => setEqEnabled(!userEq.enabled)}
+              />
             </div>
 
             <div className="mt-3.5 grid grid-cols-3 gap-1.5">
@@ -3464,26 +3671,19 @@ export const AudioStudioSheet: React.FC = () => {
                     {djMode.enabled ? 'En pausa con DJ' : `${safeCrossfade.durationSec} s`}
                   </span>
                 </div>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={safeCrossfade.enabled && !djMode.enabled}
-                  aria-label="Activar Crossfade seguro"
-                  onClick={() =>
+                <PMusicSwitch
+                  variant="hud"
+                  checked={safeCrossfade.enabled && !djMode.enabled}
+                  ariaLabel="Activar Crossfade seguro"
+                  disabled={djMode.enabled}
+                  onChange={() =>
                     setSafeCrossfade({
                       enabled: djMode.enabled ? true : !safeCrossfade.enabled,
                       durationSec:
                         safeCrossfade.durationSec > 0 ? safeCrossfade.durationSec : 4,
                     })
                   }
-                  className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold transition-colors ${
-                    safeCrossfade.enabled && !djMode.enabled
-                      ? 'bg-white text-[#070709]'
-                      : 'bg-white/10 opacity-80 hover:bg-white/15'
-                  }`}
-                >
-                  {safeCrossfade.enabled && !djMode.enabled ? 'Activo' : 'Off'}
-                </button>
+                />
               </div>
               <input
                 type="range"
@@ -3545,24 +3745,12 @@ export const AudioStudioSheet: React.FC = () => {
                   <span className="text-xs font-semibold">Normalizar volumen</span>
                   <p className="text-[10.5px] opacity-60">Iguala el nivel entre pistas</p>
                 </div>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={audioNormalization}
-                  aria-label="Normalizar volumen"
-                  onClick={() => setAudioNormalization(!audioNormalization)}
-                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors ${
-                    audioNormalization ? 'bg-white' : 'bg-white/25'
-                  }`}
-                >
-                  <span
-                    className={`h-4 w-4 rounded-full shadow-sm transition-transform duration-200 ${
-                      audioNormalization
-                        ? 'translate-x-4 bg-[#070709]'
-                        : 'translate-x-0 bg-white'
-                    }`}
-                  />
-                </button>
+                <PMusicSwitch
+                  variant="hud"
+                  checked={audioNormalization}
+                  ariaLabel="Normalizar volumen"
+                  onChange={() => setAudioNormalization(!audioNormalization)}
+                />
               </div>
             </div>
           </div>

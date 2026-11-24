@@ -133,4 +133,35 @@ describe('@pmusic/recommendations', () => {
     expect(res.artists[0]?.name).toBe('D.Valentino');
     expect(res.songs[0]?.id).toBe('es_1');
   });
+
+  it('puts Artist Profile first when searching an artist name while exact song titles still return the song', async () => {
+    const engine = new RecommendationEngine();
+    await engine.recordSignal(TRACK_PANTERA, 'like');
+
+    const bundle = {
+      query: 'La Pantera',
+      songs: [TRACK_PANTERA],
+      videos: [],
+      artists: [
+        { id: '7524936', name: 'La Pantera', thumbnailUrl: 'https://example.com/lp.jpg' },
+      ],
+      albums: [],
+      playlists: [],
+    };
+
+    const bestArtist = engine.selectBestResult('La Pantera', bundle);
+    expect(bestArtist?.kind).toBe('artist');
+    if (bestArtist?.kind === 'artist') {
+      expect(bestArtist.item.name).toBe('La Pantera');
+    }
+
+    const bestSong = engine.selectBestResult('Cayetano', {
+      ...bundle,
+      query: 'Cayetano',
+    });
+    expect(bestSong?.kind).toBe('song');
+    if (bestSong?.kind === 'song') {
+      expect(bestSong.item.id).toBe('lp_1');
+    }
+  });
 });

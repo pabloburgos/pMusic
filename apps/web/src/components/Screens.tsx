@@ -83,6 +83,8 @@ export const TrackListRow: React.FC<{
     addToQueue,
     removeTrackFromPlaylist,
     openTrackMenu,
+    playlists,
+    recordPlaylistPlay,
   } = usePMusicStore();
 
   const [dragOver, setDragOver] = useState(false);
@@ -95,6 +97,10 @@ export const TrackListRow: React.FC<{
     if (isCurrent) {
       void togglePlayPause();
     } else {
+      if (playlistId) {
+        const pl = playlists.find((p) => p.id === playlistId);
+        if (pl) recordPlaylistPlay(pl);
+      }
       void playTrack(track, queueContext);
     }
   };
@@ -197,7 +203,7 @@ export const TrackListRow: React.FC<{
             <button
               type="button"
               onClick={handleRowPlay}
-              className={`truncate text-left text-[14px] hover:underline pm-text-primary ${
+              className={`pm-text-btn truncate text-left text-[14px] leading-[1.2] hover:underline pm-text-primary ${
                 isCurrent ? 'font-bold' : 'font-medium'
               }`}
             >
@@ -212,14 +218,14 @@ export const TrackListRow: React.FC<{
               </span>
             )}
           </div>
-          <div className="flex min-w-0 items-center gap-1.5 overflow-hidden text-[12.5px] leading-normal pm-text-secondary">
+          <div className="mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden text-[12.5px] leading-[1.2] pm-text-secondary">
             <ArtistLinks
               artists={track.artists}
-              className="min-w-0 shrink-0 max-w-[75%]"
+              className="min-w-0 shrink-0 max-w-[75%] !py-0 !leading-[1.2]"
               linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
             />
             {track.album && (
-              <span className="hidden min-w-0 flex-1 truncate leading-normal pm-text-tertiary lg:inline">
+              <span className="hidden min-w-0 flex-1 truncate leading-[1.2] pm-text-tertiary lg:inline">
                 · {track.album.name}
               </span>
             )}
@@ -379,20 +385,20 @@ const CoverCard: React.FC<{
           </button>
         )}
       </div>
-      <div className={`mt-2 sm:mt-2.5 ${round ? 'text-center' : ''}`}>
+      <div className={`mt-2 space-y-0.5 sm:mt-2.5 ${round ? 'text-center' : ''}`}>
         <button
           type="button"
           onClick={onOpen}
-          className="block w-full truncate text-left text-[14px] font-semibold pm-text-primary hover:underline"
+          className="pm-text-btn block w-full truncate text-left text-[13.5px] font-semibold leading-[1.2] pm-text-primary hover:underline sm:text-[14px]"
         >
           <span className={round ? 'block text-center' : ''}>{title}</span>
         </button>
         {subtitleNode ? (
-          <div className="mt-0.5 truncate text-[12px] leading-normal pm-text-secondary">
+          <div className="truncate text-[12px] leading-[1.25] pm-text-secondary">
             {subtitleNode}
           </div>
         ) : subtitle ? (
-          <div className="mt-0.5 line-clamp-2 text-[12px] leading-normal pm-text-tertiary">
+          <div className="line-clamp-2 text-[12px] leading-[1.25] pm-text-tertiary">
             {subtitle}
           </div>
         ) : null}
@@ -482,6 +488,7 @@ export const DetailViewPanel: React.FC = () => {
     openAlbumDetail,
     openArtistDetail,
     openLocalPlaylistDetail,
+    recordPlaylistPlay,
     showToast,
   } = usePMusicStore();
 
@@ -945,6 +952,7 @@ export const DetailViewPanel: React.FC = () => {
               type="button"
               onClick={() => {
                 if (localPl.tracks[0]) {
+                  recordPlaylistPlay(localPl);
                   void playTrack(localPl.tracks[0], localPl.tracks);
                 }
               }}
@@ -959,6 +967,7 @@ export const DetailViewPanel: React.FC = () => {
               onClick={async () => {
                 await toggleDjMode(true);
                 if (localPl.tracks[0]) {
+                  recordPlaylistPlay(localPl);
                   await playTrack(localPl.tracks[0], localPl.tracks);
                 }
               }}
@@ -1015,10 +1024,10 @@ export const DetailViewPanel: React.FC = () => {
                   <div
                     role="menu"
                     data-testid="playlist-actions-menu"
-                    className="pm-glass-liquid pm-menu-pop absolute left-0 top-11 z-50 w-64 rounded-[18px] p-1.5 shadow-2xl"
+                    className="pm-glass-liquid pm-menu-pop fixed inset-x-4 bottom-[max(5.25rem,calc(env(safe-area-inset-bottom)+4.5rem))] z-50 rounded-[20px] p-2 shadow-2xl sm:absolute sm:inset-auto sm:left-0 sm:top-11 sm:w-64 sm:rounded-[18px] sm:p-1.5"
                     style={{
                       background:
-                        'color-mix(in srgb, var(--pm-bg-surface) 92%, transparent)',
+                        'color-mix(in srgb, var(--pm-bg-surface) 94%, transparent)',
                     }}
                   >
                     <button
@@ -1385,6 +1394,8 @@ export const HomeScreen: React.FC = () => {
     currentTrack,
     isPlaying,
     homeShelves,
+    playlists,
+    playlistPlayCounts,
     isOfflineNetwork,
     wrappedSeasonActive,
     openWrappedModal,
@@ -1392,6 +1403,8 @@ export const HomeScreen: React.FC = () => {
     toggleDjMode,
     openAlbumDetail,
     openArtistDetail,
+    openLocalPlaylistDetail,
+    recordPlaylistPlay,
     openTrackMenu,
     refreshHomeRecommendations,
   } = usePMusicStore();
@@ -1402,7 +1415,22 @@ export const HomeScreen: React.FC = () => {
   const mixes = homeShelves.find((s) => s.kind === 'mixes_for_you');
   const because = homeShelves.find((s) => s.kind === 'because_you_listened');
   const releases = homeShelves.find((s) => s.kind === 'favorite_new_releases');
-  const quick = (listen?.tracks ?? []).slice(0, 6);
+
+  // Promote frequently played user playlists into the Quick-Access grid (YouTube Music style)
+  const frequentPlaylists = playlists
+    .map((pl) => {
+      const normKey = pl.name.trim().toLowerCase().replace(/\s+/g, ' ');
+      const stat = playlistPlayCounts[normKey];
+      const count = stat?.count ?? 0;
+      const recencyBonus = stat?.lastPlayedAt ? Math.max(0, 1 - (Date.now() - stat.lastPlayedAt) / (7 * 86400_000)) : 0;
+      return { pl, count, rankScore: count * 3 + recencyBonus };
+    })
+    .filter((item) => item.pl.tracks.length > 0 && item.count >= 1)
+    .sort((a, b) => b.rankScore - a.rankScore)
+    .slice(0, 2)
+    .map((x) => x.pl);
+
+  const quick = (listen?.tracks ?? []).slice(0, Math.max(4, 6 - frequentPlaylists.length));
   const show = (name: (typeof HOME_CHIPS)[number]) =>
     chip === 'Todo' || chip === name;
 
@@ -1495,10 +1523,67 @@ export const HomeScreen: React.FC = () => {
         </div>
       )}
 
-      {/* 2x3 Compact Quick-Access Grid */}
-      {chip === 'Todo' && quick.length > 0 && (
+      {/* 2x3 Compact Quick-Access Grid (Promotes Frequently Played Playlists + Top Songs) */}
+      {chip === 'Todo' && (quick.length > 0 || frequentPlaylists.length > 0) && (
         <section aria-label="Escuchar de nuevo">
           <div className="grid grid-cols-2 gap-2 sm:gap-2.5 lg:grid-cols-3">
+            {frequentPlaylists.map((pl) => {
+              const plCover = pl.coverUrl ?? pl.tracks[0]?.thumbnailUrl;
+              return (
+                <div
+                  key={`quick-pl-${pl.id}`}
+                  data-testid={`quick-playlist-tile-${pl.id}`}
+                  data-surface="content"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Abrir playlist ${pl.name}`}
+                  onClick={() => openLocalPlaylistDetail(pl.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      openLocalPlaylistDetail(pl.id);
+                    }
+                  }}
+                  className="pm-quick-tile pm-card-lift group flex cursor-pointer items-center gap-2.5 overflow-hidden rounded-[10px] pr-2.5 sm:gap-3 sm:rounded-[8px]"
+                >
+                  <div className="h-[52px] w-[52px] shrink-0 overflow-hidden sm:h-14 sm:w-14">
+                    {plCover ? (
+                      <img
+                        src={plCover}
+                        alt={pl.name}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className="pm-elevated flex h-full w-full items-center justify-center text-sm font-bold pm-text-secondary">
+                        {pl.name.slice(0, 1).toUpperCase()}
+                      </div>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1 py-1">
+                    <div className="line-clamp-2 text-left text-[12.5px] font-semibold leading-[1.2] pm-text-primary sm:truncate sm:text-[14px]">
+                      {pl.name}
+                    </div>
+                    <div className="hidden truncate text-[12px] leading-normal pm-text-tertiary sm:block">
+                      Playlist · {pl.tracks.length} temas
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label={`Reproducir playlist ${pl.name}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (pl.tracks[0]) {
+                        recordPlaylistPlay(pl);
+                        void playTrack(pl.tracks[0], pl.tracks);
+                      }
+                    }}
+                    className="pm-cover-play pm-btn-primary hidden h-9 w-9 shrink-0 items-center justify-center rounded-full shadow-md sm:flex"
+                  >
+                    <Play className="h-4 w-4 translate-x-[1px] fill-current" />
+                  </button>
+                </div>
+              );
+            })}
             {quick.map((t) => {
               const isTilePlaying = currentTrack.id === t.id;
               return (
@@ -2421,11 +2506,15 @@ export const LibraryScreen: React.FC = () => {
     setImportModalOpen,
     removeOfflineTrack,
     playTrack,
+    recordPlaylistPlay,
     showToast,
   } = usePMusicStore();
 
   const [newPlaylistName, setNewPlaylistName] = useState('');
+  const [showCreateBar, setShowCreateBar] = useState(false);
   const [dragOverPlaylistId, setDragOverPlaylistId] = useState<string | null>(null);
+  const [openPlMenuId, setOpenPlMenuId] = useState<string | null>(null);
+  const [confirmDeletePlId, setConfirmDeletePlId] = useState<string | null>(null);
 
   const categories: readonly LibraryCategoryTab[] = [
     'Todo',
@@ -2448,29 +2537,43 @@ export const LibraryScreen: React.FC = () => {
   );
 
   return (
-    <div className="pm-page-enter space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-[28px] font-bold tracking-tight pm-text-primary">
+    <div className="pm-page-enter space-y-5 sm:space-y-6">
+      {/* Clean pMusic Library Header */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-[26px] font-bold tracking-tight pm-text-primary sm:text-[28px]">
             Biblioteca
           </h1>
-          <p className="text-[13px] pm-text-tertiary">
+          <p className="hidden text-[13px] pm-text-tertiary sm:block">
             Colección sincronizada entre tu móvil Android y tu PC Windows
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setImportModalOpen(true)}
-          className="pm-btn-primary inline-flex items-center gap-2 rounded-full px-5 py-2 text-xs font-bold"
-        >
-          <ListMusic className="h-4 w-4" />
-          <span>Importar playlist</span>
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            aria-label="Nueva playlist"
+            onClick={() => setShowCreateBar((v) => !v)}
+            className="pm-btn-secondary pm-pressable inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-bold sm:hidden"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            <span>Nueva</span>
+          </button>
+          <button
+            type="button"
+            aria-label="Importar playlist"
+            onClick={() => setImportModalOpen(true)}
+            className="pm-btn-primary pm-pressable inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-bold sm:px-5"
+          >
+            <ListMusic className="h-4 w-4" />
+            <span className="sm:hidden">Importar</span>
+            <span className="hidden sm:inline">Importar playlist</span>
+          </button>
+        </div>
       </div>
 
-      {/* Category Pills & Inline Filter */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+      {/* Category Pills & Search Filter */}
+      <div className="flex flex-col gap-2.5 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3">
         <div
           role="tablist"
           aria-label="Categorías de biblioteca"
@@ -2495,21 +2598,36 @@ export const LibraryScreen: React.FC = () => {
           })}
         </div>
 
-        <input
-          type="search"
-          aria-label="Filtrar en biblioteca"
-          placeholder="Filtrar en tu biblioteca..."
-          value={libraryFilterQuery}
-          onChange={(e) => setLibraryFilterQuery(e.target.value)}
-          className="pm-input w-full rounded-full px-4 py-2 text-xs sm:w-56"
-        />
+        <div className="pm-input flex w-full items-center gap-2 rounded-full px-3.5 py-1.5 sm:w-56">
+          <Search className="h-3.5 w-3.5 shrink-0 pm-text-tertiary" />
+          <input
+            type="search"
+            aria-label="Filtrar en biblioteca"
+            placeholder="Filtrar en tu biblioteca..."
+            value={libraryFilterQuery}
+            onChange={(e) => setLibraryFilterQuery(e.target.value)}
+            className="pm-text-btn w-full bg-transparent text-xs pm-text-primary placeholder:pm-text-tertiary focus:outline-none"
+          />
+          {libraryFilterQuery && (
+            <button
+              type="button"
+              aria-label="Limpiar filtro"
+              onClick={() => setLibraryFilterQuery('')}
+              className="pm-compact-btn pm-text-tertiary hover:text-[var(--pm-text-primary)]"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Create New Playlist Quick Bar */}
+      {/* Create New Playlist Quick Bar (Collapsible toggle on Mobile, Always visible on Desktop) */}
       {(libraryCategory === 'Todo' || libraryCategory === 'Playlists') && (
         <div
           data-surface="content"
-          className="pm-surface-card flex flex-wrap items-center gap-2.5 rounded-[14px] p-3.5"
+          className={`pm-surface-card items-center gap-2 rounded-[16px] p-3 sm:gap-2.5 sm:p-3.5 ${
+            showCreateBar ? 'flex' : 'hidden sm:flex'
+          }`}
         >
           <input
             type="text"
@@ -2525,6 +2643,7 @@ export const LibraryScreen: React.FC = () => {
               const name = newPlaylistName.trim() || `Mi Playlist #${playlists.length + 1}`;
               const created = await createPlaylist(name, 'Creada en pMusic', []);
               setNewPlaylistName('');
+              setShowCreateBar(false);
               showToast(`Playlist «${created.name}» creada`);
             }}
             className="pm-btn-primary inline-flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-xs font-bold"
@@ -2535,17 +2654,64 @@ export const LibraryScreen: React.FC = () => {
         </div>
       )}
 
+      {/* Pinned Liked Songs Summary Tile */}
+      {libraryCategory === 'Todo' && likedTracks.length > 0 && !filterNorm && (
+        <div
+          data-surface="content"
+          role="button"
+          tabIndex={0}
+          onClick={() => setLibraryCategory('Me gusta')}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              setLibraryCategory('Me gusta');
+            }
+          }}
+          className="pm-surface-card pm-card-lift flex cursor-pointer items-center justify-between gap-3 rounded-[16px] p-3.5"
+        >
+          <div className="flex min-w-0 items-center gap-3.5">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[12px] bg-gradient-to-br from-rose-500/85 to-purple-600/85 text-white shadow-md">
+              <Heart className="h-5 w-5 fill-current" />
+            </div>
+            <div className="min-w-0">
+              <div className="truncate text-[15px] font-bold pm-text-primary">
+                Tus Me gusta
+              </div>
+              <div className="text-xs pm-text-tertiary">
+                {likedTracks.length} {likedTracks.length === 1 ? 'canción' : 'canciones'} guardadas
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            aria-label="Reproducir Me gusta"
+            onClick={(e) => {
+              e.stopPropagation();
+              const list = likedTracks.map((l) => l.track);
+              if (list[0]) void playTrack(list[0], list);
+            }}
+            className="pm-btn-primary pm-pressable inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full shadow-md"
+          >
+            <Play className="h-4 w-4 translate-x-[1px] fill-current" />
+          </button>
+        </div>
+      )}
+
       {/* Playlists Section */}
       {(libraryCategory === 'Todo' || libraryCategory === 'Playlists') && (
         <section className="space-y-3">
-          <h2 className="text-[18px] font-bold pm-text-primary">
-            Tus Playlists ({filteredPlaylists.length})
-          </h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-[17px] font-bold pm-text-primary sm:text-[18px]">
+              Tus Playlists ({filteredPlaylists.length})
+            </h2>
+          </div>
           {filteredPlaylists.length > 0 ? (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-3">
               {filteredPlaylists.map((pl) => {
                 const thumb = pl.coverUrl ?? pl.tracks[0]?.thumbnailUrl;
                 const isDropTarget = dragOverPlaylistId === pl.id;
+                const isMenuOpen = openPlMenuId === pl.id;
+                const isConfirmDelete = confirmDeletePlId === pl.id;
                 return (
                   <article
                     key={pl.id}
@@ -2566,49 +2732,143 @@ export const LibraryScreen: React.FC = () => {
                         void addTrackToPlaylist(pl.id, dropped);
                       }
                     }}
-                    className={`pm-surface-card pm-card-lift flex items-center justify-between gap-3 rounded-[12px] p-3.5 transition-all ${
+                    onClick={() => openLocalPlaylistDetail(pl.id)}
+                    className={`pm-surface-card pm-card-lift relative flex cursor-pointer items-center justify-between gap-3 rounded-[14px] p-3 transition-all sm:p-3.5 ${
                       isDropTarget
                         ? 'pm-active-row ring-2 ring-[var(--pm-accent-primary)]'
                         : ''
                     }`}
                   >
-                    <div className="flex min-w-0 items-center gap-3">
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
                       {thumb ? (
                         <img
                           src={thumb}
                           alt={pl.name}
-                          className="h-12 w-12 shrink-0 rounded-[8px] object-cover"
+                          className="h-13 w-13 shrink-0 rounded-[10px] object-cover shadow-sm"
                         />
                       ) : (
-                        <div className="pm-elevated flex h-12 w-12 shrink-0 items-center justify-center rounded-[8px] border pm-border text-sm font-bold pm-text-secondary">
+                        <div className="pm-elevated flex h-13 w-13 shrink-0 items-center justify-center rounded-[10px] border pm-border text-sm font-bold pm-text-secondary">
                           {pl.name.slice(0, 1).toUpperCase()}
                         </div>
                       )}
-                      <div className="min-w-0">
-                        <h3 className="truncate text-[15px] font-bold pm-text-primary">
+                      <div className="min-w-0 flex-1">
+                        <h3 className="truncate text-[15px] font-bold leading-tight pm-text-primary">
                           {pl.name}
                         </h3>
-                        <p className="text-xs pm-text-tertiary">
-                          {pl.tracks.length} canciones · {pl.source}
+                        <p className="mt-0.5 truncate text-xs pm-text-tertiary">
+                          Playlist · {pl.tracks.length} {pl.tracks.length === 1 ? 'canción' : 'canciones'}
                         </p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-1.5">
+
+                    <div
+                      className="relative flex shrink-0 items-center gap-1"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {pl.tracks.length > 0 && (
+                        <button
+                          type="button"
+                          aria-label={`Reproducir ${pl.name}`}
+                          onClick={() => {
+                            if (pl.tracks[0]) {
+                              recordPlaylistPlay(pl);
+                              void playTrack(pl.tracks[0], pl.tracks);
+                            }
+                          }}
+                          className="pm-btn-secondary pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full"
+                        >
+                          <Play className="h-3.5 w-3.5 translate-x-[1px] fill-current" />
+                        </button>
+                      )}
                       <button
                         type="button"
-                        onClick={() => openLocalPlaylistDetail(pl.id)}
-                        className="pm-btn-primary rounded-full px-3.5 py-1.5 text-xs font-bold"
+                        aria-label={`Opciones de ${pl.name}`}
+                        aria-expanded={isMenuOpen}
+                        onClick={() => {
+                          setConfirmDeletePlId(null);
+                          setOpenPlMenuId(isMenuOpen ? null : pl.id);
+                        }}
+                        className="pm-hover pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-tertiary hover:text-[var(--pm-text-primary)]"
                       >
-                        Ver
+                        <MoreHorizontal className="h-4 w-4" />
                       </button>
-                      <button
-                        type="button"
-                        aria-label={`Eliminar ${pl.name}`}
-                        onClick={() => void deletePlaylist(pl.id)}
-                        className="pm-btn-secondary rounded-full p-2 pm-text-tertiary hover:text-rose-500"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+
+                      {isMenuOpen && (
+                        <>
+                          <div
+                            aria-hidden="true"
+                            onClick={() => {
+                              setOpenPlMenuId(null);
+                              setConfirmDeletePlId(null);
+                            }}
+                            className="fixed inset-0 z-40"
+                          />
+                          <div
+                            role="menu"
+                            data-testid={`library-playlist-menu-${pl.id}`}
+                            className="pm-glass-liquid pm-menu-pop absolute right-0 top-10 z-50 w-52 rounded-[16px] p-1.5 shadow-2xl"
+                            style={{
+                              background:
+                                'color-mix(in srgb, var(--pm-bg-surface) 95%, transparent)',
+                            }}
+                          >
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                setOpenPlMenuId(null);
+                                openLocalPlaylistDetail(pl.id);
+                              }}
+                              className="pm-hover pm-text-primary flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-xs font-semibold"
+                            >
+                              <ListMusic className="h-4 w-4 pm-text-secondary" />
+                              <span>Abrir playlist</span>
+                            </button>
+
+                            <div className="my-1 border-t pm-border" />
+
+                            {isConfirmDelete ? (
+                              <div className="flex items-center justify-between gap-1.5 rounded-[10px] bg-rose-500/15 px-2.5 py-2">
+                                <span className="text-[11px] font-semibold text-rose-400">
+                                  ¿Borrar?
+                                </span>
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    aria-label={`Confirmar eliminar ${pl.name}`}
+                                    onClick={() => {
+                                      setOpenPlMenuId(null);
+                                      setConfirmDeletePlId(null);
+                                      void deletePlaylist(pl.id);
+                                    }}
+                                    className="pm-compact-btn rounded-full bg-rose-500 px-2.5 py-1 text-[11px] font-bold text-white"
+                                  >
+                                    Eliminar
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeletePlId(null)}
+                                    className="pm-compact-btn rounded-full bg-white/10 px-2 py-1 text-[11px] font-semibold"
+                                  >
+                                    No
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                aria-label={`Eliminar ${pl.name}`}
+                                onClick={() => setConfirmDeletePlId(pl.id)}
+                                className="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-xs font-semibold text-rose-400 hover:bg-rose-500/15"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                                <span>Eliminar playlist</span>
+                              </button>
+                            )}
+                          </div>
+                        </>
+                      )}
                     </div>
                   </article>
                 );
@@ -2616,7 +2876,7 @@ export const LibraryScreen: React.FC = () => {
             </div>
           ) : (
             <p className="text-xs pm-text-tertiary">
-              Aún no has creado playlists personalizadas. Usa el campo superior o importa desde Spotify/YouTube.
+              Aún no has creado playlists personalizadas. Toca «Nueva» o importa desde Spotify/YouTube.
             </p>
           )}
         </section>

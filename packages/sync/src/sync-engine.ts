@@ -21,6 +21,8 @@ import {
   LibraryStore,
   UUID_RE,
   createDefaultPreferencesStorage,
+  mergePlaylistTracksUnique,
+  normalizePlaylistNameKey,
 } from './library-store.ts';
 
 export interface SyncEngineOptions {
@@ -1280,11 +1282,69 @@ export class SyncEngine implements ISyncEngine {
         }
       }
 
-      const remoteById = new Map<string, any>();
-      const remoteByName = new Map<string, any>();
+      // Group remote playlists by normalized name so duplicate rows on Supabase
+      // (e.g. a 32-song canonical copy vs a stale 18-song duplicate) are consolidated cleanly.
+      const remoteGroups = new Map<string, any[]>();
+      const unkeyedRemotes: any[] = [];
       for (const rpl of remotePlaylists ?? []) {
         const rid = String(rpl.id);
-        const rname = String(rpl.name ?? '').trim().toLowerCase();
+        if (deletedPlaylistIds.has(rid)) continue;
+        const normKey = normalizePlaylistNameKey(String(rpl.name ?? ''));
+        if (!normKey) {
+          unkeyedRemotes.push(rpl);
+          continue;
+        }
+        const list = remoteGroups.get(normKey) ?? [];
+        list.push(rpl);
+        remoteGroups.set(normKey, list);
+      }
+
+      const canonicalRemotes: any[] = [...unkeyedRemotes];
+      for (const group of remoteGroups.values()) {
+        if (group.length === 1) {
+          canonicalRemotes.push(group[0]!);
+          continue;
+        }
+        const sorted = [...group].sort((a, b) => {
+          const aCount = remoteTracksByPlaylistId.get(String(a.id))?.length ?? 0;
+          const bCount = remoteTracksByPlaylistId.get(String(b.id))?.length ?? 0;
+          if (bCount !== aCount) return bCount - aCount;
+          return (Date.parse(String(b.updated_at ?? '')) || 0) - (Date.parse(String(a.updated_at ?? '')) || 0);
+        });
+        const keeper = sorted[0]!;
+        const keeperId = String(keeper.id);
+        const origKeeperTracks = remoteTracksByPlaylistId.get(keeperId) ?? [];
+        let mergedRemoteTracks = [...origKeeperTracks];
+
+        for (const dup of sorted.slice(1)) {
+          const dupId = String(dup.id);
+          const dupTracks = remoteTracksByPlaylistId.get(dupId) ?? [];
+          mergedRemoteTracks = mergePlaylistTracksUnique(mergedRemoteTracks, dupTracks);
+          await client.from('playlist_tracks').delete().eq('playlist_id', dupId).eq('user_id', userId);
+          await client.from('playlists').delete().eq('id', dupId).eq('user_id', userId);
+        }
+
+        if (mergedRemoteTracks.length > origKeeperTracks.length) {
+          remoteTracksByPlaylistId.set(keeperId, mergedRemoteTracks);
+          const upsertRows = mergedRemoteTracks.slice(0, 300).map((t, idx) => ({
+            playlist_id: keeperId,
+            user_id: userId,
+            track_id: t.id,
+            position: idx,
+            track_data: t,
+          }));
+          if (upsertRows.length > 0) {
+            await client.from('playlist_tracks').upsert(upsertRows, { onConflict: 'playlist_id,track_id' });
+          }
+        }
+        canonicalRemotes.push(keeper);
+      }
+
+      const remoteById = new Map<string, any>();
+      const remoteByName = new Map<string, any>();
+      for (const rpl of canonicalRemotes) {
+        const rid = String(rpl.id);
+        const rname = normalizePlaylistNameKey(String(rpl.name ?? ''));
         remoteById.set(rid, rpl);
         if (rname && !remoteByName.has(rname)) {
           remoteByName.set(rname, rpl);
@@ -1292,10 +1352,11 @@ export class SyncEngine implements ISyncEngine {
       }
 
       const matchedRemoteIds = new Set<string>();
+      await this.libraryStore.deduplicatePlaylists();
       const localPlaylists = this.libraryStore.getPlaylists();
 
       for (const pl of localPlaylists.slice(0, 60)) {
-        const normName = pl.name.trim().toLowerCase();
+        const normName = normalizePlaylistNameKey(pl.name);
         const matchedRemote =
           remoteById.get(pl.id) ??
           (normName ? remoteByName.get(normName) : undefined);
@@ -1310,13 +1371,11 @@ export class SyncEngine implements ISyncEngine {
         let tracksToPush = pl.tracks;
 
         if (matchedRemote && !hasPendingUpsert) {
-          const remoteUpdatedMs = Date.parse(String(matchedRemote.updated_at ?? '')) || 0;
-          const localUpdatedMs = Date.parse(pl.updatedAt) || 0;
           const remoteIdsSig = remoteTracks.map((t) => t.id).join(',');
           const localIdsSig = pl.tracks.map((t) => t.id).join(',');
 
           if (remoteTracks.length > 0 && remoteIdsSig !== localIdsSig) {
-            if (pl.tracks.length === 0 || remoteUpdatedMs >= localUpdatedMs) {
+            if (pl.tracks.length === 0) {
               await this.libraryStore.upsertRemotePlaylist({
                 id: cloudId,
                 name: String(matchedRemote.name ?? pl.name),
@@ -1330,19 +1389,27 @@ export class SyncEngine implements ISyncEngine {
               });
               continue;
             }
-            const seenT = new Set(pl.tracks.map((t) => t.id));
-            tracksToPush = [...pl.tracks, ...remoteTracks.filter((t) => !seenT.has(t.id))];
+            // Superset merge: never shrink a fuller playlist (e.g. 32 tracks) to a stale smaller snapshot (18 tracks)
+            const primaryList = pl.tracks.length >= remoteTracks.length ? pl.tracks : remoteTracks;
+            const secondaryList = pl.tracks.length >= remoteTracks.length ? remoteTracks : pl.tracks;
+            tracksToPush = mergePlaylistTracksUnique(primaryList, secondaryList);
             await this.libraryStore.upsertRemotePlaylist({
               id: cloudId,
               name: pl.name,
-              description: pl.description,
-              coverUrl: pl.coverUrl ?? tracksToPush[0]?.thumbnailUrl,
+              description: pl.description || String(matchedRemote.description ?? ''),
+              coverUrl: pl.coverUrl ?? tracksToPush[0]?.thumbnailUrl ?? (matchedRemote.cover_url as string | null) ?? undefined,
               source: pl.source,
-              sourceUrl: pl.sourceUrl,
+              sourceUrl: pl.sourceUrl ?? (matchedRemote.source_url as string | null) ?? undefined,
               tracks: tracksToPush,
               createdAt: pl.createdAt,
-              updatedAt: pl.updatedAt,
+              updatedAt:
+                tracksToPush.length === remoteTracks.length && matchedRemote.updated_at
+                  ? String(matchedRemote.updated_at)
+                  : pl.updatedAt,
             });
+            if (tracksToPush.length === remoteTracks.length && tracksToPush.length === primaryList.length) {
+              continue;
+            }
           } else if (cloudId !== pl.id) {
             await this.libraryStore.upsertRemotePlaylist({
               id: cloudId,
@@ -1406,7 +1473,7 @@ export class SyncEngine implements ISyncEngine {
         }
       }
 
-      for (const rpl of remotePlaylists ?? []) {
+      for (const rpl of canonicalRemotes) {
         const rid = String(rpl.id);
         if (matchedRemoteIds.has(rid) || deletedPlaylistIds.has(rid)) continue;
         const tracks = remoteTracksByPlaylistId.get(rid) ?? [];
@@ -1422,6 +1489,7 @@ export class SyncEngine implements ISyncEngine {
           updatedAt: rpl.updated_at ? String(rpl.updated_at) : undefined,
         });
       }
+      await this.libraryStore.deduplicatePlaylists();
     } catch {
       hadError = true;
     }

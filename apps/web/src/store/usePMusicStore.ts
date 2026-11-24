@@ -54,6 +54,13 @@ import {
   type WrappedSummary,
 } from '../lib/wrapped-stats.ts';
 import {
+  buildCompactAccountTasteProfile,
+  mergeAccountTasteProfiles,
+  normalizePlaylistStatKey,
+  type AccountTasteProfile,
+  type PlaylistPlayStat,
+} from '../lib/taste-sync.ts';
+import {
   FALLBACK_ALBUMS,
   FALLBACK_ARTISTS,
   FALLBACK_PLAYLISTS,
@@ -74,7 +81,10 @@ import {
   defaultPlatformBridge,
   isElectronDesktopRuntime,
 } from '../platform/web-bridge.ts';
-import { applyAmbientPaletteFromCover } from '../utils/cover-color.ts';
+import {
+  applyAmbientPaletteFromCover,
+  getActiveAmbientTrackKey,
+} from '../utils/cover-color.ts';
 import {
   applyAccentOverride,
   applyPMusicTheme,
@@ -349,8 +359,10 @@ let lastObservedPlayback: { trackId: string; posSec: number } | null = null;
 let lastAutoAdvanceGuard: { trackId: string; atMs: number } = { trackId: '', atMs: 0 };
 let engineBindingsAttached = false;
 let playbackMonitorTimer: ReturnType<typeof setInterval> | null = null;
+let homeShelvesBuildEpoch = 0;
 const decodedAudioAnalyzedIds = new Set<string>();
 const decodedAudioInFlightIds = new Set<string>();
+const hydratedContributorIds = new Set<string>();
 
 export type LyricsVisualStyle =
   | 'classic'
@@ -383,8 +395,8 @@ function scheduleLibraryCloudSync(): void {
   }, 600);
 }
 
-function applyAmbientPaletteForTrack(track: Track | null): void {
-  applyAmbientPaletteFromCover(track);
+function applyAmbientPaletteForTrack(track: Track | null, durationMs = 1100): void {
+  applyAmbientPaletteFromCover(track, durationMs);
 }
 
 function normalizeTrackMetaKey(t: Track): string {
@@ -507,6 +519,7 @@ export interface PMusicStoreState {
   libraryCategory: LibraryCategoryTab;
   libraryFilterQuery: string;
   playlists: PlaylistRecord[];
+  playlistPlayCounts: Record<string, PlaylistPlayStat>;
   dismissedPlaylistRecs: Record<string, string[]>;
   likedTracks: LikedTrackRecord[];
   playHistory: PlayHistoryRecord[];
@@ -636,6 +649,7 @@ export interface PMusicStoreState {
   // Library & Offline Actions
   setLibraryCategory: (cat: LibraryCategoryTab) => void;
   setLibraryFilterQuery: (q: string) => void;
+  recordPlaylistPlay: (playlist: Pick<PlaylistRecord, 'id' | 'name'>) => void;
   createPlaylist: (name: string, description?: string, tracks?: Track[]) => Promise<PlaylistRecord>;
   renamePlaylist: (playlistId: string, name: string) => Promise<void>;
   deletePlaylist: (playlistId: string) => Promise<void>;
@@ -1448,7 +1462,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
       suppressedAutoTransitionTrackId = null;
       lastObservedPlayback = { trackId: nextTrack.id, posSec: handoffPosSec };
-      applyAmbientPaletteForTrack(nextTrack);
+      const expectedPaletteKey = `${nextTrack.id}::${nextTrack.thumbnailHighUrl ?? nextTrack.thumbnailUrl ?? ''}`;
+      if (getActiveAmbientTrackKey() !== expectedPaletteKey) {
+        applyAmbientPaletteForTrack(nextTrack, Math.round(Math.max(0.8, plan.transitionDurationSec * 0.5) * 1000));
+      }
       void get().loadLyricsForTrack(nextTrack);
       if (nextRecommended.length < 6) {
         void get().replenishRecommendedQueue();
@@ -1501,10 +1518,15 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         incomingTransitionTrack: nextTrack,
         transitionDurationSec: plan.transitionDurationSec,
       });
+      void hydrateTrackContributorsIfNeeded(nextTrack);
+      // Animate ambient backdrop colors linearly 0->10->20->...->100 over the FULL transition for BOTH DJ & crossfade!
+      applyAmbientPaletteForTrack(
+        nextTrack,
+        Math.round(Math.max(1.2, plan.transitionDurationSec) * 1000)
+      );
       if (!isPlainCrossfade) {
         suppressedAutoTransitionTrackId = null;
-      lastObservedPlayback = { trackId: nextTrack.id, posSec: plan.cueInSec };
-      applyAmbientPaletteForTrack(nextTrack);
+        lastObservedPlayback = { trackId: nextTrack.id, posSec: plan.cueInSec };
       }
 
       const handoffDelayMs = Math.max(
@@ -1646,8 +1668,127 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }
   }
 
+  async function hydrateTrackContributorsIfNeeded(track: Track | null | undefined): Promise<void> {
+    if (!track || track.artists.length > 1 || !track.id.startsWith('dz:')) return;
+    if (hydratedContributorIds.has(track.id) || typeof musicProvider.getTrack !== 'function') return;
+    hydratedContributorIds.add(track.id);
+    try {
+      const enriched = await musicProvider.getTrack(track.id);
+      if (!enriched || enriched.artists.length <= 1) return;
+      const patchArtists = (item: Track): Track =>
+        item.id === track.id ? { ...item, artists: enriched.artists } : item;
+
+      let playlistMutated = false;
+      for (const pl of libraryStore.getPlaylists()) {
+        if (pl.tracks.some((pt) => pt.id === track.id && pt.artists.length <= 1)) {
+          playlistMutated = true;
+          await libraryStore.updatePlaylist(pl.id, {
+            tracks: pl.tracks.map(patchArtists),
+          });
+        }
+      }
+
+      set((prev) => ({
+        currentTrack: patchArtists(prev.currentTrack),
+        outgoingTransitionTrack: prev.outgoingTransitionTrack
+          ? patchArtists(prev.outgoingTransitionTrack)
+          : null,
+        incomingTransitionTrack: prev.incomingTransitionTrack
+          ? patchArtists(prev.incomingTransitionTrack)
+          : null,
+        queue: prev.queue.map(patchArtists),
+        recommendedQueue: prev.recommendedQueue.map(patchArtists),
+        homeShelves: prev.homeShelves.map((shelf) =>
+          shelf.tracks
+            ? { ...shelf, tracks: shelf.tracks.map(patchArtists) }
+            : shelf
+        ),
+        searchResults: {
+          ...prev.searchResults,
+          songs: prev.searchResults.songs.map(patchArtists),
+        },
+        ...(playlistMutated ? { playlists: libraryStore.getPlaylists() } : {}),
+      }));
+      syncDiscordPresenceState();
+    } catch {
+      // non-fatal metadata hydration failure
+    }
+  }
+
+  function buildLocalTasteSnapshot(): AccountTasteProfile {
+    const st = get();
+    return buildCompactAccountTasteProfile({
+      affinities: recommendationEngine.getAffinityProfile(),
+      playHistory: libraryStore.getPlayHistory(),
+      seedArtists: recommendationEngine.getSeedArtists(),
+      playlistPlayCounts: st.playlistPlayCounts,
+    });
+  }
+
+  async function hydrateAndMergeCloudTaste(cloudPrefs: Record<string, any> | null | undefined): Promise<void> {
+    const remoteTaste = (cloudPrefs?.tasteProfile ?? null) as AccountTasteProfile | null;
+    const localTaste = buildLocalTasteSnapshot();
+    const merged = mergeAccountTasteProfiles(localTaste, remoteTaste);
+
+    if (merged.affinities.length > 0) {
+      await libraryStore.setAffinities(merged.affinities);
+    }
+    if (merged.playHistory.length > 0) {
+      await libraryStore.setPlayHistory(merged.playHistory);
+    }
+    if (merged.seedArtists.length > 0) {
+      await recommendationEngine.updateSeedArtists(merged.seedArtists);
+    }
+    await recommendationEngine.hydrate();
+
+    set({
+      playlistPlayCounts: merged.playlistPlayCounts,
+      affinityProfile: recommendationEngine.getAffinityProfile(),
+      playHistory: libraryStore.getPlayHistory(),
+      seedArtists: recommendationEngine.getSeedArtists(),
+    });
+
+    // Trigger immediate shelf refresh under the latest epoch so merged account taste wins over initial cold shelves
+    const myEpoch = ++homeShelvesBuildEpoch;
+    try {
+      const freshShelves = await recommendationEngine.buildHomeShelves();
+      if (myEpoch !== homeShelvesBuildEpoch) return;
+      const allReal = Array.from(
+        new Map(freshShelves.flatMap((s) => s.tracks ?? []).map((t) => [t.id, t])).values()
+      );
+      set((prev) => ({
+        homeShelves: freshShelves,
+        ...(allReal.length > 0 && !prev.isPlaying
+          ? {
+              currentTrack: allReal[0]!,
+              queue: allReal.slice(0, 10),
+              recommendedQueue: allReal.slice(10, 20),
+              queueIndex: 0,
+              durationSec: allReal[0]!.durationSec,
+              positionSec: 0,
+            }
+          : {}),
+      }));
+      if (isLiveRuntime()) {
+        void get().refreshExploreDiscovery(true);
+      }
+    } catch {
+      // keep existing shelves if offline
+    }
+
+    if (get().authState.connected && (!remoteTaste || merged.richnessScore > (remoteTaste.richnessScore ?? 0))) {
+      persistPrefsFromStore();
+    }
+  }
+
   function persistPrefsFromStore(): void {
     const st = get();
+    const tasteProfile = buildCompactAccountTasteProfile({
+      affinities: recommendationEngine.getAffinityProfile(),
+      playHistory: libraryStore.getPlayHistory(),
+      seedArtists: recommendationEngine.getSeedArtists(),
+      playlistPlayCounts: st.playlistPlayCounts,
+    });
     const payload = {
       themeId: st.themeId,
       playerBarStyle: st.playerBarStyle,
@@ -1675,6 +1816,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       userEq: st.userEq,
       djMode: st.djMode,
       dismissedPlaylistRecs: st.dismissedPlaylistRecs,
+      playlistPlayCounts: st.playlistPlayCounts,
+      tasteProfile,
     };
     void defaultPlatformBridge.preferencesStorage
       .setItem(USER_PREFS_STORAGE_KEY, JSON.stringify(payload))
@@ -1795,6 +1938,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         prefs.dismissedPlaylistRecs && typeof prefs.dismissedPlaylistRecs === 'object'
           ? (prefs.dismissedPlaylistRecs as Record<string, string[]>)
           : prev.dismissedPlaylistRecs,
+      playlistPlayCounts:
+        prefs.playlistPlayCounts && typeof prefs.playlistPlayCounts === 'object'
+          ? (prefs.playlistPlayCounts as Record<string, PlaylistPlayStat>)
+          : prev.playlistPlayCounts,
     }));
   }
 
@@ -1975,6 +2122,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   libraryCategory: 'Todo',
   libraryFilterQuery: '',
   playlists: [],
+  playlistPlayCounts: {},
   dismissedPlaylistRecs: {},
   likedTracks: [],
   playHistory: [],
@@ -2087,8 +2235,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }
 
     let shelves: HomeEditorialShelf[] = [];
+    const preAuthEpoch = ++homeShelvesBuildEpoch;
     try {
-      shelves = await recommendationEngine.buildHomeShelves();
+      const builtShelves = await recommendationEngine.buildHomeShelves();
+      shelves = preAuthEpoch === homeShelvesBuildEpoch ? builtShelves : get().homeShelves;
     } catch {
       shelves = get().homeShelves;
     }
@@ -2278,6 +2428,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         : {}),
     }));
 
+    let cloudTasteMerged = false;
     if (restoredAuth.connected) {
       try {
         const cloudPrefs = await syncEngine.loadAccountPreferences?.();
@@ -2286,18 +2437,24 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           void defaultPlatformBridge.preferencesStorage
             .setItem(USER_PREFS_STORAGE_KEY, JSON.stringify(cloudPrefs))
             .catch(() => {});
+          await hydrateAndMergeCloudTaste(cloudPrefs);
+          cloudTasteMerged = true;
         }
       } catch {
         // ignore offline cloud prefs load
       }
+      if (!cloudTasteMerged) {
+        await hydrateAndMergeCloudTaste(null);
+      }
     }
 
+    const activeShelves = cloudTasteMerged ? get().homeShelves : shelves;
     const allRealTracks = Array.from(
-      new Map(shelves.flatMap((s) => s.tracks ?? []).map((t) => [t.id, t])).values()
+      new Map(activeShelves.flatMap((s) => s.tracks ?? []).map((t) => [t.id, t])).values()
     );
     const firstReal = allRealTracks[0];
-    if (firstReal && !get().isPlaying) {
-      const listenTracks = shelves.find((s) => s.kind === 'listen_again')?.tracks ?? [];
+    if (firstReal && !get().isPlaying && !cloudTasteMerged) {
+      const listenTracks = activeShelves.find((s) => s.kind === 'listen_again')?.tracks ?? [];
       const realQueue = (listenTracks.length > 0 ? listenTracks : allRealTracks).slice(0, 10);
       const qIds = new Set(realQueue.map((t) => t.id));
       const initialRec = allRealTracks.filter((t) => !qIds.has(t.id)).slice(0, 10);
@@ -2463,6 +2620,15 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   },
   openLocalPlaylistDetail: (playlistId) => {
     const prev = get().activeDetailView;
+    const targetPl = get().playlists.find((p) => p.id === playlistId);
+    if (targetPl) {
+      const singleArtistTracks = targetPl.tracks
+        .filter((t) => t.artists.length <= 1 && t.id.startsWith('dz:'))
+        .slice(0, 8);
+      for (const stTrack of singleArtistTracks) {
+        void hydrateTrackContributorsIfNeeded(stTrack);
+      }
+    }
     set((s) => ({
       detailViewHistory:
         prev && !(prev.kind === 'local_playlist' && prev.playlistId === playlistId)
@@ -2574,30 +2740,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       void analyzeTrackAudioInBackground(track);
 
       // Lazy full-credits contributor hydration if playing a single-credit Deezer track
-      if (track.artists.length <= 1 && track.id.startsWith('dz:')) {
-        void musicProvider
-          .getTrack?.(track.id)
-          .then((enriched) => {
-            if (!enriched || enriched.artists.length <= 1) return;
-            set((prev) => ({
-              currentTrack:
-                prev.currentTrack.id === track.id
-                  ? { ...prev.currentTrack, artists: enriched.artists }
-                  : prev.currentTrack,
-              queue: prev.queue.map((qItem) =>
-                qItem.id === track.id ? { ...qItem, artists: enriched.artists } : qItem
-              ),
-              searchResults: {
-                ...prev.searchResults,
-                songs: prev.searchResults.songs.map((s) =>
-                  s.id === track.id ? { ...s, artists: enriched.artists } : s
-                ),
-              },
-            }));
-            syncDiscordPresenceState();
-          })
-          .catch(() => {});
-      }
+      void hydrateTrackContributorsIfNeeded(track);
 
       void syncEngine.updatePresence({
         is_active: true,
@@ -2748,6 +2891,9 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         affinityProfile: recommendationEngine.getAffinityProfile(),
         playHistory: libraryStore.getPlayHistory(),
       });
+      if (get().authState.connected) {
+        persistPrefsFromStore();
+      }
     } finally {
       if (isAutoAdvance) autoAdvanceInFlight = false;
       if (!isAutoAdvance && mySwitchEpoch === manualSwitchEpoch) {
@@ -3841,6 +3987,25 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   setLibraryCategory: (cat) => set({ libraryCategory: cat }),
   setLibraryFilterQuery: (q) => set({ libraryFilterQuery: q }),
 
+  recordPlaylistPlay: (playlist) => {
+    const key = normalizePlaylistStatKey(playlist.name);
+    if (!key) return;
+    set((prev) => {
+      const existing = prev.playlistPlayCounts[key];
+      return {
+        playlistPlayCounts: {
+          ...prev.playlistPlayCounts,
+          [key]: {
+            name: playlist.name,
+            count: (existing?.count ?? 0) + 1,
+            lastPlayedAt: Date.now(),
+          },
+        },
+      };
+    });
+    persistPrefsFromStore();
+  },
+
   createPlaylist: async (name, description, tracks) => {
     const created = await libraryStore.createPlaylist({
       name,
@@ -4215,6 +4380,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           .setItem(USER_PREFS_STORAGE_KEY, JSON.stringify(cloudPrefs))
           .catch(() => {});
       }
+      await hydrateAndMergeCloudTaste(cloudPrefs);
     } catch {
       // ignore cloud prefs load error
     }
@@ -4316,7 +4482,9 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
             void defaultPlatformBridge.preferencesStorage
               .setItem(USER_PREFS_STORAGE_KEY, JSON.stringify(cloudPrefs))
               .catch(() => {});
+            await hydrateAndMergeCloudTaste(cloudPrefs);
           } else {
+            await hydrateAndMergeCloudTaste(null);
             persistPrefsFromStore();
           }
         } catch {

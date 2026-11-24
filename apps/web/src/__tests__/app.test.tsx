@@ -4,6 +4,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen, fireEvent } from '@testing-library/react';
 import { App } from '../App.tsx';
 import { ArtistLinks } from '../components/ArtistLinks.tsx';
+import { InkBleedCoverTransition } from '../components/InkBleedCoverTransition.tsx';
+import { PMusicSwitch } from '../components/PMusicSwitch.tsx';
+import { mergeAccountTasteProfiles } from '../lib/taste-sync.ts';
 import { usePMusicStore } from '../store/usePMusicStore.ts';
 
 afterEach(() => {
@@ -472,5 +475,112 @@ describe('@pmusic/web UI', () => {
     expect(usePMusicStore.getState().currentTrack.id).toBe(t2.id);
     expect(usePMusicStore.getState().isTransitioning).toBe(false);
     expect(usePMusicStore.getState().queue[0]?.id).toBe(t2.id);
+  });
+
+  it('renders unified PMusicSwitch with pm-switch-control class, keeps InkBleed incoming scale >= 1.0, merges cloud desktop taste, and promotes frequent playlists on Home', () => {
+    // 1. Unified PMusicSwitch across Settings & AudioStudio
+    const toggleFn = vi.fn();
+    const { container } = render(
+      <PMusicSwitch checked ariaLabel="Switch de prueba" onChange={toggleFn} />
+    );
+    const sw = screen.getByRole('switch', { name: 'Switch de prueba' });
+    expect(sw.classList.contains('pm-switch-control')).toBe(true);
+    fireEvent.click(sw);
+    expect(toggleFn).toHaveBeenCalledTimes(1);
+    expect(container.querySelectorAll('button[role="switch"]')).toHaveLength(1);
+    cleanup();
+
+    // 2. InkBleedCoverTransition incoming scale >= 1.0 (zero black border edge exposure)
+    const sampleTrack = usePMusicStore.getState().homeShelves[0]!.tracks![0]!;
+    render(
+      <InkBleedCoverTransition
+        outgoingUrl={sampleTrack.thumbnailUrl}
+        outgoingTitle={sampleTrack.title}
+        incomingUrl={sampleTrack.thumbnailUrl}
+        incomingTitle="Incoming"
+        seedKey="test-seed"
+        durationSec={4}
+      />
+    );
+    const inkImg = screen.getByAltText('Incoming') as HTMLImageElement;
+    expect(inkImg.style.transform).toContain('scale(1.035');
+    expect(inkImg.style.opacity).toBe('1');
+    cleanup();
+
+    // 3. mergeAccountTasteProfiles preserves desktop richness over cold mobile profile
+    const merged = mergeAccountTasteProfiles(
+      {
+        updatedAtMs: 2000,
+        richnessScore: 0,
+        affinities: [],
+        playHistory: [],
+        seedArtists: [],
+        playlistPlayCounts: {},
+      },
+      {
+        updatedAtMs: 1000,
+        richnessScore: 42,
+        affinities: [
+          {
+            artistKey: 'la pantera',
+            artistName: 'La Pantera',
+            score: 18,
+            genres: ['trap_canarias'],
+            playCount: 9,
+            skipCount: 0,
+            isSeed: true,
+            updatedAt: '2026-11-24T20:00:00.000Z',
+          },
+        ],
+        playHistory: [
+          {
+            id: 'h_1',
+            trackId: sampleTrack.id,
+            track: sampleTrack,
+            playedAt: '2026-11-24T20:00:00.000Z',
+            playedSec: 180,
+            completionRatio: 1.0,
+            signalType: 'complete_listen',
+          },
+        ],
+        seedArtists: [
+          {
+            artistKey: 'la pantera',
+            displayName: 'La Pantera',
+            genres: ['trap_canarias'],
+            priorWeight: 9,
+          },
+        ],
+        playlistPlayCounts: {
+          lapanera: { name: 'LaPanera', count: 5, lastPlayedAt: Date.now() },
+        },
+      }
+    );
+    expect(merged.affinities[0]?.artistName).toBe('La Pantera');
+    expect(merged.playHistory).toHaveLength(1);
+    expect(merged.playlistPlayCounts['lapanera']?.count).toBe(5);
+
+    // 4. HomeScreen promotes frequently played playlists inside Quick Picks
+    act(() => {
+      usePMusicStore.setState({
+        activeTab: 'Inicio',
+        playlists: [
+          {
+            id: 'pl_freq_1',
+            name: 'LaPanera',
+            description: 'Favorita',
+            source: 'local',
+            tracks: [sampleTrack],
+            createdAt: '2026-11-24T10:00:00.000Z',
+            updatedAt: '2026-11-24T10:00:00.000Z',
+          },
+        ],
+        playlistPlayCounts: {
+          lapanera: { name: 'LaPanera', count: 4, lastPlayedAt: Date.now() },
+        },
+      });
+    });
+    render(<App />);
+    expect(screen.getByTestId('quick-playlist-tile-pl_freq_1')).toBeDefined();
   });
 });

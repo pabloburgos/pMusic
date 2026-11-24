@@ -735,4 +735,101 @@ describe('@pmusic/providers', () => {
       globalThis.fetch = prevFetch;
     }
   });
+
+  it('ranks matching artist profile first for artist queries, keeps artist+song queries on song, and promotes joint album co-headliners', async () => {
+    const mockFetch = (async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes('/search/artist')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              { id: 7524936, name: 'La Pantera', nb_fan: 550000, picture_big: 'https://example.com/lp.jpg' },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('/search?')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 3001,
+                title: 'SHARINGAN',
+                title_short: 'SHARINGAN',
+                duration: 215,
+                artist: { id: 7524936, name: 'La Pantera' },
+                contributors: [{ id: 7524936, name: 'La Pantera' }],
+                album: { id: 601, title: 'SHARINGAN', cover_medium: 'https://example.com/sh.jpg' },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('/album/777001/tracks')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 8101,
+                title: 'BANE',
+                duration: 190,
+                artist: { id: 101, name: 'Lucho RK' },
+                contributors: [
+                  { id: 101, name: 'Lucho RK' },
+                  { id: 7524936, name: 'La Pantera' },
+                ],
+              },
+              {
+                id: 8102,
+                title: 'TA FACIL',
+                duration: 200,
+                artist: { id: 101, name: 'Lucho RK' },
+                contributors: [
+                  { id: 101, name: 'Lucho RK' },
+                  { id: 7524936, name: 'La Pantera' },
+                ],
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('/album/777001')) {
+        return new Response(
+          JSON.stringify({
+            id: 777001,
+            title: 'TA FACIL',
+            nb_tracks: 2,
+            artist: { id: 101, name: 'Lucho RK' },
+            cover_big: 'https://example.com/tf.jpg',
+            tracks: { data: [] },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      return new Response(JSON.stringify({ data: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    const catalog = new DeezerCatalog(mockFetch);
+    const artistQueryRes = await catalog.search('La Pantera', 'all');
+    expect(artistQueryRes.topResult?.kind).toBe('artist');
+    if (artistQueryRes.topResult?.kind === 'artist') {
+      expect(artistQueryRes.topResult.item.name).toBe('La Pantera');
+    }
+
+    const songQueryRes = await catalog.search('La Pantera Sharingan', 'all');
+    expect(songQueryRes.topResult?.kind).toBe('song');
+    if (songQueryRes.topResult?.kind === 'song') {
+      expect(songQueryRes.topResult.item.title).toBe('SHARINGAN');
+    }
+
+    const jointAlbum = await catalog.album('777001');
+    expect(jointAlbum.album.artists.map((a) => a.name)).toEqual(['Lucho RK', 'La Pantera']);
+    expect(jointAlbum.tracks[0]?.artists.map((a) => a.name)).toEqual(['Lucho RK', 'La Pantera']);
+  });
 });

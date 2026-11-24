@@ -1281,7 +1281,7 @@ const PMusicMainApp: React.FC = () => {
                           openLocalPlaylistDetail(created.id);
                           showToast(`Playlist «${created.name}» creada`);
                         }}
-                        className="pm-hover rounded-md p-1 pm-text-tertiary hover:text-[var(--pm-text-primary)]"
+                        className="pm-hover inline-flex h-7 w-7 items-center justify-center rounded-md pm-text-tertiary hover:text-[var(--pm-text-primary)]"
                       >
                         <Plus className="h-3.5 w-3.5" />
                       </button>
@@ -1289,7 +1289,7 @@ const PMusicMainApp: React.FC = () => {
                         type="button"
                         aria-label="Importar playlist"
                         onClick={() => setImportModalOpen(true)}
-                        className="pm-hover rounded-md p-1 pm-text-tertiary hover:text-[var(--pm-text-primary)]"
+                        className="pm-hover inline-flex h-7 w-7 items-center justify-center rounded-md pm-text-tertiary hover:text-[var(--pm-text-primary)]"
                       >
                         <ListMusic className="h-3.5 w-3.5" />
                       </button>
@@ -2171,10 +2171,34 @@ const PMusicMainApp: React.FC = () => {
             {crossfadePairActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
               <div
                 key={`dock-prism-${outgoingTransitionTrack.id}-${incomingTransitionTrack.id}`}
-                className="pm-dock-prism-viewport pointer-events-auto relative w-[350px] max-w-full"
+                data-testid="dock-prism-viewport"
+                className="pm-dock-prism-viewport pointer-events-auto relative -ml-2.5 -my-[2px] inline-grid max-w-[min(100%,388px)] items-center"
               >
+                {/* Invisible sizers force the shared prism width to match the LONGER track + symmetrical margins */}
+                {[outgoingTransitionTrack, incomingTransitionTrack].map((sizerTrack, sIdx) => (
+                  <div
+                    key={`sizer-${sIdx}-${sizerTrack.id}`}
+                    aria-hidden="true"
+                    className="pointer-events-none invisible col-start-1 row-start-1 flex h-[56px] select-none items-center gap-3 px-2.5 py-1.5"
+                  >
+                    <div className="h-11 w-11 shrink-0" />
+                    <div className="min-w-0 max-w-[200px] xl:max-w-[240px]">
+                      <div className="truncate text-[14px] font-semibold leading-[1.15]">
+                        {sizerTrack.title}
+                      </div>
+                      <div className="mt-[2px] flex items-center gap-1.5 truncate text-[12px] leading-[1.2]">
+                        {sizerTrack.isExplicit && <span className="inline-block h-[14px] w-[14px] shrink-0" />}
+                        <span className="truncate">
+                          {sizerTrack.artists.map((a) => a.name).join(', ')}
+                        </span>
+                      </div>
+                    </div>
+                    <span className="inline-block h-8 w-8 shrink-0" />
+                  </div>
+                ))}
+
                 <div
-                  className="pm-cube-prism"
+                  className="pm-cube-prism col-start-1 row-start-1 h-[56px] w-full"
                   style={{
                     animation: `pmDockPrismRoll ${cfAnimDurationSec}s cubic-bezier(0.32, 0.05, 0.22, 1) forwards`,
                   }}
@@ -2187,9 +2211,9 @@ const PMusicMainApp: React.FC = () => {
                     return (
                       <div
                         key={faceClass}
-                        className={`${faceClass} flex h-[52px] w-full items-center overflow-hidden`}
+                        className={`${faceClass} flex h-[56px] w-full items-center overflow-hidden`}
                       >
-                        <div className="relative inline-flex min-w-0 max-w-full items-center gap-3 rounded-[12px]">
+                        <div className="relative flex h-full w-full items-center gap-3 rounded-[14px] px-2.5 py-1.5">
                           <button
                             type="button"
                             aria-label="Abrir reproductor a pantalla completa"
@@ -2203,7 +2227,7 @@ const PMusicMainApp: React.FC = () => {
                               className="pointer-events-none h-full w-full select-none object-cover"
                             />
                           </button>
-                          <div className="min-w-0 max-w-[200px] xl:max-w-[240px]">
+                          <div className="min-w-0 flex-1 max-w-[200px] xl:max-w-[240px]">
                             <div className="flex h-[17px] items-center">
                               <div className="block max-w-full truncate text-left text-[14px] font-semibold leading-[1.15] pm-text-primary">
                                 {trackItem.title}
@@ -2223,26 +2247,28 @@ const PMusicMainApp: React.FC = () => {
                               </div>
                             </div>
                           </div>
-                          {!isIncoming && (
+                          {!isIncoming ? (
                             <span
                               aria-hidden="true"
-                              className={`relative inline-flex shrink-0 items-center justify-center rounded-full p-2 ${
+                              className={`relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
                                 faceLiked ? 'text-rose-500' : 'pm-text-secondary'
                               } pm-dock-heart-out`}
                             >
                               <Heart className={`h-4 w-4 ${faceLiked ? 'fill-current' : ''}`} />
                             </span>
+                          ) : (
+                            <span aria-hidden="true" className="inline-block h-8 w-8 shrink-0" />
                           )}
                           {isIncoming ? (
                             <span
                               aria-hidden="true"
-                              className="pm-cube-light-in absolute inset-0 rounded-[12px]"
+                              className="pm-cube-light-in absolute inset-0 rounded-[14px]"
                               style={{ animationDuration: `${cfAnimDurationSec}s` }}
                             />
                           ) : (
                             <span
                               aria-hidden="true"
-                              className="pm-cube-shade-out absolute inset-0 rounded-[12px]"
+                              className="pm-cube-shade-out absolute inset-0 rounded-[14px]"
                               style={{ animationDuration: `${cfAnimDurationSec}s` }}
                             />
                           )}
@@ -2297,7 +2323,7 @@ const PMusicMainApp: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setNowPlayingOpen(true)}
-                    className="block max-w-full truncate text-left text-[14px] font-semibold leading-[1.15] pm-text-primary hover:underline"
+                    className="pm-text-btn block max-w-full truncate text-left text-[14px] font-semibold leading-[1.15] pm-text-primary hover:underline"
                   >
                     {currentTrack.title}
                   </button>

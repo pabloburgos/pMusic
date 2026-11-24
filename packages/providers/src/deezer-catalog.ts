@@ -194,19 +194,25 @@ export function scoreArtistForQuery(artist: ArtistSummary, query: string): numbe
   const normName = normalizeSearchStr(artist.name);
   const collapsedName = collapseSearchStr(artist.name);
   if (normName === normQuery || (collapsedQuery.length >= 4 && collapsedName === collapsedQuery)) {
-    return 195;
+    return 640;
   }
   const nameWords = new Set(tokenizeSearchStr(artist.name));
   const wordHits = queryTokens.filter((t) => nameWords.has(t)).length;
-  if (wordHits === queryTokens.length) return 165;
+  if (wordHits === queryTokens.length) return 560;
+  if (
+    collapsedQuery.length >= 4 &&
+    (collapsedName.startsWith(collapsedQuery) || collapsedQuery === collapsedName)
+  ) {
+    return 320;
+  }
   if (
     collapsedQuery.length >= 4 &&
     (collapsedName.includes(collapsedQuery) || collapsedQuery.includes(collapsedName))
   ) {
-    return 125;
+    return 240;
   }
-  if (normName.includes(normQuery) || normQuery.includes(normName)) return 80;
-  return wordHits * 24;
+  if (normName.includes(normQuery) || normQuery.includes(normName)) return 140;
+  return wordHits * 28;
 }
 
 const GENRE_CHART_MAP: Record<string, number> = {
@@ -377,11 +383,29 @@ export class DeezerCatalog {
   }
 
   private mapAlbum(a: Json, artist?: Json): AlbumSummary {
-    const who = a.artist ?? artist;
+    const artistList: Array<{ id?: string; name: string }> = [];
+    const seen = new Set<string>();
+    const pushAr = (rawAr: Json | undefined) => {
+      const name = typeof rawAr?.name === 'string' ? rawAr.name.trim() : '';
+      if (!name) return;
+      const norm = normalizeSearchStr(name);
+      if (!norm || seen.has(norm)) return;
+      seen.add(norm);
+      const idStr =
+        rawAr?.id !== undefined && rawAr?.id !== null && String(rawAr.id).trim()
+          ? String(rawAr.id).trim()
+          : undefined;
+      artistList.push(idStr ? { id: idStr, name } : { name });
+    };
+    if (a.artist) pushAr(a.artist);
+    if (Array.isArray(a.contributors)) {
+      for (const c of a.contributors) pushAr(c);
+    }
+    if (artist) pushAr(artist);
     return {
       id: String(a.id),
       title: String(a.title),
-      artists: who ? [{ id: String(who.id), name: String(who.name) }] : [],
+      artists: artistList,
       year: a.release_date ? Number(String(a.release_date).slice(0, 4)) : undefined,
       thumbnailUrl: a.cover_big ?? a.cover_medium ?? a.cover ?? '',
     };
@@ -613,7 +637,7 @@ export class DeezerCatalog {
     const enrichedList = await this.enrichTracks(
       mergedRaw,
       mergedRaw.map((t: Json) => this.mapTrack(t)),
-      6,
+      16,
       signal
     );
 
@@ -635,8 +659,39 @@ export class DeezerCatalog {
       .sort((a: { score: number; idx: number }, b: { score: number; idx: number }) => b.score - a.score || a.idx - b.idx)
       .map((x: { artist: ArtistSummary }) => x.artist);
 
+    // Promote shared joint-album collaborators discovered in enriched search tracks onto album summaries
+    const albumExtraArtists = new Map<string, Map<string, { ref: { id?: string; name: string }; count: number }>>();
+    for (const song of songList) {
+      const aid = song.album?.id;
+      if (!aid || song.artists.length < 2) continue;
+      let arMap = albumExtraArtists.get(aid);
+      if (!arMap) {
+        arMap = new Map();
+        albumExtraArtists.set(aid, arMap);
+      }
+      for (const a of song.artists) {
+        const norm = normalizeSearchStr(a.name);
+        if (!norm) continue;
+        const prev = arMap.get(norm);
+        arMap.set(norm, { ref: prev?.ref ?? a, count: (prev?.count ?? 0) + 1 });
+      }
+    }
+
     const albumList = (want('album') ? albumListRaw : [])
-      .map((a: Json) => this.mapAlbum(a))
+      .map((a: Json) => {
+        const mapped = this.mapAlbum(a);
+        const extras = albumExtraArtists.get(mapped.id);
+        if (!extras) return mapped;
+        const have = new Set(mapped.artists.map((x) => normalizeSearchStr(x.name)));
+        const promoted = [...mapped.artists];
+        for (const [norm, entry] of extras.entries()) {
+          if (entry.count >= 2 && !have.has(norm)) {
+            have.add(norm);
+            promoted.push(entry.ref);
+          }
+        }
+        return promoted.length > mapped.artists.length ? { ...mapped, artists: promoted } : mapped;
+      })
       .map((album: AlbumSummary, idx: number) => ({
         album,
         idx,
@@ -649,7 +704,25 @@ export class DeezerCatalog {
     const topArtist = artistList[0];
     const topAlbum = albumList[0];
 
-    const songScore = topSong ? scoreTrackForQuery(topSong, rawQ) : -1;
+    const normQ = normalizeSearchStr(rawQ);
+    const qTokens = tokenizeSearchStr(rawQ);
+    const topSongNormTitle = topSong ? normalizeSearchStr(topSong.title) : '';
+    const topSongTitleWords = new Set(topSong ? tokenizeSearchStr(topSong.title) : []);
+    const topSongTitleHits = qTokens.filter((t) => topSongTitleWords.has(t)).length;
+    const topSongIsTitleIntent = Boolean(
+      topSong &&
+        (topSongNormTitle === normQ ||
+          (normQ.length >= 3 && topSongNormTitle.startsWith(normQ)) ||
+          (qTokens.length >= 2 && topSongTitleHits >= 1) ||
+          (qTokens.length === 1 && topSongTitleHits === 1))
+    );
+
+    const rawSongScore = topSong ? scoreTrackForQuery(topSong, rawQ) : -1;
+    const songScore = topSong
+      ? topSongIsTitleIntent
+        ? rawSongScore
+        : Math.min(rawSongScore, 340)
+      : -1;
     const artistScore = topArtist ? scoreArtistForQuery(topArtist, rawQ) : -1;
     const albumScore = topAlbum ? scoreAlbumForQuery(topAlbum, rawQ) : -1;
 
@@ -753,7 +826,7 @@ export class DeezerCatalog {
     const topSongs = await this.enrichTracks(
       rawTop,
       rawTop.map((t: Json) => this.mapTrack(t)),
-      10,
+      14,
       signal
     );
     return {
@@ -784,11 +857,39 @@ export class DeezerCatalog {
     const tracks = await this.enrichTracks(
       rawTracks,
       rawTracks.map((t: Json) => this.mapTrack(t, a)),
-      12,
+      30,
       signal
     );
+
+    // Promote co-headlining joint-album collaborators (e.g. "TA FACIL" -> Lucho RK, La Pantera)
+    const mappedAlbum = this.mapAlbum(a);
+    if (tracks.length >= 2) {
+      const collabCounts = new Map<string, { ref: { id?: string; name: string }; count: number }>();
+      for (const tr of tracks) {
+        const seenInTrack = new Set<string>();
+        for (const ar of tr.artists) {
+          const norm = normalizeSearchStr(ar.name);
+          if (!norm || seenInTrack.has(norm)) continue;
+          seenInTrack.add(norm);
+          const prev = collabCounts.get(norm);
+          collabCounts.set(norm, { ref: prev?.ref ?? ar, count: (prev?.count ?? 0) + 1 });
+        }
+      }
+      const threshold = Math.max(2, Math.ceil(tracks.length * 0.6));
+      const existingNorms = new Set(mappedAlbum.artists.map((x) => normalizeSearchStr(x.name)));
+      const promoted = [...mappedAlbum.artists];
+      const candidates = Array.from(collabCounts.entries())
+        .filter(([norm, info]) => info.count >= threshold && !existingNorms.has(norm))
+        .sort((x, y) => y[1].count - x[1].count);
+      for (const [norm, info] of candidates) {
+        existingNorms.add(norm);
+        promoted.push(info.ref);
+      }
+      mappedAlbum.artists = promoted;
+    }
+
     return {
-      album: this.mapAlbum(a),
+      album: mappedAlbum,
       tracks,
     } as AlbumDetail;
   }
