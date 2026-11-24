@@ -512,9 +512,7 @@ const PMusicMainApp: React.FC = () => {
       outgoingTransitionTrack.id !== incomingTransitionTrack.id
   );
   const cfP = Math.max(0, Math.min(1, transitionProgress01));
-  const cfEase = cfP < 0.5 ? 4 * cfP * cfP * cfP : 1 - Math.pow(-2 * cfP + 2, 3) / 2;
-  const cfPhaseLabel =
-    cfP < 0.46 ? 'Voz entrante' : cfP < 0.68 ? 'Mezclando' : 'Siguiente pista';
+  const cfPush = cfP < 0.5 ? 2 * cfP * cfP : 1 - Math.pow(-2 * cfP + 2, 2) / 2;
   const currentBpm = trackAnalyses[currentTrack.id]?.bpm;
   const repeatLabel =
     repeatMode === 'one'
@@ -1599,68 +1597,8 @@ const PMusicMainApp: React.FC = () => {
             />
           )}
 
-          {/* Left: Artwork + Title & Clickable ArtistLinks + Heart (+ Rising 3D Crossfade Carousel) */}
+          {/* Left: Artwork + Title & Clickable ArtistLinks + Heart */}
           <div className="pointer-events-none relative z-10 flex min-w-0 items-center">
-            {crossfadePairActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref && (
-              <div
-                data-testid="crossfade-carousel-pill"
-                className="pm-cf-carousel-stage pm-glass-regular pointer-events-none absolute bottom-[calc(100%+10px)] left-0 z-30 flex items-center gap-3 rounded-2xl border border-white/15 px-3 py-2 shadow-2xl"
-              >
-                <div className="pm-cf-3d-stage flex items-center gap-2">
-                  <div
-                    className="h-9 w-9 overflow-hidden rounded-lg border border-white/15 shadow-md will-change-transform"
-                    style={{
-                      transform: `rotateY(${Math.round(cfEase * 28)}deg) scale(${(1 - cfEase * 0.22).toFixed(3)})`,
-                      opacity: Math.max(0.3, 1 - cfEase * 0.65),
-                    }}
-                  >
-                    <img
-                      src={outgoingTransitionTrack.thumbnailUrl}
-                      alt={outgoingTransitionTrack.title}
-                      draggable={false}
-                      className="h-full w-full object-cover"
-                    />
-                  </div>
-                  <div className="min-w-[116px] max-w-[160px]">
-                    <div className="flex items-center justify-between gap-2 text-[10px] font-bold uppercase tracking-wider text-white/85">
-                      <span className="flex items-center gap-1.5">
-                        <span className="flex h-2.5 items-end gap-[1.5px]">
-                          <span className="pm-eq-bar w-[2px] rounded-full bg-white" style={{ height: '70%', animationDelay: '0ms' }} />
-                          <span className="pm-eq-bar w-[2px] rounded-full bg-white" style={{ height: '100%', animationDelay: '140ms' }} />
-                          <span className="pm-eq-bar w-[2px] rounded-full bg-white" style={{ height: '55%', animationDelay: '280ms' }} />
-                        </span>
-                        <span>{cfPhaseLabel}</span>
-                      </span>
-                      <span className="tabular-nums text-white/65">{Math.round(cfP * 100)}%</span>
-                    </div>
-                    <div className="mt-1 h-[3px] w-full overflow-hidden rounded-full bg-white/15">
-                      <div
-                        className="h-full rounded-full bg-white transition-[width] duration-75"
-                        style={{ width: `${Math.round(cfP * 100)}%` }}
-                      />
-                    </div>
-                    <div className="mt-1 truncate text-[11px] font-semibold text-white/95">
-                      {incomingTransitionTrack.title}
-                    </div>
-                  </div>
-                  <div
-                    className="relative h-9 w-9 overflow-hidden rounded-lg border border-white/30 shadow-lg will-change-transform"
-                    style={{
-                      transform: `rotateY(${Math.round(-(1 - cfEase) * 28)}deg) scale(${(0.78 + cfEase * 0.24).toFixed(3)})`,
-                      opacity: 0.45 + cfEase * 0.55,
-                    }}
-                  >
-                    <img
-                      src={incomingTransitionTrack.thumbnailUrl}
-                      alt={incomingTransitionTrack.title}
-                      draggable={false}
-                      className="h-full w-full object-cover"
-                    />
-                    <span aria-hidden="true" className="pm-cf-sheen pointer-events-none absolute inset-0" />
-                  </div>
-                </div>
-              </div>
-            )}
             <div
               draggable
               onDragStart={(e) => setDraggedTrack(e, currentTrack)}
@@ -1674,7 +1612,10 @@ const PMusicMainApp: React.FC = () => {
                 className="group relative h-11 w-11 shrink-0 overflow-hidden rounded-[10px] shadow-md"
               >
                 {crossfadePairActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
-                  <div className="pm-cf-3d-stage relative h-full w-full overflow-hidden rounded-[10px]">
+                  <div
+                    className="relative h-full w-full overflow-hidden rounded-[10px]"
+                    style={{ perspective: '280px', transformStyle: 'preserve-3d' }}
+                  >
                     <div
                       aria-hidden="true"
                       className="pointer-events-none absolute -inset-[2px] z-20 rounded-[12px] p-[2px]"
@@ -1692,20 +1633,25 @@ const PMusicMainApp: React.FC = () => {
                       draggable={false}
                       className="pointer-events-none absolute inset-0 h-full w-full select-none object-cover will-change-transform"
                       style={{
-                        transform: `translate3d(0, ${(cfEase * 24).toFixed(1)}px, 0) rotateX(${(-cfEase * 82).toFixed(1)}deg) scale(${(1 - cfEase * 0.2).toFixed(3)})`,
-                        opacity: (1 - cfEase).toFixed(3),
+                        transform: `translate3d(0, ${(cfPush * 108).toFixed(1)}%, 0) rotateX(${(-cfPush * 48).toFixed(1)}deg) scale(${(1 - cfPush * 0.14).toFixed(3)})`,
+                        opacity: (1 - cfPush * 0.65).toFixed(3),
                       }}
                     />
-                    <img
-                      src={incomingTransitionTrack.thumbnailUrl}
-                      alt={incomingTransitionTrack.title}
-                      draggable={false}
-                      className="pointer-events-none absolute inset-0 h-full w-full select-none object-cover will-change-transform"
+                    <div
+                      className="pointer-events-none absolute inset-0 h-full w-full will-change-transform"
                       style={{
-                        transform: `translate3d(0, ${(-(1 - cfEase) * 24).toFixed(1)}px, 0) rotateX(${((1 - cfEase) * 82).toFixed(1)}deg) scale(${(0.8 + cfEase * 0.2).toFixed(3)})`,
-                        opacity: cfEase.toFixed(3),
+                        transform: `translate3d(0, ${(-(1 - cfPush) * 108).toFixed(1)}%, 0) rotateX(${((1 - cfPush) * 48).toFixed(1)}deg) scale(${(0.86 + cfPush * 0.14).toFixed(3)})`,
+                        opacity: (0.35 + cfPush * 0.65).toFixed(3),
                       }}
-                    />
+                    >
+                      <img
+                        src={incomingTransitionTrack.thumbnailUrl}
+                        alt={incomingTransitionTrack.title}
+                        draggable={false}
+                        className="h-full w-full select-none object-cover"
+                      />
+                      <span aria-hidden="true" className="pm-cf-sheen pointer-events-none absolute inset-0" />
+                    </div>
                   </div>
                 ) : (
                   <img
@@ -1742,8 +1688,8 @@ const PMusicMainApp: React.FC = () => {
                     <div
                       className="absolute inset-0 flex flex-col justify-center will-change-transform"
                       style={{
-                        transform: `translateY(${(cfEase * 100).toFixed(1)}%)`,
-                        opacity: 1 - cfEase,
+                        transform: `translateY(${(cfPush * 114).toFixed(1)}%)`,
+                        opacity: (1 - cfPush * 0.75).toFixed(3),
                       }}
                     >
                       <span className="block truncate text-[14px] font-semibold leading-tight pm-text-primary">
@@ -1756,8 +1702,8 @@ const PMusicMainApp: React.FC = () => {
                     <div
                       className="absolute inset-0 flex flex-col justify-center will-change-transform"
                       style={{
-                        transform: `translateY(${(-(1 - cfEase) * 100).toFixed(1)}%)`,
-                        opacity: cfEase,
+                        transform: `translateY(${(-(1 - cfPush) * 114).toFixed(1)}%)`,
+                        opacity: (0.25 + cfPush * 0.75).toFixed(3),
                       }}
                     >
                       <span className="block truncate text-[14px] font-semibold leading-tight pm-text-primary">
@@ -2243,7 +2189,10 @@ const PMusicMainApp: React.FC = () => {
                   className="relative h-11 w-11 shrink-0 overflow-hidden rounded-[8px] shadow-sm"
                 >
                   {crossfadePairActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
-                    <div className="pm-cf-3d-stage relative h-full w-full overflow-hidden rounded-[8px]">
+                    <div
+                      className="relative h-full w-full overflow-hidden rounded-[8px]"
+                      style={{ perspective: '280px', transformStyle: 'preserve-3d' }}
+                    >
                       <div
                         aria-hidden="true"
                         className="pointer-events-none absolute -inset-[2px] z-20 rounded-[10px] p-[2px]"
@@ -2261,20 +2210,25 @@ const PMusicMainApp: React.FC = () => {
                         draggable={false}
                         className="pointer-events-none absolute inset-0 h-full w-full select-none object-cover will-change-transform"
                         style={{
-                          transform: `translate3d(0, ${(cfEase * 24).toFixed(1)}px, 0) rotateX(${(-cfEase * 82).toFixed(1)}deg) scale(${(1 - cfEase * 0.2).toFixed(3)})`,
-                          opacity: (1 - cfEase).toFixed(3),
+                          transform: `translate3d(0, ${(cfPush * 108).toFixed(1)}%, 0) rotateX(${(-cfPush * 48).toFixed(1)}deg) scale(${(1 - cfPush * 0.14).toFixed(3)})`,
+                          opacity: (1 - cfPush * 0.65).toFixed(3),
                         }}
                       />
-                      <img
-                        src={incomingTransitionTrack.thumbnailUrl}
-                        alt={incomingTransitionTrack.title}
-                        draggable={false}
-                        className="pointer-events-none absolute inset-0 h-full w-full select-none object-cover will-change-transform"
+                      <div
+                        className="pointer-events-none absolute inset-0 h-full w-full will-change-transform"
                         style={{
-                          transform: `translate3d(0, ${(-(1 - cfEase) * 24).toFixed(1)}px, 0) rotateX(${((1 - cfEase) * 82).toFixed(1)}deg) scale(${(0.8 + cfEase * 0.2).toFixed(3)})`,
-                          opacity: cfEase.toFixed(3),
+                          transform: `translate3d(0, ${(-(1 - cfPush) * 108).toFixed(1)}%, 0) rotateX(${((1 - cfPush) * 48).toFixed(1)}deg) scale(${(0.86 + cfPush * 0.14).toFixed(3)})`,
+                          opacity: (0.35 + cfPush * 0.65).toFixed(3),
                         }}
-                      />
+                      >
+                        <img
+                          src={incomingTransitionTrack.thumbnailUrl}
+                          alt={incomingTransitionTrack.title}
+                          draggable={false}
+                          className="h-full w-full select-none object-cover"
+                        />
+                        <span aria-hidden="true" className="pm-cf-sheen pointer-events-none absolute inset-0" />
+                      </div>
                     </div>
                   ) : (
                     <img
@@ -2290,8 +2244,8 @@ const PMusicMainApp: React.FC = () => {
                       <div
                         className="absolute inset-0 flex flex-col justify-center will-change-transform"
                         style={{
-                          transform: `translateY(${(cfEase * 100).toFixed(1)}%)`,
-                          opacity: 1 - cfEase,
+                          transform: `translateY(${(cfPush * 114).toFixed(1)}%)`,
+                          opacity: (1 - cfPush * 0.75).toFixed(3),
                         }}
                       >
                         <span className="block truncate text-[14px] font-semibold leading-snug pm-text-primary">
@@ -2304,8 +2258,8 @@ const PMusicMainApp: React.FC = () => {
                       <div
                         className="absolute inset-0 flex flex-col justify-center will-change-transform"
                         style={{
-                          transform: `translateY(${(-(1 - cfEase) * 100).toFixed(1)}%)`,
-                          opacity: cfEase,
+                          transform: `translateY(${(-(1 - cfPush) * 114).toFixed(1)}%)`,
+                          opacity: (0.25 + cfPush * 0.75).toFixed(3),
                         }}
                       >
                         <span className="block truncate text-[14px] font-semibold leading-snug pm-text-primary">

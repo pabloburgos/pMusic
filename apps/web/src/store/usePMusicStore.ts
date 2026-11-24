@@ -883,12 +883,13 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           djPreloadedKey = cfPreloadKey;
           void audioEngine.preloadNextDeck(nextTrack, 0);
         }
-        if (safeDur > 10 && safePos >= safeDur - liveState.safeCrossfade.durationSec - 0.35) {
+        const earlyLeadSec = safeDur > liveState.safeCrossfade.durationSec + 10 ? 1.8 : 0.4;
+        if (safeDur > 10 && safePos >= safeDur - liveState.safeCrossfade.durationSec - earlyLeadSec) {
           const cfPlan: DeckTransitionPlan = {
             fromTrackId: liveState.currentTrack.id,
             toTrackId: nextTrack.id,
             cueInSec: 0,
-            cueOutSec: Math.max(6, Math.round(safeDur - liveState.safeCrossfade.durationSec)),
+            cueOutSec: Math.max(6, Math.round(safeDur - liveState.safeCrossfade.durationSec - earlyLeadSec)),
             transitionDurationSec: Math.max(1.5, Math.min(12, liveState.safeCrossfade.durationSec)),
             transitionBars: 4,
             transitionType: 'eq_swap',
@@ -1321,6 +1322,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         lyricsUserScrolled: false,
       });
 
+      applyAmbientPaletteForTrack(nextTrack);
       void get().loadLyricsForTrack(nextTrack);
       if (nextRecommended.length < 6) {
         void get().replenishRecommendedQueue();
@@ -1367,9 +1369,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
       if (isCancelled()) return;
 
-      // Act 1: Morph fluid backdrop & reveal incoming track banner/dock before swapping title & cover at deck handoff (~48%)
+      // Act 1: Reveal incoming track transition state before swapping title & cover at deck handoff (~48%)
       set({ outgoingTransitionTrack: prevTrack, incomingTransitionTrack: nextTrack });
-      applyAmbientPaletteForTrack(nextTrack);
+      if (!isPlainCrossfade) {
+        applyAmbientPaletteForTrack(nextTrack);
+      }
 
       const handoffDelayMs = Math.max(
         380,
@@ -2586,7 +2590,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       st.safeCrossfade.durationSec > 0 &&
       st.repeatMode !== 'one' &&
       dur > 15 &&
-      positionSec >= dur - st.safeCrossfade.durationSec - 0.3
+      positionSec >= dur - st.safeCrossfade.durationSec - (dur > st.safeCrossfade.durationSec + 10 ? 1.8 : 0.4)
     ) {
       seekAutoTriggerTimer = setTimeout(() => {
         seekAutoTriggerTimer = null;

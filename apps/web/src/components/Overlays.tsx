@@ -140,6 +140,7 @@ export const NowPlayingSheet: React.FC = () => {
     setDjPopoverOpen,
     audioPanelTab,
     setAudioPanelTab,
+    outgoingTransitionTrack,
     incomingTransitionTrack,
     themeId,
     reducedMotionPref,
@@ -250,6 +251,7 @@ export const NowPlayingSheet: React.FC = () => {
   const transportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const movedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const backdropTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastCrossfadedTrackIdRef = useRef<string | null>(null);
   const lastBackdropTrackRef = useRef<{ id: string; coverUrl: string }>({
     id: currentTrack.id,
     coverUrl: currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl,
@@ -281,9 +283,22 @@ export const NowPlayingSheet: React.FC = () => {
   };
 
   useEffect(() => {
+    if (isTransitioning && incomingTransitionTrack) {
+      lastCrossfadedTrackIdRef.current = incomingTransitionTrack.id;
+    }
+  }, [isTransitioning, incomingTransitionTrack]);
+
+  useEffect(() => {
     const nextUrl = currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl;
     const prev = lastBackdropTrackRef.current;
     if (prev.id !== currentTrack.id) {
+      // During or right after an active crossfade, let the water-merge overlay complete seamlessly without triggering a slide/flash cut
+      if (isTransitioning || lastCrossfadedTrackIdRef.current === currentTrack.id) {
+        if (backdropTimerRef.current) clearTimeout(backdropTimerRef.current);
+        setPrevBackdrop(null);
+        lastBackdropTrackRef.current = { id: currentTrack.id, coverUrl: nextUrl };
+        return;
+      }
       setPrevBackdrop({
         id: prev.id,
         coverUrl: prev.coverUrl,
@@ -296,7 +311,7 @@ export const NowPlayingSheet: React.FC = () => {
     return () => {
       if (backdropTimerRef.current) clearTimeout(backdropTimerRef.current);
     };
-  }, [currentTrack.id, currentTrack.thumbnailHighUrl, currentTrack.thumbnailUrl, lastTrackDirection]);
+  }, [currentTrack.id, currentTrack.thumbnailHighUrl, currentTrack.thumbnailUrl, lastTrackDirection, isTransitioning]);
 
   useEffect(() => {
     const isTouchOrSmall =
@@ -734,6 +749,16 @@ export const NowPlayingSheet: React.FC = () => {
         : 'Activar repetición de playlist';
 
   const remainingSec = Math.max(0, durationSec - smoothPosSec);
+  const cfActive = Boolean(
+    isTransitioning &&
+      outgoingTransitionTrack &&
+      incomingTransitionTrack &&
+      outgoingTransitionTrack.id !== incomingTransitionTrack.id
+  );
+  const cfP = Math.max(0, Math.min(1, transitionProgress01));
+  const cfPush = cfP < 0.5 ? 2 * cfP * cfP : 1 - Math.pow(-2 * cfP + 2, 2) / 2;
+  const baseBackdropTrack = cfActive && outgoingTransitionTrack ? outgoingTransitionTrack : currentTrack;
+
   const incomingPreviewTrack =
     djMode.enabled &&
     isTransitioning &&
@@ -741,6 +766,40 @@ export const NowPlayingSheet: React.FC = () => {
     incomingTransitionTrack.id !== currentTrack.id
       ? incomingTransitionTrack
       : null;
+
+  const waterPools = (() => {
+    if (!cfActive || !incomingTransitionTrack || reducedMotionPref) return null;
+    const idStr = incomingTransitionTrack.id;
+    let hash = 7;
+    for (let i = 0; i < idStr.length; i++) {
+      hash = (hash * 31 + idStr.charCodeAt(i)) | 0;
+    }
+    const hAbs = Math.abs(hash);
+    const x1 = 18 + (hAbs % 64);
+    const y1 = 18 + ((hAbs >> 4) % 64);
+    const x2 = 100 - x1;
+    const y2 = 100 - y1;
+    const x3 = 16 + ((hAbs >> 8) % 68);
+    const y3 = 16 + ((hAbs >> 12) % 68);
+    const r1 = Math.max(0, Math.min(165, (cfP / 0.78) * 165));
+    const r2 = Math.max(0, Math.min(165, ((cfP - 0.12) / 0.74) * 165));
+    const r3 = Math.max(0, Math.min(155, ((cfP - 0.24) / 0.68) * 155));
+    const floodRaw = Math.max(0, Math.min(1, (cfP - 0.42) / 0.54));
+    const flood = floodRaw * floodRaw * (3 - 2 * floodRaw);
+    return {
+      url: incomingTransitionTrack.thumbnailHighUrl ?? incomingTransitionTrack.thumbnailUrl,
+      x1,
+      y1,
+      x2,
+      y2,
+      x3,
+      y3,
+      r1,
+      r2,
+      r3,
+      flood,
+    };
+  })();
 
   const PlayerDeckColumn = (compact = false) => (
     <div
@@ -750,9 +809,13 @@ export const NowPlayingSheet: React.FC = () => {
           : 'mx-auto flex h-full w-full max-w-[420px] justify-center gap-5 pb-4 md:h-auto md:justify-center md:gap-5 md:py-0'
       }`}
     >
-      {/* Large Borderless Centerpiece Artwork with smooth 3D slide, DJ crossfade preview & swipe skip */}
+      {/* Large Borderless Centerpiece Artwork with smooth 3D push-out carousel & swipe skip */}
       <div
-        key={currentTrack.id}
+        key={
+          cfActive && outgoingTransitionTrack && incomingTransitionTrack
+            ? `cf-big-${outgoingTransitionTrack.id}-${incomingTransitionTrack.id}`
+            : currentTrack.id
+        }
         onTouchStart={(e) => {
           const t = e.touches[0];
           if (t) coverSwipeStartRef.current = { x: t.clientX, y: t.clientY };
@@ -775,155 +838,245 @@ export const NowPlayingSheet: React.FC = () => {
           }
         }}
         className={`${
-          lastTrackDirection === 'prev' ? 'pm-cover-slide-prev' : 'pm-cover-slide-next'
+          cfActive
+            ? ''
+            : lastTrackDirection === 'prev'
+              ? 'pm-cover-slide-prev'
+              : 'pm-cover-slide-next'
         } relative aspect-square overflow-hidden rounded-[14px] bg-[#111115] shadow-[0_26px_64px_rgba(0,0,0,0.58)] transition-transform duration-300 ease-out md:rounded-[16px] ${
           compact
             ? 'w-[min(68vw,320px,36dvh)] xl:w-[min(68vw,346px,38dvh)]'
             : 'w-[min(86vw,356px,42dvh)] md:w-[min(74vw,340px,38dvh)] xl:w-[min(74vw,380px,42dvh)]'
         } ${isPlaying ? 'scale-100' : 'scale-[0.96]'}`}
       >
-        <img
-          src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
-          alt={currentTrack.title}
-          className={`h-full w-full object-cover transition-all duration-500 ${
-            incomingPreviewTrack ? 'scale-[0.94] opacity-40 blur-[2px]' : 'scale-100 opacity-100'
-          }`}
-        />
-        {incomingPreviewTrack && (
+        {cfActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
+          <div
+            className="pm-cf-3d-stage relative h-full w-full overflow-hidden rounded-[inherit]"
+            style={{ perspective: '760px', transformStyle: 'preserve-3d' }}
+          >
+            <img
+              src={outgoingTransitionTrack.thumbnailHighUrl ?? outgoingTransitionTrack.thumbnailUrl}
+              alt={outgoingTransitionTrack.title}
+              draggable={false}
+              className="pointer-events-none absolute inset-0 h-full w-full select-none object-cover will-change-transform"
+              style={{
+                transform: `translate3d(0, ${(cfPush * 105).toFixed(1)}%, 0) rotateX(${(-cfPush * 26).toFixed(1)}deg) scale(${(1 - cfPush * 0.12).toFixed(3)})`,
+                opacity: (1 - cfPush * 0.45).toFixed(3),
+              }}
+            />
+            <div
+              className="pointer-events-none absolute inset-0 h-full w-full will-change-transform"
+              style={{
+                transform: `translate3d(0, ${(-(1 - cfPush) * 105).toFixed(1)}%, 0) rotateX(${((1 - cfPush) * 26).toFixed(1)}deg) scale(${(0.88 + cfPush * 0.12).toFixed(3)})`,
+                opacity: (0.55 + cfPush * 0.45).toFixed(3),
+              }}
+            >
+              <img
+                src={incomingTransitionTrack.thumbnailHighUrl ?? incomingTransitionTrack.thumbnailUrl}
+                alt={incomingTransitionTrack.title}
+                draggable={false}
+                className="h-full w-full select-none object-cover"
+              />
+              <span aria-hidden="true" className="pm-cf-sheen pointer-events-none absolute inset-0" />
+            </div>
+          </div>
+        ) : (
           <img
-            key={`in-cover-${incomingPreviewTrack.id}`}
-            src={incomingPreviewTrack.thumbnailHighUrl ?? incomingPreviewTrack.thumbnailUrl}
-            alt={incomingPreviewTrack.title}
-            className="pm-track-meta-in absolute inset-0 h-full w-full object-cover transition-opacity duration-500"
-            style={{
-              opacity: Math.max(0.28, Math.min(1, transitionProgress01 * 1.45)),
-            }}
+            src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
+            alt={currentTrack.title}
+            className="h-full w-full object-cover transition-all duration-500 scale-100 opacity-100"
           />
         )}
       </div>
 
       {/* Minimalist Title, Full Multi-Artist Line & Borderless Actions */}
       <div
-        key={`meta-${incomingPreviewTrack?.id ?? currentTrack.id}`}
-        className="pm-track-meta-in flex w-full flex-col gap-0.5 md:gap-1"
+        key={
+          cfActive && outgoingTransitionTrack && incomingTransitionTrack
+            ? `cf-meta-${outgoingTransitionTrack.id}-${incomingTransitionTrack.id}`
+            : `meta-${incomingPreviewTrack?.id ?? currentTrack.id}`
+        }
+        className={`${cfActive ? '' : 'pm-track-meta-in'} flex w-full flex-col gap-0.5 md:gap-1`}
       >
-        <div className="flex w-full items-center justify-between gap-2">
-          <h1 className="min-w-0 flex-1 truncate text-[21px] font-bold leading-snug tracking-tight text-white md:text-[23px]">
-            {currentTrack.title}
-          </h1>
+        {cfActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
+          <div className="flex w-full items-center justify-between gap-2">
+            <div className="relative h-[54px] min-w-0 flex-1 overflow-hidden">
+              <div
+                className="absolute inset-0 flex flex-col justify-center will-change-transform"
+                style={{
+                  transform: `translateY(${(cfPush * 114).toFixed(1)}%)`,
+                  opacity: (1 - cfPush * 0.72).toFixed(3),
+                }}
+              >
+                <h1 className="truncate text-[21px] font-bold leading-snug tracking-tight text-white md:text-[23px]">
+                  {outgoingTransitionTrack.title}
+                </h1>
+                <div className="truncate text-[14px] leading-snug text-white/70">
+                  {outgoingTransitionTrack.artists.map((a) => a.name).join(', ')}
+                </div>
+              </div>
+              <div
+                className="absolute inset-0 flex flex-col justify-center will-change-transform"
+                style={{
+                  transform: `translateY(${(-(1 - cfPush) * 114).toFixed(1)}%)`,
+                  opacity: (0.28 + cfPush * 0.72).toFixed(3),
+                }}
+              >
+                <h1 className="truncate text-[21px] font-bold leading-snug tracking-tight text-white md:text-[23px]">
+                  {incomingTransitionTrack.title}
+                </h1>
+                <div className="truncate text-[14px] leading-snug text-white/70">
+                  {incomingTransitionTrack.artists.map((a) => a.name).join(', ')}
+                </div>
+              </div>
+            </div>
 
-          <div className="flex shrink-0 items-center gap-0.5">
-            <button
-              type="button"
-              aria-label={isLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
-              aria-pressed={isLiked}
-              onClick={() => {
-                if (!isLiked && !reducedMotionPref) {
-                  setHeartBurstKey((k) => k + 1);
-                }
-                void toggleLike(currentTrack);
-              }}
-              className={`pm-pressable relative flex h-9 w-9 items-center justify-center overflow-visible rounded-full transition-colors hover:bg-white/[0.10] ${
-                isLiked ? 'text-[#FB7185]' : 'text-white/85 hover:text-white'
-              }`}
-            >
-              <Heart
-                key={`deck-heart-${heartBurstKey}-${isLiked}`}
-                className={`h-5 w-5 ${isLiked ? 'fill-current' : ''} ${
-                  isLiked && heartBurstKey > 0 && !reducedMotionPref ? 'pm-heart-burst-epic' : ''
-                }`}
-              />
-              {isLiked &&
-                heartBurstKey > 0 &&
-                !reducedMotionPref &&
-                [
-                  { sx: '0px', sy: '-20px', c: '#FB7185' },
-                  { sx: '17px', sy: '-10px', c: '#F9A8D4' },
-                  { sx: '17px', sy: '10px', c: '#FDE047' },
-                  { sx: '0px', sy: '20px', c: '#FB7185' },
-                  { sx: '-17px', sy: '10px', c: '#F9A8D4' },
-                  { sx: '-17px', sy: '-10px', c: '#FDE047' },
-                ].map((sp, spIdx) => (
-                  <span
-                    key={`deck-sp-${heartBurstKey}-${spIdx}`}
-                    aria-hidden="true"
-                    className="pm-sparkle-dot pointer-events-none absolute left-1/2 top-1/2 h-1.5 w-1.5 rounded-full"
-                    style={
-                      {
-                        backgroundColor: sp.c,
-                        '--sx': sp.sx,
-                        '--sy': sp.sy,
-                      } as React.CSSProperties
-                    }
-                  />
-                ))}
-            </button>
-
-            <button
-              type="button"
-              aria-label={
-                dlStatus === 'downloaded'
-                  ? 'Descargada offline'
-                  : 'Descargar para escuchar offline'
-              }
-              onClick={() => void downloadTrackOffline(currentTrack)}
-              className="pm-pressable hidden h-9 w-9 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/[0.10] hover:text-white md:flex"
-            >
-              {dlStatus === 'downloading' ? (
-                <Loader2 className="h-4.5 w-4.5 animate-spin text-white" />
-              ) : dlStatus === 'downloaded' ? (
-                <Check className="h-4.5 w-4.5 text-[#34D399]" />
-              ) : (
-                <Download className="h-4.5 w-4.5" />
-              )}
-            </button>
-
-            <button
-              type="button"
-              aria-label={`Más opciones para ${currentTrack.title}`}
-              onClick={(e) => {
-                const r = e.currentTarget.getBoundingClientRect();
-                openTrackMenu(currentTrack, r.left - 210, r.bottom + 8);
-              }}
-              className="pm-pressable flex h-9 w-9 items-center justify-center rounded-full text-white/85 transition-colors hover:bg-white/[0.10] hover:text-white"
-            >
-              <MoreHorizontal className="h-5 w-5" />
-            </button>
-          </div>
-        </div>
-
-        {/* Full-Width Artist · Album Line so multi-artist collaborations never truncate unnecessarily */}
-        <div className="flex w-full flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[14px] leading-snug text-white/70">
-          <ArtistLinks
-            artists={currentTrack.artists}
-            className="flex-wrap"
-            onBeforeNavigate={() => setNowPlayingOpen(false)}
-            linkClassName="hover:text-white hover:underline"
-          />
-          {currentTrack.album && currentTrack.artists.length <= 2 && (
-            <>
-              <span aria-hidden="true" className="opacity-50">
-                ·
-              </span>
+            <div className="flex shrink-0 items-center gap-0.5">
               <button
                 type="button"
-                onClick={() => {
-                  const album = currentTrack.album;
-                  setNowPlayingOpen(false);
-                  if (album?.id) {
-                    void openAlbumDetail(album.id, {
-                      title: album.name,
-                      artist: currentTrack.artists[0]?.name,
-                    });
-                  }
-                }}
-                className="min-w-0 truncate text-left text-white/55 hover:text-white hover:underline"
+                aria-label={isLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
+                aria-pressed={isLiked}
+                onClick={() => void toggleLike(currentTrack)}
+                className={`pm-pressable relative flex h-9 w-9 items-center justify-center rounded-full transition-colors hover:bg-white/[0.10] ${
+                  isLiked ? 'text-[#FB7185]' : 'text-white/85 hover:text-white'
+                }`}
               >
-                {currentTrack.album.name}
+                <Heart className={`h-5 w-5 ${isLiked ? 'fill-current' : ''}`} />
               </button>
-            </>
-          )}
-        </div>
+              <button
+                type="button"
+                aria-label={`Más opciones para ${currentTrack.title}`}
+                onClick={(e) => {
+                  const r = e.currentTarget.getBoundingClientRect();
+                  openTrackMenu(currentTrack, r.left - 210, r.bottom + 8);
+                }}
+                className="pm-pressable flex h-9 w-9 items-center justify-center rounded-full text-white/85 transition-colors hover:bg-white/[0.10] hover:text-white"
+              >
+                <MoreHorizontal className="h-5 w-5" />
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="flex w-full items-center justify-between gap-2">
+              <h1 className="min-w-0 flex-1 truncate text-[21px] font-bold leading-snug tracking-tight text-white md:text-[23px]">
+                {currentTrack.title}
+              </h1>
+
+              <div className="flex shrink-0 items-center gap-0.5">
+                <button
+                  type="button"
+                  aria-label={isLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
+                  aria-pressed={isLiked}
+                  onClick={() => {
+                    if (!isLiked && !reducedMotionPref) {
+                      setHeartBurstKey((k) => k + 1);
+                    }
+                    void toggleLike(currentTrack);
+                  }}
+                  className={`pm-pressable relative flex h-9 w-9 items-center justify-center overflow-visible rounded-full transition-colors hover:bg-white/[0.10] ${
+                    isLiked ? 'text-[#FB7185]' : 'text-white/85 hover:text-white'
+                  }`}
+                >
+                  <Heart
+                    key={`deck-heart-${heartBurstKey}-${isLiked}`}
+                    className={`h-5 w-5 ${isLiked ? 'fill-current' : ''} ${
+                      isLiked && heartBurstKey > 0 && !reducedMotionPref ? 'pm-heart-burst-epic' : ''
+                    }`}
+                  />
+                  {isLiked &&
+                    heartBurstKey > 0 &&
+                    !reducedMotionPref &&
+                    [
+                      { sx: '0px', sy: '-20px', c: '#FB7185' },
+                      { sx: '17px', sy: '-10px', c: '#F9A8D4' },
+                      { sx: '17px', sy: '10px', c: '#FDE047' },
+                      { sx: '0px', sy: '20px', c: '#FB7185' },
+                      { sx: '-17px', sy: '10px', c: '#F9A8D4' },
+                      { sx: '-17px', sy: '-10px', c: '#FDE047' },
+                    ].map((sp, spIdx) => (
+                      <span
+                        key={`deck-sp-${heartBurstKey}-${spIdx}`}
+                        aria-hidden="true"
+                        className="pm-sparkle-dot pointer-events-none absolute left-1/2 top-1/2 h-1.5 w-1.5 rounded-full"
+                        style={
+                          {
+                            backgroundColor: sp.c,
+                            '--sx': sp.sx,
+                            '--sy': sp.sy,
+                          } as React.CSSProperties
+                        }
+                      />
+                    ))}
+                </button>
+
+                <button
+                  type="button"
+                  aria-label={
+                    dlStatus === 'downloaded'
+                      ? 'Descargada offline'
+                      : 'Descargar para escuchar offline'
+                  }
+                  onClick={() => void downloadTrackOffline(currentTrack)}
+                  className="pm-pressable hidden h-9 w-9 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/[0.10] hover:text-white md:flex"
+                >
+                  {dlStatus === 'downloading' ? (
+                    <Loader2 className="h-4.5 w-4.5 animate-spin text-white" />
+                  ) : dlStatus === 'downloaded' ? (
+                    <Check className="h-4.5 w-4.5 text-[#34D399]" />
+                  ) : (
+                    <Download className="h-4.5 w-4.5" />
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  aria-label={`Más opciones para ${currentTrack.title}`}
+                  onClick={(e) => {
+                    const r = e.currentTarget.getBoundingClientRect();
+                    openTrackMenu(currentTrack, r.left - 210, r.bottom + 8);
+                  }}
+                  className="pm-pressable flex h-9 w-9 items-center justify-center rounded-full text-white/85 transition-colors hover:bg-white/[0.10] hover:text-white"
+                >
+                  <MoreHorizontal className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Full-Width Artist · Album Line so multi-artist collaborations never truncate unnecessarily */}
+            <div className="flex w-full flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[14px] leading-snug text-white/70">
+              <ArtistLinks
+                artists={currentTrack.artists}
+                className="flex-wrap"
+                onBeforeNavigate={() => setNowPlayingOpen(false)}
+                linkClassName="hover:text-white hover:underline"
+              />
+              {currentTrack.album && currentTrack.artists.length <= 2 && (
+                <>
+                  <span aria-hidden="true" className="opacity-50">
+                    ·
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const album = currentTrack.album;
+                      setNowPlayingOpen(false);
+                      if (album?.id) {
+                        void openAlbumDetail(album.id, {
+                          title: album.name,
+                          artist: currentTrack.artists[0]?.name,
+                        });
+                      }
+                    }}
+                    className="min-w-0 truncate text-left text-white/55 hover:text-white hover:underline"
+                  >
+                    {currentTrack.album.name}
+                  </button>
+                </>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Thin Apple Music Pill Progress Bar + Status + Clickable Remaining Time */}
@@ -1232,6 +1385,7 @@ export const NowPlayingSheet: React.FC = () => {
           background:
             'radial-gradient(circle at 20% 24%, var(--pm-ambient-1), transparent 58%), radial-gradient(circle at 80% 76%, var(--pm-ambient-2), transparent 60%), linear-gradient(180deg, var(--pm-ambient-3) 0%, #070709 100%)',
           transform: 'scale(var(--pm-beat-scale, 1))',
+          transition: 'background 1800ms ease',
         }}
       >
         {prevBackdrop && (
@@ -1253,7 +1407,7 @@ export const NowPlayingSheet: React.FC = () => {
         )}
 
         <div
-          key={`in-${currentTrack.id}`}
+          key={prevBackdrop ? `in-${currentTrack.id}` : 'persistent-water-base'}
           className={`pointer-events-none absolute -inset-24 ${
             prevBackdrop
               ? lastTrackDirection === 'prev'
@@ -1264,18 +1418,81 @@ export const NowPlayingSheet: React.FC = () => {
         >
           <img
             data-testid="live-backdrop-img"
-            src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
+            src={baseBackdropTrack.thumbnailHighUrl ?? baseBackdropTrack.thumbnailUrl}
             alt=""
             draggable={false}
             className="pm-fluid-cover-a absolute inset-0 h-full w-full select-none object-cover opacity-55"
           />
           <img
-            src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
+            src={baseBackdropTrack.thumbnailHighUrl ?? baseBackdropTrack.thumbnailUrl}
             alt=""
             draggable={false}
             className="pm-fluid-cover-b absolute inset-0 h-full w-full -scale-x-100 select-none object-cover opacity-35"
           />
         </div>
+
+        {/* Living "Two Waters Merging" Fluid Crossfade Currents */}
+        {waterPools && (
+          <div
+            data-testid="live-water-merge"
+            className="pointer-events-none absolute -inset-24"
+          >
+            <img
+              src={waterPools.url}
+              alt=""
+              draggable={false}
+              className="pm-water-eddy-a absolute inset-0 h-full w-full select-none object-cover"
+              style={{
+                filter: 'blur(34px) saturate(1.65)',
+                opacity: Math.min(0.76, cfP * 1.15),
+                WebkitMaskImage: `radial-gradient(circle at ${waterPools.x1}% ${waterPools.y1}%, #000 0%, #000 ${(waterPools.r1 * 0.52).toFixed(1)}%, transparent ${waterPools.r1.toFixed(1)}%)`,
+                maskImage: `radial-gradient(circle at ${waterPools.x1}% ${waterPools.y1}%, #000 0%, #000 ${(waterPools.r1 * 0.52).toFixed(1)}%, transparent ${waterPools.r1.toFixed(1)}%)`,
+              }}
+            />
+            <img
+              src={waterPools.url}
+              alt=""
+              draggable={false}
+              className="pm-water-eddy-b absolute inset-0 h-full w-full -scale-x-100 select-none object-cover"
+              style={{
+                filter: 'blur(38px) saturate(1.7)',
+                opacity: Math.max(0, Math.min(0.68, (cfP - 0.1) * 1.15)),
+                WebkitMaskImage: `radial-gradient(circle at ${waterPools.x2}% ${waterPools.y2}%, #000 0%, #000 ${(waterPools.r2 * 0.52).toFixed(1)}%, transparent ${waterPools.r2.toFixed(1)}%)`,
+                maskImage: `radial-gradient(circle at ${waterPools.x2}% ${waterPools.y2}%, #000 0%, #000 ${(waterPools.r2 * 0.52).toFixed(1)}%, transparent ${waterPools.r2.toFixed(1)}%)`,
+              }}
+            />
+            <img
+              src={waterPools.url}
+              alt=""
+              draggable={false}
+              className="pm-water-eddy-a absolute inset-0 h-full w-full select-none object-cover mix-blend-screen"
+              style={{
+                filter: 'blur(42px) saturate(1.75) brightness(1.1)',
+                opacity: Math.max(0, Math.min(0.42, (cfP - 0.22) * 0.85)),
+                WebkitMaskImage: `radial-gradient(circle at ${waterPools.x3}% ${waterPools.y3}%, #000 0%, #000 ${(waterPools.r3 * 0.5).toFixed(1)}%, transparent ${waterPools.r3.toFixed(1)}%)`,
+                maskImage: `radial-gradient(circle at ${waterPools.x3}% ${waterPools.y3}%, #000 0%, #000 ${(waterPools.r3 * 0.5).toFixed(1)}%, transparent ${waterPools.r3.toFixed(1)}%)`,
+              }}
+            />
+            {waterPools.flood > 0.01 && (
+              <>
+                <img
+                  src={waterPools.url}
+                  alt=""
+                  draggable={false}
+                  className="pm-fluid-cover-a absolute inset-0 h-full w-full select-none object-cover"
+                  style={{ opacity: 0.55 * waterPools.flood }}
+                />
+                <img
+                  src={waterPools.url}
+                  alt=""
+                  draggable={false}
+                  className="pm-fluid-cover-b absolute inset-0 h-full w-full -scale-x-100 select-none object-cover"
+                  style={{ opacity: 0.35 * waterPools.flood }}
+                />
+              </>
+            )}
+          </div>
+        )}
 
         {/* GPU-Composited Living Fluid Cover-Palette Orbs (True circles + closest-side fade = zero box seams) */}
         <div className="pm-orb-1 pointer-events-none absolute -left-[20vmax] -top-[16vmax] h-[78vmax] w-[78vmax] rounded-full mix-blend-screen" />
@@ -1560,10 +1777,15 @@ export const NowPlayingSheet: React.FC = () => {
                   })()
                 ) : (
                   <div
+                    key={`lyrics-body-${currentTrack.id}`}
+                    style={{
+                      opacity: cfActive && cfP > 0.35 && cfP < 0.58 ? 0.55 : 1,
+                      transition: 'opacity 320ms ease',
+                    }}
                     className={
                       lyricsStyle === 'kinetic'
-                        ? 'space-y-3 pt-4 pb-24'
-                        : 'pm-lyrics-mask space-y-2 pb-16'
+                        ? 'pm-lyrics-swap-in space-y-3 pt-4 pb-24'
+                        : 'pm-lyrics-mask pm-lyrics-swap-in space-y-2 pt-4 pb-16'
                     }
                   >
                     {/* Borderless 3-dot instrumental breathing pulse before intro verse */}
@@ -1652,7 +1874,9 @@ export const NowPlayingSheet: React.FC = () => {
                                     ? 'pm-poster-enter'
                                     : ''
                               }`
-                            : lyricsStyle === 'editorial' || lyricsStyle === 'poster' || lyricsStyle === 'typewriter'
+                            : highlightIdx === -1 && idx === 0
+                              ? 'pm-lyric-line-inactive opacity-85'
+                              : lyricsStyle === 'editorial' || lyricsStyle === 'poster' || lyricsStyle === 'typewriter'
                               ? isPast
                                 ? 'opacity-25'
                                 : dist === 1
