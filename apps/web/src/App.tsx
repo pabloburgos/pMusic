@@ -116,6 +116,7 @@ const PMusicMainApp: React.FC = () => {
     eqSheetOpen,
     djPopoverOpen,
     audioPanelTab,
+    outgoingTransitionTrack,
     incomingTransitionTrack,
     devicesSheetOpen,
     remoteControlledDeviceId,
@@ -440,6 +441,7 @@ const PMusicMainApp: React.FC = () => {
     eqSheetOpen,
     djPopoverOpen,
     audioPanelTab,
+    outgoingTransitionTrack,
     incomingTransitionTrack,
     devicesSheetOpen,
     remoteControlledDeviceId,
@@ -503,6 +505,16 @@ const PMusicMainApp: React.FC = () => {
     djMode.enabled && activeTransitionPlan
       ? Math.max(0, Math.round(activeTransitionPlan.cueOutSec - liveDockPosSec))
       : null;
+  const crossfadePairActive = Boolean(
+    isTransitioning &&
+      outgoingTransitionTrack &&
+      incomingTransitionTrack &&
+      outgoingTransitionTrack.id !== incomingTransitionTrack.id
+  );
+  const cfP = Math.max(0, Math.min(1, transitionProgress01));
+  const cfEase = cfP < 0.5 ? 4 * cfP * cfP * cfP : 1 - Math.pow(-2 * cfP + 2, 3) / 2;
+  const cfPhaseLabel =
+    cfP < 0.46 ? 'Voz entrante' : cfP < 0.68 ? 'Mezclando' : 'Siguiente pista';
   const currentBpm = trackAnalyses[currentTrack.id]?.bpm;
   const repeatLabel =
     repeatMode === 'one'
@@ -1467,7 +1479,7 @@ const PMusicMainApp: React.FC = () => {
             scrubDraggingRef.current = false;
             setDockHoverPct(null);
           }}
-          className={`pm-glass-regular fixed z-40 grid select-none items-center gap-4 overflow-hidden ${
+          className={`pm-glass-regular fixed z-40 grid select-none items-center gap-4 overflow-visible ${
             playerBarStyle === 'floating-island'
               ? 'left-1/2 bottom-3.5 h-[72px] w-[min(840px,calc(100%-32px))] -translate-x-1/2 cursor-pointer grid-cols-[minmax(160px,1fr)_auto_minmax(160px,1fr)] rounded-full px-5'
               : playerBarStyle === 'minimal-wave'
@@ -1477,131 +1489,178 @@ const PMusicMainApp: React.FC = () => {
                   : 'inset-x-3 bottom-3 h-[84px] grid-cols-[minmax(200px,1fr)_minmax(320px,540px)_minmax(200px,1fr)] rounded-[20px] px-5'
           }`}
         >
-          {/* Flat Solid Sharp-Edged Ambient Progress Fill (Zero Gradient, Zero Vertical Playhead) */}
-          {playerBarStyle === 'ambient-dock' && (
-            <div
-              ref={ambientFillRef}
-              aria-hidden="true"
-              data-testid="ambient-progress-fill"
-              className="pointer-events-none absolute inset-y-0 left-0 z-0 transition-[background-color] duration-300"
-              style={{
-                width: `${progressPct}%`,
-                backgroundColor:
-                  'color-mix(in srgb, var(--pm-ambient-1) 36%, rgba(255, 255, 255, 0.08))',
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 overflow-hidden rounded-[inherit]"
+          >
+            {/* Flat Solid Sharp-Edged Ambient Progress Fill (Zero Gradient, Zero Vertical Playhead) */}
+            {playerBarStyle === 'ambient-dock' && (
+              <div
+                ref={ambientFillRef}
+                aria-hidden="true"
+                data-testid="ambient-progress-fill"
+                className="pointer-events-none absolute inset-y-0 left-0 z-0 transition-[background-color] duration-300"
+                style={{
+                  width: `${progressPct}%`,
+                  backgroundColor:
+                    'color-mix(in srgb, var(--pm-ambient-1) 36%, rgba(255, 255, 255, 0.08))',
+                }}
+              />
+            )}
+
+            {/* Dynamic Floating Island Bottom Curve Progress Hairline */}
+            {playerBarStyle === 'floating-island' && (
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-x-7 bottom-0 z-10 h-[3px] overflow-hidden rounded-full bg-white/12"
+              >
+                <div
+                  ref={islandFillRef}
+                  className="h-full rounded-full"
+                  style={{
+                    width: `${progressPct}%`,
+                    background:
+                      'linear-gradient(90deg, color-mix(in srgb, var(--pm-ambient-1) 80%, var(--pm-accent-primary)) 0%, var(--pm-accent-primary) 100%)',
+                    boxShadow:
+                      '0 0 12px color-mix(in srgb, var(--pm-ambient-1) 70%, transparent)',
+                  }}
+                />
+              </div>
+            )}
+
+            {/* Minimal Studio Top Edge Glowing Progress Line */}
+            {playerBarStyle === 'minimal-wave' && (
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-x-0 top-0 z-10 h-[3px] bg-white/10"
+              >
+                <div
+                  ref={waveFillRef}
+                  className="h-full rounded-r-full"
+                  style={{
+                    width: `${progressPct}%`,
+                    background:
+                      'linear-gradient(90deg, color-mix(in srgb, var(--pm-ambient-2) 70%, var(--pm-accent-primary)) 0%, color-mix(in srgb, var(--pm-ambient-1) 85%, white) 100%)',
+                    boxShadow:
+                      '0 0 16px color-mix(in srgb, var(--pm-ambient-1) 65%, transparent)',
+                  }}
+                />
+              </div>
+            )}
+
+            {/* Stealth Hover White Scrub Hairline + Cue Overlay */}
+            {playerBarStyle !== 'classic-center' && (
+              <>
+                {dockHoverPct !== null && (
+                  <div
+                    aria-hidden="true"
+                    data-testid="dock-hover-hairline"
+                    className="pointer-events-none absolute inset-y-0 z-10 w-[1px] -translate-x-1/2 bg-white/35"
+                    style={{ left: `${dockHoverPct}%` }}
+                  />
+                )}
+                {cueStartPct !== null && cueWidthPct > 0 && (
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute top-0 z-0 h-[2.5px] rounded-full bg-purple-500/85"
+                    style={{
+                      left: `${cueStartPct}%`,
+                      width: `${cueWidthPct}%`,
+                    }}
+                  />
+                )}
+                {dockHoverPct !== null && dockHoverSec !== null && (
+                  <span
+                    aria-hidden="true"
+                    style={{ left: `clamp(28px, ${dockHoverPct}%, calc(100% - 28px))` }}
+                    className="tabular-nums pm-btn-primary pointer-events-none absolute top-1.5 z-20 -translate-x-1/2 rounded-full px-2 py-0.5 text-[11px] font-semibold shadow-sm"
+                  >
+                    {formatDurationSec(dockHoverSec)}
+                  </span>
+                )}
+              </>
+            )}
+          </div>
+
+          {playerBarStyle !== 'classic-center' && (
+            <input
+              type="range"
+              role="slider"
+              aria-label="Posición de reproducción"
+              min={0}
+              max={Math.max(1, Math.round(durationSec))}
+              value={Math.min(Math.round(durationSec), Math.round(liveDockPosSec))}
+              onChange={(e) => {
+                const next = Number(e.target.value);
+                setSmoothDockPosSec(next);
+                seekTo(next);
               }}
+              className="sr-only"
             />
           )}
 
-          {/* Dynamic Floating Island Bottom Curve Progress Hairline */}
-          {playerBarStyle === 'floating-island' && (
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-x-7 bottom-0 z-10 h-[3px] overflow-hidden rounded-full bg-white/12"
-            >
-              <div
-                ref={islandFillRef}
-                className="h-full rounded-full"
-                style={{
-                  width: `${progressPct}%`,
-                  background:
-                    'linear-gradient(90deg, color-mix(in srgb, var(--pm-ambient-1) 80%, var(--pm-accent-primary)) 0%, var(--pm-accent-primary) 100%)',
-                  boxShadow:
-                    '0 0 12px color-mix(in srgb, var(--pm-ambient-1) 70%, transparent)',
-                }}
-              />
-            </div>
-          )}
-
-          {/* Minimal Studio Top Edge Glowing Progress Line */}
-          {playerBarStyle === 'minimal-wave' && (
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-x-0 top-0 z-10 h-[3px] bg-white/10"
-            >
-              <div
-                ref={waveFillRef}
-                className="h-full rounded-r-full"
-                style={{
-                  width: `${progressPct}%`,
-                  background:
-                    'linear-gradient(90deg, color-mix(in srgb, var(--pm-ambient-2) 70%, var(--pm-accent-primary)) 0%, color-mix(in srgb, var(--pm-ambient-1) 85%, white) 100%)',
-                  boxShadow:
-                    '0 0 16px color-mix(in srgb, var(--pm-ambient-1) 65%, transparent)',
-                }}
-              />
-            </div>
-          )}
-
-          {/* Stealth Hover White Scrub Hairline + Accessible Slider for Click/Drag Dock Modes */}
-          {playerBarStyle !== 'classic-center' && (
-            <>
-              {dockHoverPct !== null && (
-                <div
-                  aria-hidden="true"
-                  data-testid="dock-hover-hairline"
-                  className="pointer-events-none absolute inset-y-0 z-10 w-[1px] -translate-x-1/2 bg-white/35"
-                  style={{ left: `${dockHoverPct}%` }}
-                />
-              )}
-              {cueStartPct !== null && cueWidthPct > 0 && (
-                <div
-                  aria-hidden="true"
-                  className="pointer-events-none absolute top-0 z-0 h-[2.5px] rounded-full bg-purple-500/85"
-                  style={{
-                    left: `${cueStartPct}%`,
-                    width: `${cueWidthPct}%`,
-                  }}
-                />
-              )}
-              {dockHoverPct !== null && dockHoverSec !== null && (
-                <span
-                  aria-hidden="true"
-                  style={{ left: `clamp(28px, ${dockHoverPct}%, calc(100% - 28px))` }}
-                  className="tabular-nums pm-btn-primary pointer-events-none absolute top-1.5 z-20 -translate-x-1/2 rounded-full px-2 py-0.5 text-[11px] font-semibold shadow-sm"
-                >
-                  {formatDurationSec(dockHoverSec)}
-                </span>
-              )}
-              <input
-                type="range"
-                role="slider"
-                aria-label="Posición de reproducción"
-                min={0}
-                max={Math.max(1, Math.round(durationSec))}
-                value={Math.min(Math.round(durationSec), Math.round(liveDockPosSec))}
-                onChange={(e) => {
-                  const next = Number(e.target.value);
-                  setSmoothDockPosSec(next);
-                  seekTo(next);
-                }}
-                className="sr-only"
-              />
-            </>
-          )}
-
-          {/* Left: Artwork + Title & Clickable ArtistLinks + Heart (+ Incoming DJ Dock Takeover) */}
+          {/* Left: Artwork + Title & Clickable ArtistLinks + Heart (+ Rising 3D Crossfade Carousel) */}
           <div className="pointer-events-none relative z-10 flex min-w-0 items-center">
-            {djMode.enabled &&
-              isTransitioning &&
-              incomingTransitionTrack &&
-              incomingTransitionTrack.id !== currentTrack.id && (
-                <div className="pm-dock-takeover-in pm-glass-chip pointer-events-auto mr-3 flex max-w-[230px] items-center gap-2 rounded-[12px] px-2.5 py-1.5">
-                  <img
-                    src={incomingTransitionTrack.thumbnailUrl}
-                    alt={incomingTransitionTrack.title}
-                    className="h-8 w-8 shrink-0 rounded-[7px] object-cover"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-white/75">
-                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
-                      <span>Entrando · {Math.round(transitionProgress01 * 100)}%</span>
+            {crossfadePairActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref && (
+              <div
+                data-testid="crossfade-carousel-pill"
+                className="pm-cf-carousel-stage pm-glass-regular pointer-events-none absolute bottom-[calc(100%+10px)] left-0 z-30 flex items-center gap-3 rounded-2xl border border-white/15 px-3 py-2 shadow-2xl"
+              >
+                <div className="pm-cf-3d-stage flex items-center gap-2">
+                  <div
+                    className="h-9 w-9 overflow-hidden rounded-lg border border-white/15 shadow-md will-change-transform"
+                    style={{
+                      transform: `rotateY(${Math.round(cfEase * 28)}deg) scale(${(1 - cfEase * 0.22).toFixed(3)})`,
+                      opacity: Math.max(0.3, 1 - cfEase * 0.65),
+                    }}
+                  >
+                    <img
+                      src={outgoingTransitionTrack.thumbnailUrl}
+                      alt={outgoingTransitionTrack.title}
+                      draggable={false}
+                      className="h-full w-full object-cover"
+                    />
+                  </div>
+                  <div className="min-w-[116px] max-w-[160px]">
+                    <div className="flex items-center justify-between gap-2 text-[10px] font-bold uppercase tracking-wider text-white/85">
+                      <span className="flex items-center gap-1.5">
+                        <span className="flex h-2.5 items-end gap-[1.5px]">
+                          <span className="pm-eq-bar w-[2px] rounded-full bg-white" style={{ height: '70%', animationDelay: '0ms' }} />
+                          <span className="pm-eq-bar w-[2px] rounded-full bg-white" style={{ height: '100%', animationDelay: '140ms' }} />
+                          <span className="pm-eq-bar w-[2px] rounded-full bg-white" style={{ height: '55%', animationDelay: '280ms' }} />
+                        </span>
+                        <span>{cfPhaseLabel}</span>
+                      </span>
+                      <span className="tabular-nums text-white/65">{Math.round(cfP * 100)}%</span>
                     </div>
-                    <div className="truncate text-xs font-semibold pm-text-primary">
+                    <div className="mt-1 h-[3px] w-full overflow-hidden rounded-full bg-white/15">
+                      <div
+                        className="h-full rounded-full bg-white transition-[width] duration-75"
+                        style={{ width: `${Math.round(cfP * 100)}%` }}
+                      />
+                    </div>
+                    <div className="mt-1 truncate text-[11px] font-semibold text-white/95">
                       {incomingTransitionTrack.title}
                     </div>
                   </div>
+                  <div
+                    className="relative h-9 w-9 overflow-hidden rounded-lg border border-white/30 shadow-lg will-change-transform"
+                    style={{
+                      transform: `rotateY(${Math.round(-(1 - cfEase) * 28)}deg) scale(${(0.78 + cfEase * 0.24).toFixed(3)})`,
+                      opacity: 0.45 + cfEase * 0.55,
+                    }}
+                  >
+                    <img
+                      src={incomingTransitionTrack.thumbnailUrl}
+                      alt={incomingTransitionTrack.title}
+                      draggable={false}
+                      className="h-full w-full object-cover"
+                    />
+                    <span aria-hidden="true" className="pm-cf-sheen pointer-events-none absolute inset-0" />
+                  </div>
                 </div>
-              )}
+              </div>
+            )}
             <div
               draggable
               onDragStart={(e) => setDraggedTrack(e, currentTrack)}
@@ -1614,12 +1673,48 @@ const PMusicMainApp: React.FC = () => {
                 onClick={() => setNowPlayingOpen(true)}
                 className="group relative h-11 w-11 shrink-0 overflow-hidden rounded-[10px] shadow-md"
               >
-                <img
-                  src={currentTrack.thumbnailUrl}
-                  alt={currentTrack.title}
-                  draggable={false}
-                  className="pointer-events-none h-full w-full select-none object-cover transition-transform duration-200 group-hover:scale-105"
-                />
+                {crossfadePairActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
+                  <div className="pm-cf-3d-stage relative h-full w-full overflow-hidden rounded-[10px]">
+                    <div
+                      aria-hidden="true"
+                      className="pointer-events-none absolute -inset-[2px] z-20 rounded-[12px] p-[2px]"
+                      style={{
+                        background: `conic-gradient(from 0deg, rgba(255,255,255,0.92) ${Math.round(cfP * 360)}deg, rgba(255,255,255,0.12) 0deg)`,
+                        WebkitMask:
+                          'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
+                        WebkitMaskComposite: 'xor',
+                        maskComposite: 'exclude',
+                      }}
+                    />
+                    <img
+                      src={outgoingTransitionTrack.thumbnailUrl}
+                      alt={outgoingTransitionTrack.title}
+                      draggable={false}
+                      className="pointer-events-none absolute inset-0 h-full w-full select-none object-cover will-change-transform"
+                      style={{
+                        transform: `translate3d(0, ${(cfEase * 24).toFixed(1)}px, 0) rotateX(${(-cfEase * 82).toFixed(1)}deg) scale(${(1 - cfEase * 0.2).toFixed(3)})`,
+                        opacity: (1 - cfEase).toFixed(3),
+                      }}
+                    />
+                    <img
+                      src={incomingTransitionTrack.thumbnailUrl}
+                      alt={incomingTransitionTrack.title}
+                      draggable={false}
+                      className="pointer-events-none absolute inset-0 h-full w-full select-none object-cover will-change-transform"
+                      style={{
+                        transform: `translate3d(0, ${(-(1 - cfEase) * 24).toFixed(1)}px, 0) rotateX(${((1 - cfEase) * 82).toFixed(1)}deg) scale(${(0.8 + cfEase * 0.2).toFixed(3)})`,
+                        opacity: cfEase.toFixed(3),
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <img
+                    src={currentTrack.thumbnailUrl}
+                    alt={currentTrack.title}
+                    draggable={false}
+                    className="pointer-events-none h-full w-full select-none object-cover transition-transform duration-200 group-hover:scale-105"
+                  />
+                )}
                 {playerBarStyle === 'minimal-wave' && isPlaying && (
                   <span
                     aria-hidden="true"
@@ -1642,29 +1737,64 @@ const PMusicMainApp: React.FC = () => {
               </button>
 
               <div className="min-w-0 max-w-[200px] xl:max-w-[240px]">
-                <button
-                  type="button"
-                  onClick={() => setNowPlayingOpen(true)}
-                  className="block max-w-full truncate text-left text-[14px] font-semibold leading-tight pm-text-primary hover:underline"
-                >
-                  {currentTrack.title}
-                </button>
-                <div className="mt-0.5 flex items-center gap-1.5 truncate">
-                  {currentTrack.isExplicit && (
-                    <span
-                      aria-label="Explícita"
-                      className="inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-[3px] bg-[var(--pm-text-secondary)]/20 text-[9px] font-extrabold leading-none pm-text-secondary"
+                {crossfadePairActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
+                  <div className="relative h-[38px] overflow-hidden">
+                    <div
+                      className="absolute inset-0 flex flex-col justify-center will-change-transform"
+                      style={{
+                        transform: `translateY(${(cfEase * 100).toFixed(1)}%)`,
+                        opacity: 1 - cfEase,
+                      }}
                     >
-                      E
-                    </span>
-                  )}
-                  <div className="truncate text-[12px] pm-text-secondary">
-                    <ArtistLinks
-                      artists={currentTrack.artists}
-                      linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
-                    />
+                      <span className="block truncate text-[14px] font-semibold leading-tight pm-text-primary">
+                        {outgoingTransitionTrack.title}
+                      </span>
+                      <span className="mt-0.5 block truncate text-[12px] pm-text-secondary">
+                        {outgoingTransitionTrack.artists.map((a) => a.name).join(', ')}
+                      </span>
+                    </div>
+                    <div
+                      className="absolute inset-0 flex flex-col justify-center will-change-transform"
+                      style={{
+                        transform: `translateY(${(-(1 - cfEase) * 100).toFixed(1)}%)`,
+                        opacity: cfEase,
+                      }}
+                    >
+                      <span className="block truncate text-[14px] font-semibold leading-tight pm-text-primary">
+                        {incomingTransitionTrack.title}
+                      </span>
+                      <span className="mt-0.5 block truncate text-[12px] pm-text-secondary">
+                        {incomingTransitionTrack.artists.map((a) => a.name).join(', ')}
+                      </span>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setNowPlayingOpen(true)}
+                      className="block max-w-full truncate text-left text-[14px] font-semibold leading-tight pm-text-primary hover:underline"
+                    >
+                      {currentTrack.title}
+                    </button>
+                    <div className="mt-0.5 flex items-center gap-1.5 truncate">
+                      {currentTrack.isExplicit && (
+                        <span
+                          aria-label="Explícita"
+                          className="inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-[3px] bg-[var(--pm-text-secondary)]/20 text-[9px] font-extrabold leading-none pm-text-secondary"
+                        >
+                          E
+                        </span>
+                      )}
+                      <div className="truncate text-[12px] pm-text-secondary">
+                        <ArtistLinks
+                          artists={currentTrack.artists}
+                          linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
 
               <button
@@ -2110,28 +2240,99 @@ const PMusicMainApp: React.FC = () => {
                   type="button"
                   aria-label="Abrir reproductor Reproduciendo ahora"
                   onClick={() => setNowPlayingOpen(true)}
-                  className="h-11 w-11 shrink-0 overflow-hidden rounded-[8px] shadow-sm"
+                  className="relative h-11 w-11 shrink-0 overflow-hidden rounded-[8px] shadow-sm"
                 >
-                  <img
-                    src={currentTrack.thumbnailUrl}
-                    alt={currentTrack.title}
-                    className="h-full w-full object-cover"
-                  />
+                  {crossfadePairActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
+                    <div className="pm-cf-3d-stage relative h-full w-full overflow-hidden rounded-[8px]">
+                      <div
+                        aria-hidden="true"
+                        className="pointer-events-none absolute -inset-[2px] z-20 rounded-[10px] p-[2px]"
+                        style={{
+                          background: `conic-gradient(from 0deg, rgba(255,255,255,0.92) ${Math.round(cfP * 360)}deg, rgba(255,255,255,0.12) 0deg)`,
+                          WebkitMask:
+                            'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
+                          WebkitMaskComposite: 'xor',
+                          maskComposite: 'exclude',
+                        }}
+                      />
+                      <img
+                        src={outgoingTransitionTrack.thumbnailUrl}
+                        alt={outgoingTransitionTrack.title}
+                        draggable={false}
+                        className="pointer-events-none absolute inset-0 h-full w-full select-none object-cover will-change-transform"
+                        style={{
+                          transform: `translate3d(0, ${(cfEase * 24).toFixed(1)}px, 0) rotateX(${(-cfEase * 82).toFixed(1)}deg) scale(${(1 - cfEase * 0.2).toFixed(3)})`,
+                          opacity: (1 - cfEase).toFixed(3),
+                        }}
+                      />
+                      <img
+                        src={incomingTransitionTrack.thumbnailUrl}
+                        alt={incomingTransitionTrack.title}
+                        draggable={false}
+                        className="pointer-events-none absolute inset-0 h-full w-full select-none object-cover will-change-transform"
+                        style={{
+                          transform: `translate3d(0, ${(-(1 - cfEase) * 24).toFixed(1)}px, 0) rotateX(${((1 - cfEase) * 82).toFixed(1)}deg) scale(${(0.8 + cfEase * 0.2).toFixed(3)})`,
+                          opacity: cfEase.toFixed(3),
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <img
+                      src={currentTrack.thumbnailUrl}
+                      alt={currentTrack.title}
+                      className="h-full w-full object-cover"
+                    />
+                  )}
                 </button>
                 <div className="min-w-0 flex-1">
-                  <button
-                    type="button"
-                    onClick={() => setNowPlayingOpen(true)}
-                    className="block max-w-full truncate text-left text-[14px] font-semibold leading-snug pm-text-primary hover:underline"
-                  >
-                    {currentTrack.title}
-                  </button>
-                  <div className="truncate text-xs leading-normal pm-text-secondary">
-                    <ArtistLinks
-                      artists={currentTrack.artists}
-                      linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
-                    />
-                  </div>
+                  {crossfadePairActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
+                    <div className="relative h-[38px] overflow-hidden">
+                      <div
+                        className="absolute inset-0 flex flex-col justify-center will-change-transform"
+                        style={{
+                          transform: `translateY(${(cfEase * 100).toFixed(1)}%)`,
+                          opacity: 1 - cfEase,
+                        }}
+                      >
+                        <span className="block truncate text-[14px] font-semibold leading-snug pm-text-primary">
+                          {outgoingTransitionTrack.title}
+                        </span>
+                        <span className="block truncate text-xs leading-normal pm-text-secondary">
+                          {outgoingTransitionTrack.artists.map((a) => a.name).join(', ')}
+                        </span>
+                      </div>
+                      <div
+                        className="absolute inset-0 flex flex-col justify-center will-change-transform"
+                        style={{
+                          transform: `translateY(${(-(1 - cfEase) * 100).toFixed(1)}%)`,
+                          opacity: cfEase,
+                        }}
+                      >
+                        <span className="block truncate text-[14px] font-semibold leading-snug pm-text-primary">
+                          {incomingTransitionTrack.title}
+                        </span>
+                        <span className="block truncate text-xs leading-normal pm-text-secondary">
+                          {incomingTransitionTrack.artists.map((a) => a.name).join(', ')}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setNowPlayingOpen(true)}
+                        className="block max-w-full truncate text-left text-[14px] font-semibold leading-snug pm-text-primary hover:underline"
+                      >
+                        {currentTrack.title}
+                      </button>
+                      <div className="truncate text-xs leading-normal pm-text-secondary">
+                        <ArtistLinks
+                          artists={currentTrack.artists}
+                          linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
+                        />
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
 

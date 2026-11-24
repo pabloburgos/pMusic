@@ -765,4 +765,55 @@ describe('@pmusic/audio-engine', () => {
       (globalThis as { document?: unknown }).document = prevDoc;
     }
   });
+
+  it('starts eq_swap cleanly without resetting active outgoing deck when no transition is in flight', async () => {
+    const created: ReturnType<typeof createFakeBrowserAudioElement>[] = [];
+    const prevDoc = (globalThis as { document?: unknown }).document;
+    (globalThis as { document?: unknown }).document = {
+      createElement: () => {
+        const el = createFakeBrowserAudioElement();
+        el.duration = 210;
+        el.readyState = 4;
+        created.push(el);
+        return el;
+      },
+      body: { appendChild: () => {} },
+    };
+
+    const engine = new DualDeckAudioEngine();
+    try {
+      await engine.init();
+      await engine.loadAndPlay(SAMPLE_TRACKS[0]!, 10);
+      await engine.preloadNextDeck(SAMPLE_TRACKS[1]!, 0);
+
+      let deckAPauseCallsBeforeHandoff = 0;
+      const origPause = created[0]!.pause.bind(created[0]!);
+      created[0]!.pause = () => {
+        if (engine.getState().isTransitioning && engine.getState().transitionProgress01 < 0.99) {
+          deckAPauseCallsBeforeHandoff++;
+        }
+        origPause();
+      };
+
+      await engine.executeTransition({
+        fromTrackId: SAMPLE_TRACKS[0]!.id,
+        toTrackId: SAMPLE_TRACKS[1]!.id,
+        cueInSec: 0,
+        cueOutSec: 180,
+        transitionDurationSec: 0.35,
+        transitionBars: 4,
+        transitionType: 'eq_swap',
+        tempoNudgeRate: 1.0,
+        echoSubdivision: 0.5,
+        compatibilityScore: 0.85,
+      });
+
+      expect(deckAPauseCallsBeforeHandoff).toBe(0);
+      expect(engine.getState().activeDeck).toBe('B');
+      expect(engine.getState().isTransitioning).toBe(false);
+    } finally {
+      await engine.dispose();
+      (globalThis as { document?: unknown }).document = prevDoc;
+    }
+  });
 });

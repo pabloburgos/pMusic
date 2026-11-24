@@ -377,6 +377,7 @@ export interface PMusicStoreState {
   eqSheetOpen: boolean;
   djPopoverOpen: boolean;
   audioPanelTab: 'dj' | 'eq';
+  outgoingTransitionTrack: Track | null;
   incomingTransitionTrack: Track | null;
   devicesSheetOpen: boolean;
   importModalOpen: boolean;
@@ -1345,20 +1346,20 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         if (isCancelled()) {
           djAutoTransitionInFlight = false;
           djAutoTransitionStartedAtMs = 0;
-          set({ incomingTransitionTrack: null, isTransitioning: false, activeTransitionPlan: null });
+          set({ outgoingTransitionTrack: null, incomingTransitionTrack: null, isTransitioning: false, activeTransitionPlan: null });
           return;
         }
         if (!preloadedOk) {
           djAutoTransitionInFlight = false;
           djAutoTransitionStartedAtMs = 0;
-          set({ incomingTransitionTrack: null });
+          set({ outgoingTransitionTrack: null, incomingTransitionTrack: null });
           await get().playTrack(nextTrack, get().queue, plan.cueInSec);
           return;
         }
       } catch {
         djAutoTransitionInFlight = false;
         djAutoTransitionStartedAtMs = 0;
-        set({ incomingTransitionTrack: null });
+        set({ outgoingTransitionTrack: null, incomingTransitionTrack: null });
         if (isCancelled()) return;
         await get().playTrack(nextTrack, get().queue, plan.cueInSec);
         return;
@@ -1367,10 +1368,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       if (isCancelled()) return;
 
       // Act 1: Morph fluid backdrop & reveal incoming track banner/dock before swapping title & cover at deck handoff (~48%)
-      set({ incomingTransitionTrack: nextTrack });
-      if (!isPlainCrossfade) {
-        applyAmbientPaletteForTrack(nextTrack);
-      }
+      set({ outgoingTransitionTrack: prevTrack, incomingTransitionTrack: nextTrack });
+      applyAmbientPaletteForTrack(nextTrack);
 
       const handoffDelayMs = Math.max(
         380,
@@ -1396,7 +1395,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           audioEngine.cancelActiveTransition();
           djAutoTransitionInFlight = false;
           djAutoTransitionStartedAtMs = 0;
-          set({ incomingTransitionTrack: null, isTransitioning: false, activeTransitionPlan: null });
+          set({ outgoingTransitionTrack: null, incomingTransitionTrack: null, isTransitioning: false, activeTransitionPlan: null });
           return;
         }
         if (!transitionedOk) {
@@ -1407,7 +1406,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           audioEngine.cancelActiveTransition();
           djAutoTransitionInFlight = false;
           djAutoTransitionStartedAtMs = 0;
-          set({ incomingTransitionTrack: null });
+          set({ outgoingTransitionTrack: null, incomingTransitionTrack: null });
           await get().playTrack(nextTrack, get().queue, plan.cueInSec);
           return;
         }
@@ -1423,7 +1422,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         audioEngine.cancelActiveTransition();
         djAutoTransitionInFlight = false;
         djAutoTransitionStartedAtMs = 0;
-        set({ incomingTransitionTrack: null });
+        set({ outgoingTransitionTrack: null, incomingTransitionTrack: null });
         if (isCancelled()) return;
         await get().playTrack(nextTrack, get().queue, plan.cueInSec);
         return;
@@ -1444,6 +1443,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           positionSec: landedPos,
           durationSec: landedDur,
           isPlaying: true,
+          outgoingTransitionTrack: null,
           incomingTransitionTrack: null,
         });
       }
@@ -1473,8 +1473,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       }
       djAutoTransitionInFlight = false;
       djAutoTransitionStartedAtMs = 0;
-      if (get().incomingTransitionTrack) {
-        set({ incomingTransitionTrack: null });
+      if (get().incomingTransitionTrack || get().outgoingTransitionTrack) {
+        set({ outgoingTransitionTrack: null, incomingTransitionTrack: null });
       }
     }
   }
@@ -1632,6 +1632,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     vocalClashProtection: true,
   },
   audioPanelTab: 'dj',
+  outgoingTransitionTrack: null,
   incomingTransitionTrack: null,
   safeCrossfade: { ...DEFAULT_SAFE_CROSSFADE_CONFIG },
   userEq: {
@@ -2434,7 +2435,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         audioEngine.cancelActiveTransition();
         djAutoTransitionInFlight = false;
         djAutoTransitionStartedAtMs = 0;
-        set({ incomingTransitionTrack: null });
+        set({ outgoingTransitionTrack: null, incomingTransitionTrack: null });
       }
 
       const nextPrevStack = [...latest.sessionPrevStack, latest.currentTrack].slice(-20);
@@ -3041,6 +3042,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         djMode: nextDjMode,
         safeCrossfade: nextSafeCrossfade,
         activeTransitionPlan: null,
+        outgoingTransitionTrack: null,
         incomingTransitionTrack: null,
         isTransitioning: false,
         transitionProgress01: 0,

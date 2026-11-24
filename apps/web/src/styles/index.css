@@ -1702,6 +1702,45 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   animation: pmDockTakeoverIn 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+@keyframes pmCfCarouselRise {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0) scale(0.94);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+.pm-cf-carousel-stage {
+  animation: pmCfCarouselRise 380ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes pmCfSheenSweep {
+  0% {
+    transform: translate3d(-130%, 0, 0) skewX(-18deg);
+    opacity: 0;
+  }
+  35% {
+    opacity: 0.45;
+  }
+  100% {
+    transform: translate3d(170%, 0, 0) skewX(-18deg);
+    opacity: 0;
+  }
+}
+
+.pm-cf-sheen {
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.38), transparent);
+  animation: pmCfSheenSweep 2.4s ease-in-out infinite;
+}
+
+.pm-cf-3d-stage {
+  perspective: 420px;
+  transform-style: preserve-3d;
+}
+
 .pm-backdrop-static .pm-orb-1,
 .pm-backdrop-static .pm-orb-2,
 .pm-backdrop-static .pm-orb-3,
@@ -2684,7 +2723,9 @@ html.pm-solid-modern .pm-mobile-glass-header {
   .pm-toast-enter,
   .pm-heart-pop,
   .pm-heart-burst-epic,
-  .pm-sparkle-dot {
+  .pm-sparkle-dot,
+  .pm-cf-carousel-stage,
+  .pm-cf-sheen {
     animation: none !important;
   }
   .pm-sing-word {
@@ -2757,7 +2798,9 @@ html.pm-reduced-motion .pm-menu-pop,
 html.pm-reduced-motion .pm-toast-enter,
 html.pm-reduced-motion .pm-heart-pop,
 html.pm-reduced-motion .pm-heart-burst-epic,
-html.pm-reduced-motion .pm-sparkle-dot {
+html.pm-reduced-motion .pm-sparkle-dot,
+html.pm-reduced-motion .pm-cf-carousel-stage,
+html.pm-reduced-motion .pm-cf-sheen {
   animation: none !important;
 }
 html.pm-reduced-motion .pm-sing-word {
