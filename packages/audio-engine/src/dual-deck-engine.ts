@@ -248,6 +248,8 @@ export class DualDeckAudioEngine implements IAudioEngine {
   private transitionResolve: (() => void) | null = null;
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   private loadGeneration = 0;
+  private isLoadingTrack = false;
+  private readonly analyserBins = new Uint8Array(64);
   private eofFiredKey = '';
   private lastObservedSrc = '';
   private lastObservedTime = -1;
@@ -395,6 +397,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
 
     if (!this.watchdogTimer) {
       this.watchdogTimer = setInterval(() => {
+        if (this.isLoadingTrack) return;
         if (!this.isPlaying || this.isTransitioning || !this.deckA || !this.deckB) return;
         const deck = this.getDeck(this.activeDeck);
         const audio = deck.audio;
@@ -488,6 +491,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
 
   private triggerTrackEnded(deckId: DeckId): void {
     if (
+      this.isLoadingTrack ||
       this.activeDeck !== deckId ||
       this.isTransitioning ||
       !this.deckA ||
@@ -615,7 +619,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
     audio.addEventListener('progress', updateBufferedProgress);
 
     audio.addEventListener('timeupdate', () => {
-      if (this.activeDeck === id) {
+      if (this.activeDeck === id && !this.isLoadingTrack) {
         if (isPlausibleDuration(audio.duration)) {
           this.durationSec = audio.duration;
         }
@@ -641,7 +645,9 @@ export class DualDeckAudioEngine implements IAudioEngine {
     });
 
     audio.addEventListener('ended', () => {
-      this.triggerTrackEnded(id);
+      if (!this.isLoadingTrack) {
+        this.triggerTrackEnded(id);
+      }
     });
 
     audio.addEventListener('error', () => {
@@ -809,46 +815,60 @@ export class DualDeckAudioEngine implements IAudioEngine {
     await this.init();
     this.cancelActiveTransition();
     const loadGen = ++this.loadGeneration;
-
-    const deck = this.getDeck(this.activeDeck);
-    const otherDeck = this.getDeck(this.getInactiveDeckId());
-    otherDeck.audio.pause();
-    this.resetDeckDsp(otherDeck, 0);
-
-    deck.track = track;
-    this.playbackRate = 1.0;
-    this.resetDeckDsp(deck, 1.0);
-    this.isBuffering = true;
-    this.bufferedPct = 0;
-    this.emitState();
-
-    const streamUrl = await this.resolveStreamUrlFn(track);
-    if (loadGen !== this.loadGeneration || !this.deckA || !this.deckB) return;
-
-    deck.audio.crossOrigin = 'anonymous';
-    deck.audio.src = streamUrl;
-    this.durationSec = track.durationSec > 0 ? track.durationSec : 195;
-    this.positionSec = Math.max(0, startSec);
-    this.resetEofTracking(this.positionSec);
+    this.isLoadingTrack = true;
 
     try {
-      deck.audio.currentTime = this.positionSec;
-    } catch {
-      // Some browsers require loadedmetadata before setting currentTime; handled below
-      deck.audio.addEventListener(
-        'loadedmetadata',
-        () => {
-          try {
-            deck.audio.currentTime = this.positionSec;
-          } catch {
-            // ignore
-          }
-        },
-        { once: true }
-      );
-    }
+      const deck = this.getDeck(this.activeDeck);
+      const otherDeck = this.getDeck(this.getInactiveDeckId());
+      deck.audio.pause();
+      otherDeck.audio.pause();
+      this.resetDeckDsp(otherDeck, 0);
 
-    await this.play();
+      deck.track = track;
+      this.playbackRate = 1.0;
+      this.durationSec = track.durationSec > 0 ? track.durationSec : 195;
+      this.positionSec = Math.max(0, startSec);
+      this.resetEofTracking(this.positionSec);
+      this.resetDeckDsp(deck, 1.0);
+      this.isBuffering = true;
+      this.bufferedPct = 0;
+      this.emitState();
+
+      const streamUrl = await this.resolveStreamUrlFn(track);
+      if (loadGen !== this.loadGeneration || !this.deckA || !this.deckB) return;
+
+      deck.audio.crossOrigin = 'anonymous';
+      deck.audio.src = streamUrl;
+      this.durationSec = track.durationSec > 0 ? track.durationSec : 195;
+      this.positionSec = Math.max(0, startSec);
+      this.resetEofTracking(this.positionSec);
+
+      try {
+        deck.audio.currentTime = this.positionSec;
+      } catch {
+        // Some browsers require loadedmetadata before setting currentTime; handled below
+        deck.audio.addEventListener(
+          'loadedmetadata',
+          () => {
+            try {
+              deck.audio.currentTime = this.positionSec;
+            } catch {
+              // ignore
+            }
+          },
+          { once: true }
+        );
+      }
+
+      if (loadGen === this.loadGeneration) {
+        this.isLoadingTrack = false;
+      }
+      await this.play();
+    } finally {
+      if (loadGen === this.loadGeneration) {
+        this.isLoadingTrack = false;
+      }
+    }
   }
 
   public async preloadNextDeck(track: Track, startSec = 0): Promise<void> {
@@ -1178,13 +1198,13 @@ export class DualDeckAudioEngine implements IAudioEngine {
           );
         }
       } else if (plan.transitionType === 'eq_swap') {
-        // Vocal-Stem Isolation setup on incoming deck so its voice floats cleanly over the outgoing beat
-        setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -32, 0.01);
-        setAudioParamSmooth(incoming.midEqNode?.frequency, this.audioCtx, 1250, 0.01);
-        setAudioParamSmooth(incoming.midEqNode?.Q, this.audioCtx, 0.72, 0.01);
-        setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, 3.5, 0.01);
-        setAudioParamSmooth(incoming.highEqNode?.gain, this.audioCtx, -4.5, 0.01);
-        setFilterTypeSafe(incoming.sweepFilterNode, this.audioCtx, 'highpass', 320, 0.75);
+        // Club Drum-Safe EQ Swap on incoming deck: tame lows & bright hats first, blend mids cleanly
+        setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -30, 0.01);
+        setAudioParamSmooth(incoming.midEqNode?.frequency, this.audioCtx, 1200, 0.01);
+        setAudioParamSmooth(incoming.midEqNode?.Q, this.audioCtx, 0.78, 0.01);
+        setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, -2.0, 0.01);
+        setAudioParamSmooth(incoming.highEqNode?.gain, this.audioCtx, -9.0, 0.01);
+        setFilterTypeSafe(incoming.sweepFilterNode, this.audioCtx, 'highpass', 300, 0.75);
       } else if (plan.transitionType === 'filter_sweep' && incoming.sweepFilterNode) {
         setFilterTypeSafe(incoming.sweepFilterNode, this.audioCtx, 'lowpass', 260, 1.25);
       }
@@ -1256,14 +1276,16 @@ export class DualDeckAudioEngine implements IAudioEngine {
 
       // Snap outgoing filter cleanly to transparent 20 Hz highpass before the curve starts so there is zero start glitch
       if (!ch && plan.transitionType === 'eq_swap') {
-        setAudioParamSmooth(outgoing.midEqNode?.frequency, this.audioCtx, 1250, 0.01);
-        setAudioParamSmooth(outgoing.midEqNode?.Q, this.audioCtx, 0.72, 0.01);
+        setAudioParamSmooth(outgoing.midEqNode?.frequency, this.audioCtx, 1200, 0.01);
+        setAudioParamSmooth(outgoing.midEqNode?.Q, this.audioCtx, 0.78, 0.01);
         setFilterTypeSafe(outgoing.sweepFilterNode, this.audioCtx, 'highpass', 20, 0.707);
       }
 
+      let lastEmitMs = 0;
+      let emittedMidpoint = false;
       const applyCurve = (pRaw: number) => {
         const p = Math.max(0, Math.min(1, pRaw));
-        this.transitionProgress01 = Number(p.toFixed(2));
+        this.transitionProgress01 = Number(p.toFixed(3));
 
         let outGain = Math.cos(p * 0.5 * Math.PI);
         let inGain = Math.sin(p * 0.5 * Math.PI);
@@ -1524,97 +1546,84 @@ export class DualDeckAudioEngine implements IAudioEngine {
             inGain = p < 0.55 ? Math.sin((p / 0.55) * 0.5 * Math.PI) * 0.92 : 0.92 + 0.08 * ((p - 0.55) / 0.45);
           }
         } else if (plan.transitionType === 'eq_swap') {
-          // Vocal-Stem over Outgoing Beat Crossfade (v0.16.2 character):
-          // Phase 1 (0–46%): Outgoing carves its own vocal pocket (-16.5 dB) to become an instrumental bed
-          //                  while incoming enters isolated as a vocal stem (HPF 320Hz, +3.5 dB vocal presence, -32 dB lows).
-          // Phase 2 (46–54%): Brief zero-clash low-end pocket (both basses cut) so kicks at different BPMs never collide.
-          // Phase 3 (54–72%): Incoming beat & bass drop in cleanly while outgoing fades out high-passed with subtle echo tail.
-          // Phase 4 (72–100%): Full transparent incoming track; outgoing dissolves cleanly.
-          if (p < 0.46) {
-            const u = p / 0.46;
-            const carveU = Math.min(1, p / 0.22);
-            const outBassCutU = p < 0.34 ? 0 : (p - 0.34) / 0.12;
+          // Drum-Safe Club EQ Swap:
+          // Phase 1 (0–40%): Kick-free & hat-tamed incoming entry over outgoing groove.
+          // Phase 2 (40–60%): Smooth S-curve bass & drum handover centered at p = 0.50.
+          // Phase 3 (60–100%): Incoming at full weight while outgoing dissolves high-passed with subtle echo tail.
+          if (p < 0.4) {
+            const u = p / 0.4;
+            const carveU = Math.min(1, p / 0.3);
+            const hpPrepU = p < 0.24 ? 0 : (p - 0.24) / 0.16;
 
-            outGain = 1.0 - 0.22 * u;
-            inGain = Math.sin(u * 0.5 * Math.PI) * 0.86;
+            outGain = 1.0 - 0.16 * u;
+            inGain = Math.sin(u * 0.5 * Math.PI) * 0.84;
 
-            setAudioParamSmooth(outgoing.midEqNode?.gain, this.audioCtx, -16.5 * carveU);
-            setAudioParamSmooth(outgoing.highEqNode?.gain, this.audioCtx, -3.5 * carveU);
-            setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -32 * outBassCutU);
+            setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -8 * hpPrepU);
+            setAudioParamSmooth(outgoing.midEqNode?.gain, this.audioCtx, -10 * carveU);
+            setAudioParamSmooth(outgoing.highEqNode?.gain, this.audioCtx, -6 * carveU);
             if (outgoing.sweepFilterNode) {
               setFilterTypeSafe(outgoing.sweepFilterNode, this.audioCtx, 'highpass', 20, 0.75);
-              setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, 20 + outBassCutU * 280);
+              outgoing.sweepFilterNode.Q.value = 0.75;
+              setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, 20 + hpPrepU * 110);
             }
 
-            setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -32);
-            setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, 3.5);
-            setAudioParamSmooth(incoming.highEqNode?.gain, this.audioCtx, -4.5);
+            setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -30);
+            setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, -2.0 + 3.5 * u);
+            setAudioParamSmooth(incoming.highEqNode?.gain, this.audioCtx, -9.0 + 6.0 * u);
             if (incoming.sweepFilterNode) {
-              setFilterTypeSafe(incoming.sweepFilterNode, this.audioCtx, 'highpass', 320, 0.75);
-              setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, 320);
+              setFilterTypeSafe(incoming.sweepFilterNode, this.audioCtx, 'highpass', 300, 0.75);
+              setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, 300);
             }
-          } else if (p < 0.54) {
-            const u = (p - 0.46) / 0.08;
-            outGain = 0.78 - 0.14 * u;
-            inGain = 0.86 + 0.06 * u;
+          } else if (p < 0.6) {
+            const u = (p - 0.4) / 0.2;
+            const s = 0.5 - 0.5 * Math.cos(Math.PI * u);
+            outGain = 0.84 - 0.34 * s;
+            inGain = 0.84 + 0.16 * s;
 
-            setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -32);
-            setAudioParamSmooth(outgoing.midEqNode?.gain, this.audioCtx, -16.5);
-            setAudioParamSmooth(outgoing.highEqNode?.gain, this.audioCtx, -4.5);
+            setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -8 - 22 * s);
+            setAudioParamSmooth(outgoing.midEqNode?.gain, this.audioCtx, -10 - 4 * s);
+            setAudioParamSmooth(outgoing.highEqNode?.gain, this.audioCtx, -6 - 6 * s);
             if (outgoing.sweepFilterNode) {
-              setFilterTypeSafe(outgoing.sweepFilterNode, this.audioCtx, 'highpass', 300, 0.8);
-              outgoing.sweepFilterNode.Q.value = 0.8;
-              setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, 300 + u * 80);
+              setFilterTypeSafe(outgoing.sweepFilterNode, this.audioCtx, 'highpass', 130, 0.85);
+              outgoing.sweepFilterNode.Q.value = 0.85;
+              setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, 130 + 390 * s);
             }
-            setAudioParamSmooth(outgoing.delaySendNode?.gain, this.audioCtx, 0.16 * u, 0.025);
-            setAudioParamSmooth(outgoing.delayFeedbackNode?.gain, this.audioCtx, 0.32, 0.025);
+            setAudioParamSmooth(
+              outgoing.delaySendNode?.gain,
+              this.audioCtx,
+              0.15 * Math.sin(u * Math.PI * 0.85),
+              0.025
+            );
+            setAudioParamSmooth(outgoing.delayFeedbackNode?.gain, this.audioCtx, 0.34, 0.025);
 
-            setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -32);
-            setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, 3.5);
-            setAudioParamSmooth(incoming.highEqNode?.gain, this.audioCtx, -4.0);
+            setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -30 * (1 - s));
+            setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, 1.5 * (1 - s));
+            setAudioParamSmooth(incoming.highEqNode?.gain, this.audioCtx, -3.0 * (1 - s));
             if (incoming.sweepFilterNode) {
-              setFilterTypeSafe(incoming.sweepFilterNode, this.audioCtx, 'highpass', 320, 0.75);
-              setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, 320);
-            }
-          } else if (p < 0.72) {
-            const u = (p - 0.54) / 0.18;
-            outGain = 0.64 * Math.cos(u * 0.5 * Math.PI * 0.75);
-            inGain = 0.92 + 0.08 * u;
-
-            setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -32 * (1 - u));
-            setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, 3.5 * (1 - u));
-            setAudioParamSmooth(incoming.highEqNode?.gain, this.audioCtx, -4.0 * (1 - u));
-            if (incoming.sweepFilterNode) {
-              setFilterTypeSafe(incoming.sweepFilterNode, this.audioCtx, 'highpass', 320, 0.707);
+              setFilterTypeSafe(incoming.sweepFilterNode, this.audioCtx, 'highpass', 300, 0.707);
               incoming.sweepFilterNode.Q.value = 0.707;
-              setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, 320 - u * 300);
+              setAudioParamSmooth(incoming.sweepFilterNode.frequency, this.audioCtx, 300 - 280 * s);
             }
-
-            setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -32);
-            setAudioParamSmooth(outgoing.midEqNode?.gain, this.audioCtx, -16.5);
-            setAudioParamSmooth(outgoing.highEqNode?.gain, this.audioCtx, -4.5 - u * 3.5);
-            if (outgoing.sweepFilterNode) {
-              setFilterTypeSafe(outgoing.sweepFilterNode, this.audioCtx, 'highpass', 380, 0.9);
-              outgoing.sweepFilterNode.Q.value = 0.9;
-              setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, 380 + u * 420);
-            }
-            setAudioParamSmooth(outgoing.delaySendNode?.gain, this.audioCtx, 0.16 * (1 - u), 0.025);
-            setAudioParamSmooth(outgoing.delayFeedbackNode?.gain, this.audioCtx, 0.32 * (1 - u * 0.6), 0.025);
           } else {
-            const u = (p - 0.72) / 0.28;
-            outGain = 0.24 * Math.cos(u * 0.5 * Math.PI);
+            const u = (p - 0.6) / 0.4;
+            outGain = 0.5 * Math.cos(u * 0.5 * Math.PI);
             inGain = 1.0;
 
-            setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -32);
-            setAudioParamSmooth(outgoing.midEqNode?.gain, this.audioCtx, -18);
-            setAudioParamSmooth(outgoing.highEqNode?.gain, this.audioCtx, -8);
+            setAudioParamSmooth(outgoing.lowEqNode?.gain, this.audioCtx, -30);
+            setAudioParamSmooth(outgoing.midEqNode?.gain, this.audioCtx, -14 - 3 * u);
+            setAudioParamSmooth(outgoing.highEqNode?.gain, this.audioCtx, -12);
             if (outgoing.sweepFilterNode) {
-              setFilterTypeSafe(outgoing.sweepFilterNode, this.audioCtx, 'highpass', 800, 0.9);
+              setFilterTypeSafe(outgoing.sweepFilterNode, this.audioCtx, 'highpass', 520, 0.9);
               outgoing.sweepFilterNode.Q.value = 0.9;
-              setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, 800 + u * 600);
+              setAudioParamSmooth(outgoing.sweepFilterNode.frequency, this.audioCtx, 520 + 1280 * u);
             }
-            setAudioParamSmooth(outgoing.delaySendNode?.gain, this.audioCtx, 0, 0.025);
-            setAudioParamSmooth(outgoing.delayFeedbackNode?.gain, this.audioCtx, 0, 0.025);
+            setAudioParamSmooth(outgoing.delaySendNode?.gain, this.audioCtx, 0.08 * (1 - u), 0.025);
+            setAudioParamSmooth(
+              outgoing.delayFeedbackNode?.gain,
+              this.audioCtx,
+              0.3 * (1 - u * 0.7),
+              0.025
+            );
 
             setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, 0);
             setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, 0);
@@ -1693,7 +1702,13 @@ export class DualDeckAudioEngine implements IAudioEngine {
           incoming.audio.playbackRate = Number((startRate + (1.0 - startRate) * glide).toFixed(3));
         }
 
-        this.emitState();
+        const nowMs = Date.now();
+        const hitMidpoint = !emittedMidpoint && p >= 0.5;
+        if (hitMidpoint) emittedMidpoint = true;
+        if (lastEmitMs === 0 || p >= 1 || hitMidpoint || nowMs - lastEmitMs >= 240) {
+          lastEmitMs = nowMs;
+          this.emitState();
+        }
       };
 
       await new Promise<void>((resolve) => {
@@ -1819,7 +1834,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
   }
 
   public getAnalyserData(): AudioAnalyserData {
-    const bins = new Uint8Array(64);
+    const bins = this.analyserBins;
     if (this.analyserNode) {
       this.analyserNode.getByteFrequencyData(bins);
       let sum = 0;
@@ -1836,12 +1851,13 @@ export class DualDeckAudioEngine implements IAudioEngine {
       }
       return { frequencyBins: bins, rmsLevel: 0.48 };
     }
+    bins.fill(0);
     return { frequencyBins: bins, rmsLevel: 0 };
   }
 
   public getLivePositionSec(): number {
     let raw = this.positionSec;
-    if (this.deckA && this.deckB) {
+    if (!this.isLoadingTrack && this.deckA && this.deckB) {
       const deck = this.getDeck(this.activeDeck);
       const t = deck.audio.currentTime;
       if (!deck.audio.seeking && Number.isFinite(t) && t >= 0) {
@@ -1854,6 +1870,21 @@ export class DualDeckAudioEngine implements IAudioEngine {
   public getLivePlaybackSnapshot(): LivePlaybackSnapshot {
     const deck = this.deckA && this.deckB ? this.getDeck(this.activeDeck) : null;
     const audio = deck?.audio;
+    if (this.isLoadingTrack) {
+      const dur = this.durationSec;
+      const clampedLoadingPos = dur > 0 ? Math.max(0, Math.min(dur, this.positionSec)) : Math.max(0, this.positionSec);
+      return {
+        positionSec: clampedLoadingPos,
+        durationSec: dur,
+        isPlaying: this.isPlaying,
+        isBuffering: this.isBuffering,
+        isPaused: audio ? Boolean(audio.paused) : !this.isPlaying,
+        isEnded: false,
+        isSeeking: false,
+        isTransitioning: this.isTransitioning,
+        transitionProgress01: this.transitionProgress01,
+      };
+    }
     const audioDur =
       audio && Number.isFinite(audio.duration) && audio.duration > 1 ? audio.duration : 0;
     const dur = audioDur > 0 ? audioDur : this.durationSec;

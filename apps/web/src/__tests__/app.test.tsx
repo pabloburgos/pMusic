@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen, fireEvent } from '@testing-library/react';
 import { App } from '../App.tsx';
 import { ArtistLinks } from '../components/ArtistLinks.tsx';
@@ -202,24 +202,58 @@ describe('@pmusic/web UI', () => {
     expect(usePMusicStore.getState().queue[0]?.id).toBe(t1.id);
   });
 
-  it('shows Play/Pause loading indicator when isBuffering is active and triggers epic skip/prev/shuffle animations', async () => {
-    act(() => {
-      usePMusicStore.setState({ isBuffering: false, isPlaying: false });
-    });
-    render(<App />);
-    const playBtn = screen.getByTestId('dock-play-btn');
-    expect(screen.queryByTestId('dock-play-loader')).toBeNull();
+  it('delays Play/Pause loading indicator by 500ms without shimmer or text and triggers epic skip/prev/shuffle animations', async () => {
+    vi.useFakeTimers();
+    try {
+      act(() => {
+        usePMusicStore.setState({ isBuffering: false, isPlaying: false });
+      });
+      render(<App />);
+      const playBtn = screen.getByTestId('dock-play-btn');
+      expect(screen.queryByTestId('dock-play-loader')).toBeNull();
 
-    act(() => {
-      usePMusicStore.setState({ isBuffering: true });
-    });
-    expect(screen.getByTestId('dock-play-loader')).toBeDefined();
-    expect(playBtn.getAttribute('aria-label')).toBe('Cargando canción');
+      // Fast load (< 500ms) never flashes a spinner
+      act(() => {
+        usePMusicStore.setState({ isBuffering: true });
+      });
+      expect(screen.queryByTestId('dock-play-loader')).toBeNull();
+      act(() => {
+        vi.advanceTimersByTime(150);
+      });
+      expect(screen.queryByTestId('dock-play-loader')).toBeNull();
 
-    act(() => {
-      usePMusicStore.setState({ isBuffering: false });
-    });
-    expect(screen.queryByTestId('dock-play-loader')).toBeNull();
+      act(() => {
+        usePMusicStore.setState({ isBuffering: false });
+      });
+      act(() => {
+        vi.advanceTimersByTime(450);
+      });
+      expect(screen.queryByTestId('dock-play-loader')).toBeNull();
+
+      // Slow load (>= 500ms) reveals ONLY the circular spinner, never CARGANDO AUDIO text or shimmer bar
+      act(() => {
+        usePMusicStore.setState({ isBuffering: true });
+      });
+      act(() => {
+        vi.advanceTimersByTime(450);
+      });
+      expect(screen.queryByTestId('dock-play-loader')).toBeNull();
+
+      act(() => {
+        vi.advanceTimersByTime(60);
+      });
+      expect(screen.getByTestId('dock-play-loader')).toBeDefined();
+      expect(playBtn.getAttribute('aria-label')).toBe('Cargando canción');
+      expect(screen.queryByText(/CARGANDO AUDIO/i)).toBeNull();
+      expect(document.querySelector('.pm-buffer-shimmer')).toBeNull();
+
+      act(() => {
+        usePMusicStore.setState({ isBuffering: false });
+      });
+      expect(screen.queryByTestId('dock-play-loader')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
 
     fireEvent.click(screen.getByRole('button', { name: /Activar reproducción aleatoria/i }));
     await act(async () => {
@@ -266,8 +300,9 @@ describe('@pmusic/web UI', () => {
     expect(screen.queryByText(/Entrando ·/i)).toBeNull();
     const inkCover = screen.getByTestId('ink-bleed-cover');
     expect(inkCover).toBeDefined();
+    expect(inkCover.querySelectorAll('canvas').length).toBeGreaterThan(0);
     expect(inkCover.querySelectorAll('circle').length).toBe(0);
-    expect(inkCover.querySelectorAll('feTurbulence').length).toBeGreaterThan(0);
+    expect(inkCover.querySelectorAll('feTurbulence').length).toBe(0);
     expect(screen.getByTestId('backdrop-slot-0')).toBeDefined();
     expect(screen.getByTestId('backdrop-slot-1')).toBeDefined();
     expect(screen.getByTestId('toggle-real-fullscreen-btn')).toBeDefined();
@@ -399,5 +434,43 @@ describe('@pmusic/web UI', () => {
       await new Promise((r) => setTimeout(r, 320));
     });
     expect(screen.getByTestId('sidebar-queue-search-results')).toBeDefined();
+  });
+
+  it('advances by exactly 1 track (never 2) when manually clicking Next while inside the suppressed crossfade zone', async () => {
+    const t1 = usePMusicStore.getState().homeShelves[0]!.tracks![0]!;
+    const t2 = usePMusicStore.getState().homeShelves[0]!.tracks![1]!;
+    const t3 = usePMusicStore.getState().homeShelves[0]!.tracks![2]!;
+
+    act(() => {
+      usePMusicStore.setState({
+        queue: [t1, t2, t3],
+        queueIndex: 0,
+        currentTrack: t1,
+        durationSec: 180,
+        positionSec: 40,
+        isPlaying: true,
+        repeatMode: 'off',
+        djMode: {
+          ...usePMusicStore.getState().djMode,
+          enabled: false,
+        },
+        safeCrossfade: { enabled: true, durationSec: 12 },
+        isTransitioning: false,
+      });
+    });
+
+    // Seek directly inside the final 12s crossfade zone (auto-crossfade suppressed)
+    act(() => {
+      usePMusicStore.getState().seekTo(174);
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 60));
+      await usePMusicStore.getState().nextTrack();
+      await new Promise((r) => setTimeout(r, 300));
+    });
+
+    expect(usePMusicStore.getState().currentTrack.id).toBe(t2.id);
+    expect(usePMusicStore.getState().isTransitioning).toBe(false);
+    expect(usePMusicStore.getState().queue[0]?.id).toBe(t2.id);
   });
 });

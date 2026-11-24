@@ -992,6 +992,68 @@ input[type="range"].pm-range-pill::-moz-range-thumb {
   background: transparent;
 }
 
+/* Transparent range overlays placed above GPU-composited translate3d progress fills */
+input[type="range"].pm-range-gpu-overlay {
+  height: 18px;
+}
+
+input[type="range"].pm-range-gpu-overlay::-webkit-slider-runnable-track {
+  height: 18px;
+  background: transparent;
+}
+
+input[type="range"].pm-range-gpu-overlay:hover::-webkit-slider-runnable-track {
+  height: 18px;
+}
+
+input[type="range"].pm-range-gpu-overlay::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+input[type="range"].pm-range-gpu-overlay::-moz-range-thumb {
+  width: 0;
+  height: 0;
+  opacity: 0;
+  border: 0;
+  background: transparent;
+}
+
+input[type="range"].pm-range-gpu-thumb-only {
+  height: 16px;
+}
+
+input[type="range"].pm-range-gpu-thumb-only::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 9999px;
+  background: transparent;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  input[type="range"].pm-range-gpu-thumb-only:hover::-webkit-slider-runnable-track {
+    height: 5px;
+  }
+  input[type="range"].pm-range-gpu-thumb-only::-webkit-slider-thumb {
+    opacity: 0;
+    transform: scale(0.75);
+  }
+  input[type="range"].pm-range-gpu-thumb-only:hover::-webkit-slider-thumb,
+  input[type="range"].pm-range-gpu-thumb-only:focus-visible::-webkit-slider-thumb {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.pm-sheet-recede-glow {
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.72) 100%);
+}
+
 /* Vertical EQ Range Sliders inside Floating EQ Popover */
 input[type="range"].pm-eq-vertical {
   writing-mode: vertical-lr;
@@ -1891,21 +1953,20 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   }
 }
 
-/* Ambient Dock Color Collapse & Tranquil Liquid Water-Recede Effects */
+/* Ambient Dock Color Collapse & Tranquil Liquid Water-Recede Effects (100% GPU compositor) */
 @keyframes pmDockColorCollapse {
   0% {
-    background-position: 0% 50%;
+    transform: translate3d(-45%, 0, 0);
     opacity: 0;
   }
   20% {
     opacity: 0.92;
   }
-  62% {
-    background-position: 68% 50%;
-    opacity: 0.72;
+  65% {
+    opacity: 0.7;
   }
   100% {
-    background-position: 100% 50%;
+    transform: translate3d(0%, 0, 0);
     opacity: 0;
   }
 }
@@ -1913,27 +1974,29 @@ html.pm-solid-modern .pm-spotlight-backdrop {
 .pm-dock-color-collapse {
   pointer-events: none;
   position: absolute;
-  inset: 0;
+  inset-y: 0;
+  left: 0;
+  width: 200%;
   background: linear-gradient(
     90deg,
     color-mix(in srgb, var(--pm-dock-prev-color, var(--pm-ambient-1)) 44%, rgba(255, 255, 255, 0.08)) 0%,
-    color-mix(in srgb, var(--pm-ambient-2) 48%, rgba(255, 255, 255, 0.1)) 46%,
+    color-mix(in srgb, var(--pm-ambient-2) 48%, rgba(255, 255, 255, 0.1)) 48%,
     color-mix(in srgb, var(--pm-ambient-1) 42%, rgba(255, 255, 255, 0.08)) 100%
   );
-  background-size: 240% 100%;
-  animation: pmDockColorCollapse 1.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  will-change: transform, opacity;
+  animation: pmDockColorCollapse 1.65s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 @keyframes pmDockWaterSheen {
   0% {
-    background-position: 100% 50%;
+    transform: translate3d(0%, 0, 0);
     opacity: 0;
   }
   18% {
     opacity: 0.85;
   }
   100% {
-    background-position: 0% 50%;
+    transform: translate3d(-48%, 0, 0);
     opacity: 0;
   }
 }
@@ -1941,7 +2004,9 @@ html.pm-solid-modern .pm-spotlight-backdrop {
 .pm-dock-water-recede-sheen {
   pointer-events: none;
   position: absolute;
-  inset: 0;
+  inset-y: 0;
+  left: 0;
+  width: 200%;
   background: linear-gradient(
     270deg,
     color-mix(in srgb, var(--pm-ambient-1) 46%, rgba(255, 255, 255, 0.24)) 0%,
@@ -1949,8 +2014,8 @@ html.pm-solid-modern .pm-spotlight-backdrop {
     color-mix(in srgb, var(--pm-ambient-2) 22%, transparent) 58%,
     transparent 100%
   );
-  background-size: 210% 100%;
-  animation: pmDockWaterSheen 1.35s ease-out forwards;
+  will-change: transform, opacity;
+  animation: pmDockWaterSheen 1.15s ease-out forwards;
 }
 
 @keyframes pmDockWaterCrest {
@@ -1960,11 +2025,11 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   }
   14% {
     opacity: 0.95;
-    transform: scaleX(1.25);
+    transform: scaleX(1.22);
   }
   68% {
-    opacity: 0.75;
-    transform: scaleX(1.05);
+    opacity: 0.72;
+    transform: scaleX(1.04);
   }
   100% {
     opacity: 0;
@@ -1975,20 +2040,20 @@ html.pm-solid-modern .pm-spotlight-backdrop {
 .pm-dock-water-recede-crest {
   pointer-events: none;
   position: absolute;
-  top: -10%;
-  bottom: -10%;
+  top: -8%;
+  bottom: -8%;
   right: 0;
-  width: 56px;
+  width: 64px;
   transform-origin: right center;
   border-radius: 9999px 0 0 9999px;
   background: radial-gradient(
-    ellipse 95% 58% at 100% 50%,
-    rgba(255, 255, 255, 0.34) 0%,
-    color-mix(in srgb, var(--pm-ambient-1) 52%, transparent) 42%,
-    transparent 82%
+    ellipse 95% 65% at 100% 50%,
+    rgba(255, 255, 255, 0.36) 0%,
+    color-mix(in srgb, var(--pm-ambient-1) 48%, transparent) 44%,
+    transparent 88%
   );
-  filter: blur(4px);
-  animation: pmDockWaterCrest 1.35s ease-out forwards;
+  will-change: transform, opacity;
+  animation: pmDockWaterCrest 1.15s ease-out forwards;
 }
 
 .pm-backdrop-static .pm-orb-1,

@@ -340,6 +340,8 @@ let lyricsTicket = 0;
 let djAutoTransitionInFlight = false;
 let djAutoTransitionStartedAtMs = 0;
 let autoAdvanceInFlight = false;
+let manualTrackSwitchInFlight = false;
+let manualSwitchEpoch = 0;
 let djPreloadedKey = '';
 let djSessionEpoch = 0;
 let suppressedAutoTransitionTrackId: string | null = null;
@@ -815,11 +817,15 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       curBeforeUpdate.activeDeck !== engineState.activeDeck ||
       curBeforeUpdate.isPlaying !== engineState.isPlaying ||
       curBeforeUpdate.isBuffering !== Boolean(engineState.isBuffering) ||
-      Math.abs(curBeforeUpdate.positionSec - safePos) >= 0.08 ||
+      Math.floor(curBeforeUpdate.positionSec) !== Math.floor(safePos) ||
+      Math.abs(curBeforeUpdate.positionSec - safePos) >= 0.95 ||
       Math.abs(curBeforeUpdate.durationSec - safeDur) >= 0.25 ||
       curBeforeUpdate.volume !== engineState.volume ||
       curBeforeUpdate.isTransitioning !== engineState.isTransitioning ||
-      curBeforeUpdate.transitionProgress01 !== engineState.transitionProgress01 ||
+      (curBeforeUpdate.transitionProgress01 < 0.5 && engineState.transitionProgress01 >= 0.5) ||
+      Math.abs(curBeforeUpdate.transitionProgress01 - engineState.transitionProgress01) >= 0.08 ||
+      (engineState.transitionProgress01 === 0 && curBeforeUpdate.transitionProgress01 !== 0) ||
+      (engineState.transitionProgress01 === 1 && curBeforeUpdate.transitionProgress01 !== 1) ||
       curBeforeUpdate.activeLyricIndex !== activeIdx ||
       durationChanged;
 
@@ -877,7 +883,14 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       void liveState.replenishRecommendedQueue();
     }
 
-    if (!engineState.isPlaying || engineState.isTransitioning || djAutoTransitionInFlight) {
+    if (
+      !engineState.isPlaying ||
+      engineState.isBuffering ||
+      engineState.isTransitioning ||
+      djAutoTransitionInFlight ||
+      manualTrackSwitchInFlight ||
+      autoAdvanceInFlight
+    ) {
       return;
     }
 
@@ -1044,7 +1057,14 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         st.showToast('Temporizador finalizado');
         return;
       }
-      if (st.isTransitioning || djAutoTransitionInFlight || autoAdvanceInFlight) return;
+      if (
+        st.isTransitioning ||
+        djAutoTransitionInFlight ||
+        autoAdvanceInFlight ||
+        manualTrackSwitchInFlight
+      ) {
+        return;
+      }
       const nowMs = Date.now();
       if (
         lastAutoAdvanceGuard.trackId === st.currentTrack.id &&
@@ -2486,36 +2506,43 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   playTrack: async (track, newQueue, startSec, direction = 'next') => {
     ensureAudioEngineBindings();
-    const st = get();
-    if (st.currentTrack && st.currentTrack.id !== track.id && st.positionSec >= 30) {
-      recordWrappedListenIfEligible(
-        st.currentTrack,
-        st.positionSec,
-        st.activeTab.toLowerCase(),
-        false
-      );
+    if (seekAutoTriggerTimer) {
+      clearTimeout(seekAutoTriggerTimer);
+      seekAutoTriggerTimer = null;
     }
-    const queue = newQueue && newQueue.length > 0 ? [...newQueue] : st.queue;
-    let idx = queue.findIndex((t) => t.id === track.id);
-    if (idx === -1) {
-      queue.unshift(track);
-      idx = 0;
-    }
+    const mySwitchEpoch = ++manualSwitchEpoch;
+    manualTrackSwitchInFlight = true;
+    try {
+      const st = get();
+      if (st.currentTrack && st.currentTrack.id !== track.id && st.positionSec >= 30) {
+        recordWrappedListenIfEligible(
+          st.currentTrack,
+          st.positionSec,
+          st.activeTab.toLowerCase(),
+          false
+        );
+      }
+      const queue = newQueue && newQueue.length > 0 ? [...newQueue] : st.queue;
+      let idx = queue.findIndex((t) => t.id === track.id);
+      if (idx === -1) {
+        queue.unshift(track);
+        idx = 0;
+      }
 
-    if (!st.trackAnalyses[track.id]) {
-      const ana = await djPlanner.analyzeTrack(track.id, null, track.durationSec);
-      set((prev) => ({
-        trackAnalyses: { ...prev.trackAnalyses, [track.id]: ana },
-      }));
-    }
+      if (!st.trackAnalyses[track.id]) {
+        const ana = await djPlanner.analyzeTrack(track.id, null, track.durationSec);
+        set((prev) => ({
+          trackAnalyses: { ...prev.trackAnalyses, [track.id]: ana },
+        }));
+      }
 
-    const analysis = get().trackAnalyses[track.id];
-    const effectiveStartSec =
-      startSec !== undefined
-        ? startSec
-        : st.djMode.enabled && st.djMode.style === 'quick' && analysis
-          ? Math.max(0, analysis.primaryDropSec - 4)
-          : 0;
+      const analysis = get().trackAnalyses[track.id];
+      const effectiveStartSec =
+        startSec !== undefined
+          ? startSec
+          : st.djMode.enabled && st.djMode.style === 'quick' && analysis
+            ? Math.max(0, analysis.primaryDropSec - 4)
+            : 0;
 
       set({
         currentTrack: track,
@@ -2598,6 +2625,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         void audioEngine.preloadNextDeck(nextCandidate, nextCueIn);
       }
       void recomputeActiveDjPlan();
+    } finally {
+      if (mySwitchEpoch === manualSwitchEpoch) {
+        manualTrackSwitchInFlight = false;
+      }
+    }
   },
 
   togglePlayPause: async () => {
@@ -2640,11 +2672,18 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   },
 
   nextTrack: async (isAutoAdvance = false) => {
-    if (isAutoAdvance && autoAdvanceInFlight) return;
+    if (isAutoAdvance && (autoAdvanceInFlight || manualTrackSwitchInFlight)) return;
+    if (seekAutoTriggerTimer) {
+      clearTimeout(seekAutoTriggerTimer);
+      seekAutoTriggerTimer = null;
+    }
     if (isAutoAdvance) autoAdvanceInFlight = true;
+    const mySwitchEpoch = !isAutoAdvance ? ++manualSwitchEpoch : manualSwitchEpoch;
+    if (!isAutoAdvance) manualTrackSwitchInFlight = true;
     try {
       const st = get();
       if (!isAutoAdvance) {
+        lastAutoAdvanceGuard = { trackId: st.currentTrack.id, atMs: Date.now() };
         if (st.positionSec > 0 && st.positionSec < 20) {
           void recommendationEngine.recordSignal(st.currentTrack, 'skip_early', {
             actualPlayedSec: st.positionSec,
@@ -2711,6 +2750,9 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       });
     } finally {
       if (isAutoAdvance) autoAdvanceInFlight = false;
+      if (!isAutoAdvance && mySwitchEpoch === manualSwitchEpoch) {
+        manualTrackSwitchInFlight = false;
+      }
     }
   },
 
@@ -2720,18 +2762,31 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       st.seekTo(0);
       return;
     }
-    if (st.sessionPrevStack.length > 0) {
-      const prev = st.sessionPrevStack[st.sessionPrevStack.length - 1]!;
-      const nextStack = st.sessionPrevStack.slice(0, -1);
-      const remaining = st.queue.filter((t) => t.id !== prev.id);
-      const nextQueue = [prev, ...remaining];
-      set({ sessionPrevStack: nextStack });
-      await st.playTrack(prev, nextQueue, undefined, 'prev');
-      return;
+    if (seekAutoTriggerTimer) {
+      clearTimeout(seekAutoTriggerTimer);
+      seekAutoTriggerTimer = null;
     }
-    const prevIdx = (st.queueIndex - 1 + st.queue.length) % Math.max(1, st.queue.length);
-    const prev = st.queue[prevIdx] ?? FALLBACK_TRACKS[0]!;
-    await st.playTrack(prev, st.queue, undefined, 'prev');
+    const mySwitchEpoch = ++manualSwitchEpoch;
+    manualTrackSwitchInFlight = true;
+    try {
+      lastAutoAdvanceGuard = { trackId: st.currentTrack.id, atMs: Date.now() };
+      if (st.sessionPrevStack.length > 0) {
+        const prev = st.sessionPrevStack[st.sessionPrevStack.length - 1]!;
+        const nextStack = st.sessionPrevStack.slice(0, -1);
+        const remaining = st.queue.filter((t) => t.id !== prev.id);
+        const nextQueue = [prev, ...remaining];
+        set({ sessionPrevStack: nextStack });
+        await st.playTrack(prev, nextQueue, undefined, 'prev');
+        return;
+      }
+      const prevIdx = (st.queueIndex - 1 + st.queue.length) % Math.max(1, st.queue.length);
+      const prev = st.queue[prevIdx] ?? FALLBACK_TRACKS[0]!;
+      await st.playTrack(prev, st.queue, undefined, 'prev');
+    } finally {
+      if (mySwitchEpoch === manualSwitchEpoch) {
+        manualTrackSwitchInFlight = false;
+      }
+    }
   },
 
   toggleShuffle: () => {

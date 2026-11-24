@@ -816,4 +816,67 @@ describe('@pmusic/audio-engine', () => {
       (globalThis as { document?: unknown }).document = prevDoc;
     }
   });
+
+  it('never leaks previous track position or triggers EOF while loadAndPlay resolves the next stream asynchronously', async () => {
+    const created: ReturnType<typeof createFakeBrowserAudioElement>[] = [];
+    const prevDoc = (globalThis as { document?: unknown }).document;
+    (globalThis as { document?: unknown }).document = {
+      createElement: () => {
+        const el = createFakeBrowserAudioElement();
+        el.duration = 180;
+        el.readyState = 4;
+        created.push(el);
+        return el;
+      },
+      body: { appendChild: () => {} },
+    };
+
+    const engine = new DualDeckAudioEngine({
+      resolveStreamUrl: async (track) => {
+        if (track.id === SAMPLE_TRACKS[1]!.id) {
+          await new Promise((r) => setTimeout(r, 70));
+        }
+        return `https://stream.pmusic.test/${track.id}`;
+      },
+    });
+    try {
+      let endedCalls = 0;
+      engine.onTrackEnded(() => {
+        endedCalls += 1;
+      });
+      await engine.init();
+      await engine.loadAndPlay(SAMPLE_TRACKS[0]!, 0);
+
+      // Put outgoing deck into final crossfade / near-EOF zone
+      const deckAEl = created[0]!;
+      deckAEl.duration = 180;
+      deckAEl.currentTime = 175;
+      deckAEl.paused = false;
+
+      const loadPromise = engine.loadAndPlay(SAMPLE_TRACKS[1]!, 0);
+      // Wait just long enough for loadAndPlay to pause deckA and await stream resolution
+      await new Promise((r) => setTimeout(r, 15));
+
+      const snapDuringLoad = engine.getLivePlaybackSnapshot();
+      expect(snapDuringLoad.positionSec).toBe(0);
+      expect(snapDuringLoad.isEnded).toBe(false);
+      expect(endedCalls).toBe(0);
+
+      await loadPromise;
+      expect(engine.getLivePlaybackSnapshot().positionSec).toBe(0);
+      expect(endedCalls).toBe(0);
+    } finally {
+      await engine.dispose();
+      (globalThis as { document?: unknown }).document = prevDoc;
+    }
+  });
+
+  it('reuses a single Uint8Array analyser buffer across calls with zero per-frame allocation', async () => {
+    const engine = new DualDeckAudioEngine();
+    await engine.init();
+    const first = engine.getAnalyserData().frequencyBins;
+    const second = engine.getAnalyserData().frequencyBins;
+    expect(first).toBe(second);
+    await engine.dispose();
+  });
 });

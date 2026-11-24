@@ -42,6 +42,7 @@ import {
   RoundedPlayIcon,
 } from './TransportIcons.tsx';
 import { InkBleedCoverTransition } from './InkBleedCoverTransition.tsx';
+import { useDelayedBuffering } from '../hooks/useDelayedBuffering.ts';
 import {
   USER_EQ_FREQUENCIES_HZ,
   USER_EQ_PRESETS,
@@ -211,11 +212,14 @@ export const NowPlayingSheet: React.FC = () => {
   } = usePMusicStore();
 
   const isElectronDesktop = isElectronDesktopRuntime();
+  const showBuffering = useDelayedBuffering(isBuffering, 500);
   const sheetRootRef = useRef<HTMLDivElement | null>(null);
   const lyricsContainerRef = useRef<HTMLDivElement | null>(null);
   const activeLyricRef = useRef<HTMLButtonElement | null>(null);
   const backdropBeatRef = useRef<HTMLDivElement | null>(null);
   const progressInputRef = useRef<HTMLInputElement | null>(null);
+  const sheetFillRef = useRef<HTMLDivElement | null>(null);
+  const sheetRewindGlowRef = useRef<HTMLSpanElement | null>(null);
   const progressTimeRef = useRef<HTMLSpanElement | null>(null);
   const progressRemainRef = useRef<HTMLSpanElement | null>(null);
   const showRemainingTimeRef = useRef(true);
@@ -372,18 +376,24 @@ export const NowPlayingSheet: React.FC = () => {
     }
     let rafId = 0;
     let smoothBass = 0;
-    const pulse = () => {
-      const data = getLiveAnalyserData();
-      const bins = data.frequencyBins;
-      const lowAvg =
-        bins.length >= 4
-          ? ((bins[0] ?? 0) + (bins[1] ?? 0) + (bins[2] ?? 0) + (bins[3] ?? 0)) / (4 * 255)
-          : data.rmsLevel;
-      const bassLevel = Math.max(lowAvg, data.rmsLevel * 0.85);
-      smoothBass = smoothBass * 0.74 + bassLevel * 0.26;
-      const el = backdropBeatRef.current;
-      if (el) {
-        el.style.setProperty('--pm-beat-scale', (1 + smoothBass * 0.045).toFixed(4));
+    let lastBeatSampleMs = 0;
+    let lastBeatScale = 1;
+    const pulse = (now: number) => {
+      if (now - lastBeatSampleMs >= 33) {
+        lastBeatSampleMs = now;
+        const data = getLiveAnalyserData();
+        const bins = data.frequencyBins;
+        const lowAvg =
+          bins.length >= 4
+            ? ((bins[0] ?? 0) + (bins[1] ?? 0) + (bins[2] ?? 0) + (bins[3] ?? 0)) / (4 * 255)
+            : data.rmsLevel;
+        const bassLevel = Math.max(lowAvg, data.rmsLevel * 0.85);
+        smoothBass = smoothBass * 0.74 + bassLevel * 0.26;
+        const nextScale = 1 + smoothBass * 0.045;
+        if (Math.abs(nextScale - lastBeatScale) >= 0.0005 && backdropBeatRef.current) {
+          lastBeatScale = nextScale;
+          backdropBeatRef.current.style.setProperty('--pm-beat-scale', nextScale.toFixed(4));
+        }
       }
       rafId = requestAnimationFrame(pulse);
     };
@@ -529,14 +539,24 @@ export const NowPlayingSheet: React.FC = () => {
         sheetBarRewindRef.current = {
           fromPct: lastSheetBarPctRef.current,
           startMs: now,
-          durationMs: 750,
+          durationMs: 900,
         };
+        if (sheetRewindGlowRef.current) {
+          sheetRewindGlowRef.current.style.opacity = '1';
+        }
       } else if (!sheetBarRewindRef.current) {
         lastSheetBarPctRef.current = pct;
+        if (sheetFillRef.current) {
+          sheetFillRef.current.style.transform = `translate3d(${(pct - 100).toFixed(4)}%, 0, 0)`;
+        }
+        if (sheetRewindGlowRef.current) {
+          sheetRewindGlowRef.current.style.opacity = '0';
+        }
         if (progressInputRef.current) {
-          progressInputRef.current.style.setProperty('--pm-fill', `${pct.toFixed(2)}%`);
           progressInputRef.current.max = String(Math.max(1, Math.round(effDur)));
-          progressInputRef.current.value = String(Math.min(Math.round(effDur), Math.round(clampedPos)));
+          progressInputRef.current.value = String(
+            Number(Math.min(effDur, Math.round(clampedPos * 10) / 10).toFixed(1))
+          );
         }
       }
       if (progressTimeRef.current) {
@@ -570,7 +590,11 @@ export const NowPlayingSheet: React.FC = () => {
       return;
     }
     let rafId = 0;
+    let lastFrameMs = typeof performance !== 'undefined' ? performance.now() : 0;
     const step = (now: number) => {
+      const dtSec = Math.min(0.05, Math.max(0.001, (now - lastFrameMs) / 1000));
+      lastFrameMs = now;
+
       const live = getLivePlaybackPosition();
       const useIncoming = Boolean(
         live.isTransitioning &&
@@ -591,6 +615,7 @@ export const NowPlayingSheet: React.FC = () => {
         : Number.isFinite(live.positionSec)
           ? live.positionSec
           : syncClockRef.current.posSec;
+      const rate = usePMusicStore.getState().playbackRate || 1.0;
       const lClock = lyricClockRef.current;
       if (lClock.trackId !== currentTrack.id || Math.abs(rawPos - lClock.smoothedPos) > 0.75) {
         lClock.trackId = currentTrack.id;
@@ -603,7 +628,7 @@ export const NowPlayingSheet: React.FC = () => {
           lClock.lastWallMs = now;
         }
         const extrapolated =
-          rawPos + Math.min(0.2, Math.max(0, (now - lClock.lastWallMs) / 1000));
+          rawPos + Math.min(0.22, Math.max(0, (now - lClock.lastWallMs) / 1000)) * rate;
         if (extrapolated >= lClock.smoothedPos) {
           lClock.smoothedPos = extrapolated;
         }
@@ -623,8 +648,11 @@ export const NowPlayingSheet: React.FC = () => {
         sheetBarRewindRef.current = {
           fromPct: lastSheetBarPctRef.current,
           startMs: now,
-          durationMs: 750,
+          durationMs: 900,
         };
+        if (sheetRewindGlowRef.current) {
+          sheetRewindGlowRef.current.style.opacity = '1';
+        }
       }
 
       let visualPct = livePct;
@@ -638,15 +666,30 @@ export const NowPlayingSheet: React.FC = () => {
         if (t >= 1) {
           sheetBarRewindRef.current = null;
           visualPct = livePct;
+          if (sheetRewindGlowRef.current) {
+            sheetRewindGlowRef.current.style.opacity = '0';
+          }
+        }
+      } else {
+        const prevPct = lastSheetBarPctRef.current;
+        if (Math.abs(livePct - prevPct) > 4 || Math.abs(livePct - prevPct) < 0.002) {
+          visualPct = livePct;
+        } else {
+          visualPct = prevPct + (livePct - prevPct) * (1 - Math.exp(-dtSec * 22));
         }
       }
       lastSheetBarPctRef.current = visualPct;
 
+      if (sheetFillRef.current) {
+        sheetFillRef.current.style.transform = `translate3d(${(visualPct - 100).toFixed(4)}%, 0, 0)`;
+      }
       if (progressInputRef.current) {
-        progressInputRef.current.style.setProperty('--pm-fill', `${visualPct.toFixed(2)}%`);
-        progressInputRef.current.max = String(Math.max(1, Math.round(effDur)));
+        const roundedMax = String(Math.max(1, Math.round(effDur)));
+        if (progressInputRef.current.max !== roundedMax) {
+          progressInputRef.current.max = roundedMax;
+        }
         progressInputRef.current.value = String(
-          Math.min(Math.round(effDur), Math.round((visualPct / 100) * effDur))
+          Number(Math.min(effDur, Math.round(((visualPct / 100) * effDur) * 10) / 10).toFixed(1))
         );
       }
       if (progressTimeRef.current) {
@@ -750,14 +793,13 @@ export const NowPlayingSheet: React.FC = () => {
         const whole = Math.floor(rendered);
         if (whole !== lastWholeSecRef.current) {
           lastWholeSecRef.current = whole;
-          setSmoothPosSec(rendered);
         }
       }
       rafId = requestAnimationFrame(step);
     };
     rafId = requestAnimationFrame(step);
     return () => cancelAnimationFrame(rafId);
-  }, [nowPlayingOpen, isPlaying, durationSec, nowPlayingTab, currentTrack.id]);
+  }, [nowPlayingOpen, isPlaying, durationSec, nowPlayingTab, currentTrack.id, reducedMotionPref]);
 
   useEffect(() => {
     if (!isElectronDesktop) return;
@@ -1222,25 +1264,38 @@ export const NowPlayingSheet: React.FC = () => {
         )}
       </div>
 
-      {/* Thin Apple Music Pill Progress Bar + Status + Clickable Remaining Time */}
+      {/* Thin Apple Music GPU-Composited Pill Progress Bar + Clickable Remaining Time */}
       <div className="w-full space-y-1">
-        <div className="relative flex w-full items-center">
-          {isBuffering && (
-            <span
-              aria-hidden="true"
-              className="pm-buffer-shimmer pointer-events-none absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full opacity-90"
-            />
-          )}
-          {unplayedCueStartPct !== null && unplayedCueWidthPct > 0 && (
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-[#C084FC]/75"
+        <div className="group relative flex h-[18px] w-full items-center">
+          <div
+            aria-hidden="true"
+            className="pointer-events-none relative h-[6px] w-full overflow-hidden rounded-full bg-white/18 transition-[height] duration-150 group-hover:h-[8px]"
+          >
+            <div
+              ref={sheetFillRef}
+              data-testid="nowplaying-progress-fill"
+              className="relative h-full w-full rounded-full bg-white/92 will-change-transform"
               style={{
-                left: `${unplayedCueStartPct}%`,
-                width: `${unplayedCueWidthPct}%`,
+                transform: `translate3d(${(activeSheetFillPct - 100).toFixed(4)}%, 0, 0)`,
               }}
-            />
-          )}
+            >
+              <span
+                ref={sheetRewindGlowRef}
+                aria-hidden="true"
+                className="pm-sheet-recede-glow pointer-events-none absolute inset-y-0 right-0 w-10 rounded-full opacity-0 transition-opacity duration-200"
+              />
+            </div>
+            {unplayedCueStartPct !== null && unplayedCueWidthPct > 0 && (
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-y-0 rounded-full bg-[#C084FC]/80"
+                style={{
+                  left: `${unplayedCueStartPct}%`,
+                  width: `${unplayedCueWidthPct}%`,
+                }}
+              />
+            )}
+          </div>
           <input
             ref={progressInputRef}
             type="range"
@@ -1248,9 +1303,12 @@ export const NowPlayingSheet: React.FC = () => {
             aria-label="Progreso de la canción"
             min={0}
             max={Math.max(1, Math.round(activeSheetDurSec))}
-            value={Math.min(
-              Math.round(activeSheetDurSec),
-              Math.round((activeSheetFillPct / 100) * activeSheetDurSec)
+            step={0.1}
+            value={Number(
+              Math.min(
+                activeSheetDurSec,
+                Math.round(((activeSheetFillPct / 100) * activeSheetDurSec) * 10) / 10
+              ).toFixed(1)
             )}
             onChange={(e) => {
               const effDur = activeSheetDurSec;
@@ -1260,9 +1318,14 @@ export const NowPlayingSheet: React.FC = () => {
                 typeof performance !== 'undefined' ? performance.now() : Date.now();
               sheetBarRewindRef.current = null;
               lastSheetBarPctRef.current = pct;
+              if (sheetFillRef.current) {
+                sheetFillRef.current.style.transform = `translate3d(${(pct - 100).toFixed(4)}%, 0, 0)`;
+              }
+              if (sheetRewindGlowRef.current) {
+                sheetRewindGlowRef.current.style.opacity = '0';
+              }
               if (progressInputRef.current) {
-                progressInputRef.current.style.setProperty('--pm-fill', `${pct.toFixed(2)}%`);
-                progressInputRef.current.value = String(Math.round(next));
+                progressInputRef.current.value = String(Number(next.toFixed(1)));
               }
               if (progressTimeRef.current) {
                 progressTimeRef.current.textContent = formatDurationSec(next);
@@ -1275,21 +1338,21 @@ export const NowPlayingSheet: React.FC = () => {
               lastWholeSecRef.current = Math.floor(next);
               syncClockRef.current.renderedPosSec = next;
               syncClockRef.current.posSec = next;
+              lyricClockRef.current = {
+                lastRawPos: next,
+                lastWallMs: typeof performance !== 'undefined' ? performance.now() : 0,
+                smoothedPos: next,
+                trackId: currentTrack.id,
+              };
               setSmoothPosSec(next);
               seekTo(next);
             }}
-            style={{ '--pm-fill': `${activeSheetFillPct}%` } as React.CSSProperties}
-            className="pm-range-pill relative z-10 w-full cursor-pointer"
+            className="pm-range-gpu-overlay absolute inset-0 z-10 h-full w-full cursor-pointer"
           />
         </div>
         <div className="tabular-nums flex items-center justify-between text-[11px] font-medium text-white/60">
           <span ref={progressTimeRef}>{formatDurationSec(smoothPosSec)}</span>
-          {isBuffering ? (
-            <span className="inline-flex items-center gap-1.5 font-sans text-[10px] font-semibold tracking-[0.14em] text-white/90 animate-pulse">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              CARGANDO AUDIO…
-            </span>
-          ) : djMode.enabled && isTransitioning ? (
+          {djMode.enabled && isTransitioning ? (
             <span className="font-sans text-[10px] font-semibold tracking-[0.14em] text-purple-300/90 animate-pulse">
               MEZCLANDO · DJ
             </span>
@@ -1360,21 +1423,15 @@ export const NowPlayingSheet: React.FC = () => {
         <button
           type="button"
           data-testid="nowplaying-play-btn"
-          aria-label={isBuffering ? 'Cargando canción' : isPlaying ? 'Pausar' : 'Reproducir'}
+          aria-label={showBuffering ? 'Cargando canción' : isPlaying ? 'Pausar' : 'Reproducir'}
           onClick={() => {
             triggerTransportAnim('play');
             void togglePlayPause();
           }}
           className="pm-pressable relative flex h-16 w-16 items-center justify-center overflow-visible bg-transparent text-white outline-none ring-0 transition-transform duration-200 hover:scale-105 active:scale-90 focus:outline-none"
         >
-          {isBuffering ? (
-            <>
-              <span
-                aria-hidden="true"
-                className="pm-play-loading-ring pointer-events-none absolute inset-1 rounded-full border-2 border-white/40"
-              />
-              <Loader2 data-testid="nowplaying-play-loader" className="h-10 w-10 animate-spin text-white/95" />
-            </>
+          {showBuffering ? (
+            <Loader2 data-testid="nowplaying-play-loader" className="h-10 w-10 animate-spin text-white/95" />
           ) : (
             <>
               <RoundedPauseIcon
