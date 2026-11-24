@@ -30,6 +30,7 @@ import {
   Sliders,
   Sparkles,
   Timer,
+  Users,
   Volume2,
   VolumeX,
   Wifi,
@@ -49,6 +50,8 @@ import { SettingsModal } from './components/SettingsModal.tsx';
 import { TrackInfoModal } from './components/TrackInfoModal.tsx';
 import { AuthOnboardingModal } from './components/AuthOnboardingModal.tsx';
 import { WrappedStoriesModal } from './components/WrappedStoriesModal.tsx';
+import { SocialScreen } from './components/SocialScreen.tsx';
+import { PublicJamGuestPage } from './components/PublicJamGuestPage.tsx';
 import {
   clearDraggedTrack,
   readTrackFromDropEvent,
@@ -70,6 +73,19 @@ import {
 } from './components/Overlays.tsx';
 
 export const App: React.FC = () => {
+  const publicJamCode =
+    typeof window !== 'undefined'
+      ? window.location.pathname.match(/^\/jam\/([A-Za-z0-9]{4,12})\/?$/)?.[1] ?? null
+      : null;
+
+  if (publicJamCode) {
+    return <PublicJamGuestPage code={publicJamCode} />;
+  }
+
+  return <PMusicMainApp />;
+};
+
+const PMusicMainApp: React.FC = () => {
   const {
     initApp,
     activeTab,
@@ -510,6 +526,7 @@ export const App: React.FC = () => {
     { id: 'Explorar', label: 'Explorar', icon: <Compass className="h-[18px] w-[18px]" /> },
     { id: 'Buscar', label: 'Buscar', icon: <Search className="h-[18px] w-[18px]" /> },
     { id: 'Biblioteca', label: 'Biblioteca', icon: <Library className="h-[18px] w-[18px]" /> },
+    { id: 'Social', label: 'Social', icon: <Users className="h-[18px] w-[18px]" /> },
   ];
   const dockHoverSec =
     dockHoverPct !== null ? (dockHoverPct / 100) * Math.max(1, durationSec) : null;
@@ -1151,6 +1168,7 @@ export const App: React.FC = () => {
                 {activeTab === 'Explorar' && <ExploreScreen />}
                 {activeTab === 'Buscar' && <SearchScreen />}
                 {activeTab === 'Biblioteca' && <LibraryScreen />}
+                {activeTab === 'Social' && <SocialScreen />}
               </>
             )}
           </div>
@@ -2202,7 +2220,7 @@ export const App: React.FC = () => {
             role="tablist"
             aria-label="Navegación móvil"
             data-testid="mobile-tab-bar"
-            className="pm-glass-regular fixed inset-x-3 bottom-[max(0.75rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] z-40 grid grid-cols-4 gap-1 rounded-[22px] p-1.5"
+            className="pm-glass-regular fixed inset-x-3 bottom-[max(0.75rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] z-40 grid grid-cols-5 gap-1 rounded-[22px] p-1.5"
           >
             {navTabs.map((item) => {
               const active = activeTab === item.id;

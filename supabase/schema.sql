@@ -265,14 +265,158 @@ create policy "profiles_owner_write"
   with check ((select auth.uid()) = user_id);
 
 -- -----------------------------------------------------------------------------
--- 8. Publicación en Supabase Realtime (Idempotente)
+-- 8. public.friendships (Sistema de amigos por @usuario)
+-- -----------------------------------------------------------------------------
+create table if not exists public.friendships (
+  id uuid primary key default gen_random_uuid(),
+  requester_id uuid not null references auth.users(id) on delete cascade,
+  addressee_id uuid not null references auth.users(id) on delete cascade,
+  status text not null default 'pending' check (status in ('pending', 'accepted', 'declined')),
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now()),
+  unique (requester_id, addressee_id),
+  check (requester_id <> addressee_id)
+);
+
+create index if not exists idx_friendships_users
+  on public.friendships (requester_id, addressee_id);
+
+drop trigger if exists trg_friendships_updated_at on public.friendships;
+create trigger trg_friendships_updated_at
+  before update on public.friendships
+  for each row execute function public.pmusic_set_updated_at();
+
+alter table public.friendships enable row level security;
+
+drop policy if exists "friendships_participants_all" on public.friendships;
+create policy "friendships_participants_all"
+  on public.friendships
+  for all
+  to authenticated
+  using ((select auth.uid()) = requester_id or (select auth.uid()) = addressee_id)
+  with check ((select auth.uid()) = requester_id or (select auth.uid()) = addressee_id);
+
+-- -----------------------------------------------------------------------------
+-- 9. public.shared_playlists (Playlists colaborativas y Blends con amigos)
+-- -----------------------------------------------------------------------------
+create table if not exists public.shared_playlists (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  name text not null check (char_length(trim(name)) between 1 and 140),
+  description text not null default '',
+  cover_url text,
+  kind text not null default 'collab' check (kind in ('collab', 'blend')),
+  member_ids uuid[] not null default '{}',
+  tracks jsonb not null default '[]'::jsonb,
+  compatibility_score smallint check (compatibility_score between 0 and 100),
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+create index if not exists idx_shared_playlists_members
+  on public.shared_playlists using gin (member_ids);
+
+drop trigger if exists trg_shared_playlists_updated_at on public.shared_playlists;
+create trigger trg_shared_playlists_updated_at
+  before update on public.shared_playlists
+  for each row execute function public.pmusic_set_updated_at();
+
+alter table public.shared_playlists replica identity full;
+alter table public.shared_playlists enable row level security;
+
+drop policy if exists "shared_playlists_members_all" on public.shared_playlists;
+create policy "shared_playlists_members_all"
+  on public.shared_playlists
+  for all
+  to authenticated
+  using ((select auth.uid()) = owner_id or (select auth.uid()) = any(member_ids))
+  with check ((select auth.uid()) = owner_id or (select auth.uid()) = any(member_ids));
+
+-- -----------------------------------------------------------------------------
+-- 10. public.jam_sessions y public.jam_requests (Jam en vivo + Web de peticiones sin app)
+-- -----------------------------------------------------------------------------
+create table if not exists public.jam_sessions (
+  code text primary key check (code ~ '^[A-Z0-9]{4,12}$'),
+  host_user_id uuid not null references auth.users(id) on delete cascade,
+  host_name text not null default 'Anfitrión',
+  current_track jsonb,
+  queue jsonb not null default '[]'::jsonb,
+  is_playing boolean not null default false,
+  allow_guest_direct_add boolean not null default true,
+  max_requests_per_guest smallint not null default 0 check (max_requests_per_guest >= 0),
+  active boolean not null default true,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+drop trigger if exists trg_jam_sessions_updated_at on public.jam_sessions;
+create trigger trg_jam_sessions_updated_at
+  before update on public.jam_sessions
+  for each row execute function public.pmusic_set_updated_at();
+
+alter table public.jam_sessions replica identity full;
+alter table public.jam_sessions enable row level security;
+
+drop policy if exists "jam_sessions_public_read" on public.jam_sessions;
+create policy "jam_sessions_public_read"
+  on public.jam_sessions
+  for select
+  to anon, authenticated
+  using (active = true);
+
+drop policy if exists "jam_sessions_host_write" on public.jam_sessions;
+create policy "jam_sessions_host_write"
+  on public.jam_sessions
+  for all
+  to authenticated
+  using ((select auth.uid()) = host_user_id)
+  with check ((select auth.uid()) = host_user_id);
+
+create table if not exists public.jam_requests (
+  id uuid primary key default gen_random_uuid(),
+  jam_code text not null references public.jam_sessions(code) on delete cascade,
+  guest_name text not null check (char_length(trim(guest_name)) between 1 and 40),
+  track_data jsonb not null,
+  status text not null default 'approved' check (status in ('approved', 'pending', 'rejected')),
+  created_at timestamptz not null default timezone('utc', now())
+);
+
+create index if not exists idx_jam_requests_code_created
+  on public.jam_requests (jam_code, created_at desc);
+
+alter table public.jam_requests replica identity full;
+alter table public.jam_requests enable row level security;
+
+drop policy if exists "jam_requests_public_read" on public.jam_requests;
+create policy "jam_requests_public_read"
+  on public.jam_requests
+  for select
+  to anon, authenticated
+  using (true);
+
+drop policy if exists "jam_requests_public_insert" on public.jam_requests;
+create policy "jam_requests_public_insert"
+  on public.jam_requests
+  for insert
+  to anon, authenticated
+  with check (exists (select 1 from public.jam_sessions s where s.code = jam_code and s.active = true));
+
+drop policy if exists "jam_requests_host_update" on public.jam_requests;
+create policy "jam_requests_host_update"
+  on public.jam_requests
+  for update
+  to authenticated
+  using (exists (select 1 from public.jam_sessions s where s.code = jam_code and s.host_user_id = (select auth.uid())));
+
+-- -----------------------------------------------------------------------------
+-- 11. Publicación en Supabase Realtime (Idempotente)
 -- -----------------------------------------------------------------------------
 do $$
 declare
   tbl text;
 begin
   if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
-    foreach tbl in array array['playlists', 'playlist_tracks', 'liked_tracks', 'artist_affinity', 'device_sessions', 'profiles']
+    foreach tbl in array array['playlists', 'playlist_tracks', 'liked_tracks', 'artist_affinity', 'device_sessions', 'profiles', 'friendships', 'shared_playlists', 'jam_sessions', 'jam_requests']
     loop
       if not exists (
         select 1
@@ -289,9 +433,11 @@ end;
 $$;
 
 -- -----------------------------------------------------------------------------
--- 9. Permisos explícitos para roles authenticated y service_role (Idempotente)
+-- 12. Permisos explícitos para roles anon, authenticated y service_role (Idempotente)
 -- -----------------------------------------------------------------------------
 grant usage on schema public to anon, authenticated, service_role;
+grant select on table public.jam_sessions to anon;
+grant select, insert on table public.jam_requests to anon;
 grant all on table
   public.profiles,
   public.playlists,
@@ -299,5 +445,9 @@ grant all on table
   public.liked_tracks,
   public.play_history,
   public.artist_affinity,
-  public.device_sessions
+  public.device_sessions,
+  public.friendships,
+  public.shared_playlists,
+  public.jam_sessions,
+  public.jam_requests
   to authenticated, service_role;

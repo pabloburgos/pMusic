@@ -135,6 +135,10 @@ export class SyncEngine implements ISyncEngine {
     return this.currentMode;
   }
 
+  public getSupabaseClient(): SupabaseClient | null {
+    return this.supabaseBackend?.client ?? null;
+  }
+
   private detectPlatform(): DevicePlatform {
     if (typeof navigator !== 'undefined') {
       const ua = navigator.userAgent.toLowerCase();

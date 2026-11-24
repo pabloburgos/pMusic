@@ -3300,27 +3300,40 @@ export const DevicesConnectSheet: React.FC = () => {
         <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-current opacity-20 sm:hidden" />
 
         <div className="flex items-center justify-between border-b pm-border pb-4">
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-400">
+          <div className="flex items-center gap-3">
+            <span className="relative flex h-10 w-10 items-center justify-center rounded-2xl border border-white/15 bg-white/[0.06] text-white">
               <Wifi className="h-5 w-5" />
+              <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-400 ring-2 ring-[#070709] animate-pulse" />
             </span>
             <div>
               <h2 className="text-base font-bold pm-text-primary sm:text-lg">
                 pMusic Connect
               </h2>
               <p className="text-xs pm-text-secondary">
-                Cambia entre móvil y PC al instante y controla el volumen en vivo
+                {onlineDevices.length} {onlineDevices.length === 1 ? 'dispositivo activo' : 'dispositivos en vivo'} · control al milisegundo
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            aria-label="Cerrar dispositivos"
-            onClick={() => setDevicesSheetOpen(false)}
-            className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-semibold"
-          >
-            Cerrar
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setDevicesSheetOpen(false);
+                usePMusicStore.getState().setActiveTab('Social');
+              }}
+              className="pm-btn-primary rounded-full px-3 py-1.5 text-[11px] font-bold"
+            >
+              Jam QR
+            </button>
+            <button
+              type="button"
+              aria-label="Cerrar dispositivos"
+              onClick={() => setDevicesSheetOpen(false)}
+              className="pm-btn-secondary rounded-full px-3 py-1.5 text-xs font-semibold"
+            >
+              Cerrar
+            </button>
+          </div>
         </div>
 
         {lastTransferBanner && (

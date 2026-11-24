@@ -83,7 +83,7 @@ import {
   type PMusicThemeId,
 } from '../utils/themes.ts';
 
-export type MainNavTab = 'Inicio' | 'Explorar' | 'Buscar' | 'Biblioteca';
+export type MainNavTab = 'Inicio' | 'Explorar' | 'Buscar' | 'Biblioteca' | 'Social';
 export type NowPlayingSubTab = 'Portada' | 'Letras' | 'Cola';
 export type SearchScopeTab = 'Todo' | 'Canciones' | 'Artistas' | 'Álbumes' | 'Playlists';
 export type LibraryCategoryTab = 'Todo' | 'Playlists' | 'Me gusta' | 'Descargas' | 'Historial';
@@ -181,6 +181,10 @@ const syncEngine = new SyncEngine({
   preferencesStorage: defaultPlatformBridge.preferencesStorage,
   libraryStore,
 });
+
+export function getSyncSupabaseClient() {
+  return syncEngine.getSupabaseClient();
+}
 
 const recommendationEngine = new RecommendationEngine({
   musicProvider,
