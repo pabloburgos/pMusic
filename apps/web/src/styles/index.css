@@ -3340,3 +3340,14 @@ html.pm-reduced-motion .pm-lyric-line-inactive {
     filter: none !important;
   }
 }
+
+/* Ultra low-power hibernation while window is minimized or hidden */
+html.pm-app-hidden *,
+html.pm-app-hidden *::before,
+html.pm-app-hidden *::after {
+  animation-play-state: paused !important;
+  transition: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  will-change: auto !important;
+}

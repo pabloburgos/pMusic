@@ -255,6 +255,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
   private lastObservedTime = -1;
   private lastProgressWallMs = 0;
   private lastRecoveryNudgeWallMs = 0;
+  private lastHiddenEmitMs = 0;
   private audioUnlockAttached = false;
   private audioUnlockCleanup: (() => void) | null = null;
 
@@ -475,7 +476,16 @@ export class DualDeckAudioEngine implements IAudioEngine {
           }
           void audio.play().catch(() => {});
         }
-        this.emitState();
+        const isDocHidden = typeof document !== 'undefined' && document.hidden;
+        if (isDocHidden && !this.isTransitioning && realDur - curTime > 12) {
+          if (nowMs - this.lastHiddenEmitMs >= 1000) {
+            this.lastHiddenEmitMs = nowMs;
+            this.emitState();
+          }
+        } else {
+          this.lastHiddenEmitMs = nowMs;
+          this.emitState();
+        }
       }, 250);
       (this.watchdogTimer as { unref?: () => void }).unref?.();
     }

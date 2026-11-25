@@ -40,6 +40,7 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
   useEffect(() => {
     let active = true;
     const load = async () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       const [s, r] = await Promise.all([
         fetchPublicJamSession(cleanCode),
         fetchPublicJamRequests(cleanCode),

@@ -35,6 +35,13 @@ contextBridge.exposeInMainWorld('pmusicDesktop', {
       ipcRenderer.removeListener('pmusic:fullscreen-changed', handler);
     };
   },
+  onWindowVisibilityChanged: (cb: (visible: boolean) => void): (() => void) => {
+    const handler = (_event: unknown, visible: boolean) => cb(Boolean(visible));
+    ipcRenderer.on('pmusic:window-visibility', handler);
+    return () => {
+      ipcRenderer.removeListener('pmusic:window-visibility', handler);
+    };
+  },
   openExternalUrl: (url: string): Promise<void> =>
     ipcRenderer.invoke('pmusic:open-external-url', url),
   getOAuthRedirectUrl: (): Promise<string> =>

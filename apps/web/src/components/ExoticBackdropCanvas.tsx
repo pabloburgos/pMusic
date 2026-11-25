@@ -302,6 +302,10 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = ({
 
     const renderFrame = (now: number) => {
       if (cancelled) return;
+      if (typeof document !== 'undefined' && document.hidden) {
+        rafId = 0;
+        return;
+      }
       const frameBudgetMs = staticMode ? 1000 : isMobileLike ? 30 : 16;
       if (now - lastDrawMs < frameBudgetMs && lastDrawMs > 0) {
         if (!staticMode && typeof requestAnimationFrame === 'function') {
@@ -384,9 +388,25 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = ({
       }
     };
 
+    const handleVisibility = () => {
+      if (cancelled || staticMode) return;
+      if (typeof document !== 'undefined' && document.hidden) {
+        if (rafId && typeof cancelAnimationFrame === 'function') {
+          cancelAnimationFrame(rafId);
+          rafId = 0;
+        }
+      } else if (!rafId && typeof requestAnimationFrame === 'function') {
+        lastStepMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+        rafId = requestAnimationFrame(renderFrame);
+      }
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibility);
+    }
+
     if (staticMode) {
       renderFrame(startMs);
-    } else if (typeof requestAnimationFrame === 'function') {
+    } else if (typeof requestAnimationFrame === 'function' && !(typeof document !== 'undefined' && document.hidden)) {
       rafId = requestAnimationFrame(renderFrame);
     } else {
       renderFrame(startMs);
@@ -394,10 +414,22 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = ({
 
     return () => {
       cancelled = true;
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibility);
+      }
       if (rafId && typeof cancelAnimationFrame === 'function') {
         cancelAnimationFrame(rafId);
       }
       if (ro) ro.disconnect();
+      if (gl && glProg) {
+        try {
+          gl.deleteProgram(glProg);
+        } catch {
+          // ignore WebGL teardown failure
+        }
+      }
+      canvas.width = 0;
+      canvas.height = 0;
     };
   }, [style, ambientMotionEnabled, reducedMotionPref]);
 

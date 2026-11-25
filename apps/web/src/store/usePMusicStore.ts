@@ -87,6 +87,7 @@ import {
   applyAmbientPaletteFromCover,
   getActiveAmbientTrackKey,
   prebakeMobileBackdrop,
+  trimBackdropMemoryCaches,
 } from '../utils/cover-color.ts';
 import {
   applyAccentOverride,
@@ -362,6 +363,9 @@ let lastObservedPlayback: { trackId: string; posSec: number } | null = null;
 let lastAutoAdvanceGuard: { trackId: string; atMs: number } = { trackId: '', atMs: 0 };
 let engineBindingsAttached = false;
 let playbackMonitorTimer: ReturnType<typeof setInterval> | null = null;
+let hiddenSkipTick = 0;
+let lastMediaSessionSyncKey = '';
+let lastMediaSessionSyncWallMs = 0;
 let homeShelvesBuildEpoch = 0;
 const decodedAudioAnalyzedIds = new Set<string>();
 const decodedAudioInFlightIds = new Set<string>();
@@ -577,21 +581,24 @@ let activeArtistShuffleToken = 0;
 const preloadedCoverUrls = new Set<string>();
 function preloadTrackCoverArt(track: Track | null | undefined): void {
   if (!track || typeof Image === 'undefined') return;
+  const shouldPrebakeMobile = isMobileHardwareVolumeRuntime();
   for (const url of [track.thumbnailHighUrl, track.thumbnailUrl]) {
     if (!url || preloadedCoverUrls.has(url)) continue;
     preloadedCoverUrls.add(url);
-    if (preloadedCoverUrls.size > 40) {
+    if (preloadedCoverUrls.size > 12) {
       const oldest = preloadedCoverUrls.values().next().value;
       if (oldest) preloadedCoverUrls.delete(oldest);
     }
     try {
       const img = new Image();
       img.decoding = 'async';
-      img.onload = () => {
-        prebakeMobileBackdrop(url, img);
-      };
+      if (shouldPrebakeMobile) {
+        img.onload = () => {
+          prebakeMobileBackdrop(url, img);
+        };
+      }
       img.src = url;
-      if (img.complete && img.naturalWidth > 0) {
+      if (shouldPrebakeMobile && img.complete && img.naturalWidth > 0) {
         prebakeMobileBackdrop(url, img);
       }
     } catch {
@@ -663,6 +670,7 @@ export interface PMusicStoreState {
   activeDetailView: ActiveDetailView;
   detailViewHistory: Exclude<ActiveDetailView, null>[];
   isOfflineNetwork: boolean;
+  isAppHidden: boolean;
   surfaceStyle: PMusicSurfaceStyle;
   liquidGlassMode: boolean;
   ambientMotionEnabled: boolean;
@@ -807,6 +815,7 @@ export interface PMusicStoreState {
   setDjPopoverOpen: (open: boolean) => void;
   setAudioPanelTab: (tab: 'dj' | 'eq' | 'display') => void;
   setCarModeOpen: (open: boolean) => void;
+  setAppHidden: (hidden: boolean) => void;
   playFromVoiceQuery: (query: string) => Promise<void>;
   setDevicesSheetOpen: (open: boolean) => void;
   setImportModalOpen: (open: boolean) => void;
@@ -1076,27 +1085,32 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         : -1;
 
     const curBeforeUpdate = get();
+    const appHidden = curBeforeUpdate.isAppHidden;
     const durationChanged =
       !engineState.isTransitioning &&
       Number.isFinite(safeDur) &&
       safeDur > 2 &&
       Math.abs(safeDur - curBeforeUpdate.currentTrack.durationSec) >= 1.5;
 
-    const needsStorePatch =
+    const criticalStateChanged =
       curBeforeUpdate.activeDeck !== engineState.activeDeck ||
       curBeforeUpdate.isPlaying !== engineState.isPlaying ||
       curBeforeUpdate.isBuffering !== Boolean(engineState.isBuffering) ||
-      Math.floor(curBeforeUpdate.positionSec) !== Math.floor(safePos) ||
-      Math.abs(curBeforeUpdate.positionSec - safePos) >= 0.95 ||
-      Math.abs(curBeforeUpdate.durationSec - safeDur) >= 0.25 ||
       curBeforeUpdate.volume !== engineState.volume ||
       curBeforeUpdate.isTransitioning !== engineState.isTransitioning ||
-      (curBeforeUpdate.transitionProgress01 < 0.5 && engineState.transitionProgress01 >= 0.5) ||
-      Math.abs(curBeforeUpdate.transitionProgress01 - engineState.transitionProgress01) >= 0.08 ||
-      (engineState.transitionProgress01 === 0 && curBeforeUpdate.transitionProgress01 !== 0) ||
-      (engineState.transitionProgress01 === 1 && curBeforeUpdate.transitionProgress01 !== 1) ||
-      curBeforeUpdate.activeLyricIndex !== activeIdx ||
       durationChanged;
+
+    const needsStorePatch =
+      criticalStateChanged ||
+      ((!appHidden || engineState.isTransitioning) &&
+        (Math.floor(curBeforeUpdate.positionSec) !== Math.floor(safePos) ||
+          Math.abs(curBeforeUpdate.positionSec - safePos) >= 0.95 ||
+          Math.abs(curBeforeUpdate.durationSec - safeDur) >= 0.25 ||
+          (curBeforeUpdate.transitionProgress01 < 0.5 && engineState.transitionProgress01 >= 0.5) ||
+          Math.abs(curBeforeUpdate.transitionProgress01 - engineState.transitionProgress01) >= 0.08 ||
+          (engineState.transitionProgress01 === 0 && curBeforeUpdate.transitionProgress01 !== 0) ||
+          (engineState.transitionProgress01 === 1 && curBeforeUpdate.transitionProgress01 !== 1) ||
+          curBeforeUpdate.activeLyricIndex !== activeIdx));
 
     if (needsStorePatch) {
       set((prev) => ({
@@ -1130,9 +1144,19 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       void recomputeActiveDjPlan();
     }
 
-    if (engineStateOverride || Math.abs(curBeforeUpdate.positionSec - safePos) >= 0.9) {
+    const activeTrack = get().currentTrack;
+    const mediaSessionKey = `${activeTrack.id}|${engineState.isPlaying}|${Math.round(safeDur)}`;
+    const nowWallMs = Date.now();
+    const minSessionIntervalMs = appHidden ? 15_000 : 1000;
+    if (
+      Boolean(engineStateOverride) ||
+      mediaSessionKey !== lastMediaSessionSyncKey ||
+      nowWallMs - lastMediaSessionSyncWallMs >= minSessionIntervalMs
+    ) {
+      lastMediaSessionSyncKey = mediaSessionKey;
+      lastMediaSessionSyncWallMs = nowWallMs;
       void getMediaController().updateSession({
-        track: get().currentTrack,
+        track: activeTrack,
         isPlaying: engineState.isPlaying,
         positionSec: safePos,
         durationSec: safeDur,
@@ -1453,13 +1477,32 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           set({ sidebarCollapsed: false });
         }
       });
+      if (typeof document !== 'undefined') {
+        document.addEventListener('visibilitychange', () => {
+          get().setAppHidden(Boolean(document.hidden));
+        });
+      }
+      const desktopBridge = (window as {
+        pmusicDesktop?: { onWindowVisibilityChanged?: (cb: (visible: boolean) => void) => () => void };
+      }).pmusicDesktop;
+      desktopBridge?.onWindowVisibilityChanged?.((visible: boolean) => {
+        get().setAppHidden(!visible);
+      });
     }
 
     if (!playbackMonitorTimer && typeof setInterval === 'function') {
       playbackMonitorTimer = setInterval(() => {
-        if (get().isPlaying || audioEngine.getState().isPlaying) {
-          checkLivePlaybackTriggers();
+        const st = get();
+        const eng = audioEngine.getState();
+        if (!st.isPlaying && !eng.isPlaying) return;
+        if (st.isAppHidden && !eng.isTransitioning) {
+          const rem = Math.max(0, (eng.durationSec || 0) - (eng.positionSec || 0));
+          if (rem > 16) {
+            hiddenSkipTick = (hiddenSkipTick + 1) % 4;
+            if (hiddenSkipTick !== 0) return;
+          }
         }
+        checkLivePlaybackTriggers();
       }, 250);
       (playbackMonitorTimer as { unref?: () => void }).unref?.();
     }
@@ -1475,8 +1518,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     ) {
       return;
     }
-    // Avoid full-track PCM decoding on mobile unless DJ Mode is explicitly active
-    if (isMobileHardwareVolumeRuntime() && !get().djMode.enabled) {
+    // Avoid heavy full-track fetch + decodeAudioData unless DJ Mode is active
+    if (!get().djMode.enabled) {
       return;
     }
     decodedAudioInFlightIds.add(track.id);
@@ -2286,6 +2329,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   activeDetailView: null,
   detailViewHistory: [],
   isOfflineNetwork: typeof navigator !== 'undefined' ? !navigator.onLine : false,
+  isAppHidden: typeof document !== 'undefined' ? Boolean(document.hidden) : false,
   surfaceStyle: 'liquid-glass',
   liquidGlassMode: true,
   ambientMotionEnabled: true,
@@ -2977,6 +3021,17 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         : {}),
     })),
   setCarModeOpen: (open) => set({ carModeOpen: open }),
+  setAppHidden: (hidden) => {
+    set({ isAppHidden: hidden });
+    if (typeof document !== 'undefined') {
+      document.documentElement.classList.toggle('pm-app-hidden', hidden);
+    }
+    if (hidden) {
+      trimBackdropMemoryCaches();
+    } else {
+      checkLivePlaybackTriggers(audioEngine.getState());
+    }
+  },
   playFromVoiceQuery: async (query) => {
     const clean = query.trim();
     if (!clean) {

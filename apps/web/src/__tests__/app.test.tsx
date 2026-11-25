@@ -886,5 +886,25 @@ describe('@pmusic/web UI', () => {
     });
     expect(screen.getByTestId('track-info-modal')).toBeDefined();
     expect(screen.getByTestId('track-credits-section')).toBeDefined();
+
+    // 4. Low-power hibernation pauses animations and unmounts WebGL/2D canvases when minimized/hidden
+    act(() => {
+      usePMusicStore.setState({
+        trackInfoModalTrack: null,
+        nowPlayingOpen: true,
+        nowPlayingBackdropStyle: 'pulse',
+      });
+    });
+    expect(screen.getByTestId('exotic-backdrop-canvas')).toBeDefined();
+    act(() => {
+      usePMusicStore.getState().setAppHidden(true);
+    });
+    expect(document.documentElement.classList.contains('pm-app-hidden')).toBe(true);
+    expect(screen.queryByTestId('exotic-backdrop-canvas')).toBeNull();
+    act(() => {
+      usePMusicStore.getState().setAppHidden(false);
+    });
+    expect(document.documentElement.classList.contains('pm-app-hidden')).toBe(false);
+    expect(screen.getByTestId('exotic-backdrop-canvas')).toBeDefined();
   });
 });

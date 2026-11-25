@@ -262,6 +262,10 @@ export const MobileFluidBackdropCanvas: React.FC<MobileFluidBackdropCanvasProps>
 
     const loop = (now: number) => {
       if (cancelled) return;
+      if (typeof document !== 'undefined' && document.hidden) {
+        rafId = 0;
+        return;
+      }
       if (now - lastDraw >= 30 || blendActiveRef.current) {
         lastDraw = now;
         drawFrame(now);
@@ -271,16 +275,37 @@ export const MobileFluidBackdropCanvas: React.FC<MobileFluidBackdropCanvasProps>
       }
     };
 
+    const handleVisibility = () => {
+      if (cancelled) return;
+      if (typeof document !== 'undefined' && document.hidden) {
+        if (rafId && typeof cancelAnimationFrame === 'function') {
+          cancelAnimationFrame(rafId);
+          rafId = 0;
+        }
+      } else if (!rafId && (motionRef.current || blendActiveRef.current) && typeof requestAnimationFrame === 'function') {
+        lastTick = typeof performance !== 'undefined' ? performance.now() : Date.now();
+        rafId = requestAnimationFrame(loop);
+      }
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibility);
+    }
+
     drawFrame(lastTick);
-    if (typeof requestAnimationFrame === 'function') {
+    if (typeof requestAnimationFrame === 'function' && !(typeof document !== 'undefined' && document.hidden)) {
       rafId = requestAnimationFrame(loop);
     }
 
     return () => {
       cancelled = true;
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibility);
+      }
       if (rafId && typeof cancelAnimationFrame === 'function') {
         cancelAnimationFrame(rafId);
       }
+      canvas.width = 0;
+      canvas.height = 0;
     };
   }, [ambientMotionEnabled, reducedMotionPref, coverUrl]);
 

@@ -11,10 +11,11 @@ export const AudioVisualizer: React.FC<{
   const isPlaying = usePMusicStore((s) => s.isPlaying);
   const visualizerEnabled = usePMusicStore((s) => s.visualizerEnabled);
   const reducedMotionPref = usePMusicStore((s) => s.reducedMotionPref);
+  const isAppHidden = usePMusicStore((s) => s.isAppHidden);
   const barsRef = useRef<(HTMLSpanElement | null)[]>([]);
 
   useEffect(() => {
-    if (!visualizerEnabled) return;
+    if (!visualizerEnabled || isAppHidden) return;
     const applyBars = (levels: number[], playing: boolean) => {
       for (let i = 0; i < BAR_COUNT; i++) {
         const el = barsRef.current[i];
@@ -31,6 +32,7 @@ export const AudioVisualizer: React.FC<{
     }
 
     const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       const data = getLiveAnalyserData();
       const bins = data.frequencyBins;
       const stride = Math.max(1, Math.floor(bins.length / BAR_COUNT));
@@ -43,7 +45,7 @@ export const AudioVisualizer: React.FC<{
     }, 85);
 
     return () => clearInterval(timer);
-  }, [isPlaying, visualizerEnabled, reducedMotionPref]);
+  }, [isPlaying, visualizerEnabled, reducedMotionPref, isAppHidden]);
 
   if (!visualizerEnabled) return null;
 

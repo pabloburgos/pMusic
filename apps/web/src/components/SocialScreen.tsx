@@ -106,6 +106,7 @@ export const SocialScreen: React.FC = () => {
     if (!sb || !jamSession?.active) return;
     let alive = true;
     const poll = async () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       const reqs = await fetchJamRequests(sb, jamSession.code);
       if (!alive) return;
       setJamRequests(reqs);

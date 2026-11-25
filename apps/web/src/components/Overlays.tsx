@@ -77,6 +77,7 @@ import {
   getCachedPaletteCss,
   getPrebakedMobileBackdrop,
   prebakeMobileBackdrop,
+  registerBackdropCleanupHook,
 } from '../utils/cover-color.ts';
 import { ArtistLinks } from './ArtistLinks.tsx';
 import { PMusicSwitch } from './PMusicSwitch.tsx';
@@ -213,6 +214,10 @@ const PLAYER_BAR_STYLE_OPTIONS = [
 ] as const;
 
 const decodedBackdropImgCache = new Map<string, HTMLImageElement>();
+export function clearDecodedBackdropCache(): void {
+  decodedBackdropImgCache.clear();
+}
+registerBackdropCleanupHook(clearDecodedBackdropCache);
 
 export const NowPlayingSheet: React.FC = () => {
   const {
@@ -230,6 +235,7 @@ export const NowPlayingSheet: React.FC = () => {
     incomingTransitionTrack,
     themeId,
     reducedMotionPref,
+    isAppHidden,
     lyricsSize,
     lyricsBlurEnabled,
     lyricsStyle,
@@ -559,6 +565,10 @@ export const NowPlayingSheet: React.FC = () => {
       if (cancelled) return;
       if (ok) {
         decodedBackdropImgCache.set(url, img);
+        if (decodedBackdropImgCache.size > 6) {
+          const oldest = decodedBackdropImgCache.keys().next().value;
+          if (oldest) decodedBackdropImgCache.delete(oldest);
+        }
         prebakeMobileBackdrop(url, img);
       }
       paintMobileMipmapSlot(slot, ok ? img : null, url);
@@ -699,7 +709,7 @@ export const NowPlayingSheet: React.FC = () => {
       if (img && img.complete && img.naturalWidth > 0) {
         decodedBackdropImgCache.set(targetBackdropUrl, img);
         if (isMobileBackdrop) prebakeMobileBackdrop(targetBackdropUrl, img);
-        if (decodedBackdropImgCache.size > 32) {
+        if (decodedBackdropImgCache.size > 6) {
           const oldest = decodedBackdropImgCache.keys().next().value;
           if (oldest) decodedBackdropImgCache.delete(oldest);
         }
@@ -910,6 +920,7 @@ export const NowPlayingSheet: React.FC = () => {
     if (
       !nowPlayingOpen ||
       !isPlaying ||
+      isAppHidden ||
       typeof requestAnimationFrame !== 'function'
     ) {
       return;
@@ -1124,7 +1135,7 @@ export const NowPlayingSheet: React.FC = () => {
     };
     rafId = requestAnimationFrame(step);
     return () => cancelAnimationFrame(rafId);
-  }, [nowPlayingOpen, isPlaying, durationSec, nowPlayingTab, currentTrack.id, reducedMotionPref]);
+  }, [nowPlayingOpen, isPlaying, isAppHidden, durationSec, nowPlayingTab, currentTrack.id, reducedMotionPref]);
 
   useEffect(() => {
     if (!isElectronDesktop) return;
@@ -1902,18 +1913,20 @@ export const NowPlayingSheet: React.FC = () => {
       >
         {/* Double-Buffered Desktop Slots OR Zero-Flicker Single-Canvas Mobile Fluid Backdrop */}
         {isMobileBackdrop && nowPlayingBackdropStyle === 'fluid' ? (
-          <div
-            className="pointer-events-none fixed inset-0"
-            style={{ zIndex: 2 }}
-          >
-            <MobileFluidBackdropCanvas
-              coverUrl={targetBackdropUrl}
-              crossfadeMs={cfActiveBackdrop ? Math.round(cfDurBackdropSec * 1000) : 950}
-              crossfadeLinear={cfActiveBackdrop}
-              ambientMotionEnabled={ambientMotionEnabled}
-              reducedMotionPref={reducedMotionPref}
-            />
-          </div>
+          !isAppHidden && (
+            <div
+              className="pointer-events-none fixed inset-0"
+              style={{ zIndex: 2 }}
+            >
+              <MobileFluidBackdropCanvas
+                coverUrl={targetBackdropUrl}
+                crossfadeMs={cfActiveBackdrop ? Math.round(cfDurBackdropSec * 1000) : 950}
+                crossfadeLinear={cfActiveBackdrop}
+                ambientMotionEnabled={ambientMotionEnabled}
+                reducedMotionPref={reducedMotionPref}
+              />
+            </div>
+          )
         ) : (
           ([0, 1] as const).map((slotIdx) => {
             const isSlotActive = backdropSlots.active === slotIdx;
@@ -1976,8 +1989,9 @@ export const NowPlayingSheet: React.FC = () => {
           </div>
         )}
 
-        {(nowPlayingBackdropStyle === 'paint' ||
-          nowPlayingBackdropStyle === 'pulse') && (
+        {!isAppHidden &&
+          (nowPlayingBackdropStyle === 'paint' ||
+            nowPlayingBackdropStyle === 'pulse') && (
           <div className="pointer-events-none absolute inset-16" style={{ zIndex: 3 }}>
             <ExoticBackdropCanvas
               key={nowPlayingBackdropStyle}

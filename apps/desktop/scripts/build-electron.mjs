@@ -183,6 +183,11 @@ process.on('unhandledRejection', (reason) => {
   console.warn('[pMusic] Unhandled rejection:', reason);
 });
 
+app.commandLine.appendSwitch('js-flags', '--max-old-space-size=160');
+app.commandLine.appendSwitch('disk-cache-size', String(24 * 1024 * 1024));
+app.commandLine.appendSwitch('gpu-program-cache-size-kb', '12288');
+app.commandLine.appendSwitch('disable-features', 'MediaRouter,OptimizationHints');
+
 function getVaultFilePath(): string {
   return join(app.getPath('userData'), 'pmusic-vault.json');
 }
@@ -459,6 +464,9 @@ function makeThumbarIcon(kind: 'prev' | 'play' | 'pause' | 'next'): Electron.Nat
 }
 
 let cachedThumbarIcons: Record<'prev' | 'play' | 'pause' | 'next', Electron.NativeImage> | null = null;
+let lastThumbarPlaying: boolean | null = null;
+let lastWindowTitle = '';
+
 function updateTaskbarThumbar(isPlaying: boolean): void {
   if (process.platform !== 'win32' || !mainWindow || mainWindow.isDestroyed()) return;
   try {
@@ -503,10 +511,18 @@ ipcMain.handle('pmusic:vault-remove', (_event, key: string) => {
 });
 ipcMain.handle('pmusic:update-discord', () => undefined);
 ipcMain.handle('pmusic:update-media-session', (_event, state: { isPlaying?: boolean; track?: { title?: string } }) => {
-  updateTaskbarThumbar(Boolean(state?.isPlaying));
+  const nextPlaying = Boolean(state?.isPlaying);
+  if (nextPlaying !== lastThumbarPlaying) {
+    lastThumbarPlaying = nextPlaying;
+    updateTaskbarThumbar(nextPlaying);
+  }
   if (mainWindow && !mainWindow.isDestroyed()) {
     const tTitle = state?.track?.title?.trim();
-    mainWindow.setTitle(tTitle ? \`\${tTitle} — pMusic\` : 'pMusic');
+    const nextTitle = tTitle ? \`\${tTitle} — pMusic\` : 'pMusic';
+    if (nextTitle !== lastWindowTitle) {
+      lastWindowTitle = nextTitle;
+      mainWindow.setTitle(nextTitle);
+    }
   }
 });
 ipcMain.handle('pmusic:open-external-url', async (_event, url: string) => {
@@ -555,6 +571,8 @@ async function createMainWindow(): Promise<void> {
     join(__dirname, '../build/icon.png'),
   ];
   const windowIcon = iconCandidates.find((p) => existsSync(p));
+  lastThumbarPlaying = null;
+  lastWindowTitle = '';
 
   mainWindow = new BrowserWindow({
     width: 1380,
@@ -577,6 +595,7 @@ async function createMainWindow(): Promise<void> {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      backgroundThrottling: true,
     },
   });
 
@@ -597,12 +616,29 @@ async function createMainWindow(): Promise<void> {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
-    updateTaskbarThumbar(false);
+    if (lastThumbarPlaying === null) {
+      lastThumbarPlaying = false;
+      updateTaskbarThumbar(false);
+    }
   });
 
   const targetUrl = process.env.PMUSIC_DEV_URL || \`http://127.0.0.1:\${port}\`;
   await mainWindow.loadURL(targetUrl);
 
+  mainWindow.on('minimize', () => {
+    mainWindow?.webContents.setBackgroundThrottling(true);
+    mainWindow?.webContents.send('pmusic:window-visibility', false);
+  });
+  mainWindow.on('hide', () => {
+    mainWindow?.webContents.setBackgroundThrottling(true);
+    mainWindow?.webContents.send('pmusic:window-visibility', false);
+  });
+  mainWindow.on('restore', () => {
+    mainWindow?.webContents.send('pmusic:window-visibility', true);
+  });
+  mainWindow.on('show', () => {
+    mainWindow?.webContents.send('pmusic:window-visibility', true);
+  });
   mainWindow.on('enter-full-screen', () => {
     mainWindow?.webContents.send('pmusic:fullscreen-changed', true);
   });

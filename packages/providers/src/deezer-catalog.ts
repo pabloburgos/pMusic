@@ -339,7 +339,7 @@ export class DeezerCatalog {
       const data = (await res.json()) as Json;
       if (data?.error) throw new Error(String(data.error?.message ?? 'Deezer error'));
       this.cache.set(path, { at: Date.now(), data });
-      if (this.cache.size > 400) this.cache.delete(this.cache.keys().next().value as string);
+      if (this.cache.size > 120) this.cache.delete(this.cache.keys().next().value as string);
       return data;
     })();
     if (!signal) {
@@ -839,7 +839,7 @@ export class DeezerCatalog {
       playlists: (playlists?.data ?? []).map((p: Json) => this.mapPlaylist(p)),
     };
     this.searchCache.set(searchCacheKey, { at: Date.now(), bundle });
-    if (this.searchCache.size > 120) {
+    if (this.searchCache.size > 24) {
       this.searchCache.delete(this.searchCache.keys().next().value as string);
     }
     return bundle;
@@ -1211,7 +1211,7 @@ export class DeezerCatalog {
       relatedArtists: (related.data ?? []).map((r: Json) => this.mapArtist(r)),
     } as ArtistDetail;
     this.artistDetailCache.set(id, { at: Date.now(), detail });
-    if (this.artistDetailCache.size > 80) {
+    if (this.artistDetailCache.size > 16) {
       const oldest = this.artistDetailCache.keys().next().value;
       if (oldest) this.artistDetailCache.delete(oldest);
     }
@@ -1728,7 +1728,7 @@ export class DeezerCatalog {
     };
 
     this.creditsCache.set(cacheKey, { at: Date.now(), credits });
-    if (this.creditsCache.size > 300) {
+    if (this.creditsCache.size > 40) {
       this.creditsCache.delete(this.creditsCache.keys().next().value as string);
     }
     return credits;

@@ -145,6 +145,7 @@ const PMusicMainApp: React.FC = () => {
     themeId,
     playerBarStyle,
     reducedMotionPref,
+    isAppHidden,
     marqueeTextEnabled,
     sleepTimerMode,
     sleepTimerRemainingSec,
@@ -462,7 +463,7 @@ const PMusicMainApp: React.FC = () => {
   }, [positionSec, currentTrack.id, isPlaying, isMobileViewport, durationSec, reducedMotionPref]);
 
   useEffect(() => {
-    if ((!isPlaying && !isDockReceding) || isMobileViewport || typeof requestAnimationFrame !== 'function') {
+    if ((!isPlaying && !isDockReceding) || isMobileViewport || isAppHidden || typeof requestAnimationFrame !== 'function') {
       return;
     }
     let rafId = 0;
@@ -601,7 +602,7 @@ const PMusicMainApp: React.FC = () => {
     };
     rafId = requestAnimationFrame(step);
     return () => cancelAnimationFrame(rafId);
-  }, [isPlaying, isDockReceding, isMobileViewport, durationSec, reducedMotionPref]);
+  }, [isPlaying, isDockReceding, isMobileViewport, isAppHidden, durationSec, reducedMotionPref]);
 
   const triggerDockTransportAnim = (
     kind: 'prev' | 'next' | 'play' | 'shuffle' | 'repeat'

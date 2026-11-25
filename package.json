@@ -1,6 +1,6 @@
 {
   "name": "pmusic",
-  "version": "0.18.3",
+  "version": "0.18.4",
   "private": true,
   "type": "module",
   "description": "pMusic — Reproductor de música cross-device (Android + Windows) con Liquid Glass, Sesión DJ AutoMix, recomendaciones ES y sincronización gratuita con Supabase",

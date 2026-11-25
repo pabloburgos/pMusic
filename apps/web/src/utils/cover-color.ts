@@ -265,9 +265,18 @@ export function prebakeMobileBackdrop(url?: string | null, loadedImg?: HTMLImage
     const pair = buildBakedCanvasPair(img);
     if (!pair) return;
     prebakedBackdropCache.set(url, pair);
-    if (prebakedBackdropCache.size > 24) {
+    if (prebakedBackdropCache.size > 6) {
       const oldest = prebakedBackdropCache.keys().next().value;
-      if (oldest) prebakedBackdropCache.delete(oldest);
+      if (oldest) {
+        const oldPair = prebakedBackdropCache.get(oldest);
+        if (oldPair) {
+          oldPair[0].width = 0;
+          oldPair[0].height = 0;
+          oldPair[1].width = 0;
+          oldPair[1].height = 0;
+        }
+        prebakedBackdropCache.delete(oldest);
+      }
     }
   };
   if (loadedImg && loadedImg.complete && loadedImg.naturalWidth > 0) {
@@ -296,6 +305,30 @@ export function getCachedPaletteCss(coverUrl?: string | null): [string, string, 
   const cached = coverUrl ? paletteCache.get(coverUrl) : undefined;
   const p = cached ?? liveRgb;
   return [rgbCss(p[0]), rgbCss(p[1]), rgbCss(p[2])];
+}
+
+const backdropCleanupHooks = new Set<() => void>();
+
+export function registerBackdropCleanupHook(fn: () => void): void {
+  backdropCleanupHooks.add(fn);
+}
+
+export function trimBackdropMemoryCaches(): void {
+  for (const [cA, cB] of prebakedBackdropCache.values()) {
+    cA.width = 0;
+    cA.height = 0;
+    cB.width = 0;
+    cB.height = 0;
+  }
+  prebakedBackdropCache.clear();
+  prebakedBackdropInFlight.clear();
+  for (const fn of backdropCleanupHooks) {
+    try {
+      fn();
+    } catch {
+      // ignore cleanup failure
+    }
+  }
 }
 
 /**
@@ -395,6 +428,10 @@ export function animateAmbientPaletteFromCover(track: Track | null, durationMs =
             ];
           }
           paletteCache.set(imgUrl, extracted);
+          if (paletteCache.size > 32) {
+            const oldest = paletteCache.keys().next().value;
+            if (oldest) paletteCache.delete(oldest);
+          }
           transitionToPalette(extracted, remainingMs);
         }
       } catch {
