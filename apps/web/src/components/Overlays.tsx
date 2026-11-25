@@ -3,6 +3,7 @@ import {
   Check,
   ChevronDown,
   Clock,
+  Copy,
   Disc3,
   Download,
   Eye,
@@ -21,11 +22,13 @@ import {
   Pause,
   Play,
   Plus,
+  QrCode,
   Radio,
   RefreshCw,
   Repeat,
   Repeat1,
   Search,
+  Share2,
   Shuffle,
   Sliders,
   SlidersHorizontal,
@@ -33,6 +36,7 @@ import {
   Sparkles,
   Trash2,
   Type,
+  Users,
   Volume2,
   VolumeX,
   Waves,
@@ -49,6 +53,8 @@ import {
 import { InkBleedCoverTransition } from './InkBleedCoverTransition.tsx';
 import { ExoticBackdropCanvas } from './ExoticBackdropCanvas.tsx';
 import { MarqueeText } from './MarqueeText.tsx';
+import { UserAvatar } from './UserAvatar.tsx';
+import { buildJamQrImageUrl, buildJamShareUrl } from '../services/social-service.ts';
 import { useDelayedBuffering } from '../hooks/useDelayedBuffering.ts';
 import {
   USER_EQ_FREQUENCIES_HZ,
@@ -294,6 +300,16 @@ export const NowPlayingSheet: React.FC = () => {
     playTrack,
     openAlbumDetail,
     showToast,
+    activeJamSession,
+    activeJamRole,
+    activeJamRequests,
+    jamInviteModalOpen,
+    setJamInviteModalOpen,
+    startJam,
+    leaveOrEndJam,
+    addTrackToActiveJam,
+    approveJamRequest,
+    rejectJamRequest,
   } = usePMusicStore();
 
   const isElectronDesktop = isElectronDesktopRuntime();
@@ -2681,8 +2697,18 @@ export const NowPlayingSheet: React.FC = () => {
         )}
 
         {nowPlayingTab === 'Cola' && (() => {
-          const activeQueueTrack = queue[queueIndex] ?? currentTrack;
-          const upNextTracks = queue.slice(queueIndex + 1);
+          const isJamActive = Boolean(activeJamSession?.active);
+          const isHostInJam = isJamActive && activeJamRole === 'host';
+          const isGuestInJam = isJamActive && activeJamRole === 'guest';
+          const pendingJamReqs = isHostInJam
+            ? activeJamRequests.filter((r) => r.status === 'pending')
+            : [];
+          const activeQueueTrack = isGuestInJam
+            ? (activeJamSession?.currentTrack ?? queue[queueIndex] ?? currentTrack)
+            : (queue[queueIndex] ?? currentTrack);
+          const upNextTracks = isGuestInJam
+            ? (activeJamSession?.queue ?? []).filter((t) => t.id !== activeQueueTrack.id)
+            : queue.slice(queueIndex + 1);
           const activeAna = trackAnalyses[activeQueueTrack.id];
           const activeLiked = likedTracks.some((l) => l.trackId === activeQueueTrack.id);
           return (
@@ -2691,56 +2717,100 @@ export const NowPlayingSheet: React.FC = () => {
               {PlayerDeckColumn(true)}
             </div>
 
-            {/* Free-floating Borderless Two-Tier Queue */}
+            {/* Free-floating Borderless Two-Tier Queue / Spotify-style Live Jam Queue */}
             <div
               data-testid="queue-view"
               className="flex h-full min-h-0 flex-col gap-3 lg:col-span-7 lg:max-h-[82vh] lg:gap-3.5 lg:self-center lg:pb-12"
             >
               {/* Clean Borderless Header */}
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.08] pb-2.5 md:border-white/[0.12] md:pb-3">
-                <div>
-                  <h2 className="text-[19px] font-bold tracking-tight text-white md:text-xl">
-                    Cola de reproducción
-                  </h2>
+              <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-white/[0.08] pb-2.5 md:border-white/[0.12] md:pb-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-[19px] font-bold tracking-tight text-white md:text-xl">
+                      {isJamActive ? 'Cola de Jam' : 'Cola de reproducción'}
+                    </h2>
+                    {isJamActive && activeJamSession && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/35 bg-emerald-500/20 px-2.5 py-0.5 text-[10.5px] font-bold text-emerald-300">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        EN VIVO · {activeJamSession.code}
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-[#D4D4E0]">
-                    {upNextTracks.length} en tu cola · {recommendedQueue.length} recomendadas infinitas
+                    {isJamActive && activeJamSession
+                      ? `Anfitrión: ${activeJamSession.hostName} · ${upNextTracks.length} en cola compartida`
+                      : `${upNextTracks.length} en tu cola · ${recommendedQueue.length} recomendadas infinitas`}
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    aria-pressed={shuffleEnabled}
-                    onClick={() => toggleShuffle()}
-                    className={`pm-pressable inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-[11px] font-semibold transition-colors ${
-                      shuffleEnabled
-                        ? 'bg-white text-[#0A0A0D]'
-                        : 'bg-white/[0.08] text-[#F5F5F7] hover:bg-white/[0.16]'
-                    }`}
-                  >
-                    <Shuffle className="h-3.5 w-3.5" />
-                    Aleatorio
-                  </button>
-                  {upNextTracks.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {isJamActive ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setJamInviteModalOpen(true)}
+                        className="pm-pressable inline-flex h-8 items-center gap-1.5 rounded-full bg-white px-3 text-[11px] font-bold text-[#0A0A0D] hover:opacity-90"
+                      >
+                        <QrCode className="h-3.5 w-3.5" />
+                        Invitar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void leaveOrEndJam()}
+                        className="pm-pressable inline-flex h-8 items-center gap-1 rounded-full bg-rose-500/20 px-3 text-[11px] font-semibold text-rose-300 hover:bg-rose-500/30"
+                      >
+                        {isHostInJam ? 'Finalizar' : 'Salir'}
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => void startJam({ openSheet: true })}
+                        className="pm-pressable inline-flex h-8 items-center gap-1.5 rounded-full bg-emerald-500/20 px-3 text-[11px] font-bold text-emerald-300 hover:bg-emerald-500/30"
+                      >
+                        <Radio className="h-3.5 w-3.5" />
+                        Jam
+                      </button>
+                      <button
+                        type="button"
+                        aria-pressed={shuffleEnabled}
+                        onClick={() => toggleShuffle()}
+                        className={`pm-pressable inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-[11px] font-semibold transition-colors ${
+                          shuffleEnabled
+                            ? 'bg-white text-[#0A0A0D]'
+                            : 'bg-white/[0.08] text-[#F5F5F7] hover:bg-white/[0.16]'
+                        }`}
+                      >
+                        <Shuffle className="h-3.5 w-3.5" />
+                        Aleatorio
+                      </button>
+                    </>
+                  )}
+                  {upNextTracks.length > 0 && !isGuestInJam && (
                     <button
                       type="button"
                       onClick={() => clearUpNextQueue()}
                       className="pm-pressable h-8 rounded-full bg-white/[0.08] px-3.5 text-[11px] font-semibold text-[#F5F5F7] transition-colors hover:bg-white/[0.16]"
                     >
-                      Limpiar cola
+                      Limpiar
                     </button>
                   )}
                 </div>
               </div>
 
-              {/* Quick Inline Search to Add Songs Directly to Queue */}
+              {/* Quick Inline Search to Add Songs Directly to Queue or Active Jam */}
               <div className="space-y-2">
                 <div className="flex items-center gap-2 rounded-full bg-white/[0.09] px-3.5 py-2.5 focus-within:bg-white/[0.14] md:border md:border-white/15 md:bg-white/[0.08] md:py-2 md:focus-within:border-white/40 md:focus-within:bg-white/[0.12]">
                   <Search className="h-3.5 w-3.5 shrink-0 text-[#D4D4E0]" />
                   <input
                     type="text"
-                    aria-label="Buscar canción para añadir a la cola"
-                    placeholder="Buscar canción para añadir a la cola…"
+                    aria-label={isJamActive ? 'Buscar canción para añadir a la Jam' : 'Buscar canción para añadir a la cola'}
+                    placeholder={
+                      isJamActive
+                        ? 'Buscar canción para añadir a la Jam…'
+                        : 'Buscar canción para añadir a la cola…'
+                    }
                     value={queueSearchQuery}
                     onChange={async (e) => {
                       const q = e.target.value;
@@ -2775,7 +2845,7 @@ export const NowPlayingSheet: React.FC = () => {
                 </div>
 
                 {queueSearchResults.length > 0 && (
-                  <div className="space-y-1 rounded-[14px] border border-white/15 bg-black/40 p-2">
+                  <div className="space-y-1 rounded-[14px] border border-white/15 bg-black/45 p-2">
                     {queueSearchResults.map((cand) => (
                       <div
                         key={`qadd-${cand.id}`}
@@ -2801,25 +2871,25 @@ export const NowPlayingSheet: React.FC = () => {
                           </div>
                         </div>
                         <div className="flex shrink-0 items-center gap-1">
+                          {!isGuestInJam && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void addTrackToActiveJam(cand, true);
+                              }}
+                              className="pm-pressable rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-[#070709] hover:opacity-90"
+                            >
+                              + Siguiente
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => {
-                              playNextInQueue(cand);
-                              showToast(`«${cand.title}» sonará a continuación`);
-                            }}
-                            className="pm-pressable rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-[#070709] hover:opacity-90"
-                          >
-                            + Siguiente
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              addToQueue(cand);
-                              showToast(`«${cand.title}» añadida al final`);
+                              void addTrackToActiveJam(cand, false);
                             }}
                             className="pm-pressable rounded-full border border-white/20 bg-white/[0.10] px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-white/[0.20]"
                           >
-                            + Cola
+                            {isJamActive ? '+ Jam' : '+ Cola'}
                           </button>
                         </div>
                       </div>
@@ -2827,6 +2897,57 @@ export const NowPlayingSheet: React.FC = () => {
                   </div>
                 )}
               </div>
+
+              {/* Host Pending Moderation Requests inside Jam Queue */}
+              {pendingJamReqs.length > 0 && (
+                <div className="space-y-1.5 rounded-[14px] border border-amber-400/25 bg-amber-500/10 p-2.5">
+                  <div className="px-1 text-[10.5px] font-bold uppercase tracking-wider text-amber-300">
+                    Peticiones por aprobar ({pendingJamReqs.length})
+                  </div>
+                  {pendingJamReqs.map((req) => (
+                    <div
+                      key={req.id}
+                      className="flex items-center justify-between gap-2 rounded-[10px] bg-black/30 px-2.5 py-1.5"
+                    >
+                      <div className="flex min-w-0 flex-1 items-center gap-2">
+                        {req.track?.thumbnailUrl && (
+                          <img
+                            src={req.track.thumbnailUrl}
+                            alt=""
+                            className="h-8 w-8 shrink-0 rounded-md object-cover"
+                          />
+                        )}
+                        <div className="min-w-0">
+                          <div className="truncate text-xs font-semibold text-white">
+                            {req.track?.title}
+                          </div>
+                          <div className="truncate text-[10.5px] text-white/65">
+                            Pedido por {req.guestName}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <button
+                          type="button"
+                          aria-label={`Aprobar ${req.track?.title}`}
+                          onClick={() => void approveJamRequest(req)}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500/25 text-emerald-300 hover:bg-emerald-500/40"
+                        >
+                          <Check className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Rechazar ${req.track?.title}`}
+                          onClick={() => void rejectJamRequest(req)}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-rose-500/25 text-rose-300 hover:bg-rose-500/40"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {/* Subtle 1-line Live Choreography Telemetry when DJ Mode is active */}
               {djMode.enabled && activeTransitionPlan && (
@@ -2903,12 +3024,24 @@ export const NowPlayingSheet: React.FC = () => {
                         <div className="truncate text-[14px] font-semibold leading-snug text-[#F5F5F7]">
                           {activeQueueTrack.title}
                         </div>
-                        <div className="overflow-x-clip py-[1px] text-xs leading-normal text-[#D4D4E0]">
+                        <div className="flex items-center gap-1.5 overflow-x-clip py-[1px] text-xs leading-normal text-[#D4D4E0]">
                           <ArtistLinks
                             artists={activeQueueTrack.artists}
                             onBeforeNavigate={() => setNowPlayingOpen(false)}
                             linkClassName="hover:text-white hover:underline"
                           />
+                          {isJamActive && activeQueueTrack.addedBy?.displayName && (
+                            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white/[0.10] px-1.5 py-0.5 text-[10px] font-semibold text-white/90">
+                              <UserAvatar
+                                src={activeQueueTrack.addedBy.avatarUrl}
+                                name={activeQueueTrack.addedBy.displayName}
+                                size="xs"
+                              />
+                              <span className="max-w-[84px] truncate">
+                                {activeQueueTrack.addedBy.displayName}
+                              </span>
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -3073,12 +3206,24 @@ export const NowPlayingSheet: React.FC = () => {
                                 >
                                   {track.title}
                                 </button>
-                                <div className="overflow-x-clip py-[1px] text-xs leading-normal text-[#D4D4E0]">
+                                <div className="flex items-center gap-1.5 overflow-x-clip py-[1px] text-xs leading-normal text-[#D4D4E0]">
                                   <ArtistLinks
                                     artists={track.artists}
                                     onBeforeNavigate={() => setNowPlayingOpen(false)}
                                     linkClassName="hover:text-white hover:underline"
                                   />
+                                  {track.addedBy?.displayName && (
+                                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white/[0.10] px-1.5 py-0.5 text-[10px] font-semibold text-white/90">
+                                      <UserAvatar
+                                        src={track.addedBy.avatarUrl}
+                                        name={track.addedBy.displayName}
+                                        size="xs"
+                                      />
+                                      <span className="max-w-[84px] truncate">
+                                        {track.addedBy.displayName}
+                                      </span>
+                                    </span>
+                                  )}
                                 </div>
                               </div>
                             </div>
@@ -4222,8 +4367,15 @@ export const DevicesConnectSheet: React.FC = () => {
     setSettingsOpen,
     nowPlayingOpen,
     playerBarStyle,
+    activeJamSession,
+    startJam,
+    joinJamInApp,
+    setNowPlayingOpen,
+    setNowPlayingTab,
+    setJamInviteModalOpen,
   } = usePMusicStore();
 
+  const [joinCodeDraft, setJoinCodeDraft] = useState('');
   const [quickEmail, setQuickEmail] = useState('');
   const [quickPassword, setQuickPassword] = useState('');
   const [quickAuthMode, setQuickAuthMode] = useState<'signin' | 'signup'>('signin');
@@ -4340,13 +4492,44 @@ export const DevicesConnectSheet: React.FC = () => {
             type="button"
             onClick={() => {
               setDevicesSheetOpen(false);
-              usePMusicStore.getState().openJamView();
+              if (activeJamSession?.active) {
+                setNowPlayingOpen(true);
+                setNowPlayingTab('Cola');
+                setJamInviteModalOpen(true);
+              } else {
+                void startJam({ openSheet: true });
+              }
             }}
             className="shrink-0 rounded-full bg-white px-3 py-1 text-[11px] font-bold text-[#070709] shadow-sm transition-opacity hover:opacity-90"
           >
-            Jam QR
+            {activeJamSession?.active ? `Jam · ${activeJamSession.code}` : 'Iniciar Jam'}
           </button>
         </div>
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!joinCodeDraft.trim()) return;
+            setDevicesSheetOpen(false);
+            void joinJamInApp(joinCodeDraft);
+            setJoinCodeDraft('');
+          }}
+          className="mt-2.5 flex items-center gap-1.5"
+        >
+          <input
+            type="text"
+            value={joinCodeDraft}
+            onChange={(e) => setJoinCodeDraft(e.target.value.toUpperCase())}
+            placeholder="Código Jam de un amigo (ej. AB3K9P)"
+            className="min-w-0 flex-1 rounded-full border border-white/12 bg-white/[0.06] px-3 py-1.5 text-[11px] text-white placeholder:text-white/40 focus:border-white/35 focus:outline-none"
+          />
+          <button
+            type="submit"
+            className="shrink-0 rounded-full bg-white/15 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-white/25"
+          >
+            Unirse
+          </button>
+        </form>
 
         {lastTransferBanner && (
           <div className="mt-3 flex items-center justify-between gap-2 rounded-[12px] border border-emerald-400/35 bg-emerald-500/15 px-3 py-2 text-[11.5px] font-semibold text-emerald-200">
@@ -4654,6 +4837,143 @@ export const DevicesConnectSheet: React.FC = () => {
         </div>
       </div>
     </>
+  );
+};
+
+export const JamInviteModal: React.FC = () => {
+  const {
+    jamInviteModalOpen,
+    setJamInviteModalOpen,
+    activeJamSession,
+    activeJamRole,
+    updateJamSettings,
+    leaveOrEndJam,
+    showToast,
+  } = usePMusicStore();
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  if (!jamInviteModalOpen || !activeJamSession) return null;
+  const shareUrl = buildJamShareUrl(activeJamSession.code);
+  const qrUrl = buildJamQrImageUrl(activeJamSession.code);
+  const isHost = activeJamRole === 'host';
+
+  return (
+    <div className="fixed inset-0 z-[72] flex items-center justify-center p-4">
+      <div
+        aria-hidden="true"
+        onClick={() => setJamInviteModalOpen(false)}
+        className="pm-spotlight-backdrop absolute inset-0 bg-black/70 backdrop-blur-sm"
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Invitar a esta Jam"
+        data-testid="jam-invite-modal"
+        className="pm-glass-frosted-neutral pm-hud-dark pm-modal-pop relative z-10 w-full max-w-sm space-y-4 rounded-[26px] border border-white/15 p-6 text-center shadow-2xl"
+      >
+        <div className="flex items-center justify-between">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/20 px-3 py-1 text-[11px] font-bold text-emerald-300">
+            <Radio className="h-3.5 w-3.5 animate-pulse" />
+            JAM ACTIVA
+          </span>
+          <button
+            type="button"
+            aria-label="Cerrar invitación de Jam"
+            onClick={() => setJamInviteModalOpen(false)}
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/80 hover:bg-white/20 hover:text-white"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div>
+          <h3 className="text-lg font-extrabold tracking-tight text-white">
+            Invita a añadir canciones
+          </h3>
+          <p className="mt-1 text-xs text-white/70">
+            Escanea el QR o comparte el enlace: en la web podrán añadir temas rápido sin descargar la app.
+          </p>
+        </div>
+
+        <div className="mx-auto inline-flex flex-col items-center gap-2 rounded-2xl border border-white/15 bg-[#050507] p-3">
+          <img
+            src={qrUrl}
+            alt={`Código QR Jam ${activeJamSession.code}`}
+            className="h-44 w-44 rounded-xl"
+          />
+          <span className="font-mono text-base font-black tracking-[0.22em] text-white">
+            {activeJamSession.code}
+          </span>
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              void navigator.clipboard?.writeText(shareUrl);
+              setCopiedLink(true);
+              window.setTimeout(() => setCopiedLink(false), 1800);
+              showToast('Enlace de Jam copiado');
+            }}
+            className="pm-pressable inline-flex flex-1 items-center justify-center gap-1.5 rounded-full bg-white py-2.5 text-xs font-bold text-[#070709]"
+          >
+            {copiedLink ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+            {copiedLink ? 'Copiado' : 'Copiar enlace'}
+          </button>
+          {typeof navigator !== 'undefined' && typeof navigator.share === 'function' && (
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.share({
+                  title: `Únete a la Jam de ${activeJamSession.hostName} en pMusic`,
+                  url: shareUrl,
+                }).catch(() => {});
+              }}
+              className="pm-pressable inline-flex items-center justify-center gap-1.5 rounded-full bg-white/12 px-4 py-2.5 text-xs font-bold text-white hover:bg-white/20"
+            >
+              <Share2 className="h-3.5 w-3.5" />
+              Compartir
+            </button>
+          )}
+        </div>
+
+        {isHost && (
+          <div className="flex items-center justify-between rounded-2xl border border-white/12 bg-white/[0.04] px-3.5 py-2.5 text-left">
+            <div>
+              <div className="text-xs font-bold text-white">Peticiones de invitados</div>
+              <div className="text-[11px] text-white/65">
+                {activeJamSession.allowGuestDirectAdd
+                  ? 'Entran directo a la cola'
+                  : 'Aprobar antes de añadir'}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                void updateJamSettings({
+                  allowGuestDirectAdd: !activeJamSession.allowGuestDirectAdd,
+                })
+              }
+              className={`rounded-full px-3 py-1 text-[11px] font-bold ${
+                activeJamSession.allowGuestDirectAdd
+                  ? 'bg-emerald-500/20 text-emerald-300'
+                  : 'bg-amber-500/20 text-amber-300'
+              }`}
+            >
+              {activeJamSession.allowGuestDirectAdd ? 'Directo' : 'Moderar'}
+            </button>
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={() => void leaveOrEndJam()}
+          className="w-full rounded-full border border-rose-400/30 bg-rose-500/15 py-2 text-xs font-bold text-rose-300 hover:bg-rose-500/25"
+        >
+          {isHost ? 'Finalizar Jam para todos' : 'Salir de la Jam'}
+        </button>
+      </div>
+    </div>
   );
 };
 

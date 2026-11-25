@@ -81,6 +81,37 @@ import {
 import { RecommendationEngine } from '@pmusic/recommendations';
 import { LibraryStore, SyncEngine } from '@pmusic/sync';
 import {
+  addTrackToSharedPlaylist,
+  computeBlendScoreAndTracks,
+  createJamSession,
+  createSharedPlaylist,
+  ensureOwnProfileExists,
+  fetchActiveHostJamSession,
+  fetchJamRequests,
+  fetchPublicJamRequests,
+  fetchPublicJamSession,
+  fetchSharedPlaylistByCode,
+  getAnonSupabaseClient,
+  inviteMemberToSharedPlaylist,
+  joinSharedPlaylistByCode,
+  listFriendships,
+  listSharedPlaylists,
+  publishOrUpdateSharedPlaylistLink,
+  removeTrackFromSharedPlaylist,
+  respondFriendRequest,
+  searchPublicCatalog,
+  sendFriendRequest,
+  stampTrackAddedBy,
+  submitPublicJamRequest,
+  updateJamRequestStatus,
+  updateJamSessionState,
+  type FriendRecord,
+  type JamRequestRecord,
+  type JamSessionRecord,
+  type SharedPlaylistRecord,
+  type TrackAdderIdentity,
+} from '../services/social-service.ts';
+import {
   defaultPlatformBridge,
   isElectronDesktopRuntime,
 } from '../platform/web-bridge.ts';
@@ -175,6 +206,7 @@ export type ActiveDetailView =
   | { kind: 'album'; data: AlbumDetail; isLoading?: boolean; transitionKey?: string }
   | { kind: 'playlist'; data: PlaylistDetail }
   | { kind: 'local_playlist'; playlistId: string }
+  | { kind: 'shared_playlist'; sharedId: string }
   | null;
 
 const DETAIL_CLIENT_CACHE_TTL_MS = 15 * 60_000;
@@ -398,6 +430,12 @@ let hiddenSkipTick = 0;
 let lastMediaSessionSyncKey = '';
 let lastMediaSessionSyncWallMs = 0;
 let homeShelvesBuildEpoch = 0;
+let socialRealtimeChannel: any = null;
+let socialSubscribedUserId = '';
+let jamRealtimeChannel: any = null;
+let jamFallbackPollTimer: ReturnType<typeof setInterval> | null = null;
+let jamHostPushTimer: ReturnType<typeof setTimeout> | null = null;
+const processedJamRequestIds = new Set<string>();
 const decodedAudioAnalyzedIds = new Set<string>();
 const decodedAudioInFlightIds = new Set<string>();
 const hydratedContributorIds = new Set<string>();
@@ -907,8 +945,14 @@ export interface PMusicStoreState {
   userProfile: UserProfile | null;
   authCallbackError: string | null;
   favoriteArtists: FavoriteArtistRecord[];
+  friends: FriendRecord[];
+  sharedPlaylists: SharedPlaylistRecord[];
   socialSubTab: SocialSubTab;
   activeJamCode: string | null;
+  activeJamSession: JamSessionRecord | null;
+  activeJamRole: 'host' | 'guest' | null;
+  activeJamRequests: JamRequestRecord[];
+  jamInviteModalOpen: boolean;
   wrappedModalOpen: boolean;
   wrappedSummary: WrappedSummary | null;
   wrappedSoundtrackTracks: Track[];
@@ -943,6 +987,7 @@ export interface PMusicStoreState {
   openPlaylistDetail: (playlistId: string) => Promise<void>;
   fetchTrackCredits: (track: Track) => Promise<TrackCredits | null>;
   openLocalPlaylistDetail: (playlistId: string) => void;
+  openSharedPlaylistDetail: (sharedId: string) => void;
   closeDetailView: () => void;
   showToast: (message: string) => void;
   openTrackMenu: (track: Track, x: number, y: number, playlistId?: string) => void;
@@ -1031,6 +1076,42 @@ export interface PMusicStoreState {
   setSocialSubTab: (tab: SocialSubTab) => void;
   setActiveJamCode: (code: string | null) => void;
   openJamView: () => void;
+  setJamInviteModalOpen: (open: boolean) => void;
+  hydrateSocialAndSubscribe: () => Promise<void>;
+  startJam: (opts?: {
+    allowGuestDirectAdd?: boolean;
+    maxRequestsPerGuest?: number;
+    openSheet?: boolean;
+  }) => Promise<JamSessionRecord | null>;
+  joinJamInApp: (code: string) => Promise<JamSessionRecord | null>;
+  leaveOrEndJam: () => Promise<void>;
+  addTrackToActiveJam: (track: Track, playNext?: boolean) => Promise<void>;
+  approveJamRequest: (req: JamRequestRecord) => Promise<void>;
+  rejectJamRequest: (req: JamRequestRecord) => Promise<void>;
+  updateJamSettings: (patch: {
+    allowGuestDirectAdd?: boolean;
+    maxRequestsPerGuest?: number;
+  }) => Promise<void>;
+  sendFriendRequestToUser: (targetUserId: string) => Promise<void>;
+  respondToFriendRequest: (
+    friendshipId: string,
+    status: 'accepted' | 'declined',
+    username?: string
+  ) => Promise<void>;
+  togglePlaylistCollaborative: (playlistId: string) => Promise<SharedPlaylistRecord | null>;
+  inviteFriendToPlaylist: (
+    playlistIdOrSharedId: string,
+    friendUserId: string
+  ) => Promise<SharedPlaylistRecord | null>;
+  createCollaborativePlaylist: (
+    name: string,
+    friendIds?: string[],
+    initialTracks?: Track[]
+  ) => Promise<SharedPlaylistRecord | null>;
+  createBlendWithFriend: (friend: FriendRecord) => Promise<SharedPlaylistRecord | null>;
+  addTrackToCollaborativePlaylist: (sharedId: string, track: Track) => Promise<void>;
+  removeTrackFromCollaborativePlaylist: (sharedId: string, trackId: string) => Promise<void>;
+  joinSharedPlaylistLink: (shareCode: string) => Promise<SharedPlaylistRecord | null>;
   updateUserProfile: (input: {
     displayName: string;
     avatarUrl?: string | null;
@@ -2157,6 +2238,215 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }
   }
 
+  function syncUserLibraryContextToEngine(): void {
+    const pls = libraryStore.getPlaylists();
+    const likes = libraryStore.getLikedTracks();
+    const shared = get().sharedPlaylists;
+    recommendationEngine.setUserLibraryContext({
+      libraryTracks: [
+        ...pls.flatMap((p) => p.tracks),
+        ...shared.flatMap((s) => s.tracks),
+      ],
+      likedTracks: likes.map((l) => l.track),
+    });
+  }
+
+  function getOwnAdderIdentity(): TrackAdderIdentity {
+    const st = get();
+    return {
+      userId: st.authState.userId ?? undefined,
+      username: st.userProfile?.username,
+      displayName:
+        st.userProfile?.displayName ||
+        st.authState.displayName ||
+        (st.userProfile?.username ? `@${st.userProfile.username}` : '') ||
+        st.authState.email?.split('@')[0] ||
+        'Tú',
+      avatarUrl: st.userProfile?.avatarUrl ?? st.authState.avatarUrl ?? null,
+    };
+  }
+
+  function cleanupJamRealtime(): void {
+    if (jamHostPushTimer) {
+      clearTimeout(jamHostPushTimer);
+      jamHostPushTimer = null;
+    }
+    if (jamFallbackPollTimer) {
+      clearInterval(jamFallbackPollTimer);
+      jamFallbackPollTimer = null;
+    }
+    if (jamRealtimeChannel) {
+      try {
+        void jamRealtimeChannel.unsubscribe?.();
+        getSyncSupabaseClient()?.removeChannel?.(jamRealtimeChannel);
+        getAnonSupabaseClient().removeChannel?.(jamRealtimeChannel);
+      } catch {
+        // ignore channel cleanup
+      }
+      jamRealtimeChannel = null;
+    }
+    processedJamRequestIds.clear();
+  }
+
+  function cleanupSocialRealtime(): void {
+    if (socialRealtimeChannel) {
+      try {
+        void socialRealtimeChannel.unsubscribe?.();
+        getSyncSupabaseClient()?.removeChannel?.(socialRealtimeChannel);
+      } catch {
+        // ignore
+      }
+      socialRealtimeChannel = null;
+    }
+    socialSubscribedUserId = '';
+  }
+
+  function pushHostJamStateSoon(): void {
+    const st = get();
+    const sb = getSyncSupabaseClient();
+    if (!sb || !st.activeJamSession?.active || st.activeJamRole !== 'host') return;
+    if (jamHostPushTimer) clearTimeout(jamHostPushTimer);
+    jamHostPushTimer = setTimeout(() => {
+      jamHostPushTimer = null;
+      const cur = get();
+      const sbNow = getSyncSupabaseClient();
+      if (!sbNow || !cur.activeJamSession?.active || cur.activeJamRole !== 'host') return;
+      const liveQueue = cur.queue.slice(Math.max(0, cur.queueIndex));
+      void updateJamSessionState(sbNow, cur.activeJamSession.code, {
+        currentTrack: cur.currentTrack,
+        queue: liveQueue,
+        isPlaying: cur.isPlaying,
+        allowGuestDirectAdd: cur.activeJamSession.allowGuestDirectAdd,
+        maxRequestsPerGuest: cur.activeJamSession.maxRequestsPerGuest,
+      });
+    }, 220);
+  }
+
+  async function syncSharedPlaylistsToLocalPlaylists(sharedList: SharedPlaylistRecord[]): Promise<void> {
+    if (!sharedList || sharedList.length === 0) return;
+    const localPls = libraryStore.getPlaylists();
+    let mutated = false;
+    for (const sp of sharedList) {
+      if (!sp.shareCode) continue;
+      const match = localPls.find(
+        (lp) => lp.shareCode && lp.shareCode.toUpperCase() === sp.shareCode!.toUpperCase()
+      );
+      if (match) {
+        const diffTracks =
+          match.tracks.length !== sp.tracks.length ||
+          match.tracks.some(
+            (t, idx) =>
+              t.id !== sp.tracks[idx]?.id ||
+              (t.addedBy?.userId ?? '') !== (sp.tracks[idx]?.addedBy?.userId ?? '')
+          );
+        const diffCollab = Boolean(match.isCollaborative) !== Boolean(sp.allowLinkEdit);
+        if (diffTracks || diffCollab || match.name !== sp.name) {
+          mutated = true;
+          await libraryStore.updatePlaylist(match.id, {
+            tracks: sp.tracks,
+            isCollaborative: Boolean(sp.allowLinkEdit),
+            name: sp.name,
+            coverUrl: sp.coverUrl ?? match.coverUrl,
+          });
+        }
+      }
+    }
+    if (mutated) {
+      set({ playlists: libraryStore.getPlaylists() });
+      syncUserLibraryContextToEngine();
+    }
+  }
+
+  function processIncomingHostJamRequests(reqs: JamRequestRecord[]): void {
+    const st = get();
+    if (st.activeJamRole !== 'host' || !st.activeJamSession?.active) return;
+    const myNameLow = getOwnAdderIdentity().displayName.trim().toLowerCase();
+    for (const req of reqs) {
+      if (req.status === 'approved' && !processedJamRequestIds.has(req.id)) {
+        processedJamRequestIds.add(req.id);
+        if (req.track?.id && !st.queue.some((t) => t.id === req.track.id)) {
+          const stamped = req.track.addedBy?.displayName
+            ? req.track
+            : stampTrackAddedBy(req.track, {
+                displayName: req.guestName || 'Invitado',
+                avatarUrl: req.track.addedBy?.avatarUrl ?? null,
+              });
+          set((prev) => ({
+            queue: prev.queue.some((t) => t.id === stamped.id)
+              ? prev.queue
+              : [...prev.queue, stamped],
+          }));
+          if (req.guestName.trim().toLowerCase() !== myNameLow) {
+            get().showToast(`${req.guestName} añadió «${req.track.title}» a la Jam`);
+          }
+          pushHostJamStateSoon();
+        }
+      }
+    }
+  }
+
+  function subscribeJamRealtime(code: string): void {
+    cleanupJamRealtime();
+    const cleanCode = code.trim().toUpperCase();
+    if (!cleanCode) return;
+    const sb = getSyncSupabaseClient() ?? getAnonSupabaseClient();
+
+    const refreshJamSnapshot = async () => {
+      const [sess, reqs] = await Promise.all([
+        fetchPublicJamSession(cleanCode),
+        fetchPublicJamRequests(cleanCode),
+      ]);
+      const cur = get();
+      if (!cur.activeJamSession || cur.activeJamSession.code !== cleanCode) return;
+      if (!sess || !sess.active) {
+        cleanupJamRealtime();
+        set({
+          activeJamSession: null,
+          activeJamRole: null,
+          activeJamCode: null,
+          activeJamRequests: [],
+          jamInviteModalOpen: false,
+        });
+        get().showToast('La sala Jam ha finalizado');
+        return;
+      }
+      set({
+        activeJamSession: sess,
+        activeJamRequests: reqs,
+      });
+      if (cur.activeJamRole === 'host') {
+        processIncomingHostJamRequests(reqs);
+      }
+    };
+
+    try {
+      jamRealtimeChannel = sb
+        .channel(`pmusic-jam-rt:${cleanCode}:${Date.now()}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'jam_sessions', filter: `code=eq.${cleanCode}` },
+          () => {
+            void refreshJamSnapshot();
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'jam_requests', filter: `jam_code=eq.${cleanCode}` },
+          () => {
+            void refreshJamSnapshot();
+          }
+        )
+        .subscribe();
+    } catch {
+      // ignore realtime init error, fallback poll keeps syncing
+    }
+
+    jamFallbackPollTimer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      void refreshJamSnapshot();
+    }, 5500);
+  }
+
   function buildLocalTasteSnapshot(): AccountTasteProfile {
     const st = get();
     return buildCompactAccountTasteProfile({
@@ -2182,6 +2472,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       await recommendationEngine.updateSeedArtists(merged.seedArtists);
     }
     await recommendationEngine.hydrate();
+    syncUserLibraryContextToEngine();
 
     set({
       playlistPlayCounts: merged.playlistPlayCounts,
@@ -2199,7 +2490,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         new Map(freshShelves.flatMap((s) => s.tracks ?? []).map((t) => [t.id, t])).values()
       );
       set((prev) => ({
-        homeShelves: freshShelves,
+        homeShelves: allReal.length > 0 ? freshShelves : prev.homeShelves,
         ...(allReal.length > 0 && !prev.isPlaying
           ? {
               currentTrack: allReal[0]!,
@@ -2729,8 +3020,14 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   userProfile: null,
   authCallbackError: null,
   favoriteArtists: [],
+  friends: [],
+  sharedPlaylists: [],
   socialSubTab: 'jam',
   activeJamCode: null,
+  activeJamSession: null,
+  activeJamRole: null,
+  activeJamRequests: [],
+  jamInviteModalOpen: false,
   wrappedModalOpen: false,
   wrappedSummary: null,
   wrappedSoundtrackTracks: [],
@@ -2752,6 +3049,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     } catch {
       // ignore hydration failure
     }
+    syncUserLibraryContextToEngine();
     let ranV3Migration = false;
     try {
       const migrated = await defaultPlatformBridge.preferencesStorage.getItem(
@@ -3027,7 +3325,9 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       offlineEntries,
       offlineDownloads,
       trackAnalyses: analyses,
-      homeShelves: canonicalShelves,
+      homeShelves: canonicalShelves.some((s) => (s.tracks?.length ?? 0) > 0)
+        ? canonicalShelves
+        : prev.homeShelves,
       onlineDevices: syncEngine.getOnlineDevices(),
       ...(rpcStatus ? { discordRpcStatus: rpcStatus } : {}),
       ...(hydratedPrefs
@@ -3138,6 +3438,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         await hydrateAndMergeCloudTaste(null);
         persistPrefsFromStore(true);
       }
+      void get().hydrateSocialAndSubscribe();
     }
 
     if (typeof window !== 'undefined') {
@@ -3176,12 +3477,15 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }
 
     if (isLiveRuntime() && !get().searchQuery) {
-      void musicProvider.search('', 'all').then((bundle) => {
+      const firstFav = get().favoriteArtists[0]?.artistName;
+      const firstLibArtist = libraryStore.getPlaylists()[0]?.tracks[0]?.artists[0]?.name;
+      const seedQ = firstFav || firstLibArtist || recommendationEngine.getAffinityProfile()[0]?.artistName || 'Cruzzi';
+      void musicProvider.search(seedQ, 'all').then((bundle) => {
         if (!get().searchQuery && bundle.songs.length > 0) {
           const reranked = recommendationEngine.rerankTracks(bundle.songs);
           set({
             searchResults: { ...bundle, songs: reranked },
-            bestResult: recommendationEngine.selectBestResult('', { ...bundle, songs: reranked }),
+            bestResult: recommendationEngine.selectBestResult(seedQ, { ...bundle, songs: reranked }),
           });
         }
       }).catch(() => {});
@@ -3594,6 +3898,18 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       nowPlayingOpen: false,
     }));
   },
+  openSharedPlaylistDetail: (sharedId) => {
+    const prev = get().activeDetailView;
+    set((s) => ({
+      detailViewHistory:
+        prev && !(prev.kind === 'shared_playlist' && prev.sharedId === sharedId)
+          ? [...s.detailViewHistory, prev].slice(-12)
+          : s.detailViewHistory,
+      activeDetailView: { kind: 'shared_playlist', sharedId },
+      spotlightOpen: false,
+      nowPlayingOpen: false,
+    }));
+  },
   closeDetailView: () =>
     set((s) => {
       if (s.detailViewHistory.length > 0) {
@@ -3728,6 +4044,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         track_title: `${track.title} — ${track.artists.map((a) => a.name).join(', ')}`,
       });
       syncDiscordPresenceState();
+      pushHostJamStateSoon();
 
       if (
         isLiveRuntime() &&
@@ -3807,6 +4124,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       });
       void syncEngine.updatePresence({ is_playing: false });
       syncDiscordPresenceState();
+      pushHostJamStateSoon();
     } else {
       const snapshots =
         typeof document !== 'undefined'
@@ -3820,6 +4138,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         set({ isPlaying: true });
         void syncEngine.updatePresence({ is_playing: true });
         syncDiscordPresenceState();
+        pushHostJamStateSoon();
       }
     }
   },
@@ -4108,6 +4427,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     });
     void recomputeActiveDjPlan();
     persistPrefsFromStore();
+    pushHostJamStateSoon();
   },
 
   removeQueueItem: (index) => {
@@ -4124,6 +4444,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     });
     void recomputeActiveDjPlan();
     persistPrefsFromStore();
+    pushHostJamStateSoon();
   },
 
   clearUpNextQueue: () => {
@@ -4137,6 +4458,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       activeTransitionPlan: null,
     });
     st.showToast('Cola limpiada');
+    pushHostJamStateSoon();
   },
 
   addToQueue: (rawTrack) => {
@@ -4155,6 +4477,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       }
       st.showToast('Añadida al final de la cola');
       void recomputeActiveDjPlan();
+      pushHostJamStateSoon();
       return;
     }
     set({
@@ -4164,6 +4487,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     st.showToast('Añadida a la cola');
     void recomputeActiveDjPlan();
     persistPrefsFromStore();
+    pushHostJamStateSoon();
   },
 
   playNextInQueue: (track) => {
@@ -4187,6 +4511,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     st.showToast('Sonará a continuación');
     void recomputeActiveDjPlan();
     persistPrefsFromStore();
+    pushHostJamStateSoon();
   },
 
   replenishRecommendedQueue: async (force = false) => {
@@ -5105,7 +5430,517 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   setSocialSubTab: (tab) => set({ socialSubTab: tab }),
   setActiveJamCode: (code) => set({ activeJamCode: code }),
-  openJamView: () => set({ activeTab: 'Social', socialSubTab: 'jam' }),
+  setJamInviteModalOpen: (open) => set({ jamInviteModalOpen: open }),
+  openJamView: () => {
+    const st = get();
+    if (st.activeJamSession) {
+      set({ nowPlayingOpen: true, nowPlayingTab: 'Cola', jamInviteModalOpen: true });
+      return;
+    }
+    if (st.authState.connected) {
+      void st.startJam({ openSheet: true });
+    } else {
+      set({ activeTab: 'Social', socialSubTab: 'jam' });
+    }
+  },
+
+  hydrateSocialAndSubscribe: async () => {
+    const st = get();
+    const sb = getSyncSupabaseClient();
+    const myUserId = st.authState.userId;
+    if (!sb || !myUserId || !st.authState.connected) return;
+
+    try {
+      if (!st.userProfile) {
+        const ensured = await ensureOwnProfileExists(sb, {
+          userId: myUserId,
+          email: st.authState.email,
+          displayName: st.authState.displayName,
+          avatarUrl: st.authState.avatarUrl,
+        });
+        if (ensured) set({ userProfile: ensured, needsProfileSetup: false });
+      }
+      const [fList, spList, hostJam] = await Promise.all([
+        listFriendships(sb, myUserId),
+        listSharedPlaylists(sb, myUserId),
+        fetchActiveHostJamSession(sb, myUserId),
+      ]);
+      set({
+        friends: fList,
+        sharedPlaylists: spList,
+      });
+      await syncSharedPlaylistsToLocalPlaylists(spList);
+      syncUserLibraryContextToEngine();
+
+      if (hostJam && (!get().activeJamSession || get().activeJamSession?.code === hostJam.code)) {
+        const reqs = await fetchJamRequests(sb, hostJam.code);
+        set({
+          activeJamSession: hostJam,
+          activeJamRole: 'host',
+          activeJamCode: hostJam.code,
+          activeJamRequests: reqs,
+        });
+        processIncomingHostJamRequests(reqs);
+        subscribeJamRealtime(hostJam.code);
+      }
+
+      if (socialSubscribedUserId !== myUserId) {
+        cleanupSocialRealtime();
+        socialSubscribedUserId = myUserId;
+        socialRealtimeChannel = sb
+          .channel(`pmusic-social-rt:${myUserId}:${Date.now()}`)
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'friendships' },
+            async () => {
+              const cur = get();
+              const prevList = cur.friends;
+              const nextList = await listFriendships(sb, myUserId);
+              for (const nf of nextList) {
+                const old = prevList.find((of) => of.id === nf.id);
+                if (!old && nf.isIncoming && nf.status === 'pending') {
+                  cur.showToast(`Nueva solicitud de amistad de @${nf.otherProfile.username}`);
+                } else if (old?.status === 'pending' && nf.status === 'accepted') {
+                  cur.showToast(`¡@${nf.otherProfile.username} y tú ahora sois amigos!`);
+                }
+              }
+              set({ friends: nextList });
+            }
+          )
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'shared_playlists' },
+            async () => {
+              const nextSp = await listSharedPlaylists(sb, myUserId);
+              set({ sharedPlaylists: nextSp });
+              await syncSharedPlaylistsToLocalPlaylists(nextSp);
+            }
+          )
+          .subscribe();
+      }
+    } catch {
+      // ignore offline social sync failure
+    }
+  },
+
+  startJam: async (opts) => {
+    const st = get();
+    const sb = getSyncSupabaseClient();
+    const myUserId = st.authState.userId;
+    if (!sb || !myUserId || !st.authState.connected) {
+      st.showToast('Inicia sesión para iniciar una Jam');
+      set({ authOnboardingOpen: true });
+      return null;
+    }
+    const existing = await fetchActiveHostJamSession(sb, myUserId);
+    if (existing) {
+      const reqs = await fetchJamRequests(sb, existing.code);
+      set({
+        activeJamSession: existing,
+        activeJamRole: 'host',
+        activeJamCode: existing.code,
+        activeJamRequests: reqs,
+        ...(opts?.openSheet !== false
+          ? { nowPlayingOpen: true, nowPlayingTab: 'Cola' as const, jamInviteModalOpen: true }
+          : {}),
+      });
+      subscribeJamRealtime(existing.code);
+      return existing;
+    }
+
+    const identity = getOwnAdderIdentity();
+    await ensureOwnProfileExists(sb, {
+      userId: myUserId,
+      email: st.authState.email,
+      displayName: identity.displayName,
+      avatarUrl: identity.avatarUrl,
+    });
+
+    const stampedQueue = st.queue.slice(Math.max(0, st.queueIndex)).map((t) =>
+      t.addedBy?.displayName ? t : stampTrackAddedBy(t, identity)
+    );
+    const created = await createJamSession(sb, {
+      hostUserId: myUserId,
+      hostName: identity.displayName,
+      currentTrack: st.currentTrack.addedBy?.displayName
+        ? st.currentTrack
+        : stampTrackAddedBy(st.currentTrack, identity),
+      queue: stampedQueue,
+      isPlaying: st.isPlaying,
+      allowGuestDirectAdd: opts?.allowGuestDirectAdd ?? true,
+      maxRequestsPerGuest: opts?.maxRequestsPerGuest ?? 0,
+    });
+    processedJamRequestIds.clear();
+    set({
+      activeJamSession: created,
+      activeJamRole: 'host',
+      activeJamCode: created.code,
+      activeJamRequests: [],
+      ...(opts?.openSheet !== false
+        ? { nowPlayingOpen: true, nowPlayingTab: 'Cola' as const, jamInviteModalOpen: true }
+        : {}),
+    });
+    subscribeJamRealtime(created.code);
+    st.showToast(`Jam ${created.code} iniciada`);
+    return created;
+  },
+
+  joinJamInApp: async (code) => {
+    const cleanCode = code.trim().toUpperCase().replace(/^.*\/JAM\//i, '').replace(/[^A-Z0-9]/g, '');
+    if (cleanCode.length < 4) {
+      get().showToast('Introduce un código de Jam válido');
+      return null;
+    }
+    const [sess, reqs] = await Promise.all([
+      fetchPublicJamSession(cleanCode),
+      fetchPublicJamRequests(cleanCode),
+    ]);
+    if (!sess || !sess.active) {
+      get().showToast(`La Jam ${cleanCode} no existe o ya terminó`);
+      return null;
+    }
+    const st = get();
+    const isOwnHost = Boolean(st.authState.userId && sess.hostUserId === st.authState.userId);
+    set({
+      activeJamSession: sess,
+      activeJamRole: isOwnHost ? 'host' : 'guest',
+      activeJamCode: sess.code,
+      activeJamRequests: reqs,
+      nowPlayingOpen: true,
+      nowPlayingTab: 'Cola',
+      jamInviteModalOpen: false,
+      ...(sess.currentTrack && !st.isPlaying
+        ? {
+            currentTrack: sess.currentTrack,
+            queue: sess.queue.length > 0 ? sess.queue : [sess.currentTrack],
+            queueIndex: 0,
+            durationSec: sess.currentTrack.durationSec,
+          }
+        : {}),
+    });
+    subscribeJamRealtime(sess.code);
+    get().showToast(`Conectado a la Jam de ${sess.hostName} (${sess.code})`);
+    return sess;
+  },
+
+  leaveOrEndJam: async () => {
+    const st = get();
+    const sb = getSyncSupabaseClient();
+    const sess = st.activeJamSession;
+    const role = st.activeJamRole;
+    cleanupJamRealtime();
+    if (sb && sess && role === 'host') {
+      await updateJamSessionState(sb, sess.code, { active: false }).catch(() => {});
+      st.showToast('Sala Jam finalizada');
+    } else if (sess) {
+      st.showToast('Saliste de la Jam');
+    }
+    set({
+      activeJamSession: null,
+      activeJamRole: null,
+      activeJamCode: null,
+      activeJamRequests: [],
+      jamInviteModalOpen: false,
+    });
+  },
+
+  addTrackToActiveJam: async (rawTrack, playNext = false) => {
+    const st = get();
+    const sess = st.activeJamSession;
+    if (!sess) {
+      if (playNext) st.playNextInQueue(rawTrack);
+      else st.addToQueue(rawTrack);
+      return;
+    }
+    const identity = getOwnAdderIdentity();
+    const stamped = stampTrackAddedBy(canonicalizeTrackArtists(rawTrack), identity);
+    if (st.activeJamRole === 'host') {
+      if (playNext) st.playNextInQueue(stamped);
+      else st.addToQueue(stamped);
+      pushHostJamStateSoon();
+      return;
+    }
+    const created = await submitPublicJamRequest(
+      sess.code,
+      identity.displayName,
+      stamped,
+      sess.allowGuestDirectAdd,
+      identity
+    );
+    set((prev) => ({
+      activeJamRequests: [created, ...prev.activeJamRequests],
+      ...(sess.allowGuestDirectAdd && prev.activeJamSession
+        ? {
+            activeJamSession: {
+              ...prev.activeJamSession,
+              queue: prev.activeJamSession.queue.some((q) => q.id === stamped.id)
+                ? prev.activeJamSession.queue
+                : [...prev.activeJamSession.queue, stamped],
+            },
+          }
+        : {}),
+    }));
+    st.showToast(
+      sess.allowGuestDirectAdd
+        ? `«${stamped.title}» añadida a la cola de la Jam`
+        : `«${stamped.title}» enviada para aprobación`
+    );
+  },
+
+  approveJamRequest: async (req) => {
+    const sb = getSyncSupabaseClient();
+    if (!sb) return;
+    await updateJamRequestStatus(sb, req.id, 'approved');
+    processedJamRequestIds.add(req.id);
+    if (req.track?.id) {
+      const stamped = req.track.addedBy?.displayName
+        ? req.track
+        : stampTrackAddedBy(req.track, {
+            displayName: req.guestName || 'Invitado',
+            avatarUrl: req.track.addedBy?.avatarUrl ?? null,
+          });
+      get().addToQueue(stamped);
+    }
+    set((prev) => ({
+      activeJamRequests: prev.activeJamRequests.map((item) =>
+        item.id === req.id ? { ...item, status: 'approved' } : item
+      ),
+    }));
+  },
+
+  rejectJamRequest: async (req) => {
+    const sb = getSyncSupabaseClient();
+    if (!sb) return;
+    await updateJamRequestStatus(sb, req.id, 'rejected');
+    set((prev) => ({
+      activeJamRequests: prev.activeJamRequests.map((item) =>
+        item.id === req.id ? { ...item, status: 'rejected' } : item
+      ),
+    }));
+  },
+
+  updateJamSettings: async (patch) => {
+    const st = get();
+    const sb = getSyncSupabaseClient();
+    if (!sb || !st.activeJamSession || st.activeJamRole !== 'host') return;
+    const nextSess: JamSessionRecord = {
+      ...st.activeJamSession,
+      ...(patch.allowGuestDirectAdd !== undefined
+        ? { allowGuestDirectAdd: patch.allowGuestDirectAdd }
+        : {}),
+      ...(patch.maxRequestsPerGuest !== undefined
+        ? { maxRequestsPerGuest: patch.maxRequestsPerGuest }
+        : {}),
+    };
+    set({ activeJamSession: nextSess });
+    await updateJamSessionState(sb, nextSess.code, patch);
+  },
+
+  sendFriendRequestToUser: async (targetUserId) => {
+    const st = get();
+    const sb = getSyncSupabaseClient();
+    if (!sb || !st.authState.userId) return;
+    await sendFriendRequest(sb, st.authState.userId, targetUserId);
+    const fList = await listFriendships(sb, st.authState.userId);
+    set({ friends: fList });
+  },
+
+  respondToFriendRequest: async (friendshipId, status, username) => {
+    const st = get();
+    const sb = getSyncSupabaseClient();
+    if (!sb || !st.authState.userId) return;
+    await respondFriendRequest(sb, friendshipId, status);
+    const fList = await listFriendships(sb, st.authState.userId);
+    set({ friends: fList });
+    if (status === 'accepted' && username) {
+      st.showToast(`Ahora eres amigo de @${username}`);
+    }
+  },
+
+  togglePlaylistCollaborative: async (playlistId) => {
+    const st = get();
+    const pl = st.playlists.find((p) => p.id === playlistId);
+    if (!pl) return null;
+    const nextCollab = !pl.isCollaborative;
+    const sb = getSyncSupabaseClient();
+    if (!sb || !st.authState.connected || !st.authState.userId) {
+      await st.setPlaylistShareMetadata(playlistId, { isCollaborative: nextCollab });
+      st.showToast(nextCollab ? 'Playlist marcada como colaborativa' : 'Modo solo lectura activado');
+      return null;
+    }
+    const synced = await publishOrUpdateSharedPlaylistLink(sb, {
+      ownerId: st.authState.userId,
+      name: pl.name,
+      description: pl.description,
+      tracks: pl.tracks,
+      isCollaborative: nextCollab,
+      existingShareCode: pl.shareCode,
+      ownerProfile: st.userProfile,
+    });
+    await st.setPlaylistShareMetadata(playlistId, {
+      shareCode: synced.shareCode ?? pl.shareCode,
+      isCollaborative: nextCollab,
+      isPublicLink: true,
+    });
+    const nextShared = [
+      synced,
+      ...st.sharedPlaylists.filter((s) => s.id !== synced.id),
+    ];
+    set({ sharedPlaylists: nextShared });
+    await syncSharedPlaylistsToLocalPlaylists(nextShared);
+    st.showToast(
+      nextCollab
+        ? 'Playlist colaborativa activada — ¡invita a amigos o comparte el enlace!'
+        : 'Playlist cambiada a solo lectura'
+    );
+    return synced;
+  },
+
+  inviteFriendToPlaylist: async (playlistIdOrSharedId, friendUserId) => {
+    const st = get();
+    const sb = getSyncSupabaseClient();
+    if (!sb || !st.authState.connected || !st.authState.userId) {
+      st.showToast('Inicia sesión para invitar colaboradores');
+      return null;
+    }
+    let shared =
+      st.sharedPlaylists.find((s) => s.id === playlistIdOrSharedId) ?? null;
+    if (!shared) {
+      const local = st.playlists.find((p) => p.id === playlistIdOrSharedId);
+      if (local) {
+        if (local.shareCode) {
+          shared =
+            st.sharedPlaylists.find(
+              (s) => s.shareCode?.toUpperCase() === local.shareCode?.toUpperCase()
+            ) ?? null;
+        }
+        if (!shared) {
+          shared = await publishOrUpdateSharedPlaylistLink(sb, {
+            ownerId: st.authState.userId,
+            name: local.name,
+            description: local.description,
+            tracks: local.tracks,
+            isCollaborative: true,
+            existingShareCode: local.shareCode,
+            ownerProfile: st.userProfile,
+          });
+          await st.setPlaylistShareMetadata(local.id, {
+            shareCode: shared.shareCode ?? local.shareCode,
+            isCollaborative: true,
+            isPublicLink: true,
+          });
+        }
+      }
+    }
+    if (!shared) return null;
+    const updated = await inviteMemberToSharedPlaylist(sb, shared, friendUserId);
+    set((prev) => ({
+      sharedPlaylists: [
+        updated,
+        ...prev.sharedPlaylists.filter((item) => item.id !== updated.id),
+      ],
+    }));
+    const friend = st.friends.find((f) => f.otherProfile.userId === friendUserId);
+    st.showToast(
+      friend
+        ? `@${friend.otherProfile.username} añadido como colaborador`
+        : 'Colaborador añadido al instante'
+    );
+    return updated;
+  },
+
+  createCollaborativePlaylist: async (name, friendIds = [], initialTracks = []) => {
+    const st = get();
+    const sb = getSyncSupabaseClient();
+    if (!sb || !st.authState.userId) return null;
+    const created = await createSharedPlaylist(sb, {
+      ownerId: st.authState.userId,
+      name: name.trim(),
+      description: 'Playlist colaborativa en pMusic',
+      kind: 'collab',
+      memberIds: friendIds,
+      tracks: initialTracks,
+      isPublicLink: true,
+      allowLinkEdit: true,
+      ownerProfile: st.userProfile,
+    });
+    set((prev) => ({
+      sharedPlaylists: [created, ...prev.sharedPlaylists.filter((s) => s.id !== created.id)],
+    }));
+    syncUserLibraryContextToEngine();
+    st.showToast(`Playlist colaborativa «${created.name}» creada`);
+    return created;
+  },
+
+  createBlendWithFriend: async (friend) => {
+    const st = get();
+    const sb = getSyncSupabaseClient();
+    if (!sb || !st.authState.userId) return null;
+    const baseTracks = [...st.likedTracks.map((l) => l.track), ...st.queue];
+    const { score, tracks } = computeBlendScoreAndTracks(baseTracks, friend.otherProfile.username);
+    const created = await createSharedPlaylist(sb, {
+      ownerId: st.authState.userId,
+      name: `Blend · ${st.userProfile?.displayName || 'Tú'} + ${friend.otherProfile.displayName}`,
+      description: `Mezcla automática con @${friend.otherProfile.username} (${score}% de compatibilidad)`,
+      kind: 'blend',
+      memberIds: [friend.otherProfile.userId],
+      tracks,
+      compatibilityScore: score,
+      ownerProfile: st.userProfile,
+    });
+    set((prev) => ({
+      sharedPlaylists: [created, ...prev.sharedPlaylists.filter((s) => s.id !== created.id)],
+    }));
+    st.showToast(`Blend creado (${score}% de match)`);
+    return created;
+  },
+
+  addTrackToCollaborativePlaylist: async (sharedId, track) => {
+    const st = get();
+    const sb = getSyncSupabaseClient();
+    const target = st.sharedPlaylists.find((s) => s.id === sharedId);
+    if (!sb || !target) return;
+    const identity = getOwnAdderIdentity();
+    const updated = await addTrackToSharedPlaylist(sb, target, canonicalizeTrackArtists(track), identity);
+    set((prev) => ({
+      sharedPlaylists: prev.sharedPlaylists.map((item) =>
+        item.id === updated.id ? updated : item
+      ),
+    }));
+    await syncSharedPlaylistsToLocalPlaylists([updated]);
+    st.showToast(`«${track.title}» añadida por ${identity.displayName}`);
+  },
+
+  removeTrackFromCollaborativePlaylist: async (sharedId, trackId) => {
+    const st = get();
+    const sb = getSyncSupabaseClient();
+    const target = st.sharedPlaylists.find((s) => s.id === sharedId);
+    if (!sb || !target) return;
+    const updated = await removeTrackFromSharedPlaylist(sb, target, trackId);
+    set((prev) => ({
+      sharedPlaylists: prev.sharedPlaylists.map((item) =>
+        item.id === updated.id ? updated : item
+      ),
+    }));
+    await syncSharedPlaylistsToLocalPlaylists([updated]);
+    st.showToast('Eliminada de la playlist colaborativa');
+  },
+
+  joinSharedPlaylistLink: async (shareCode) => {
+    const st = get();
+    const sb = getSyncSupabaseClient();
+    const found = await fetchSharedPlaylistByCode(shareCode, sb);
+    if (!found) return null;
+    if (sb && st.authState.connected && st.authState.userId && found.allowLinkEdit) {
+      const joined = await joinSharedPlaylistByCode(sb, found, st.authState.userId);
+      set((prev) => ({
+        sharedPlaylists: [joined, ...prev.sharedPlaylists.filter((s) => s.id !== joined.id)],
+      }));
+      await syncSharedPlaylistsToLocalPlaylists([joined]);
+      return joined;
+    }
+    return found;
+  },
 
   updateUserProfile: async (input) => {
     const st = get();
@@ -5160,6 +5995,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       await recommendationEngine.clearPlayHistory();
       await libraryStore.setPlayHistory([]);
     }
+    syncUserLibraryContextToEngine();
     const shelves = await recommendationEngine.buildHomeShelves();
     const allRealTracks = Array.from(
       new Map(shelves.flatMap((s) => s.tracks ?? []).map((t) => [t.id, t])).values()
@@ -5215,6 +6051,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       tracks,
     });
     set({ playlists: libraryStore.getPlaylists() });
+    syncUserLibraryContextToEngine();
     scheduleLibraryCloudSync();
     return created;
   },
@@ -5236,6 +6073,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           ? null
           : prev.activeDetailView,
     }));
+    syncUserLibraryContextToEngine();
     scheduleLibraryCloudSync();
   },
 
@@ -5277,15 +6115,35 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   addTrackToPlaylist: async (playlistId, track) => {
     const existing = get().playlists.find((p) => p.id === playlistId);
     const alreadyIn = Boolean(existing?.tracks.some((t) => t.id === track.id));
-    await libraryStore.addTrackToPlaylist(playlistId, track);
+    const stamped = existing?.isCollaborative
+      ? stampTrackAddedBy(canonicalizeTrackArtists(track), getOwnAdderIdentity())
+      : canonicalizeTrackArtists(track);
+    await libraryStore.addTrackToPlaylist(playlistId, stamped);
     if (!alreadyIn) {
-      await recommendationEngine.recordSignal(track, 'add_to_playlist');
+      await recommendationEngine.recordSignal(stamped, 'add_to_playlist');
       scheduleLibraryCloudSync();
+      const sb = getSyncSupabaseClient();
+      const st = get();
+      if (sb && existing?.isCollaborative && existing.shareCode && st.authState.connected) {
+        const linked = st.sharedPlaylists.find(
+          (s) => s.shareCode?.toUpperCase() === existing.shareCode?.toUpperCase()
+        );
+        if (linked) {
+          void addTrackToSharedPlaylist(sb, linked, stamped, getOwnAdderIdentity()).then((updated) => {
+            set((prev) => ({
+              sharedPlaylists: prev.sharedPlaylists.map((item) =>
+                item.id === updated.id ? updated : item
+              ),
+            }));
+          }).catch(() => {});
+        }
+      }
     }
     set({
       playlists: libraryStore.getPlaylists(),
       affinityProfile: recommendationEngine.getAffinityProfile(),
     });
+    syncUserLibraryContextToEngine();
     if (existing) {
       get().showToast(
         alreadyIn
@@ -5296,9 +6154,27 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   },
 
   removeTrackFromPlaylist: async (playlistId, trackId) => {
+    const existing = get().playlists.find((p) => p.id === playlistId);
     await libraryStore.removeTrackFromPlaylist(playlistId, trackId);
     set({ playlists: libraryStore.getPlaylists() });
+    syncUserLibraryContextToEngine();
     scheduleLibraryCloudSync();
+    const sb = getSyncSupabaseClient();
+    const st = get();
+    if (sb && existing?.isCollaborative && existing.shareCode && st.authState.connected) {
+      const linked = st.sharedPlaylists.find(
+        (s) => s.shareCode?.toUpperCase() === existing.shareCode?.toUpperCase()
+      );
+      if (linked) {
+        void removeTrackFromSharedPlaylist(sb, linked, trackId).then((updated) => {
+          set((prev) => ({
+            sharedPlaylists: prev.sharedPlaylists.map((item) =>
+              item.id === updated.id ? updated : item
+            ),
+          }));
+        }).catch(() => {});
+      }
+    }
     get().showToast('Eliminada de la playlist');
   },
 
@@ -5322,7 +6198,12 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     if (!q) return get().searchResults.songs.slice(0, 12);
     try {
       const bundle = await musicProvider.search(q, 'song');
-      return bundle.songs.slice(0, 16);
+      if (bundle.songs.length > 0) return bundle.songs.slice(0, 16);
+    } catch {
+      // fall back to public catalog
+    }
+    try {
+      return await searchPublicCatalog(q);
     } catch {
       return [];
     }
@@ -5370,12 +6251,12 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     };
 
     const playlistSeeds = [...pl.tracks];
-    // Pick up to 3 varied seeds across playlist + explicit seedTrack just added
+    // Pick up to 5 distributed seeds across playlist + explicit seedTrack just added
     const seedTracks: Track[] = [];
     if (options?.seedTrack) seedTracks.push(options.seedTrack);
     if (playlistSeeds.length > 0) {
-      const step = Math.max(1, Math.floor(playlistSeeds.length / 3));
-      for (let i = playlistSeeds.length - 1; i >= 0 && seedTracks.length < 4; i -= step) {
+      const step = Math.max(1, Math.floor(playlistSeeds.length / 4));
+      for (let i = playlistSeeds.length - 1; i >= 0 && seedTracks.length < 5; i -= step) {
         const cand = playlistSeeds[i]!;
         if (!seedTracks.some((s) => s.id === cand.id)) seedTracks.push(cand);
       }
@@ -5389,35 +6270,100 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         ...(options?.seedTrack?.artists.map((a) => a.name) ?? []),
         ...pl.tracks.flatMap((t) => t.artists.map((a) => a.name)),
       ])
-    ).slice(0, 3);
+    ).slice(0, 4);
 
     const [relRes, artRes] = await Promise.all([
       Promise.allSettled(seedTracks.map((t) => musicProvider.getRelated(t.id))),
       Promise.allSettled(artistSeeds.map((name) => musicProvider.getArtist(name))),
     ]);
 
+    const relatedArtistNames: string[] = [];
+    const olderAlbumsToSample: AlbumSummary[] = [];
+
     for (const r of relRes) {
       if (r.status !== 'fulfilled') continue;
       for (const t of r.value.tracks ?? []) pushCand(t);
+      for (const ar of r.value.artists ?? []) {
+        if (!artistSeeds.some((s) => s.toLowerCase() === ar.name.toLowerCase())) {
+          relatedArtistNames.push(ar.name);
+        }
+      }
     }
     for (const r of artRes) {
       if (r.status !== 'fulfilled') continue;
       for (const t of r.value.topSongs ?? []) pushCand(t);
-    }
-    for (const t of [...st.searchResults.songs, ...st.recommendedQueue, ...FALLBACK_TRACKS]) {
-      pushCand(t);
+      for (const relAr of r.value.relatedArtists ?? []) {
+        if (!artistSeeds.some((s) => s.toLowerCase() === relAr.name.toLowerCase())) {
+          relatedArtistNames.push(relAr.name);
+        }
+      }
+      // Also pick older albums (skip index 0 which is typically the newest album) so older classics & deep cuts appear
+      const older = [...(r.value.albums ?? [])]
+        .sort((a, b) => (a.year ?? 2020) - (b.year ?? 2020))
+        .slice(0, 2);
+      olderAlbumsToSample.push(...older);
     }
 
-    return recommendationEngine.rerankTracks(Array.from(candidates.values()), {
+    // Second wave: fetch related artists & older albums so recommendations span eras & albums, not just this year
+    const uniqRelatedArtists = Array.from(new Set(relatedArtistNames)).slice(0, 4);
+    const uniqOlderAlbums = olderAlbumsToSample
+      .filter((a, i, arr) => arr.findIndex((x) => x.id === a.id) === i)
+      .slice(0, 3);
+    if (uniqRelatedArtists.length > 0 || uniqOlderAlbums.length > 0) {
+      const [relArtDetails, olderAlbDetails] = await Promise.all([
+        Promise.allSettled(uniqRelatedArtists.map((n) => musicProvider.getArtist(n))),
+        Promise.allSettled(uniqOlderAlbums.map((al) => musicProvider.getAlbum(al.id))),
+      ]);
+      for (const r of relArtDetails) {
+        if (r.status === 'fulfilled') {
+          for (const t of r.value.topSongs ?? []) pushCand(t);
+        }
+      }
+      for (const r of olderAlbDetails) {
+        if (r.status === 'fulfilled') {
+          for (const t of r.value.tracks ?? []) pushCand(t);
+        }
+      }
+    }
+
+    for (const t of [...st.searchResults.songs, ...st.recommendedQueue, ...FALLBACK_TRACKS]) {
+      if (candidates.size < 18) pushCand(t);
+    }
+
+    const reranked = recommendationEngine.rerankTracks(Array.from(candidates.values()), {
       maxPerArtistInWindow: 2,
-      limit: 24,
+      limit: 60,
     });
+
+    // Enforce rich album & era diversity: max 1 track per album in the first pass, mixing older & newer releases
+    const albumUsed = new Map<string, number>();
+    const playlistAlbumCounts = new Map<string, number>();
+    for (const pt of pl.tracks) {
+      const ak = (pt.album?.name ?? '').trim().toLowerCase();
+      if (ak) playlistAlbumCounts.set(ak, (playlistAlbumCounts.get(ak) ?? 0) + 1);
+    }
+    const primaryPass: Track[] = [];
+    const overflowPass: Track[] = [];
+    for (const cand of reranked) {
+      const ak = (cand.album?.name ?? '').trim().toLowerCase();
+      const inPlAlbum = ak ? (playlistAlbumCounts.get(ak) ?? 0) : 0;
+      const usedInOut = ak ? (albumUsed.get(ak) ?? 0) : 0;
+      if (ak && (usedInOut >= 1 || inPlAlbum >= 3)) {
+        overflowPass.push(cand);
+      } else {
+        if (ak) albumUsed.set(ak, usedInOut + 1);
+        primaryPass.push(cand);
+      }
+    }
+
+    return [...primaryPass, ...overflowPass].slice(0, 24);
   },
 
   toggleLike: async (track) => {
     const target = track ?? get().currentTrack;
     const likedNow = await libraryStore.toggleLikeTrack(target);
     await recommendationEngine.recordSignal(target, likedNow ? 'like' : 'unlike');
+    syncUserLibraryContextToEngine();
     const shelves = await recommendationEngine.buildHomeShelves();
     set({
       likedTracks: libraryStore.getLikedTracks(),
@@ -5542,6 +6488,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       importUrlInput: '',
       activeTab: 'Biblioteca',
     });
+    syncUserLibraryContextToEngine();
     scheduleLibraryCloudSync();
   },
 
@@ -5614,6 +6561,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       targetDeviceId: '*',
       type: 'request_state',
     });
+    void get().hydrateSocialAndSubscribe();
   },
 
   signUpSupabase: async (email, password) => {
@@ -5746,6 +6694,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           targetDeviceId: '*',
           type: 'request_state',
         });
+        void get().hydrateSocialAndSubscribe();
       } else {
         set({ authCallbackError: 'No se recibió una sesión válida de Google. Inténtalo de nuevo.' });
       }
@@ -5762,8 +6711,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       cloudPrefsSaveTimer = null;
     }
     pendingCloudPrefsPayload = null;
+    cleanupJamRealtime();
+    cleanupSocialRealtime();
     clearSessionTrackMemory();
     recommendationEngine.setFavoriteArtists([]);
+    recommendationEngine.setUserLibraryContext({ libraryTracks: [], likedTracks: [] });
     await syncEngine.signOut();
     if (typeof window !== 'undefined') {
       try {
@@ -5795,7 +6747,13 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       userProfile: null,
       needsProfileSetup: false,
       favoriteArtists: [],
+      friends: [],
+      sharedPlaylists: [],
       activeJamCode: null,
+      activeJamSession: null,
+      activeJamRole: null,
+      activeJamRequests: [],
+      jamInviteModalOpen: false,
       onlineDevices: syncEngine.getOnlineDevices(),
       remoteControlledDeviceId: null,
       remoteDeviceSnapshot: null,
@@ -5810,7 +6768,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       seedArtists: recommendationEngine.getSeedArtists(),
       affinityProfile: recommendationEngine.getAffinityProfile(),
       activeDetailView:
-        prev.activeDetailView?.kind === 'local_playlist' ? null : prev.activeDetailView,
+        prev.activeDetailView?.kind === 'local_playlist' ||
+        prev.activeDetailView?.kind === 'shared_playlist'
+          ? null
+          : prev.activeDetailView,
     }));
     void get().refreshHomeRecommendations(false);
   },

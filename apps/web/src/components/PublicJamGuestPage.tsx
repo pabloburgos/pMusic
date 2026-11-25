@@ -1,10 +1,12 @@
-import React, { useEffect, useState } from 'react';
-import { Check, Clock, Disc3, Loader2, Music2, Plus, Search, Sparkles } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Check, Clock, Loader2, Music2, Pencil, Plus, Radio, Search, Sparkles, X } from 'lucide-react';
 import type { Track } from '@pmusic/core';
 import { PMusicLogo } from './PMusicLogo.tsx';
+import { UserAvatar } from './UserAvatar.tsx';
 import {
   fetchPublicJamRequests,
   fetchPublicJamSession,
+  getAnonSupabaseClient,
   searchPublicCatalog,
   submitPublicJamRequest,
   type JamRequestRecord,
@@ -18,29 +20,32 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
   const [loading, setLoading] = useState(true);
   const [guestName, setGuestName] = useState<string>(() => {
     try {
-      return sessionStorage.getItem('pmusic.jam.guestName') ?? '';
+      return localStorage.getItem('pmusic.jam.guestName') ?? sessionStorage.getItem('pmusic.jam.guestName') ?? '';
     } catch {
       return '';
     }
   });
   const [nameConfirmed, setNameConfirmed] = useState<boolean>(() => {
     try {
-      return Boolean(sessionStorage.getItem('pmusic.jam.guestName'));
+      return Boolean(
+        localStorage.getItem('pmusic.jam.guestName') || sessionStorage.getItem('pmusic.jam.guestName')
+      );
     } catch {
       return false;
     }
   });
+  const [editingNickname, setEditingNickname] = useState(false);
 
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<Track[]>([]);
   const [requestedIds, setRequestedIds] = useState<Set<string>>(new Set());
   const [feedback, setFeedback] = useState<string | null>(null);
+  const searchSeqRef = useRef(0);
 
   useEffect(() => {
     let active = true;
     const load = async () => {
-      if (typeof document !== 'undefined' && document.hidden) return;
       const [s, r] = await Promise.all([
         fetchPublicJamSession(cleanCode),
         fetchPublicJamRequests(cleanCode),
@@ -51,23 +56,77 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
       setLoading(false);
     };
     void load();
-    const timer = window.setInterval(() => void load(), 4000);
+
+    const sb = getAnonSupabaseClient();
+    const channel = sb
+      .channel(`pmusic-public-jam:${cleanCode}:${Date.now()}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'jam_sessions', filter: `code=eq.${cleanCode}` },
+        () => void load()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'jam_requests', filter: `jam_code=eq.${cleanCode}` },
+        () => void load()
+      )
+      .subscribe();
+
+    const timer = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      void load();
+    }, 5500);
+
     return () => {
       active = false;
       window.clearInterval(timer);
+      void channel.unsubscribe?.();
+      sb.removeChannel?.(channel);
     };
   }, [cleanCode]);
 
+  // Live debounced search as the guest types
+  useEffect(() => {
+    const cleanQ = query.trim();
+    if (cleanQ.length < 2) {
+      if (cleanQ.length === 0) setResults([]);
+      setSearching(false);
+      return;
+    }
+    const seq = ++searchSeqRef.current;
+    setSearching(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const list = await searchPublicCatalog(cleanQ);
+        if (seq === searchSeqRef.current) {
+          setResults(list);
+        }
+      } catch {
+        if (seq === searchSeqRef.current) setResults([]);
+      } finally {
+        if (seq === searchSeqRef.current) setSearching(false);
+      }
+    }, 260);
+    return () => window.clearTimeout(timer);
+  }, [query]);
+
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!query.trim()) return;
+    const cleanQ = query.trim();
+    if (!cleanQ) return;
+    const seq = ++searchSeqRef.current;
     setSearching(true);
     setFeedback(null);
     try {
-      const list = await searchPublicCatalog(query);
-      setResults(list);
+      const list = await searchPublicCatalog(cleanQ);
+      if (seq === searchSeqRef.current) {
+        setResults(list);
+        if (list.length === 0) {
+          setFeedback('No encontramos canciones con esa búsqueda. Prueba otro título o artista.');
+        }
+      }
     } finally {
-      setSearching(false);
+      if (seq === searchSeqRef.current) setSearching(false);
     }
   };
 
@@ -81,18 +140,20 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
       return;
     }
     try {
+      const cleanNick = guestName.trim() || 'Invitado';
       const created = await submitPublicJamRequest(
         cleanCode,
-        guestName || 'Invitado',
+        cleanNick,
         track,
-        session.allowGuestDirectAdd
+        session.allowGuestDirectAdd,
+        { displayName: cleanNick, avatarUrl: null }
       );
       setRequests((prev) => [created, ...prev]);
       setRequestedIds((prev) => new Set(prev).add(track.id));
       setFeedback(
         session.allowGuestDirectAdd
-          ? `"${track.title}" añadida a la cola de ${session.hostName}`
-          : `"${track.title}" enviada para aprobación de ${session.hostName}`
+          ? `«${track.title}» añadida a la cola de ${session.hostName}`
+          : `«${track.title}» enviada para aprobación de ${session.hostName}`
       );
     } catch (err) {
       setFeedback(err instanceof Error ? err.message : 'No se pudo enviar la canción');
@@ -121,7 +182,7 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
     );
   }
 
-  if (!nameConfirmed) {
+  if (!nameConfirmed || editingNickname) {
     return (
       <div className="flex min-h-dvh flex-col items-center justify-center bg-[#050507] px-6 text-white">
         <div className="w-full max-w-sm space-y-6 text-center">
@@ -129,12 +190,12 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
             <PMusicLogo size={46} variant="wordmark-only" animated />
           </div>
           <div>
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/[0.06] px-3 py-1 text-[11px] font-semibold uppercase tracking-widest text-white/75">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/25 bg-emerald-500/12 px-3 py-1 text-[11px] font-semibold uppercase tracking-widest text-emerald-300">
               <Sparkles className="h-3 w-3" /> Jam de {session.hostName}
             </span>
-            <h1 className="mt-3 text-xl font-bold">Pide tus canciones</h1>
+            <h1 className="mt-3 text-xl font-bold">Añade canciones a la cola</h1>
             <p className="mt-1 text-xs text-white/55">
-              Pon tu apodo para que sepan quién pidió cada temazo.
+              Pon tu apodo para que sepan quién ha añadido cada tema.
             </p>
           </div>
           <form
@@ -143,11 +204,13 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
               const clean = guestName.trim();
               if (!clean) return;
               try {
+                localStorage.setItem('pmusic.jam.guestName', clean);
                 sessionStorage.setItem('pmusic.jam.guestName', clean);
               } catch {
                 // ignore
               }
               setNameConfirmed(true);
+              setEditingNickname(false);
             }}
             className="space-y-3"
           >
@@ -159,13 +222,13 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
               maxLength={32}
               required
               autoFocus
-              className="w-full rounded-full border border-white/15 bg-white/[0.05] px-5 py-3.5 text-center text-sm text-white placeholder-white/35 outline-none focus:border-white/40"
+              className="w-full rounded-full border border-white/15 bg-white/[0.06] px-5 py-3.5 text-center text-sm text-white placeholder-white/35 outline-none focus:border-white/40"
             />
             <button
               type="submit"
               className="w-full cursor-pointer rounded-full bg-white px-5 py-3.5 text-sm font-bold text-black transition hover:bg-white/90"
             >
-              Entrar a la Jam
+              {editingNickname ? 'Guardar apodo' : 'Entrar a añadir canciones'}
             </button>
           </form>
         </div>
@@ -175,46 +238,33 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
 
   return (
     <div className="min-h-dvh bg-[#050507] text-white">
-      <div className="mx-auto max-w-xl px-4 pb-16 pt-6 sm:px-6">
-        <header className="flex items-center justify-between gap-3 pb-5">
+      <div className="mx-auto max-w-xl px-4 pb-16 pt-5 sm:px-6">
+        <header className="flex flex-wrap items-center justify-between gap-2 pb-4">
           <PMusicLogo size={26} variant="wordmark-only" />
           <div className="flex items-center gap-2">
             <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/30 bg-emerald-500/15 px-3 py-1 text-[11px] font-semibold text-emerald-300">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <Radio className="h-3 w-3 animate-pulse" />
               Jam · {session.hostName}
             </span>
+            <button
+              type="button"
+              onClick={() => setEditingNickname(true)}
+              className="inline-flex items-center gap-1.5 rounded-full border border-white/12 bg-white/[0.05] px-2.5 py-1 text-[11px] font-semibold text-white/80 hover:bg-white/10"
+              title="Cambiar tu apodo"
+            >
+              <UserAvatar name={guestName || 'Invitado'} size="xs" />
+              <span className="max-w-[90px] truncate">{guestName}</span>
+              <Pencil className="h-2.5 w-2.5 opacity-65" />
+            </button>
           </div>
         </header>
 
-        {/* Now Playing Live Card (Read-Only) */}
-        {session.currentTrack && (
-          <section className="mb-6 flex items-center gap-4 rounded-3xl border border-white/12 bg-white/[0.04] p-4">
-            {session.currentTrack.thumbnailUrl ? (
-              <img
-                src={session.currentTrack.thumbnailUrl}
-                alt=""
-                className="h-16 w-16 shrink-0 rounded-2xl object-cover shadow-lg"
-              />
-            ) : (
-              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-white/10">
-                <Disc3 className="h-7 w-7 text-white/60" />
-              </div>
-            )}
-            <div className="min-w-0 flex-1">
-              <div className="text-[10px] font-bold uppercase tracking-widest text-white/45">
-                {session.isPlaying ? 'Sonando ahora' : 'En pausa'}
-              </div>
-              <div className="truncate text-base font-bold text-white">
-                {session.currentTrack.title}
-              </div>
-              <div className="truncate text-xs text-white/60">
-                {session.currentTrack.artists?.map((a) => a.name).join(', ')}
-              </div>
-            </div>
-          </section>
-        )}
+        <div className="mb-4 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-xs text-white/75">
+          Modo web invitado · Solo para buscar y añadir temas directamente a la cola de{' '}
+          <strong className="text-white">{session.hostName}</strong>.
+        </div>
 
-        {/* Search & Request Form */}
+        {/* Fast Search Bar — Only add songs */}
         <form onSubmit={handleSearch} className="mb-4 flex gap-2">
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40" />
@@ -222,9 +272,22 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Busca una canción para pedir..."
-              className="w-full rounded-full border border-white/15 bg-white/[0.05] py-3 pl-11 pr-4 text-sm text-white placeholder-white/40 outline-none focus:border-white/40"
+              placeholder="Busca una canción para añadir a la Jam..."
+              className="w-full rounded-full border border-white/15 bg-white/[0.06] py-3 pl-11 pr-9 text-sm text-white placeholder-white/40 outline-none focus:border-white/40"
             />
+            {query && (
+              <button
+                type="button"
+                aria-label="Limpiar búsqueda"
+                onClick={() => {
+                  setQuery('');
+                  setResults([]);
+                }}
+                className="absolute right-3 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full text-white/50 hover:bg-white/10 hover:text-white"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
           <button
             type="submit"
@@ -236,16 +299,16 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
         </form>
 
         {feedback && (
-          <div className="mb-4 rounded-2xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-xs text-white/85">
+          <div className="mb-4 rounded-2xl border border-emerald-400/25 bg-emerald-500/10 px-4 py-2.5 text-xs font-medium text-emerald-200">
             {feedback}
           </div>
         )}
 
         {/* Search Results */}
         {results.length > 0 && (
-          <section className="mb-8 space-y-2">
-            <h2 className="text-xs font-bold uppercase tracking-wider text-white/45">
-              Resultados — Toca para pedir
+          <section className="mb-7 space-y-2">
+            <h2 className="text-[11px] font-bold uppercase tracking-wider text-white/45">
+              Resultados — Toca para añadir a la cola
             </h2>
             <div className="space-y-1.5">
               {results.map((track) => {
@@ -253,7 +316,7 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
                 return (
                   <div
                     key={track.id}
-                    className="flex items-center gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.03] p-2.5"
+                    className="flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.04] p-2.5"
                   >
                     <img
                       src={track.thumbnailUrl}
@@ -277,7 +340,7 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
                       }`}
                     >
                       {already ? <Check className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
-                      {already ? 'Pedida' : 'Pedir'}
+                      {already ? 'Añadida' : 'Añadir'}
                     </button>
                   </div>
                 );
@@ -286,19 +349,18 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
           </section>
         )}
 
-        {/* Live Requests Queue */}
+        {/* Live Add-Only Jam Queue */}
         <section className="space-y-2.5">
           <div className="flex items-center justify-between">
-            <h2 className="text-xs font-bold uppercase tracking-wider text-white/45">
-              Peticiones en esta Jam ({requests.length})
+            <h2 className="text-[11px] font-bold uppercase tracking-wider text-white/45">
+              Añadidas a la cola ({requests.length + (session.queue?.length ?? 0)})
             </h2>
-            <span className="text-[11px] text-white/40">Hola, {guestName}</span>
           </div>
 
-          {requests.length === 0 ? (
+          {requests.length === 0 && (!session.queue || session.queue.length === 0) ? (
             <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-6 text-center text-xs text-white/45">
               <Music2 className="mx-auto mb-2 h-6 w-6 opacity-50" />
-              Aún no hay peticiones. ¡Sé el primero en pedir una canción!
+              Aún no hay temas añadidos. ¡Busca arriba y añade el primero!
             </div>
           ) : (
             <div className="space-y-2">
@@ -318,8 +380,15 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
                     <div className="truncate text-sm font-semibold text-white">
                       {req.track?.title}
                     </div>
-                    <div className="truncate text-[11px] text-white/55">
-                      Pedido por <strong className="text-white/85">{req.guestName}</strong>
+                    <div className="mt-0.5 flex items-center gap-1.5 truncate text-[11px] text-white/60">
+                      <UserAvatar
+                        src={req.track?.addedBy?.avatarUrl}
+                        name={req.guestName}
+                        size="xs"
+                      />
+                      <span>
+                        Añadida por <strong className="text-white/90">{req.guestName}</strong>
+                      </span>
                     </div>
                   </div>
                   <span

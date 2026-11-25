@@ -22,6 +22,8 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Plus,
+  QrCode,
+  Radio,
   Repeat,
   Repeat1,
   Search,
@@ -69,6 +71,7 @@ import { WrappedStoriesModal } from './components/WrappedStoriesModal.tsx';
 import { SocialScreen } from './components/SocialScreen.tsx';
 import { PublicJamGuestPage } from './components/PublicJamGuestPage.tsx';
 import { SharedPlaylistLinkModal } from './components/SharedPlaylistLinkModal.tsx';
+import { UserAvatar } from './components/UserAvatar.tsx';
 import {
   clearDraggedTrack,
   readTrackFromDropEvent,
@@ -86,8 +89,28 @@ import {
   DjPopover,
   EqAndCrossfadeSheet,
   ImportPlaylistModal,
+  JamInviteModal,
   NowPlayingSheet,
 } from './components/Overlays.tsx';
+
+function hasStoredBrowserAuthSession(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (isElectronDesktopRuntime() || window.location?.hostname === 'appassets.pmusic.local') {
+    return true;
+  }
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && /^sb-.*-auth-token$/.test(k)) {
+        const val = localStorage.getItem(k);
+        if (val && val.includes('access_token')) return true;
+      }
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return false;
+}
 
 export const App: React.FC = () => {
   const publicJamCode =
@@ -96,13 +119,16 @@ export const App: React.FC = () => {
       : null;
 
   if (publicJamCode) {
+    if (hasStoredBrowserAuthSession()) {
+      return <PMusicMainApp initialJamCode={publicJamCode.toUpperCase()} />;
+    }
     return <PublicJamGuestPage code={publicJamCode} />;
   }
 
   return <PMusicMainApp />;
 };
 
-const PMusicMainApp: React.FC = () => {
+const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJamCode = null }) => {
   const {
     initApp,
     appReady,
@@ -153,6 +179,9 @@ const PMusicMainApp: React.FC = () => {
     sleepTimerRemainingSec,
     authState,
     userProfile,
+    sharedPlaylists,
+    activeJamSession,
+    activeJamRole,
     setAuthOnboardingOpen,
     setActiveTab,
     setSidebarCollapsed,
@@ -168,6 +197,7 @@ const PMusicMainApp: React.FC = () => {
     playFromVoiceQuery,
     setLibraryCategory,
     openLocalPlaylistDetail,
+    openSharedPlaylistDetail,
     closeDetailView,
     playTrack,
     togglePlayPause,
@@ -186,6 +216,9 @@ const PMusicMainApp: React.FC = () => {
     removeQueueItem,
     addToQueue,
     playNextInQueue,
+    addTrackToActiveJam,
+    joinJamInApp,
+    setJamInviteModalOpen,
     searchTracksForPlaylist,
     openTrackMenu,
     showToast,
@@ -222,6 +255,15 @@ const PMusicMainApp: React.FC = () => {
     const pm = window.location.pathname.match(/^\/playlist\/([A-Za-z0-9]{4,16})\/?$/);
     return pm ? pm[1]!.toUpperCase() : null;
   });
+  const initialJamHandledRef = useRef(false);
+
+  useEffect(() => {
+    if (!initialJamCode || !appReady || initialJamHandledRef.current) return;
+    if (authState.connected) {
+      initialJamHandledRef.current = true;
+      void joinJamInApp(initialJamCode);
+    }
+  }, [initialJamCode, appReady, authState.connected, joinJamInApp]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -961,7 +1003,9 @@ const PMusicMainApp: React.FC = () => {
         ? `album:${activeDetailView.transitionKey ?? activeDetailView.data.album.id}`
         : activeDetailView.kind === 'playlist'
           ? `playlist:${activeDetailView.data.playlist.id}`
-          : `local:${activeDetailView.playlistId}`
+          : activeDetailView.kind === 'shared_playlist'
+            ? `shared:${activeDetailView.sharedId}`
+            : `local:${activeDetailView.playlistId}`
     : `tab:${activeTab}`;
 
   useEffect(() => {
@@ -1027,6 +1071,10 @@ const PMusicMainApp: React.FC = () => {
       void prevTrack();
     }
   };
+
+  if (initialJamCode && appReady && !authState.connected) {
+    return <PublicJamGuestPage code={initialJamCode} />;
+  }
 
   return (
     <div
@@ -1125,17 +1173,12 @@ const PMusicMainApp: React.FC = () => {
                 className="pm-no-drag pm-btn-secondary pm-pressable inline-flex h-8 items-center gap-2 rounded-full pl-1.5 pr-3 text-xs font-semibold"
                 title={authState.email ?? 'Tu cuenta pMusic'}
               >
-                {userProfile?.avatarUrl || authState.avatarUrl ? (
-                  <img
-                    src={userProfile?.avatarUrl || authState.avatarUrl || ''}
-                    alt=""
-                    className="h-5 w-5 rounded-full object-cover"
-                  />
-                ) : (
-                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#fa233b] text-[10px] font-black text-white">
-                    {(userProfile?.displayName || authState.email || 'P').slice(0, 1).toUpperCase()}
-                  </span>
-                )}
+                <UserAvatar
+                  src={userProfile?.avatarUrl || authState.avatarUrl}
+                  name={userProfile?.displayName || authState.email || 'P'}
+                  size="sm"
+                  className="!h-5 !w-5 !text-[10px]"
+                />
                 <span className="max-w-[110px] truncate">
                   {userProfile?.username ? `@${userProfile.username}` : authState.email?.split('@')[0] ?? 'Cuenta'}
                 </span>
@@ -1196,17 +1239,11 @@ const PMusicMainApp: React.FC = () => {
                 onClick={() => setSettingsOpen(true)}
                 className="pm-glass-chip pm-pressable inline-flex h-9 items-center gap-1.5 rounded-full pl-1.5 pr-2.5 text-xs font-semibold pm-text-primary"
               >
-                {userProfile?.avatarUrl || authState.avatarUrl ? (
-                  <img
-                    src={userProfile?.avatarUrl || authState.avatarUrl || ''}
-                    alt=""
-                    className="h-6 w-6 rounded-full object-cover"
-                  />
-                ) : (
-                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#fa233b] text-[10px] font-black text-white">
-                    {(userProfile?.displayName || authState.email || 'P').slice(0, 1).toUpperCase()}
-                  </span>
-                )}
+                <UserAvatar
+                  src={userProfile?.avatarUrl || authState.avatarUrl}
+                  name={userProfile?.displayName || authState.email || 'P'}
+                  size="sm"
+                />
                 <span className="max-w-[76px] truncate">
                   {userProfile?.username ? `@${userProfile.username}` : 'Cuenta'}
                 </span>
@@ -1567,8 +1604,13 @@ const PMusicMainApp: React.FC = () => {
                           </div>
                         )}
                         <div className="min-w-0 flex-1">
-                          <div className="truncate text-[13px] pm-text-primary">
-                            {pl.name}
+                          <div className="flex items-center gap-1.5">
+                            <span className="truncate text-[13px] pm-text-primary">
+                              {pl.name}
+                            </span>
+                            {pl.isCollaborative && (
+                              <Users className="h-3 w-3 shrink-0 text-emerald-400" />
+                            )}
                           </div>
                           <div className="truncate text-[11px] pm-text-tertiary">
                             {isDropActive ? '+ Soltar para añadir' : `${pl.tracks.length} canciones`}
@@ -1577,6 +1619,45 @@ const PMusicMainApp: React.FC = () => {
                       </button>
                     );
                   })}
+
+                  {sharedPlaylists
+                    .filter(
+                      (sp) =>
+                        !sp.shareCode ||
+                        !playlists.some(
+                          (lp) => lp.shareCode?.toUpperCase() === sp.shareCode?.toUpperCase()
+                        )
+                    )
+                    .slice(0, 8)
+                    .map((sp) => (
+                      <button
+                        key={`sb-sp-${sp.id}`}
+                        type="button"
+                        onClick={() => openSharedPlaylistDetail(sp.id)}
+                        className="pm-hover flex w-full items-center gap-3 rounded-[10px] px-2 py-1.5 text-left transition-all"
+                      >
+                        {sp.coverUrl ?? sp.tracks[0]?.thumbnailUrl ? (
+                          <img
+                            src={sp.coverUrl ?? sp.tracks[0]?.thumbnailUrl}
+                            alt=""
+                            className="h-8 w-8 shrink-0 rounded-[7px] object-cover"
+                          />
+                        ) : (
+                          <div className="pm-elevated flex h-8 w-8 shrink-0 items-center justify-center rounded-[7px] text-xs font-bold pm-text-secondary">
+                            {sp.name.slice(0, 1).toUpperCase()}
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="truncate text-[13px] pm-text-primary">{sp.name}</span>
+                            <Users className="h-3 w-3 shrink-0 text-emerald-400" />
+                          </div>
+                          <div className="truncate text-[11px] pm-text-tertiary">
+                            {sp.kind === 'blend' ? 'Blend' : 'Colaborativa'} · {sp.tracks.length}
+                          </div>
+                        </div>
+                      </button>
+                    ))}
                 </div>
               )}
             </div>
@@ -1869,25 +1950,45 @@ const PMusicMainApp: React.FC = () => {
               </div>
             )}
 
-            {/* Next in Queue Preview with Drag-and-Drop Reorder + Quick Song Search */}
+            {/* Next in Queue Preview with Spotify-style Live Jam Queue + Drag Reorder + Quick Song Search */}
             <div className="space-y-2.5 border-t pm-border pt-4">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold pm-text-primary">
-                  A continuación
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNowPlayingOpen(true);
-                    setNowPlayingTab('Cola');
-                  }}
-                  className="text-[11px] font-semibold pm-text-secondary hover:text-[var(--pm-text-primary)]"
-                >
-                  Abrir cola
-                </button>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate text-xs font-bold pm-text-primary">
+                    {activeJamSession?.active
+                      ? `Cola de Jam · ${activeJamSession.code}`
+                      : 'A continuación'}
+                  </span>
+                  {activeJamSession?.active && (
+                    <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-400 animate-pulse" />
+                  )}
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  {activeJamSession?.active && (
+                    <button
+                      type="button"
+                      onClick={() => setJamInviteModalOpen(true)}
+                      className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10.5px] font-bold text-emerald-300 hover:bg-emerald-500/30"
+                      title="Invitar amigos o mostrar QR"
+                    >
+                      <QrCode className="h-3 w-3" />
+                      Invitar
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNowPlayingOpen(true);
+                      setNowPlayingTab('Cola');
+                    }}
+                    className="text-[11px] font-semibold pm-text-secondary hover:text-[var(--pm-text-primary)]"
+                  >
+                    Abrir cola
+                  </button>
+                </div>
               </div>
 
-              {/* Compact Quick Search to Add Songs Straight to Queue */}
+              {/* Compact Quick Search to Add Songs Straight to Queue or Active Jam */}
               <div className="relative">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 pm-text-tertiary" />
                 <input
@@ -1895,7 +1996,11 @@ const PMusicMainApp: React.FC = () => {
                   data-testid="sidebar-queue-search-input"
                   value={sidebarSearchQuery}
                   onChange={(e) => setSidebarSearchQuery(e.target.value)}
-                  placeholder="Añadir canción a la cola…"
+                  placeholder={
+                    activeJamSession?.active
+                      ? 'Añadir tema a la Jam…'
+                      : 'Añadir canción a la cola…'
+                  }
                   aria-label="Buscar canción para añadir a la cola"
                   className="w-full rounded-[10px] border pm-border bg-white/[0.04] py-1.5 pl-8 pr-7 text-[12px] pm-text-primary placeholder:pm-text-tertiary focus:border-white/25 focus:outline-none"
                 />
@@ -1947,24 +2052,26 @@ const PMusicMainApp: React.FC = () => {
                             </div>
                           </div>
                           <div className="flex shrink-0 items-center gap-0.5">
+                            {!(activeJamSession?.active && activeJamRole === 'guest') && (
+                              <button
+                                type="button"
+                                title="Reproducir a continuación"
+                                aria-label={`Poner ${resTrack.title} a continuación`}
+                                onClick={() => {
+                                  void addTrackToActiveJam(resTrack, true);
+                                  setSidebarAddedIds((p) => ({ ...p, [resTrack.id]: true }));
+                                }}
+                                className="pm-pressable flex h-6 w-6 items-center justify-center rounded-full pm-text-secondary hover:bg-white/15 hover:text-[var(--pm-text-primary)]"
+                              >
+                                <ListStart className="h-3.5 w-3.5" />
+                              </button>
+                            )}
                             <button
                               type="button"
-                              title="Reproducir a continuación"
-                              aria-label={`Poner ${resTrack.title} a continuación`}
-                              onClick={() => {
-                                playNextInQueue(resTrack);
-                                setSidebarAddedIds((p) => ({ ...p, [resTrack.id]: true }));
-                              }}
-                              className="pm-pressable flex h-6 w-6 items-center justify-center rounded-full pm-text-secondary hover:bg-white/15 hover:text-[var(--pm-text-primary)]"
-                            >
-                              <ListStart className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              title="Añadir al final de la cola"
+                              title={activeJamSession?.active ? 'Añadir a la Jam' : 'Añadir al final de la cola'}
                               aria-label={`Añadir ${resTrack.title} a la cola`}
                               onClick={() => {
-                                addToQueue(resTrack);
+                                void addTrackToActiveJam(resTrack, false);
                                 setSidebarAddedIds((p) => ({ ...p, [resTrack.id]: true }));
                               }}
                               className="pm-pressable flex h-6 w-6 items-center justify-center rounded-full pm-text-secondary hover:bg-white/15 hover:text-[var(--pm-text-primary)]"
@@ -1984,7 +2091,10 @@ const PMusicMainApp: React.FC = () => {
               )}
 
               <div className="space-y-1">
-                {upNextQueue.map((track, offset) => {
+                {(activeJamSession?.active && activeJamRole === 'guest'
+                  ? activeJamSession.queue.filter((t) => t.id !== (activeJamSession.currentTrack?.id ?? '')).slice(0, 24)
+                  : upNextQueue
+                ).map((track, offset) => {
                   const realIdx = queueIndex + 1 + offset;
                   const isDropTarget =
                     sidebarDragOverIdx === realIdx && sidebarDragFromIdx !== realIdx;
@@ -2047,12 +2157,25 @@ const PMusicMainApp: React.FC = () => {
                         >
                           {track.title}
                         </button>
-                        <div className="truncate text-[11px] pm-text-tertiary">
+                        <div className="flex items-center gap-1 truncate text-[11px] pm-text-tertiary">
                           <ArtistLinks
                             artists={track.artists}
                             className="flex !py-0 !leading-[1.25]"
                             linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
                           />
+                          {activeJamSession?.active && track.addedBy?.displayName && (
+                            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white/[0.08] px-1.5 py-0.5 text-[9.5px] font-semibold pm-text-secondary">
+                              <UserAvatar
+                                src={track.addedBy.avatarUrl}
+                                name={track.addedBy.displayName}
+                                size="xs"
+                                className="!h-3.5 !w-3.5 !text-[8px]"
+                              />
+                              <span className="max-w-[58px] truncate">
+                                {track.addedBy.displayName}
+                              </span>
+                            </span>
+                          )}
                         </div>
                       </div>
                       <button
@@ -3317,6 +3440,7 @@ const PMusicMainApp: React.FC = () => {
       <EqAndCrossfadeSheet />
       <DjPopover />
       <DevicesConnectSheet />
+      <JamInviteModal />
       <CarModeView />
       <ImportPlaylistModal />
       <SettingsModal />

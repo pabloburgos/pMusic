@@ -240,4 +240,135 @@ describe('@pmusic/recommendations', () => {
     expect(titles.some((t) => /Daily Mix/i.test(t))).toBe(true);
     expect(titles.some((t) => /Sesión DJ/i.test(t))).toBe(false);
   });
+
+  it('never runs empty search("", all), blocks unrelated chart pop, builds 3x50 disjoint Daily Mixes, and titles discovery shelf "Recomendado para ti"', async () => {
+    const searchCalls: string[] = [];
+    const unrelatedPop: Track = {
+      id: 'pop_ariana',
+      title: 'Yes, And?',
+      artists: [{ id: 'ariana', name: 'Ariana Grande' }],
+      durationSec: 215,
+      thumbnailUrl: 'https://example.com/ariana.jpg',
+      source: 'ytmusic',
+      releaseYear: 2024,
+    };
+
+    // Build 180 distinct scene/related tracks across 6 artists (enough for 3 x 50 disjoint Daily Mixes + Descubre lo Nuevo)
+    const sceneArtists = ['Cruzzi', 'La Pantera', 'Quevedo', 'Rels B', 'D.Valentino', 'Mvrk'];
+    const poolTracks: Track[] = [];
+    for (let i = 0; i < 180; i++) {
+      const art = sceneArtists[i % sceneArtists.length]!;
+      poolTracks.push({
+        id: `scene_${i}`,
+        title: `Tema Escena ${i}`,
+        artists: [{ id: `art_${i % sceneArtists.length}`, name: art }],
+        album: { id: `alb_${i % 12}`, name: `Álbum ${i % 12}` },
+        durationSec: 185,
+        thumbnailUrl: `https://example.com/${i}.jpg`,
+        source: 'ytmusic',
+        releaseYear: i % 5 === 0 ? 2026 : 2022 + (i % 4),
+      });
+    }
+
+    const mockProvider = {
+      search: async (query: string) => {
+        searchCalls.push(query);
+        const matching = poolTracks.filter((t) =>
+          t.artists.some((a) => a.name.toLowerCase().includes(query.toLowerCase()))
+        );
+        return {
+          query,
+          songs: query === '' ? [unrelatedPop] : matching,
+          videos: [],
+          artists: [],
+          albums: [],
+          playlists: [],
+        };
+      },
+      getHomeFeed: async () => ({ shelves: [], moods: [] }),
+      getUpNext: async () => [],
+      getRelated: async () => ({
+        tracks: poolTracks.slice(0, 90),
+        artists: sceneArtists.map((n, i) => ({
+          id: `art_${i}`,
+          name: n,
+          thumbnailUrl: `https://example.com/ar_${i}.jpg`,
+        })),
+        playlists: [],
+      }),
+      getArtist: async (idOrName: string) => {
+        const clean = idOrName.replace(/^art_/, '');
+        const matched = poolTracks.filter((t) =>
+          t.artists.some((a) => a.name.toLowerCase().includes(clean.toLowerCase()) || a.id === idOrName)
+        );
+        const artistName = matched[0]?.artists[0]?.name ?? clean;
+        return {
+          artist: { id: idOrName, name: artistName, thumbnailUrl: 'https://example.com/a.jpg' },
+          topSongs: matched.length > 0 ? matched : poolTracks.slice(0, 40),
+          albums: [
+            {
+              id: `alb_rel_${artistName}`,
+              title: `Disco Reciente ${artistName}`,
+              artists: [{ name: artistName }],
+              thumbnailUrl: 'https://example.com/al.jpg',
+              year: 2026,
+            },
+          ],
+          singles: [],
+          relatedArtists: sceneArtists.map((n, idx) => ({
+            id: `art_${idx}`,
+            name: n,
+            thumbnailUrl: 'https://example.com/rel.jpg',
+          })),
+        };
+      },
+      getAlbum: async (albumId: string) => ({
+        album: {
+          id: albumId,
+          title: 'Disco Reciente',
+          artists: [{ name: 'Cruzzi' }],
+          thumbnailUrl: 'https://example.com/al.jpg',
+          year: 2026,
+        },
+        tracks: poolTracks.filter((t) => t.releaseYear === 2026).slice(0, 12),
+      }),
+    };
+
+    const engine = new RecommendationEngine({ musicProvider: mockProvider });
+    engine.setFavoriteArtists([{ artistId: 'art_0', artistName: 'Cruzzi', likedAt: '2026-11-25T10:00:00Z' }]);
+    engine.setUserLibraryContext({
+      libraryTracks: poolTracks.slice(0, 15),
+      likedTracks: [poolTracks[0]!, poolTracks[1]!],
+    });
+
+    const shelves = await engine.buildHomeShelves();
+
+    expect(searchCalls).not.toContain('');
+
+    const allTrackIdsAcrossShelves = shelves.flatMap((s) => [
+      ...(s.tracks ?? []).map((t) => t.id),
+      ...(s.mixes ?? []).flatMap((m) => m.tracks.map((t) => t.id)),
+    ]);
+    expect(allTrackIdsAcrossShelves).not.toContain('pop_ariana');
+
+    const discoverShelf = shelves.find((s) => s.kind === 'because_you_listened');
+    expect(discoverShelf?.title).toBe('Recomendado para ti');
+
+    const mixesShelf = shelves.find((s) => s.kind === 'mixes_for_you');
+    const dailyMixes = (mixesShelf?.mixes ?? []).filter((m) => m.id.startsWith('mix_daily_'));
+    expect(dailyMixes.length).toBe(3);
+    for (const dm of dailyMixes) {
+      expect(dm.tracks.length).toBe(50);
+    }
+
+    // Verify 0 duplicate tracks across Daily Mix 1, 2 & 3
+    const seenAcrossDailies = new Set<string>();
+    for (const dm of dailyMixes) {
+      for (const t of dm.tracks) {
+        expect(seenAcrossDailies.has(t.id)).toBe(false);
+        seenAcrossDailies.add(t.id);
+      }
+    }
+    expect(seenAcrossDailies.size).toBe(150);
+  });
 });

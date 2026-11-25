@@ -25,6 +25,7 @@ import {
   PMUSIC_THEMES,
 } from '../utils/themes.ts';
 import { PMusicSwitch } from './PMusicSwitch.tsx';
+import { UserAvatar } from './UserAvatar.tsx';
 
 type SettingsCategoryId =
   | 'apariencia'
@@ -1495,17 +1496,12 @@ export const SettingsModal: React.FC = () => {
                             Tu perfil pMusic
                           </div>
                           <div className="flex flex-wrap items-center gap-3">
-                            {profileAvatarDraft ? (
-                              <img
-                                src={profileAvatarDraft}
-                                alt={profileNameDraft || 'Avatar'}
-                                className="h-14 w-14 shrink-0 rounded-full border border-white/20 object-cover"
-                              />
-                            ) : (
-                              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-white/15 bg-white/10 text-lg font-bold pm-text-primary">
-                                {(profileNameDraft || authState.email || 'P').slice(0, 1).toUpperCase()}
-                              </div>
-                            )}
+                            <UserAvatar
+                              src={profileAvatarDraft}
+                              name={profileNameDraft || authState.email || 'P'}
+                              size="xl"
+                              showRing
+                            />
                             <div className="flex flex-wrap items-center gap-2">
                               <button
                                 type="button"

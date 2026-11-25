@@ -6,13 +6,40 @@ const DEFAULT_SUPABASE_URL = 'https://zlaxnxkfwngmwqnqnqtu.supabase.co';
 const DEFAULT_SUPABASE_KEY = 'sb_publishable_FksjG7J-ZnFPpsT07uLg3g_kzCzgBdJ';
 
 let anonClient: SupabaseClient | null = null;
-function getAnonClient(): SupabaseClient {
+export function getAnonSupabaseClient(): SupabaseClient {
   if (!anonClient) {
     anonClient = createClient(DEFAULT_SUPABASE_URL, DEFAULT_SUPABASE_KEY, {
       auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
     });
   }
   return anonClient;
+}
+function getAnonClient(): SupabaseClient {
+  return getAnonSupabaseClient();
+}
+
+export interface TrackAdderIdentity {
+  userId?: string;
+  username?: string;
+  displayName: string;
+  avatarUrl?: string | null;
+}
+
+export function stampTrackAddedBy(
+  track: Track,
+  identity?: TrackAdderIdentity | null
+): Track {
+  if (!identity?.displayName && !identity?.username) return track;
+  return {
+    ...track,
+    addedBy: {
+      userId: identity.userId,
+      username: identity.username,
+      displayName: identity.displayName || (identity.username ? `@${identity.username}` : 'Colaborador'),
+      avatarUrl: identity.avatarUrl ?? null,
+      addedAt: new Date().toISOString(),
+    },
+  };
 }
 
 export interface FriendRecord {
@@ -518,6 +545,25 @@ export async function removeTrackFromSharedPlaylist(
   return { ...playlist, tracks: nextTracks, coverUrl };
 }
 
+export async function inviteMemberToSharedPlaylist(
+  client: SupabaseClient,
+  playlist: SharedPlaylistRecord,
+  targetUserId: string
+): Promise<SharedPlaylistRecord> {
+  if (playlist.ownerId === targetUserId || playlist.memberIds.includes(targetUserId)) {
+    return playlist;
+  }
+  const nextMembers = Array.from(new Set([...playlist.memberIds, targetUserId]));
+  const { data, error } = await client
+    .from('shared_playlists')
+    .update({ member_ids: nextMembers })
+    .eq('id', playlist.id)
+    .select(SHARED_PLAYLIST_SELECT)
+    .single();
+  if (error) throw new Error(formatSocialError(error, 'No se pudo invitar al amigo'));
+  return data ? mapSharedPlaylistRow(data) : { ...playlist, memberIds: nextMembers };
+}
+
 export function computeBlendScoreAndTracks(
   myTracks: Track[],
   friendLabel: string
@@ -653,15 +699,24 @@ export async function submitPublicJamRequest(
   code: string,
   guestName: string,
   track: Track,
-  directAdd: boolean
+  directAdd: boolean,
+  guestIdentity?: TrackAdderIdentity | null
 ): Promise<JamRequestRecord> {
   const sb = getAnonClient();
+  const cleanGuestName = guestName.trim().slice(0, 40) || 'Invitado';
+  const stampedTrack = stampTrackAddedBy(
+    track,
+    guestIdentity ?? {
+      displayName: cleanGuestName,
+      avatarUrl: track.addedBy?.avatarUrl ?? null,
+    }
+  );
   const { data, error } = await sb
     .from('jam_requests')
     .insert({
       jam_code: code.toUpperCase(),
-      guest_name: guestName.trim().slice(0, 40) || 'Invitado',
-      track_data: track,
+      guest_name: cleanGuestName,
+      track_data: stampedTrack,
       status: directAdd ? 'approved' : 'pending',
     })
     .select('id,jam_code,guest_name,track_data,status,created_at')
@@ -672,27 +727,100 @@ export async function submitPublicJamRequest(
   return mapJamRequestRow(data);
 }
 
+function mapDeezerItemsToTracks(items: unknown): Track[] {
+  if (!Array.isArray(items)) return [];
+  return items
+    .filter((item: any) => item && item.id && item.title)
+    .map((item: any): Track => ({
+      id: `dz:${item.id}`,
+      title: String(item.title ?? 'Sin título'),
+      artists: [{ id: `dz_art:${item.artist?.id ?? '0'}`, name: String(item.artist?.name ?? 'Artista') }],
+      album: {
+        id: `dz_alb:${item.album?.id ?? '0'}`,
+        name: String(item.album?.title ?? ''),
+      },
+      durationSec: Number(item.duration ?? 180),
+      thumbnailUrl: String(item.album?.cover_medium ?? item.album?.cover ?? ''),
+      thumbnailHighUrl: String(item.album?.cover_xl ?? item.album?.cover_big ?? item.album?.cover_medium ?? ''),
+      isExplicit: Boolean(item.explicit_lyrics),
+      source: 'youtube',
+    }));
+}
+
+function mapItunesItemsToTracks(items: unknown): Track[] {
+  if (!Array.isArray(items)) return [];
+  return items
+    .filter((item: any) => item && item.trackId && item.trackName)
+    .map((item: any): Track => {
+      const artSmall = String(item.artworkUrl100 ?? item.artworkUrl60 ?? '');
+      const artLarge = artSmall ? artSmall.replace(/\/\d+x\d+bb\./, '/600x600bb.') : '';
+      return {
+        id: `it:${item.trackId}`,
+        title: String(item.trackName),
+        artists: [{ id: item.artistId ? `it_art:${item.artistId}` : undefined, name: String(item.artistName ?? 'Artista') }],
+        album: item.collectionName
+          ? {
+              id: item.collectionId ? `it_alb:${item.collectionId}` : 'it_alb:0',
+              name: String(item.collectionName),
+            }
+          : undefined,
+        durationSec: Math.max(30, Math.round(Number(item.trackTimeMillis ?? 180_000) / 1000)),
+        thumbnailUrl: artLarge || artSmall,
+        thumbnailHighUrl: artLarge || artSmall,
+        isExplicit: item.trackExplicitness === 'explicit',
+        source: 'youtube',
+      };
+    });
+}
+
 export async function searchPublicCatalog(query: string): Promise<Track[]> {
   const q = query.trim();
   if (!q) return [];
-  const res = await fetch(`/api/dz-proxy?path=${encodeURIComponent(`/search?q=${encodeURIComponent(q)}&limit=15`)}`);
-  if (!res.ok) return [];
-  const json = await res.json();
-  const items = Array.isArray(json?.data) ? json.data : [];
-  return items.map((item: any): Track => ({
-    id: `dz:${item.id}`,
-    title: String(item.title ?? 'Sin título'),
-    artists: [{ id: `dz_art:${item.artist?.id ?? '0'}`, name: String(item.artist?.name ?? 'Artista') }],
-    album: {
-      id: `dz_alb:${item.album?.id ?? '0'}`,
-      name: String(item.album?.title ?? ''),
-    },
-    durationSec: Number(item.duration ?? 180),
-    thumbnailUrl: String(item.album?.cover_medium ?? item.album?.cover ?? ''),
-    thumbnailHighUrl: String(item.album?.cover_xl ?? item.album?.cover_big ?? item.album?.cover_medium ?? ''),
-    isExplicit: Boolean(item.explicit_lyrics),
-    source: 'youtube',
-  }));
+  const dzPath = `/search?q=${encodeURIComponent(q)}&limit=15`;
+
+  const tryDzUrl = async (url: string): Promise<Track[]> => {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return [];
+      const ct = res.headers.get('content-type') ?? '';
+      if (!ct.includes('json')) return [];
+      const json = await res.json();
+      return mapDeezerItemsToTracks(json?.data);
+    } catch {
+      return [];
+    }
+  };
+
+  const canUseRelativeProxy =
+    typeof window !== 'undefined' &&
+    window.location?.protocol?.startsWith('http') &&
+    window.location?.hostname !== 'appassets.pmusic.local' &&
+    window.location?.hostname !== '127.0.0.1' &&
+    window.location?.hostname !== 'localhost';
+
+  // 1. Same-origin Vercel proxy when running on public web
+  if (canUseRelativeProxy) {
+    const localHits = await tryDzUrl(`/api/dz-proxy?path=${encodeURIComponent(dzPath)}`);
+    if (localHits.length > 0) return localHits;
+  }
+
+  // 2. Public pMusic proxy fallback (works inside Electron, Android WebView & local dev)
+  const remoteHits = await tryDzUrl(
+    `${PUBLIC_WEB_BASE_URL}/api/dz-proxy?path=${encodeURIComponent(dzPath)}`
+  );
+  if (remoteHits.length > 0) return remoteHits;
+
+  // 3. Universal CORS-enabled iTunes catalog fallback (never fails on static hosts)
+  try {
+    const itRes = await fetch(
+      `https://itunes.apple.com/search?media=music&entity=song&limit=15&term=${encodeURIComponent(q)}`
+    );
+    if (!itRes.ok) return [];
+    const itJson = await itRes.json();
+    return mapItunesItemsToTracks(itJson?.results);
+  } catch {
+    return [];
+  }
 }
 
 function mapJamRow(row: any): JamSessionRecord {

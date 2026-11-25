@@ -26,10 +26,11 @@ import {
   Shuffle,
   Sparkles,
   Trash2,
+  UserPlus,
   Users,
   X,
 } from 'lucide-react';
-import { formatDurationSec, type Track } from '@pmusic/core';
+import { formatDurationSec, type Track, type UserProfile } from '@pmusic/core';
 import {
   getSyncSupabaseClient,
   usePMusicStore,
@@ -39,7 +40,9 @@ import {
 import {
   buildPlaylistShareUrl,
   publishOrUpdateSharedPlaylistLink,
+  searchProfilesByUsername,
 } from '../services/social-service.ts';
+import { UserAvatar } from './UserAvatar.tsx';
 import { extractCharacteristicImageColor, type RgbTriple } from '../utils/cover-color.ts';
 import {
   clearDraggedTrack,
@@ -243,8 +246,13 @@ export const TrackListRow: React.FC<{
               </span>
             )}
             {track.addedBy?.displayName && (
-              <span className="hidden shrink-0 items-center gap-1 rounded-full bg-white/[0.06] px-2 py-0.5 text-[10.5px] font-semibold pm-text-secondary sm:inline-flex">
-                <span>Añadida por {track.addedBy.displayName}</span>
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white/[0.08] px-1.5 py-0.5 text-[10.5px] font-semibold pm-text-secondary">
+                <UserAvatar
+                  src={track.addedBy.avatarUrl}
+                  name={track.addedBy.displayName}
+                  size="xs"
+                />
+                <span className="max-w-[95px] truncate">{track.addedBy.displayName}</span>
               </span>
             )}
           </div>
@@ -493,6 +501,8 @@ export const DetailViewPanel: React.FC = () => {
     shuffleEnabled,
     alwaysShuffle,
     playlists,
+    sharedPlaylists,
+    friends,
     likedTracks,
     favoriteArtists,
     dismissedPlaylistRecs,
@@ -506,6 +516,10 @@ export const DetailViewPanel: React.FC = () => {
     toggleFavoriteArtist,
     isArtistFavorite,
     setPlaylistShareMetadata,
+    togglePlaylistCollaborative,
+    inviteFriendToPlaylist,
+    addTrackToCollaborativePlaylist,
+    removeTrackFromCollaborativePlaylist,
     toggleDjMode,
     startTrackRadio,
     renamePlaylist,
@@ -529,6 +543,10 @@ export const DetailViewPanel: React.FC = () => {
   const [plMenuOpen, setPlMenuOpen] = useState(false);
   const [showCopyTargetMenu, setShowCopyTargetMenu] = useState(false);
   const [confirmDeletePl, setConfirmDeletePl] = useState(false);
+  const [collabModalOpen, setCollabModalOpen] = useState(false);
+  const [collabUserQuery, setCollabUserQuery] = useState('');
+  const [collabUserHits, setCollabUserHits] = useState<UserProfile[]>([]);
+  const [searchingCollabUsers, setSearchingCollabUsers] = useState(false);
   const [addFinderOverride, setAddFinderOverride] = useState<boolean | null>(null);
   const [playlistDropActive, setPlaylistDropActive] = useState(false);
   const [addSearchQuery, setAddSearchQuery] = useState('');
@@ -1233,6 +1251,396 @@ export const DetailViewPanel: React.FC = () => {
     );
   }
 
+  const renderInviteCollaboratorsModal = (opts: {
+    targetId: string;
+    playlistName: string;
+    shareCode?: string | null;
+    memberIds: string[];
+  }) => {
+    if (!collabModalOpen) return null;
+    const shareUrl = opts.shareCode ? buildPlaylistShareUrl(opts.shareCode) : '';
+    const acceptedFriends = friends.filter((f) => f.status === 'accepted');
+    const sb = getSyncSupabaseClient();
+    return (
+      <div className="fixed inset-0 z-[72] flex items-center justify-center p-4">
+        <div
+          aria-hidden="true"
+          onClick={() => setCollabModalOpen(false)}
+          className="pm-spotlight-backdrop absolute inset-0 bg-black/70 backdrop-blur-sm"
+        />
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Invitar colaboradores"
+          data-testid="invite-collaborators-modal"
+          className="pm-glass-frosted-neutral pm-hud-dark pm-modal-pop relative z-10 w-full max-w-md space-y-4 rounded-[24px] border border-white/15 p-5 shadow-2xl"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <h3 className="text-base font-extrabold text-white">Invitar a «{opts.playlistName}»</h3>
+              <p className="text-[11px] text-white/70">
+                Cada amigo añadido verá la lista al instante en su Biblioteca
+              </p>
+            </div>
+            <button
+              type="button"
+              aria-label="Cerrar modal de colaboradores"
+              onClick={() => setCollabModalOpen(false)}
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/80 hover:bg-white/20"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {shareUrl && (
+            <div className="space-y-1.5 rounded-2xl border border-white/12 bg-white/[0.04] p-3">
+              <div className="text-[10.5px] font-bold uppercase tracking-wider text-white/60">
+                Enlace colaborativo
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="min-w-0 flex-1 truncate rounded-xl bg-black/35 px-3 py-2 font-mono text-[11px] text-white/85">
+                  {shareUrl}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(shareUrl);
+                    showToast('Enlace colaborativo copiado');
+                  }}
+                  className="shrink-0 rounded-full bg-white px-3.5 py-2 text-[11px] font-bold text-[#070709]"
+                >
+                  Copiar link
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Search any @usuario */}
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!sb || !collabUserQuery.trim()) return;
+              setSearchingCollabUsers(true);
+              try {
+                const hits = await searchProfilesByUsername(sb, collabUserQuery, authState.userId);
+                setCollabUserHits(hits);
+              } finally {
+                setSearchingCollabUsers(false);
+              }
+            }}
+            className="flex gap-2"
+          >
+            <input
+              type="text"
+              value={collabUserQuery}
+              onChange={(e) => setCollabUserQuery(e.target.value)}
+              placeholder="Buscar usuario por @apodo o nombre..."
+              className="min-w-0 flex-1 rounded-full border border-white/15 bg-white/[0.06] px-4 py-2 text-xs text-white placeholder:text-white/45 focus:outline-none"
+            />
+            <button
+              type="submit"
+              disabled={searchingCollabUsers}
+              className="rounded-full bg-white px-4 py-2 text-xs font-bold text-[#070709]"
+            >
+              {searchingCollabUsers ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Buscar'}
+            </button>
+          </form>
+
+          {collabUserHits.length > 0 && (
+            <div className="max-h-36 space-y-1.5 overflow-y-auto rounded-2xl border border-white/10 bg-black/30 p-2">
+              {collabUserHits.map((u) => {
+                const isMember = opts.memberIds.includes(u.userId);
+                return (
+                  <div key={u.userId} className="flex items-center justify-between gap-2 px-1.5 py-1">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <UserAvatar src={u.avatarUrl} name={u.displayName} size="sm" />
+                      <div className="min-w-0">
+                        <div className="truncate text-xs font-bold text-white">{u.displayName}</div>
+                        <div className="truncate text-[10.5px] text-white/65">@{u.username}</div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={isMember}
+                      onClick={() => void inviteFriendToPlaylist(opts.targetId, u.userId)}
+                      className={`rounded-full px-3 py-1 text-[11px] font-bold ${
+                        isMember
+                          ? 'bg-emerald-500/20 text-emerald-300'
+                          : 'bg-white text-[#070709]'
+                      }`}
+                    >
+                      {isMember ? 'Miembro' : 'Añadir'}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Accepted Friends Quick List */}
+          <div className="space-y-1.5">
+            <div className="text-[10.5px] font-bold uppercase tracking-wider text-white/60">
+              Tus amigos ({acceptedFriends.length})
+            </div>
+            {acceptedFriends.length === 0 ? (
+              <p className="rounded-xl bg-white/[0.03] px-3 py-3 text-center text-[11px] text-white/60">
+                Añade amigos en la pestaña Social o busca arriba por @usuario.
+              </p>
+            ) : (
+              <div className="max-h-44 space-y-1.5 overflow-y-auto">
+                {acceptedFriends.map((f) => {
+                  const isMember = opts.memberIds.includes(f.otherProfile.userId);
+                  return (
+                    <div
+                      key={f.id}
+                      className="flex items-center justify-between gap-2 rounded-xl bg-white/[0.04] px-3 py-2"
+                    >
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        <UserAvatar
+                          src={f.otherProfile.avatarUrl}
+                          name={f.otherProfile.displayName}
+                          size="sm"
+                        />
+                        <div className="min-w-0">
+                          <div className="truncate text-xs font-bold text-white">
+                            {f.otherProfile.displayName}
+                          </div>
+                          <div className="truncate text-[10.5px] text-white/65">
+                            @{f.otherProfile.username}
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={isMember}
+                        onClick={() =>
+                          void inviteFriendToPlaylist(opts.targetId, f.otherProfile.userId)
+                        }
+                        className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-bold ${
+                          isMember
+                            ? 'bg-emerald-500/20 text-emerald-300'
+                            : 'bg-white text-[#070709]'
+                        }`}
+                      >
+                        {isMember ? 'Miembro' : 'Invitar'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  if (activeDetailView.kind === 'shared_playlist') {
+    const sharedPl = sharedPlaylists.find((p) => p.id === activeDetailView.sharedId);
+    if (!sharedPl) return null;
+    const totalMins = Math.max(
+      0,
+      Math.round(sharedPl.tracks.reduce((acc, t) => acc + (t.durationSec || 0), 0) / 60)
+    );
+    const cover = sharedPl.coverUrl ?? sharedPl.tracks[0]?.thumbnailHighUrl ?? sharedPl.tracks[0]?.thumbnailUrl;
+    const isAddOpen = addFinderOverride ?? sharedPl.tracks.length < 4;
+    const suggestedSharedAdds = (
+      addSearchQuery.trim() ? addSearchResults : searchResults.songs.slice(0, 8)
+    ).filter((t) => !sharedPl.tracks.some((ex) => ex.id === t.id));
+
+    return (
+      <div className="pm-page-enter space-y-6">
+        <div
+          data-surface="content"
+          className="pm-surface-card relative rounded-[20px] p-4 sm:p-6"
+        >
+          <div className="flex flex-col gap-5">
+            <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-end sm:gap-5">
+              {cover ? (
+                <img
+                  src={cover}
+                  alt={sharedPl.name}
+                  className="h-32 w-32 shrink-0 rounded-[14px] object-cover shadow-[0_18px_40px_rgba(0,0,0,0.45)] sm:h-40 sm:w-40"
+                />
+              ) : (
+                <div className="pm-elevated flex h-32 w-32 shrink-0 items-center justify-center rounded-[14px] border pm-border text-3xl font-bold pm-text-secondary sm:h-40 sm:w-40">
+                  {sharedPl.name.slice(0, 1).toUpperCase()}
+                </div>
+              )}
+              <div className="min-w-0 flex-1 space-y-2">
+                <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-400/30 bg-emerald-500/15 px-2.5 py-1 text-[11px] font-semibold text-emerald-300">
+                  <Users className="h-3 w-3" />
+                  <span>{sharedPl.kind === 'blend' ? 'BLEND' : 'LISTA COLABORATIVA'}</span>
+                  <span aria-hidden="true">·</span>
+                  <span>{sharedPl.tracks.length} PISTAS</span>
+                  {totalMins > 0 && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <span>{totalMins} min</span>
+                    </>
+                  )}
+                </span>
+                <h1 className="truncate text-3xl font-bold tracking-tight pm-text-primary sm:text-4xl">
+                  {sharedPl.name}
+                </h1>
+                <p className="text-xs pm-text-secondary">
+                  {sharedPl.description || 'Playlist colaborativa · Cada canción muestra quién la añadió'}
+                </p>
+              </div>
+            </div>
+
+            <div className="relative flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (sharedPl.tracks.length > 0) {
+                    void playCollection(sharedPl.tracks, { isPlaylist: true });
+                  }
+                }}
+                className="pm-btn-primary inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-xs font-bold"
+              >
+                <Play className="h-4 w-4 fill-current" />
+                <span>Reproducir</span>
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  await toggleDjMode(true);
+                  if (sharedPl.tracks.length > 0) {
+                    await playCollection(sharedPl.tracks, { isPlaylist: true });
+                  }
+                }}
+                className="pm-btn-secondary inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold"
+              >
+                <Disc3 className="h-4 w-4 text-purple-500" />
+                <span>Sesión DJ</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setAddFinderOverride(!isAddOpen)}
+                className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-2.5 text-xs font-semibold ${
+                  isAddOpen ? 'pm-btn-primary' : 'pm-btn-secondary'
+                }`}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>Añadir</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setCollabModalOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/35 bg-emerald-500/20 px-4 py-2.5 text-xs font-semibold text-emerald-300"
+              >
+                <UserPlus className="h-3.5 w-3.5" />
+                <span>Invitar / Enlace</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-0.5">
+          {sharedPl.tracks.length > 0 ? (
+            sharedPl.tracks.map((t, idx) => (
+              <div key={t.id} className="group flex items-center gap-1">
+                <div className="min-w-0 flex-1">
+                  <TrackListRow
+                    track={t}
+                    index={idx}
+                    queueContext={sharedPl.tracks}
+                  />
+                </div>
+                {(sharedPl.ownerId === authState.userId || t.addedBy?.userId === authState.userId) && (
+                  <button
+                    type="button"
+                    aria-label={`Quitar ${t.title}`}
+                    onClick={() => void removeTrackFromCollaborativePlaylist(sharedPl.id, t.id)}
+                    className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-full pm-text-tertiary hover:bg-rose-500/15 hover:text-rose-400 group-hover:flex"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            ))
+          ) : (
+            <div className="pm-surface-card rounded-[14px] border-dashed p-8 text-center text-xs pm-text-secondary">
+              Esta lista colaborativa está vacía. Busca canciones abajo o invita a tus amigos.
+            </div>
+          )}
+        </div>
+
+        {isAddOpen && (
+          <section data-surface="content" className="pm-surface-card space-y-4 rounded-[16px] p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-[17px] font-bold pm-text-primary">
+                  Añadir canciones a «{sharedPl.name}»
+                </h2>
+                <p className="text-xs pm-text-tertiary">
+                  Se guardarán en vivo para todos los colaboradores
+                </p>
+              </div>
+            </div>
+            <div className="pm-input flex items-center gap-2.5 rounded-full px-4 py-2">
+              <Search className="h-4 w-4 pm-text-secondary" />
+              <input
+                type="search"
+                aria-label="Buscar canciones para lista colaborativa"
+                placeholder="Buscar canciones o artistas para añadir..."
+                value={addSearchQuery}
+                onChange={async (e) => {
+                  const q = e.target.value;
+                  setAddSearchQuery(q);
+                  if (q.trim().length >= 2) {
+                    setIsSearchingAdd(true);
+                    const found = await searchTracksForPlaylist(q);
+                    setAddSearchResults(found);
+                    setIsSearchingAdd(false);
+                  } else {
+                    setAddSearchResults([]);
+                  }
+                }}
+                className="flex-1 bg-transparent text-xs pm-text-primary placeholder:pm-text-tertiary focus:outline-none"
+              />
+              {isSearchingAdd && <Loader2 className="h-4 w-4 animate-spin pm-text-secondary" />}
+            </div>
+            <div className="space-y-1">
+              {suggestedSharedAdds.slice(0, 6).map((t) => (
+                <div
+                  key={`add-sp-${t.id}`}
+                  className="pm-hover flex items-center justify-between gap-3 rounded-[10px] px-2.5 py-2"
+                >
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                    <img src={t.thumbnailUrl} alt="" className="h-10 w-10 shrink-0 rounded-[7px] object-cover" />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[13.5px] font-medium pm-text-primary">{t.title}</div>
+                      <div className="truncate text-xs pm-text-tertiary">
+                        {t.artists.map((a) => a.name).join(', ')}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void addTrackToCollaborativePlaylist(sharedPl.id, t)}
+                    className="pm-btn-secondary inline-flex items-center gap-1 rounded-full px-3.5 py-1.5 text-xs font-semibold"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    <span>Añadir</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {renderInviteCollaboratorsModal({
+          targetId: sharedPl.id,
+          playlistName: sharedPl.name,
+          shareCode: sharedPl.shareCode,
+          memberIds: sharedPl.memberIds,
+        })}
+      </div>
+    );
+  }
+
   const localPl = playlists.find((p) => p.id === activeDetailView.playlistId);
   if (!localPl) return null;
 
@@ -1356,26 +1764,17 @@ export const DetailViewPanel: React.FC = () => {
   };
 
   const handleToggleCollaborative = async () => {
-    const nextCollab = !localPl.isCollaborative;
-    await setPlaylistShareMetadata(localPl.id, { isCollaborative: nextCollab });
-    if (nextCollab) {
-      await handleSharePlaylist(true);
-    } else {
-      const sb = getSyncSupabaseClient();
-      if (sb && authState.connected && authState.userId && localPl.shareCode) {
-        void publishOrUpdateSharedPlaylistLink(sb, {
-          ownerId: authState.userId,
-          name: localPl.name,
-          description: localPl.description,
-          tracks: localPl.tracks,
-          isCollaborative: false,
-          existingShareCode: localPl.shareCode,
-          ownerProfile: userProfile,
-        }).catch(() => {});
-      }
-      showToast('Playlist cambiada a solo lectura');
+    const synced = await togglePlaylistCollaborative(localPl.id);
+    if (!localPl.isCollaborative || synced?.allowLinkEdit) {
+      setCollabModalOpen(true);
     }
   };
+
+  const linkedShared = localPl.shareCode
+    ? sharedPlaylists.find(
+        (s) => s.shareCode?.toUpperCase() === localPl.shareCode?.toUpperCase()
+      ) ?? null
+    : null;
 
   return (
     <div className="pm-page-enter space-y-6">
@@ -1505,31 +1904,6 @@ export const DetailViewPanel: React.FC = () => {
 
             <button
               type="button"
-              aria-label="Compartir enlace de playlist"
-              onClick={() => void handleSharePlaylist()}
-              className="pm-btn-secondary inline-flex items-center gap-1.5 rounded-full px-4 py-2.5 text-xs font-semibold"
-            >
-              <Link2 className="h-3.5 w-3.5" />
-              <span>Compartir enlace</span>
-            </button>
-
-            <button
-              type="button"
-              aria-label="Activar playlist colaborativa"
-              aria-pressed={Boolean(localPl.isCollaborative)}
-              onClick={() => void handleToggleCollaborative()}
-              className={`inline-flex items-center gap-1.5 rounded-full px-4 py-2.5 text-xs font-semibold transition-colors ${
-                localPl.isCollaborative
-                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/35'
-                  : 'pm-btn-secondary'
-              }`}
-            >
-              <Users className="h-3.5 w-3.5" />
-              <span>{localPl.isCollaborative ? 'Colaborativa' : 'Hacer colaborativa'}</span>
-            </button>
-
-            <button
-              type="button"
               onClick={() => setAddFinderOverride(!isAddFinderOpen)}
               className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-2.5 text-xs font-semibold ${
                 isAddFinderOpen ? 'pm-btn-primary' : 'pm-btn-secondary'
@@ -1538,6 +1912,17 @@ export const DetailViewPanel: React.FC = () => {
               <Plus className="h-3.5 w-3.5" />
               <span>Añadir</span>
             </button>
+
+            {localPl.isCollaborative && (
+              <button
+                type="button"
+                onClick={() => setCollabModalOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/35 bg-emerald-500/20 px-4 py-2.5 text-xs font-semibold text-emerald-300"
+              >
+                <Users className="h-3.5 w-3.5" />
+                <span>Colaborativa · Invitar</span>
+              </button>
+            )}
 
             <div className="relative">
               <button
@@ -1638,6 +2023,39 @@ export const DetailViewPanel: React.FC = () => {
                     >
                       <Copy className="h-4 w-4 pm-text-secondary" />
                       <span>Duplicar playlist</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={async () => {
+                        setPlMenuOpen(false);
+                        await handleToggleCollaborative();
+                      }}
+                      className="pm-hover pm-text-primary flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-xs font-medium"
+                    >
+                      <Users className="h-4 w-4 text-emerald-400" />
+                      <span>
+                        {localPl.isCollaborative
+                          ? 'Desactivar lista colaborativa'
+                          : 'Hacer lista colaborativa'}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={async () => {
+                        setPlMenuOpen(false);
+                        if (!localPl.shareCode && authState.connected) {
+                          await togglePlaylistCollaborative(localPl.id);
+                        }
+                        setCollabModalOpen(true);
+                      }}
+                      className="pm-hover pm-text-primary flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-xs font-medium"
+                    >
+                      <UserPlus className="h-4 w-4 pm-text-secondary" />
+                      <span>Invitar amigo o copiar link</span>
                     </button>
 
                     <button
@@ -1924,6 +2342,13 @@ export const DetailViewPanel: React.FC = () => {
           )}
         </div>
       </section>
+
+      {renderInviteCollaboratorsModal({
+        targetId: localPl.id,
+        playlistName: localPl.name,
+        shareCode: linkedShared?.shareCode ?? localPl.shareCode,
+        memberIds: linkedShared?.memberIds ?? [],
+      })}
     </div>
   );
 };
@@ -1936,6 +2361,11 @@ export const HomeScreen: React.FC = () => {
     isPlaying,
     homeShelves,
     playlists,
+    sharedPlaylists,
+    likedTracks,
+    playHistory,
+    searchResults,
+    exploreEmergingArtists,
     playlistPlayCounts,
     isOfflineNetwork,
     wrappedSeasonActive,
@@ -1976,32 +2406,70 @@ export const HomeScreen: React.FC = () => {
   const show = (name: (typeof HOME_CHIPS)[number]) =>
     chip === 'Todo' || chip === name;
 
-  const favArtistMap = new Map<string, { a: { id?: string; name: string }; img: string }>();
+  // Build "Tus artistas favoritos" strictly from liked artists (heart) OR >= 2 songs in user playlists / likes / real listening history
+  const userRealTracks: Track[] = [
+    ...playlists.flatMap((p) => p.tracks),
+    ...sharedPlaylists.flatMap((s) => s.tracks),
+    ...likedTracks.map((l) => l.track),
+    ...playHistory.filter((h) => h.signalType !== 'skip_early').map((h) => h.track),
+  ];
+  const findArtistPortrait = (artistName: string): string => {
+    const low = artistName.trim().toLowerCase();
+    const fromSearch = searchResults.artists.find((a) => a.name.trim().toLowerCase() === low)?.thumbnailUrl;
+    if (fromSearch) return fromSearch;
+    const fromEmerging = exploreEmergingArtists.find((a) => a.name.trim().toLowerCase() === low)?.thumbnailUrl;
+    if (fromEmerging) return fromEmerging;
+    const fromUserTrack = userRealTracks.find((t) =>
+      t.artists[0]?.name.trim().toLowerCase() === low
+    );
+    return fromUserTrack?.thumbnailHighUrl ?? fromUserTrack?.thumbnailUrl ?? '';
+  };
+
+  const libraryArtistCounts = new Map<
+    string,
+    { id?: string; name: string; count: number; img: string; isHearted: boolean }
+  >();
   for (const fa of favoriteArtists) {
-    const thumb =
-      fa.thumbnailUrl ||
-      (releases?.tracks ?? []).find((t) =>
-        t.artists.some((ar) => ar.name.toLowerCase() === fa.artistName.toLowerCase())
-      )?.thumbnailHighUrl ||
-      listen?.tracks?.[0]?.thumbnailUrl ||
-      '';
-    favArtistMap.set(fa.artistName.toLowerCase(), {
-      a: { id: fa.artistId, name: fa.artistName },
-      img: thumb,
+    const k = fa.artistName.trim().toLowerCase();
+    if (!k) continue;
+    libraryArtistCounts.set(k, {
+      id: fa.artistId,
+      name: fa.artistName,
+      count: 1000,
+      img: fa.thumbnailUrl || findArtistPortrait(fa.artistName),
+      isHearted: true,
     });
   }
-  for (const t of releases?.tracks ?? []) {
-    const a = t.artists[0];
-    if (!a?.name) continue;
-    const key = a.name.toLowerCase();
-    if (!favArtistMap.has(key)) {
-      favArtistMap.set(key, {
-        a,
-        img: t.thumbnailHighUrl ?? t.thumbnailUrl,
+  const seenTrackIdsForCounts = new Set<string>();
+  for (const t of userRealTracks) {
+    if (!t?.id || seenTrackIdsForCounts.has(t.id)) continue;
+    seenTrackIdsForCounts.add(t.id);
+    const primary = t.artists[0];
+    if (!primary?.name) continue;
+    const k = primary.name.trim().toLowerCase();
+    const existing = libraryArtistCounts.get(k);
+    if (existing) {
+      existing.count += 1;
+      if (!existing.img) existing.img = t.thumbnailHighUrl ?? t.thumbnailUrl ?? '';
+      if (!existing.id && primary.id) existing.id = primary.id;
+    } else {
+      libraryArtistCounts.set(k, {
+        id: primary.id,
+        name: primary.name,
+        count: 1,
+        img: findArtistPortrait(primary.name) || t.thumbnailHighUrl || t.thumbnailUrl || '',
+        isHearted: false,
       });
     }
   }
-  const artistCards = Array.from(favArtistMap.values()).slice(0, 12);
+  const artistCards = Array.from(libraryArtistCounts.values())
+    .filter((entry) => entry.isHearted || entry.count >= 2)
+    .sort((a, b) => Number(b.isHearted) - Number(a.isHearted) || b.count - a.count)
+    .slice(0, 12)
+    .map((entry) => ({
+      a: { id: entry.id, name: entry.name },
+      img: entry.img,
+    }));
 
   return (
     <div className="pm-page-enter space-y-6 sm:space-y-8">
@@ -3094,6 +3562,7 @@ export const LibraryScreen: React.FC = () => {
     libraryCategory,
     libraryFilterQuery,
     playlists,
+    sharedPlaylists,
     likedTracks,
     favoriteArtists,
     playHistory,
@@ -3105,6 +3574,7 @@ export const LibraryScreen: React.FC = () => {
     deletePlaylist,
     addTrackToPlaylist,
     openLocalPlaylistDetail,
+    openSharedPlaylistDetail,
     openArtistDetail,
     toggleFavoriteArtist,
     setImportModalOpen,
@@ -3135,6 +3605,13 @@ export const LibraryScreen: React.FC = () => {
   const filteredPlaylists = playlists.filter(
     (p) => !filterNorm || p.name.toLowerCase().includes(filterNorm)
   );
+  const filteredSharedPlaylists = sharedPlaylists.filter(
+    (sp) =>
+      (!sp.shareCode ||
+        !playlists.some((lp) => lp.shareCode?.toUpperCase() === sp.shareCode?.toUpperCase())) &&
+      (!filterNorm || sp.name.toLowerCase().includes(filterNorm))
+  );
+  const totalUnifiedPlaylistCount = filteredPlaylists.length + filteredSharedPlaylists.length;
   const filteredLikes = likedTracks.filter(
     (l) =>
       !filterNorm ||
@@ -3303,16 +3780,67 @@ export const LibraryScreen: React.FC = () => {
         </div>
       )}
 
-      {/* Playlists Section */}
+      {/* Playlists Section (Local + Collaborative / Blend unified as normal playlists) */}
       {(libraryCategory === 'Todo' || libraryCategory === 'Playlists') && (
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-[17px] font-bold pm-text-primary sm:text-[18px]">
-              Tus Playlists ({filteredPlaylists.length})
+              Tus Playlists ({totalUnifiedPlaylistCount})
             </h2>
           </div>
-          {filteredPlaylists.length > 0 ? (
+          {totalUnifiedPlaylistCount > 0 ? (
             <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-3">
+              {filteredSharedPlaylists.map((sp) => {
+                const thumb = sp.coverUrl ?? sp.tracks[0]?.thumbnailUrl;
+                return (
+                  <article
+                    key={`lib-sp-${sp.id}`}
+                    data-surface="content"
+                    onClick={() => openSharedPlaylistDetail(sp.id)}
+                    className="pm-surface-card pm-card-lift relative flex cursor-pointer items-center justify-between gap-3 rounded-[14px] p-3 transition-all sm:p-3.5"
+                  >
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
+                      {thumb ? (
+                        <img
+                          src={thumb}
+                          alt={sp.name}
+                          className="h-13 w-13 shrink-0 rounded-[10px] object-cover shadow-sm"
+                        />
+                      ) : (
+                        <div className="pm-elevated flex h-13 w-13 shrink-0 items-center justify-center rounded-[10px] border pm-border text-sm font-bold pm-text-secondary">
+                          {sp.name.slice(0, 1).toUpperCase()}
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <h3 className="truncate text-[15px] font-bold leading-tight pm-text-primary">
+                            {sp.name}
+                          </h3>
+                          <span className="shrink-0 rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
+                            {sp.kind === 'blend' ? 'Blend' : 'Colaborativa'}
+                          </span>
+                        </div>
+                        <p className="mt-0.5 truncate text-xs pm-text-tertiary">
+                          {sp.tracks.length} {sp.tracks.length === 1 ? 'canción' : 'canciones'}
+                        </p>
+                      </div>
+                    </div>
+                    {sp.tracks.length > 0 && (
+                      <button
+                        type="button"
+                        aria-label={`Reproducir ${sp.name}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void playCollection(sp.tracks, { isPlaylist: true });
+                        }}
+                        className="pm-btn-secondary pm-pressable inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
+                      >
+                        <Play className="h-3.5 w-3.5 translate-x-[1px] fill-current" />
+                      </button>
+                    )}
+                  </article>
+                );
+              })}
               {filteredPlaylists.map((pl) => {
                 const thumb = pl.coverUrl ?? pl.tracks[0]?.thumbnailUrl;
                 const isDropTarget = dragOverPlaylistId === pl.id;
@@ -3358,9 +3886,16 @@ export const LibraryScreen: React.FC = () => {
                         </div>
                       )}
                       <div className="min-w-0 flex-1">
-                        <h3 className="truncate text-[15px] font-bold leading-tight pm-text-primary">
-                          {pl.name}
-                        </h3>
+                        <div className="flex items-center gap-1.5">
+                          <h3 className="truncate text-[15px] font-bold leading-tight pm-text-primary">
+                            {pl.name}
+                          </h3>
+                          {pl.isCollaborative && (
+                            <span className="shrink-0 rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
+                              Colaborativa
+                            </span>
+                          )}
+                        </div>
                         <p className="mt-0.5 truncate text-xs pm-text-tertiary">
                           Playlist · {pl.tracks.length} {pl.tracks.length === 1 ? 'canción' : 'canciones'}
                         </p>
