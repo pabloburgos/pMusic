@@ -1996,6 +1996,8 @@ export const NowPlayingSheet: React.FC = () => {
             <ExoticBackdropCanvas
               key={nowPlayingBackdropStyle}
               style={nowPlayingBackdropStyle}
+              coverUrl={targetBackdropUrl}
+              crossfadeMs={cfActiveBackdrop ? Math.round(cfDurBackdropSec * 1000) : 950}
               isPlaying={isPlaying}
               ambientMotionEnabled={ambientMotionEnabled}
               reducedMotionPref={reducedMotionPref}
@@ -2004,20 +2006,20 @@ export const NowPlayingSheet: React.FC = () => {
         )}
       </div>
 
-      {/* Apple HIG Bright Media Scrim (Lightened for Pulse/Paint so bright covers stay luminous) */}
+      {/* Apple HIG Bright Media Scrim (Balanced over real cover art for Pulse/Paint) */}
       <div
         data-testid="bright-media-scrim"
         data-scrim="true"
         data-scrim-alpha={
           nowPlayingBackdropStyle === 'pulse' || nowPlayingBackdropStyle === 'paint'
-            ? '0.18'
+            ? '0.22'
             : '0.34'
         }
         className="pointer-events-none fixed inset-0 z-0"
         style={{
           background:
             nowPlayingBackdropStyle === 'pulse' || nowPlayingBackdropStyle === 'paint'
-              ? 'linear-gradient(180deg, rgba(8, 8, 12, 0.20) 0%, rgba(8, 8, 12, 0.14) 28%, rgba(8, 8, 12, 0.18) 100%)'
+              ? 'linear-gradient(180deg, rgba(8, 8, 12, 0.24) 0%, rgba(8, 8, 12, 0.16) 28%, rgba(8, 8, 12, 0.22) 100%)'
               : 'linear-gradient(180deg, rgba(8, 8, 12, 0.44) 0%, rgba(8, 8, 12, 0.31) 24%, rgba(8, 8, 12, 0.34) 100%)',
         }}
       />
