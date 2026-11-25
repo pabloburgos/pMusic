@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  ArrowLeft,
   Check,
   Copy,
+  Link2,
   ListMusic,
   Loader2,
   Play,
@@ -10,22 +12,27 @@ import {
   Radio,
   Search,
   Sparkles,
+  Trash2,
   UserPlus,
   Users,
   X,
 } from 'lucide-react';
-import type { UserProfile } from '@pmusic/core';
+import type { Track, UserProfile } from '@pmusic/core';
 import { getSyncSupabaseClient, usePMusicStore } from '../store/usePMusicStore.ts';
 import {
   addTrackToSharedPlaylist,
   buildJamQrImageUrl,
   buildJamShareUrl,
+  buildPlaylistShareUrl,
   computeBlendScoreAndTracks,
   createJamSession,
   createSharedPlaylist,
+  ensureOwnProfileExists,
+  fetchActiveHostJamSession,
   fetchJamRequests,
   listFriendships,
   listSharedPlaylists,
+  removeTrackFromSharedPlaylist,
   respondFriendRequest,
   searchProfilesByUsername,
   sendFriendRequest,
@@ -36,8 +43,7 @@ import {
   type JamSessionRecord,
   type SharedPlaylistRecord,
 } from '../services/social-service.ts';
-
-type SocialSubTab = 'jam' | 'amigos' | 'compartidas';
+import { PublicJamGuestPage } from './PublicJamGuestPage.tsx';
 
 export const SocialScreen: React.FC = () => {
   const {
@@ -47,13 +53,18 @@ export const SocialScreen: React.FC = () => {
     queue,
     isPlaying,
     likedTracks,
-    playTrack,
+    socialSubTab,
+    activeJamCode,
+    setSocialSubTab,
+    setActiveJamCode,
+    playCollection,
     addToQueue,
+    searchTracksForPlaylist,
     setAuthOnboardingOpen,
     showToast,
   } = usePMusicStore();
 
-  const [subTab, setSubTab] = useState<SocialSubTab>('jam');
+  const [socialError, setSocialError] = useState<string | null>(null);
 
   // Friends state
   const [friendSearch, setFriendSearch] = useState('');
@@ -63,6 +74,10 @@ export const SocialScreen: React.FC = () => {
   const [sharedPlaylists, setSharedPlaylists] = useState<SharedPlaylistRecord[]>([]);
   const [newCollabName, setNewCollabName] = useState('');
   const [selectedFriendId, setSelectedFriendId] = useState('');
+  const [openedSharedId, setOpenedSharedId] = useState<string | null>(null);
+  const [collabAddQuery, setCollabAddQuery] = useState('');
+  const [collabSearchHits, setCollabSearchHits] = useState<Track[]>([]);
+  const [searchingCollabTracks, setSearchingCollabTracks] = useState(false);
 
   // Jam state
   const [jamSession, setJamSession] = useState<JamSessionRecord | null>(null);
@@ -71,6 +86,8 @@ export const SocialScreen: React.FC = () => {
   const [maxPerGuest, setMaxPerGuest] = useState<number>(0);
   const [jamBusy, setJamBusy] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState(false);
+  const [joinJamInput, setJoinJamInput] = useState('');
+  const [joinedGuestJamCode, setJoinedGuestJamCode] = useState<string | null>(null);
   const processedRequestIdsRef = useRef<Set<string>>(new Set());
 
   const sb = getSyncSupabaseClient();
@@ -78,19 +95,38 @@ export const SocialScreen: React.FC = () => {
 
   const refreshSocialData = async () => {
     if (!sb || !myUserId || !authState.connected) return;
-    const [fList, spList] = await Promise.all([
-      listFriendships(sb, myUserId),
-      listSharedPlaylists(sb, myUserId),
-    ]);
-    setFriends(fList);
-    setSharedPlaylists(spList);
+    setSocialError(null);
+    try {
+      if (!userProfile) {
+        await ensureOwnProfileExists(sb, {
+          userId: myUserId,
+          email: authState.email,
+          displayName: authState.displayName,
+          avatarUrl: authState.avatarUrl,
+        });
+      }
+      const [fList, spList, hostJam] = await Promise.all([
+        listFriendships(sb, myUserId),
+        listSharedPlaylists(sb, myUserId),
+        fetchActiveHostJamSession(sb, myUserId),
+      ]);
+      setFriends(fList);
+      setSharedPlaylists(spList);
+      if (hostJam && (!jamSession || jamSession.code === hostJam.code)) {
+        setJamSession(hostJam);
+        setActiveJamCode(hostJam.code);
+      } else if (!hostJam && activeJamCode && !jamSession) {
+        setActiveJamCode(null);
+      }
+    } catch (err) {
+      setSocialError(err instanceof Error ? err.message : 'Error cargando datos sociales');
+    }
   };
 
   useEffect(() => {
     void refreshSocialData();
   }, [authState.connected, myUserId]);
 
-  // Keep active Jam session synced with live playback & auto-ingest guest requests
   useEffect(() => {
     if (!sb || !jamSession?.active) return;
     void updateJamSessionState(sb, jamSession.code, {
@@ -129,12 +165,22 @@ export const SocialScreen: React.FC = () => {
   }, [sb, jamSession?.code, jamSession?.active, addToQueue, showToast]);
 
   const handleStartJam = async () => {
-    if (!sb || !myUserId) return;
+    if (!sb || !myUserId) {
+      showToast('Inicia sesión para crear una Jam');
+      return;
+    }
     setJamBusy(true);
+    setSocialError(null);
     try {
+      await ensureOwnProfileExists(sb, {
+        userId: myUserId,
+        email: authState.email,
+        displayName: userProfile?.displayName || authState.displayName,
+        avatarUrl: userProfile?.avatarUrl || authState.avatarUrl,
+      });
       const created = await createJamSession(sb, {
         hostUserId: myUserId,
-        hostName: userProfile?.displayName || userProfile?.username || 'pMusic',
+        hostName: userProfile?.displayName || userProfile?.username || authState.displayName || 'pMusic',
         currentTrack,
         queue,
         isPlaying,
@@ -143,10 +189,13 @@ export const SocialScreen: React.FC = () => {
       });
       processedRequestIdsRef.current.clear();
       setJamSession(created);
+      setActiveJamCode(created.code);
       setJamRequests([]);
       showToast(`Jam ${created.code} iniciada — comparte el QR`);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'No se pudo iniciar la Jam');
+      const msg = err instanceof Error ? err.message : 'No se pudo iniciar la Jam';
+      setSocialError(msg);
+      showToast(msg);
     } finally {
       setJamBusy(false);
     }
@@ -156,6 +205,7 @@ export const SocialScreen: React.FC = () => {
     if (!sb || !jamSession) return;
     await updateJamSessionState(sb, jamSession.code, { active: false });
     setJamSession(null);
+    setActiveJamCode(null);
     setJamRequests([]);
     showToast('Sala Jam finalizada');
   };
@@ -183,9 +233,17 @@ export const SocialScreen: React.FC = () => {
     e.preventDefault();
     if (!sb || !friendSearch.trim()) return;
     setSearchingUsers(true);
+    setSocialError(null);
     try {
       const hits = await searchProfilesByUsername(sb, friendSearch, myUserId);
       setSearchHits(hits);
+      if (hits.length === 0) {
+        showToast('No se encontraron usuarios con ese nombre o @usuario');
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Error buscando usuarios';
+      setSocialError(msg);
+      showToast(msg);
     } finally {
       setSearchingUsers(false);
     }
@@ -193,10 +251,7 @@ export const SocialScreen: React.FC = () => {
 
   const handleCreateBlend = async (friend: FriendRecord) => {
     if (!sb || !myUserId) return;
-    const baseTracks = [
-      ...likedTracks.map((l) => l.track),
-      ...queue,
-    ];
+    const baseTracks = [...likedTracks.map((l) => l.track), ...queue];
     const { score, tracks } = computeBlendScoreAndTracks(baseTracks, friend.otherProfile.username);
     try {
       const created = await createSharedPlaylist(sb, {
@@ -207,12 +262,16 @@ export const SocialScreen: React.FC = () => {
         memberIds: [friend.otherProfile.userId],
         tracks,
         compatibilityScore: score,
+        ownerProfile: userProfile,
       });
       setSharedPlaylists((prev) => [created, ...prev]);
-      setSubTab('compartidas');
+      setSocialSubTab('compartidas');
+      setOpenedSharedId(created.id);
       showToast(`Blend creado (${score}% de match)`);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'No se pudo crear el Blend');
+      const msg = err instanceof Error ? err.message : 'No se pudo crear el Blend';
+      setSocialError(msg);
+      showToast(msg);
     }
   };
 
@@ -227,14 +286,37 @@ export const SocialScreen: React.FC = () => {
         kind: 'collab',
         memberIds: selectedFriendId ? [selectedFriendId] : [],
         tracks: currentTrack ? [currentTrack] : [],
+        isPublicLink: true,
+        allowLinkEdit: true,
+        ownerProfile: userProfile,
       });
       setSharedPlaylists((prev) => [created, ...prev]);
       setNewCollabName('');
+      setOpenedSharedId(created.id);
       showToast(`Playlist colaborativa "${created.name}" creada`);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'No se pudo crear la playlist');
+      const msg = err instanceof Error ? err.message : 'No se pudo crear la playlist';
+      setSocialError(msg);
+      showToast(msg);
     }
   };
+
+  if (joinedGuestJamCode) {
+    return (
+      <div className="space-y-3">
+        <button
+          type="button"
+          onClick={() => setJoinedGuestJamCode(null)}
+          className="pm-btn-secondary inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-bold"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" /> Volver a Social
+        </button>
+        <div className="overflow-hidden rounded-3xl border pm-border">
+          <PublicJamGuestPage code={joinedGuestJamCode} />
+        </div>
+      </div>
+    );
+  }
 
   if (!authState.connected) {
     return (
@@ -262,6 +344,15 @@ export const SocialScreen: React.FC = () => {
 
   const acceptedFriends = friends.filter((f) => f.status === 'accepted');
   const pendingIncoming = friends.filter((f) => f.status === 'pending' && f.isIncoming);
+  const pendingOutgoing = friends.filter((f) => f.status === 'pending' && !f.isIncoming);
+  const openedShared = sharedPlaylists.find((p) => p.id === openedSharedId) ?? null;
+
+  const adderIdentity = {
+    userId: myUserId ?? undefined,
+    username: userProfile?.username,
+    displayName: userProfile?.displayName || authState.displayName || authState.email?.split('@')[0] || 'Tú',
+    avatarUrl: userProfile?.avatarUrl ?? authState.avatarUrl ?? null,
+  };
 
   return (
     <div className="pm-page-enter space-y-6">
@@ -272,22 +363,25 @@ export const SocialScreen: React.FC = () => {
           </h1>
           <p className="text-xs pm-text-secondary">
             {userProfile?.username ? `@${userProfile.username}` : authState.email} · Jam Web con QR,
-            Amigos y Blend
+            Amigos y Playlists Colaborativas
           </p>
         </div>
 
         <div className="inline-flex rounded-full border pm-border bg-white/[0.04] p-1">
           {[
-            { id: 'jam' as const, label: 'Jam & QR' },
+            { id: 'jam' as const, label: jamSession ? `Jam · ${jamSession.code}` : 'Jam & QR' },
             { id: 'amigos' as const, label: `Amigos (${acceptedFriends.length})` },
             { id: 'compartidas' as const, label: `Blend & Collab (${sharedPlaylists.length})` },
           ].map((tab) => (
             <button
               key={tab.id}
               type="button"
-              onClick={() => setSubTab(tab.id)}
+              onClick={() => {
+                setSocialSubTab(tab.id);
+                setOpenedSharedId(null);
+              }}
               className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition ${
-                subTab === tab.id ? 'pm-btn-primary' : 'pm-text-secondary hover:text-white'
+                socialSubTab === tab.id ? 'pm-btn-primary' : 'pm-text-secondary hover:text-white'
               }`}
             >
               {tab.label}
@@ -296,80 +390,115 @@ export const SocialScreen: React.FC = () => {
         </div>
       </div>
 
+      {socialError && (
+        <div className="rounded-2xl border border-amber-400/35 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
+          {socialError}
+        </div>
+      )}
+
       {/* 1. JAM & WEB REQUEST QR */}
-      {subTab === 'jam' && (
+      {socialSubTab === 'jam' && (
         <div className="space-y-4">
           {!jamSession ? (
-            <div className="pm-surface-card space-y-5 rounded-3xl p-6">
-              <div className="flex items-start gap-4">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/10">
-                  <QrCode className="h-6 w-6 pm-text-primary" />
+            <div className="space-y-4">
+              <div className="pm-surface-card space-y-5 rounded-3xl p-6">
+                <div className="flex items-start gap-4">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/10">
+                    <QrCode className="h-6 w-6 pm-text-primary" />
+                  </div>
+                  <div className="space-y-1">
+                    <h2 className="text-lg font-bold pm-text-primary">
+                      Jam en vivo · Pedir canciones desde la web
+                    </h2>
+                    <p className="text-xs pm-text-secondary">
+                      Crea un código QR para que cualquiera pueda buscar y pedir canciones desde el
+                      navegador sin descargar la app.
+                    </p>
+                  </div>
                 </div>
-                <div className="space-y-1">
-                  <h2 className="text-lg font-bold pm-text-primary">
-                    Jam en vivo · Pedir canciones desde la web
-                  </h2>
-                  <p className="text-xs pm-text-secondary">
-                    Crea un código QR para que cualquiera pueda buscar y pedir canciones desde el
-                    navegador sin descargar la app (sin poder pausar, saltar ni tocar el volumen).
-                  </p>
-                </div>
-              </div>
 
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <button
-                  type="button"
-                  onClick={() => setAllowDirectAdd((v) => !v)}
-                  className="flex items-center justify-between rounded-2xl border pm-border bg-white/[0.03] px-4 py-3 text-left"
-                >
-                  <div>
-                    <div className="text-xs font-bold pm-text-primary">Modo de peticiones</div>
-                    <div className="text-[11px] pm-text-secondary">
-                      {allowDirectAdd ? 'Añadir directo a la cola' : 'Aprobar antes de sonar'}
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => setAllowDirectAdd((v) => !v)}
+                    className="flex items-center justify-between rounded-2xl border pm-border bg-white/[0.03] px-4 py-3 text-left"
+                  >
+                    <div>
+                      <div className="text-xs font-bold pm-text-primary">Modo de peticiones</div>
+                      <div className="text-[11px] pm-text-secondary">
+                        {allowDirectAdd ? 'Añadir directo a la cola' : 'Aprobar antes de sonar'}
+                      </div>
+                    </div>
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${
+                        allowDirectAdd
+                          ? 'bg-emerald-500/20 text-emerald-300'
+                          : 'bg-amber-500/20 text-amber-300'
+                      }`}
+                    >
+                      {allowDirectAdd ? 'Directo' : 'Moderar'}
+                    </span>
+                  </button>
+
+                  <div className="flex items-center justify-between rounded-2xl border pm-border bg-white/[0.03] px-4 py-3">
+                    <div>
+                      <div className="text-xs font-bold pm-text-primary">Límite por invitado</div>
+                      <div className="text-[11px] pm-text-secondary">Evita spam en fiestas</div>
+                    </div>
+                    <div className="flex gap-1">
+                      {[0, 2, 3, 5].map((n) => (
+                        <button
+                          key={n}
+                          type="button"
+                          onClick={() => setMaxPerGuest(n)}
+                          className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${
+                            maxPerGuest === n ? 'pm-btn-primary' : 'pm-btn-secondary'
+                          }`}
+                        >
+                          {n === 0 ? '∞' : n}
+                        </button>
+                      ))}
                     </div>
                   </div>
-                  <span
-                    className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${
-                      allowDirectAdd
-                        ? 'bg-emerald-500/20 text-emerald-300'
-                        : 'bg-amber-500/20 text-amber-300'
-                    }`}
-                  >
-                    {allowDirectAdd ? 'Directo' : 'Moderar'}
-                  </span>
-                </button>
-
-                <div className="flex items-center justify-between rounded-2xl border pm-border bg-white/[0.03] px-4 py-3">
-                  <div>
-                    <div className="text-xs font-bold pm-text-primary">Límite por invitado</div>
-                    <div className="text-[11px] pm-text-secondary">Evita spam en fiestas</div>
-                  </div>
-                  <div className="flex gap-1">
-                    {[0, 2, 3, 5].map((n) => (
-                      <button
-                        key={n}
-                        type="button"
-                        onClick={() => setMaxPerGuest(n)}
-                        className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${
-                          maxPerGuest === n ? 'pm-btn-primary' : 'pm-btn-secondary'
-                        }`}
-                      >
-                        {n === 0 ? '∞' : n}
-                      </button>
-                    ))}
-                  </div>
                 </div>
+
+                <button
+                  type="button"
+                  disabled={jamBusy}
+                  onClick={() => void handleStartJam()}
+                  className="pm-btn-primary inline-flex items-center gap-2 rounded-full px-6 py-3 text-sm font-bold disabled:opacity-50"
+                >
+                  {jamBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radio className="h-4 w-4" />}
+                  Iniciar Jam y generar QR
+                </button>
               </div>
 
-              <button
-                type="button"
-                disabled={jamBusy}
-                onClick={() => void handleStartJam()}
-                className="pm-btn-primary inline-flex items-center gap-2 rounded-full px-6 py-3 text-sm font-bold disabled:opacity-50"
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const code = joinJamInput.trim().toUpperCase().replace(/^.*\/JAM\//i, '').replace(/[^A-Z0-9]/g, '');
+                  if (code.length >= 4) {
+                    setJoinedGuestJamCode(code);
+                  } else {
+                    showToast('Introduce un código de Jam válido');
+                  }
+                }}
+                className="pm-surface-card flex flex-wrap items-center gap-2 rounded-2xl p-4"
               >
-                {jamBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radio className="h-4 w-4" />}
-                Iniciar Jam y generar QR
-              </button>
+                <input
+                  type="text"
+                  value={joinJamInput}
+                  onChange={(e) => setJoinJamInput(e.target.value)}
+                  placeholder="¿Tienes un código de Jam? Ej: AB3K9P"
+                  className="pm-input min-w-[200px] flex-1 rounded-full px-4 py-2 text-xs"
+                />
+                <button
+                  type="submit"
+                  className="pm-btn-secondary rounded-full px-4 py-2 text-xs font-bold"
+                >
+                  Unirse como invitado
+                </button>
+              </form>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
@@ -489,7 +618,7 @@ export const SocialScreen: React.FC = () => {
       )}
 
       {/* 2. AMIGOS (@usuario) */}
-      {subTab === 'amigos' && (
+      {socialSubTab === 'amigos' && (
         <div className="space-y-4">
           <form onSubmit={handleSearchFriends} className="flex gap-2">
             <div className="relative flex-1">
@@ -498,7 +627,7 @@ export const SocialScreen: React.FC = () => {
                 type="text"
                 value={friendSearch}
                 onChange={(e) => setFriendSearch(e.target.value)}
-                placeholder="Buscar amigo por @usuario..."
+                placeholder="Buscar amigo por @usuario o nombre..."
                 className="pm-input w-full rounded-full py-2.5 pl-10 pr-4 text-xs"
               />
             </div>
@@ -516,35 +645,43 @@ export const SocialScreen: React.FC = () => {
               <div className="text-[11px] font-bold uppercase tracking-wider pm-text-tertiary">
                 Resultados
               </div>
-              {searchHits.map((u) => (
-                <div key={u.userId} className="flex items-center justify-between gap-3 py-1">
-                  <div className="flex items-center gap-2.5">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-xs font-bold pm-text-primary">
-                      {u.displayName.slice(0, 1).toUpperCase()}
+              {searchHits.map((u) => {
+                const alreadyFriend = friends.some((f) => f.otherProfile.userId === u.userId);
+                return (
+                  <div key={u.userId} className="flex items-center justify-between gap-3 py-1">
+                    <div className="flex items-center gap-2.5">
+                      {u.avatarUrl ? (
+                        <img src={u.avatarUrl} alt={u.displayName} className="h-9 w-9 rounded-full object-cover" />
+                      ) : (
+                        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-xs font-bold pm-text-primary">
+                          {u.displayName.slice(0, 1).toUpperCase()}
+                        </div>
+                      )}
+                      <div>
+                        <div className="text-xs font-bold pm-text-primary">{u.displayName}</div>
+                        <div className="text-[11px] pm-text-secondary">@{u.username}</div>
+                      </div>
                     </div>
-                    <div>
-                      <div className="text-xs font-bold pm-text-primary">{u.displayName}</div>
-                      <div className="text-[11px] pm-text-secondary">@{u.username}</div>
-                    </div>
+                    <button
+                      type="button"
+                      disabled={alreadyFriend}
+                      onClick={async () => {
+                        if (!sb || !myUserId) return;
+                        try {
+                          await sendFriendRequest(sb, myUserId, u.userId);
+                          showToast(`Solicitud enviada a @${u.username}`);
+                          void refreshSocialData();
+                        } catch (err) {
+                          showToast(err instanceof Error ? err.message : 'Error');
+                        }
+                      }}
+                      className="pm-btn-primary inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-bold disabled:opacity-45"
+                    >
+                      <UserPlus className="h-3.5 w-3.5" /> {alreadyFriend ? 'En curso' : 'Añadir'}
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      if (!sb || !myUserId) return;
-                      try {
-                        await sendFriendRequest(sb, myUserId, u.userId);
-                        showToast(`Solicitud enviada a @${u.username}`);
-                        void refreshSocialData();
-                      } catch (err) {
-                        showToast(err instanceof Error ? err.message : 'Error');
-                      }
-                    }}
-                    className="pm-btn-primary inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-bold"
-                  >
-                    <UserPlus className="h-3.5 w-3.5" /> Añadir
-                  </button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -555,11 +692,20 @@ export const SocialScreen: React.FC = () => {
               </div>
               {pendingIncoming.map((req) => (
                 <div key={req.id} className="flex items-center justify-between gap-3 py-1">
-                  <div>
-                    <div className="text-xs font-bold pm-text-primary">
-                      {req.otherProfile.displayName}
+                  <div className="flex items-center gap-2.5">
+                    {req.otherProfile.avatarUrl ? (
+                      <img src={req.otherProfile.avatarUrl} alt="" className="h-9 w-9 rounded-full object-cover" />
+                    ) : (
+                      <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-xs font-bold">
+                        {req.otherProfile.displayName.slice(0, 1).toUpperCase()}
+                      </div>
+                    )}
+                    <div>
+                      <div className="text-xs font-bold pm-text-primary">
+                        {req.otherProfile.displayName}
+                      </div>
+                      <div className="text-[11px] pm-text-secondary">@{req.otherProfile.username}</div>
                     </div>
-                    <div className="text-[11px] pm-text-secondary">@{req.otherProfile.username}</div>
                   </div>
                   <div className="flex gap-1.5">
                     <button
@@ -591,6 +737,24 @@ export const SocialScreen: React.FC = () => {
             </div>
           )}
 
+          {pendingOutgoing.length > 0 && (
+            <div className="pm-surface-card space-y-2 rounded-2xl p-4">
+              <div className="text-[11px] font-bold uppercase tracking-wider pm-text-tertiary">
+                Solicitudes enviadas ({pendingOutgoing.length})
+              </div>
+              {pendingOutgoing.map((req) => (
+                <div key={req.id} className="flex items-center justify-between gap-3 py-1">
+                  <div className="text-xs pm-text-primary">
+                    {req.otherProfile.displayName} <span className="pm-text-secondary">@{req.otherProfile.username}</span>
+                  </div>
+                  <span className="rounded-full bg-white/10 px-2.5 py-0.5 text-[10px] font-semibold pm-text-secondary">
+                    Pendiente
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="pm-surface-card space-y-2.5 rounded-2xl p-4">
             <div className="text-[11px] font-bold uppercase tracking-wider pm-text-tertiary">
               Tus amigos ({acceptedFriends.length})
@@ -606,9 +770,13 @@ export const SocialScreen: React.FC = () => {
                   className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border pm-border bg-white/[0.02] p-3"
                 >
                   <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-sm font-bold pm-text-primary">
-                      {f.otherProfile.displayName.slice(0, 1).toUpperCase()}
-                    </div>
+                    {f.otherProfile.avatarUrl ? (
+                      <img src={f.otherProfile.avatarUrl} alt="" className="h-10 w-10 rounded-full object-cover" />
+                    ) : (
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-sm font-bold pm-text-primary">
+                        {f.otherProfile.displayName.slice(0, 1).toUpperCase()}
+                      </div>
+                    )}
                     <div>
                       <div className="text-sm font-bold pm-text-primary">
                         {f.otherProfile.displayName}
@@ -631,119 +799,300 @@ export const SocialScreen: React.FC = () => {
       )}
 
       {/* 3. BLEND & COLLAB PLAYLISTS */}
-      {subTab === 'compartidas' && (
-        <div className="space-y-4">
-          <form onSubmit={handleCreateCollab} className="pm-surface-card flex flex-wrap gap-2 rounded-2xl p-4">
-            <input
-              type="text"
-              value={newCollabName}
-              onChange={(e) => setNewCollabName(e.target.value)}
-              placeholder="Nombre de nueva playlist colaborativa..."
-              className="pm-input min-w-[200px] flex-1 rounded-full px-4 py-2 text-xs"
-            />
-            {acceptedFriends.length > 0 && (
-              <select
-                value={selectedFriendId}
-                onChange={(e) => setSelectedFriendId(e.target.value)}
-                className="pm-input rounded-full px-3 py-2 text-xs"
+      {socialSubTab === 'compartidas' && (
+        openedShared ? (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => setOpenedSharedId(null)}
+                className="pm-btn-secondary inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-bold"
               >
-                <option value="">Con amigo...</option>
-                {acceptedFriends.map((f) => (
-                  <option key={f.id} value={f.otherProfile.userId}>
-                    @{f.otherProfile.username}
-                  </option>
-                ))}
-              </select>
-            )}
-            <button
-              type="submit"
-              className="pm-btn-primary inline-flex items-center gap-1 rounded-full px-4 py-2 text-xs font-bold"
-            >
-              <Plus className="h-3.5 w-3.5" /> Crear
-            </button>
-          </form>
-
-          {sharedPlaylists.length === 0 ? (
-            <div className="pm-surface-card rounded-2xl p-8 text-center text-xs pm-text-secondary">
-              <ListMusic className="mx-auto mb-2 h-7 w-7 opacity-45" />
-              Aún no tienes Blends ni playlists colaborativas. Crea una arriba o desde la pestaña
-              Amigos.
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {sharedPlaylists.map((pl) => (
-                <div
-                  key={pl.id}
-                  className="pm-surface-card flex flex-col justify-between gap-3 rounded-2xl p-4"
+                <ArrowLeft className="h-3.5 w-3.5" /> Volver a listas
+              </button>
+              {openedShared.shareCode && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const url = buildPlaylistShareUrl(openedShared.shareCode!);
+                    void navigator.clipboard?.writeText(url);
+                    showToast('Enlace de playlist copiado');
+                  }}
+                  className="pm-btn-secondary inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-bold"
                 >
-                  <div className="flex items-start gap-3">
-                    {pl.coverUrl ? (
-                      <img
-                        src={pl.coverUrl}
-                        alt=""
-                        className="h-14 w-14 shrink-0 rounded-xl object-cover"
-                      />
-                    ) : (
-                      <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-white/10">
-                        <Sparkles className="h-6 w-6 pm-text-primary" />
-                      </div>
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-bold uppercase pm-text-primary">
-                          {pl.kind === 'blend' ? 'Blend' : 'Colaborativa'}
-                        </span>
-                        {typeof pl.compatibilityScore === 'number' && (
-                          <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
-                            {pl.compatibilityScore}% match
-                          </span>
-                        )}
-                      </div>
-                      <h3 className="mt-1 truncate text-sm font-bold pm-text-primary">{pl.name}</h3>
-                      <p className="truncate text-[11px] pm-text-secondary">
-                        {pl.tracks.length} canciones
-                      </p>
-                    </div>
-                  </div>
+                  <Link2 className="h-3.5 w-3.5" /> Copiar enlace
+                </button>
+              )}
+            </div>
 
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      disabled={pl.tracks.length === 0}
-                      onClick={() => {
-                        if (pl.tracks[0]) void playTrack(pl.tracks[0], pl.tracks);
-                      }}
-                      className="pm-btn-primary inline-flex flex-1 items-center justify-center gap-1.5 rounded-full py-2 text-xs font-bold disabled:opacity-40"
-                    >
-                      <Play className="h-3.5 w-3.5 fill-current" /> Reproducir
-                    </button>
-                    {currentTrack && (
+            <div className="pm-surface-card flex flex-wrap items-end justify-between gap-4 rounded-3xl p-5">
+              <div className="flex items-center gap-4">
+                {openedShared.coverUrl ? (
+                  <img src={openedShared.coverUrl} alt="" className="h-20 w-20 rounded-2xl object-cover" />
+                ) : (
+                  <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-white/10">
+                    <Sparkles className="h-8 w-8 pm-text-primary" />
+                  </div>
+                )}
+                <div>
+                  <span className="rounded-full bg-white/10 px-2.5 py-0.5 text-[10px] font-bold uppercase pm-text-primary">
+                    {openedShared.kind === 'blend' ? 'Blend' : 'Lista colaborativa'}
+                  </span>
+                  <h2 className="mt-1 text-2xl font-bold pm-text-primary">{openedShared.name}</h2>
+                  <p className="text-xs pm-text-secondary">
+                    {openedShared.tracks.length} canciones · Cada pista muestra quién la añadió
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={openedShared.tracks.length === 0}
+                onClick={() => void playCollection(openedShared.tracks, { isPlaylist: true })}
+                className="pm-btn-primary inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-xs font-bold disabled:opacity-40"
+              >
+                <Play className="h-4 w-4 fill-current" /> Reproducir
+              </button>
+            </div>
+
+            {/* Search & Add track to Collaborative Playlist */}
+            <div className="pm-surface-card space-y-3 rounded-2xl p-4">
+              <div className="text-xs font-bold pm-text-primary">Añadir canción a esta lista</div>
+              <div className="flex gap-2">
+                <input
+                  type="search"
+                  value={collabAddQuery}
+                  onChange={async (e) => {
+                    const q = e.target.value;
+                    setCollabAddQuery(q);
+                    if (q.trim().length >= 2) {
+                      setSearchingCollabTracks(true);
+                      const hits = await searchTracksForPlaylist(q);
+                      setCollabSearchHits(hits.slice(0, 6));
+                      setSearchingCollabTracks(false);
+                    } else {
+                      setCollabSearchHits([]);
+                    }
+                  }}
+                  placeholder="Busca una canción para añadirla..."
+                  className="pm-input flex-1 rounded-full px-4 py-2 text-xs"
+                />
+                {searchingCollabTracks && <Loader2 className="h-5 w-5 animate-spin self-center" />}
+              </div>
+              {collabSearchHits.length > 0 && (
+                <div className="space-y-1.5">
+                  {collabSearchHits.map((t) => (
+                    <div key={t.id} className="flex items-center justify-between gap-2 rounded-xl bg-white/[0.03] p-2">
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        <img src={t.thumbnailUrl} alt="" className="h-9 w-9 rounded-lg object-cover" />
+                        <div className="min-w-0">
+                          <div className="truncate text-xs font-semibold pm-text-primary">{t.title}</div>
+                          <div className="truncate text-[11px] pm-text-secondary">
+                            {t.artists.map((a) => a.name).join(', ')}
+                          </div>
+                        </div>
+                      </div>
                       <button
                         type="button"
                         onClick={async () => {
                           if (!sb) return;
-                          try {
-                            const updated = await addTrackToSharedPlaylist(sb, pl, currentTrack);
-                            setSharedPlaylists((prev) =>
-                              prev.map((item) => (item.id === updated.id ? updated : item))
-                            );
-                            showToast(`"${currentTrack.title}" añadida a ${pl.name}`);
-                          } catch (err) {
-                            showToast(err instanceof Error ? err.message : 'Error');
-                          }
+                          const updated = await addTrackToSharedPlaylist(sb, openedShared, t, adderIdentity);
+                          setSharedPlaylists((prev) =>
+                            prev.map((item) => (item.id === updated.id ? updated : item))
+                          );
+                          showToast(`"${t.title}" añadida por ${adderIdentity.displayName}`);
                         }}
-                        className="pm-btn-secondary inline-flex items-center gap-1 rounded-full px-3 py-2 text-xs font-semibold"
-                        title="Añadir la canción que suena ahora"
+                        className="pm-btn-primary inline-flex items-center gap-1 rounded-full px-3 py-1 text-[11px] font-bold"
                       >
-                        <Plus className="h-3.5 w-3.5" /> Actual
+                        <Plus className="h-3 w-3" /> Añadir
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              {openedShared.tracks.map((t, idx) => (
+                <div
+                  key={t.id}
+                  className="pm-surface-card flex items-center justify-between gap-3 rounded-2xl px-3.5 py-2.5"
+                >
+                  <button
+                    type="button"
+                    onClick={() => void playCollection(openedShared.tracks, { startIndex: idx, isPlaylist: true })}
+                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                  >
+                    <img src={t.thumbnailUrl} alt="" className="h-11 w-11 shrink-0 rounded-xl object-cover" />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-bold pm-text-primary">{t.title}</div>
+                      <div className="truncate text-xs pm-text-secondary">
+                        {t.artists.map((a) => a.name).join(', ')}
+                      </div>
+                    </div>
+                  </button>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.06] px-2.5 py-1 text-[11px] font-semibold pm-text-secondary">
+                      {t.addedBy?.avatarUrl ? (
+                        <img src={t.addedBy.avatarUrl} alt="" className="h-4 w-4 rounded-full object-cover" />
+                      ) : null}
+                      <span>
+                        Añadida por{' '}
+                        <strong className="pm-text-primary">
+                          {t.addedBy?.displayName ||
+                            (t.addedBy?.username ? `@${t.addedBy.username}` : 'Creador')}
+                        </strong>
+                      </span>
+                    </span>
+                    {(openedShared.ownerId === myUserId || t.addedBy?.userId === myUserId) && (
+                      <button
+                        type="button"
+                        aria-label="Quitar canción"
+                        onClick={async () => {
+                          if (!sb) return;
+                          const updated = await removeTrackFromSharedPlaylist(sb, openedShared, t.id);
+                          setSharedPlaylists((prev) =>
+                            prev.map((item) => (item.id === updated.id ? updated : item))
+                          );
+                        }}
+                        className="pm-hover rounded-full p-1.5 pm-text-tertiary hover:text-rose-400"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     )}
                   </div>
                 </div>
               ))}
             </div>
-          )}
-        </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <form onSubmit={handleCreateCollab} className="pm-surface-card flex flex-wrap gap-2 rounded-2xl p-4">
+              <input
+                type="text"
+                value={newCollabName}
+                onChange={(e) => setNewCollabName(e.target.value)}
+                placeholder="Nombre de nueva playlist colaborativa..."
+                className="pm-input min-w-[200px] flex-1 rounded-full px-4 py-2 text-xs"
+              />
+              {acceptedFriends.length > 0 && (
+                <select
+                  value={selectedFriendId}
+                  onChange={(e) => setSelectedFriendId(e.target.value)}
+                  className="pm-input rounded-full px-3 py-2 text-xs"
+                >
+                  <option value="">Con enlace / amigo...</option>
+                  {acceptedFriends.map((f) => (
+                    <option key={f.id} value={f.otherProfile.userId}>
+                      @{f.otherProfile.username}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <button
+                type="submit"
+                className="pm-btn-primary inline-flex items-center gap-1 rounded-full px-4 py-2 text-xs font-bold"
+              >
+                <Plus className="h-3.5 w-3.5" /> Crear colaborativa
+              </button>
+            </form>
+
+            {sharedPlaylists.length === 0 ? (
+              <div className="pm-surface-card rounded-2xl p-8 text-center text-xs pm-text-secondary">
+                <ListMusic className="mx-auto mb-2 h-7 w-7 opacity-45" />
+                Aún no tienes Blends ni playlists colaborativas. Crea una arriba o comparte cualquier
+                playlist de tu Biblioteca como colaborativa.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {sharedPlaylists.map((pl) => (
+                  <div
+                    key={pl.id}
+                    className="pm-surface-card flex flex-col justify-between gap-3 rounded-2xl p-4"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setOpenedSharedId(pl.id)}
+                      className="flex items-start gap-3 text-left"
+                    >
+                      {pl.coverUrl ? (
+                        <img
+                          src={pl.coverUrl}
+                          alt=""
+                          className="h-14 w-14 shrink-0 rounded-xl object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-white/10">
+                          <Sparkles className="h-6 w-6 pm-text-primary" />
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-bold uppercase pm-text-primary">
+                            {pl.kind === 'blend' ? 'Blend' : 'Colaborativa'}
+                          </span>
+                          {typeof pl.compatibilityScore === 'number' && (
+                            <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
+                              {pl.compatibilityScore}% match
+                            </span>
+                          )}
+                        </div>
+                        <h3 className="mt-1 truncate text-sm font-bold pm-text-primary">{pl.name}</h3>
+                        <p className="truncate text-[11px] pm-text-secondary">
+                          {pl.tracks.length} canciones · Pulsa para ver quién añadió cada tema
+                        </p>
+                      </div>
+                    </button>
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={pl.tracks.length === 0}
+                        onClick={() => void playCollection(pl.tracks, { isPlaylist: true })}
+                        className="pm-btn-primary inline-flex flex-1 items-center justify-center gap-1.5 rounded-full py-2 text-xs font-bold disabled:opacity-40"
+                      >
+                        <Play className="h-3.5 w-3.5 fill-current" /> Reproducir
+                      </button>
+                      {pl.shareCode && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void navigator.clipboard?.writeText(buildPlaylistShareUrl(pl.shareCode!));
+                            showToast('Enlace colaborativo copiado');
+                          }}
+                          className="pm-btn-secondary inline-flex items-center gap-1 rounded-full px-3 py-2 text-xs font-semibold"
+                          title="Copiar enlace para compartir"
+                        >
+                          <Link2 className="h-3.5 w-3.5" /> Enlace
+                        </button>
+                      )}
+                      {currentTrack && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (!sb) return;
+                            try {
+                              const updated = await addTrackToSharedPlaylist(sb, pl, currentTrack, adderIdentity);
+                              setSharedPlaylists((prev) =>
+                                prev.map((item) => (item.id === updated.id ? updated : item))
+                              );
+                              showToast(`"${currentTrack.title}" añadida a ${pl.name}`);
+                            } catch (err) {
+                              showToast(err instanceof Error ? err.message : 'Error');
+                            }
+                          }}
+                          className="pm-btn-secondary inline-flex items-center gap-1 rounded-full px-3 py-2 text-xs font-semibold"
+                          title="Añadir la canción que suena ahora"
+                        >
+                          <Plus className="h-3.5 w-3.5" /> Actual
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )
       )}
     </div>
   );

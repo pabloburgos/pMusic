@@ -22,6 +22,7 @@ import {
   type DjModeConfig,
   type DjSessionStyle,
   type DjTransitionType,
+  type FavoriteArtistRecord,
   type HomeEditorialShelf,
   type ImportProgressEvent,
   type LikedTrackRecord,
@@ -98,9 +99,16 @@ import {
 } from '../utils/themes.ts';
 
 export type MainNavTab = 'Inicio' | 'Explorar' | 'Buscar' | 'Biblioteca' | 'Social';
+export type SocialSubTab = 'jam' | 'amigos' | 'compartidas';
 export type NowPlayingSubTab = 'Portada' | 'Letras' | 'Cola';
 export type SearchScopeTab = 'Todo' | 'Canciones' | 'Artistas' | 'Álbumes' | 'Playlists';
-export type LibraryCategoryTab = 'Todo' | 'Playlists' | 'Me gusta' | 'Descargas' | 'Historial';
+export type LibraryCategoryTab =
+  | 'Todo'
+  | 'Playlists'
+  | 'Artistas'
+  | 'Me gusta'
+  | 'Descargas'
+  | 'Historial';
 export type OfflineDownloadStatus = 'idle' | 'downloading' | 'downloaded' | 'error';
 export type PMusicSurfaceStyle = 'liquid-glass' | 'frosted-glass' | 'simple';
 
@@ -678,9 +686,62 @@ function applyAmbientPaletteForTrack(track: Track | null, durationMs = 1100): vo
 }
 
 function normalizeTrackMetaKey(t: Track): string {
-  const title = (t.title ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
-  const artist = (t.artists?.[0]?.name ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const title = (t.title ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\((feat|ft|with|official|video|audio|lyric|visualizer|en vivo)[^)]*\)/gi, '')
+    .replace(/\[(official|video|audio|lyric|visualizer)[^\]]*\]/gi, '')
+    .replace(/[^a-z0-9\s]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const artist = (t.artists?.[0]?.name ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   return `${title}::${artist}`;
+}
+
+const sessionPlayedTrackIds = new Set<string>();
+const sessionPlayedTrackKeys = new Set<string>();
+const activePlaylistExcludedIds = new Set<string>();
+const activePlaylistExcludedKeys = new Set<string>();
+
+function recordSessionPlayedTrack(t: Track | null | undefined): void {
+  if (!t?.id) return;
+  sessionPlayedTrackIds.add(t.id);
+  const k = normalizeTrackMetaKey(t);
+  if (k !== '::') sessionPlayedTrackKeys.add(k);
+}
+
+function clearSessionTrackMemory(): void {
+  sessionPlayedTrackIds.clear();
+  sessionPlayedTrackKeys.clear();
+  activePlaylistExcludedIds.clear();
+  activePlaylistExcludedKeys.clear();
+}
+
+function isArtistAliasMatch(a: string, b: string): boolean {
+  const norm = (s: string) =>
+    s
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim();
+  const na = norm(a);
+  const nb = norm(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  if (
+    (na === 'cruzzi' || na === 'cruz cafune') &&
+    (nb === 'cruzzi' || nb === 'cruz cafune')
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function parseFanCountText(txt?: string): number {
@@ -840,13 +901,17 @@ export interface PMusicStoreState {
     volume: number;
   } | null;
 
-  // Onboarding, Profile & Wrapped
+  // Onboarding, Profile, Social & Wrapped
   authOnboardingOpen: boolean;
   needsProfileSetup: boolean;
   userProfile: UserProfile | null;
   authCallbackError: string | null;
+  favoriteArtists: FavoriteArtistRecord[];
+  socialSubTab: SocialSubTab;
+  activeJamCode: string | null;
   wrappedModalOpen: boolean;
   wrappedSummary: WrappedSummary | null;
+  wrappedSoundtrackTracks: Track[];
   wrappedSeasonActive: boolean;
   wrappedLocalCount: number;
 
@@ -889,6 +954,14 @@ export interface PMusicStoreState {
     newQueue?: Track[],
     startSec?: number,
     direction?: 'next' | 'prev'
+  ) => Promise<void>;
+  playCollection: (
+    tracks: Track[],
+    options?: {
+      forceShuffle?: boolean;
+      isPlaylist?: boolean;
+      startIndex?: number;
+    }
   ) => Promise<void>;
   togglePlayPause: () => Promise<void>;
   nextTrack: (isAutoAdvance?: boolean) => Promise<void>;
@@ -945,6 +1018,24 @@ export interface PMusicStoreState {
   addRecentSearchArtist: (artist: { id: string; name: string; thumbnailUrl: string }) => void;
   removeRecentSearchItem: (id: string) => void;
   clearRecentSearchItems: () => void;
+  toggleFavoriteArtist: (artist: {
+    id: string;
+    name: string;
+    thumbnailUrl?: string;
+  }) => Promise<boolean>;
+  isArtistFavorite: (artistIdOrName: string) => boolean;
+  setPlaylistShareMetadata: (
+    playlistId: string,
+    patch: { shareCode?: string | null; isCollaborative?: boolean; isPublicLink?: boolean }
+  ) => Promise<void>;
+  setSocialSubTab: (tab: SocialSubTab) => void;
+  setActiveJamCode: (code: string | null) => void;
+  openJamView: () => void;
+  updateUserProfile: (input: {
+    displayName: string;
+    avatarUrl?: string | null;
+    username?: string;
+  }) => Promise<UserProfile>;
   addSeedArtist: (name: string) => Promise<void>;
   removeSeedArtist: (artistKey: string) => Promise<void>;
   resetTasteProfile: () => Promise<void>;
@@ -2167,6 +2258,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       lyricsStyle: st.lyricsStyle,
       nowPlayingBackdropStyle: st.nowPlayingBackdropStyle,
       alwaysShuffle: st.alwaysShuffle,
+      shuffleEnabled: st.shuffleEnabled,
       skipSameAlbumCoverTransition: st.skipSameAlbumCoverTransition,
       marqueeTextEnabled: st.marqueeTextEnabled,
       showRemainingTime: st.showRemainingTime,
@@ -2187,13 +2279,18 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       safeCrossfade: st.safeCrossfade,
       userEq: st.userEq,
       djMode: st.djMode,
+      favoriteArtists: st.favoriteArtists,
       dismissedPlaylistRecs: st.dismissedPlaylistRecs,
       playlistPlayCounts: st.playlistPlayCounts,
       tasteProfile,
     };
+    const compactJson = JSON.stringify(payload);
     void defaultPlatformBridge.preferencesStorage
-      .setItem(USER_PREFS_STORAGE_KEY, JSON.stringify(payload))
+      .setItem(USER_PREFS_STORAGE_KEY, compactJson)
       .catch(() => {});
+    if (typeof window !== 'undefined') {
+      void (window as any).pmusicDesktop?.writePrefsFile?.(compactJson)?.catch?.(() => {});
+    }
 
     if (st.authState.connected) {
       pendingCloudPrefsPayload = payload;
@@ -2298,6 +2395,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         prev.nowPlayingBackdropStyle
       ),
       alwaysShuffle: Boolean(prefs.alwaysShuffle ?? prev.alwaysShuffle),
+      shuffleEnabled:
+        typeof prefs.shuffleEnabled === 'boolean'
+          ? prefs.shuffleEnabled
+          : Boolean(prefs.alwaysShuffle ?? prev.shuffleEnabled),
       skipSameAlbumCoverTransition: Boolean(
         prefs.skipSameAlbumCoverTransition ?? prev.skipSameAlbumCoverTransition
       ),
@@ -2345,7 +2446,21 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         prefs.playlistPlayCounts && typeof prefs.playlistPlayCounts === 'object'
           ? (prefs.playlistPlayCounts as Record<string, PlaylistPlayStat>)
           : prev.playlistPlayCounts,
+      ...(Array.isArray(prefs.favoriteArtists)
+        ? {
+            favoriteArtists: (prefs.favoriteArtists as FavoriteArtistRecord[]).filter(
+              (a) => Boolean(a?.artistId && a?.artistName)
+            ),
+          }
+        : {}),
     }));
+    if (Array.isArray(prefs.favoriteArtists)) {
+      recommendationEngine.setFavoriteArtists(
+        (prefs.favoriteArtists as FavoriteArtistRecord[]).filter(
+          (a) => Boolean(a?.artistId && a?.artistName)
+        )
+      );
+    }
   }
 
   function syncAndroidAutoLibrarySnapshot(): void {
@@ -2613,8 +2728,12 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   needsProfileSetup: false,
   userProfile: null,
   authCallbackError: null,
+  favoriteArtists: [],
+  socialSubTab: 'jam',
+  activeJamCode: null,
   wrappedModalOpen: false,
   wrappedSummary: null,
+  wrappedSoundtrackTracks: [],
   wrappedSeasonActive: isWrappedSeason(),
   wrappedLocalCount: loadLocalWrappedEvents().length,
 
@@ -2746,6 +2865,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       );
       if (rawPrefs) {
         hydratedPrefs = JSON.parse(rawPrefs) as Record<string, any>;
+      } else if (typeof window !== 'undefined' && (window as any).pmusicDesktop?.readPrefsFile) {
+        const diskPrefs = await (window as any).pmusicDesktop.readPrefsFile();
+        if (diskPrefs && diskPrefs !== '{}') {
+          hydratedPrefs = JSON.parse(diskPrefs) as Record<string, any>;
+        }
       }
     } catch {
       hydratedPrefs = null;
@@ -2762,6 +2886,34 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       hydratedPrefs.ownerUserId !== restoredAuth.userId
     ) {
       hydratedPrefs = null;
+    }
+
+    if (restoredAuth.connected && !hydratedPrefs) {
+      try {
+        const cloudPrefs = await syncEngine.loadAccountPreferences?.();
+        if (cloudPrefs) {
+          hydratedPrefs = cloudPrefs;
+        }
+      } catch {
+        // ignore offline cloud prefs error
+      }
+    }
+
+    let restoredFavoriteArtists: FavoriteArtistRecord[] = Array.isArray(hydratedPrefs?.favoriteArtists)
+      ? (hydratedPrefs!.favoriteArtists as FavoriteArtistRecord[]).filter(
+          (a) => Boolean(a?.artistId && a?.artistName)
+        )
+      : [];
+    if (restoredAuth.connected && restoredFavoriteArtists.length === 0) {
+      try {
+        const remoteFavs = (await syncEngine.listFavoriteArtists?.()) ?? [];
+        if (remoteFavs.length > 0) restoredFavoriteArtists = remoteFavs;
+      } catch {
+        // ignore
+      }
+    }
+    if (restoredFavoriteArtists.length > 0) {
+      recommendationEngine.setFavoriteArtists(restoredFavoriteArtists);
     }
 
     const resolvedSurfaceStyle: PMusicSurfaceStyle =
@@ -2865,6 +3017,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       authState: restoredAuth,
       userProfile: restoredProfile,
       needsProfileSetup: restoredAuth.connected && !restoredProfile,
+      favoriteArtists: restoredFavoriteArtists,
       playlists: canonicalPlaylists,
       likedTracks: canonicalLiked,
       playHistory: canonicalHistory,
@@ -2934,9 +3087,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
             ...(typeof hydratedPrefs.rightPanelOpen === 'boolean'
               ? { rightPanelOpen: hydratedPrefs.rightPanelOpen }
               : {}),
-            ...(Boolean(hydratedPrefs.alwaysShuffle ?? prev.alwaysShuffle)
-              ? { shuffleEnabled: true }
-              : {}),
+            ...(typeof hydratedPrefs.shuffleEnabled === 'boolean'
+              ? { shuffleEnabled: hydratedPrefs.shuffleEnabled }
+              : Boolean(hydratedPrefs.alwaysShuffle ?? prev.alwaysShuffle)
+                ? { shuffleEnabled: true }
+                : {}),
             discordRpcEnabled: Boolean(hydratedPrefs.discordRpcEnabled ?? prev.discordRpcEnabled),
             discordRpcConfig: {
               ...prev.discordRpcConfig,
@@ -3472,6 +3627,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   playTrack: async (rawTrack, newQueue, startSec, direction = 'next') => {
     const track = canonicalizeTrackArtists(rawTrack);
+    recordSessionPlayedTrack(track);
     ensureAudioEngineBindings();
     if (seekAutoTriggerTimer) {
       clearTimeout(seekAutoTriggerTimer);
@@ -3529,6 +3685,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
             ? Math.max(0, analysis.primaryDropSec - 4)
             : 0;
 
+      const trackMetaKey = normalizeTrackMetaKey(track);
       set({
         currentTrack: track,
         lastTrackDirection: direction,
@@ -3536,6 +3693,9 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         unshuffledQueue,
         shuffleEnabled: nextShuffleEnabled,
         queueIndex: idx,
+        recommendedQueue: st.recommendedQueue.filter(
+          (t) => t.id !== track.id && normalizeTrackMetaKey(t) !== trackMetaKey
+        ),
         positionSec: effectiveStartSec,
         durationSec: track.durationSec,
         isPlaying: true,
@@ -3593,6 +3753,35 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       if (mySwitchEpoch === manualSwitchEpoch) {
         manualTrackSwitchInFlight = false;
       }
+    }
+  },
+
+  playCollection: async (rawTracks, options) => {
+    const tracks = rawTracks.filter((t) => Boolean(t?.id)).map(canonicalizeTrackArtists);
+    if (tracks.length === 0) return;
+    if (options?.isPlaylist) {
+      activePlaylistExcludedIds.clear();
+      activePlaylistExcludedKeys.clear();
+      for (const t of tracks) {
+        activePlaylistExcludedIds.add(t.id);
+        const mk = normalizeTrackMetaKey(t);
+        if (mk !== '::') activePlaylistExcludedKeys.add(mk);
+      }
+    }
+    const st = get();
+    const useShuffle = Boolean(options?.forceShuffle || st.shuffleEnabled || st.alwaysShuffle);
+    let chosenIdx = options?.startIndex ?? 0;
+    if (useShuffle && options?.startIndex === undefined && tracks.length > 1) {
+      chosenIdx = Math.floor(Math.random() * tracks.length);
+    }
+    chosenIdx = Math.max(0, Math.min(tracks.length - 1, chosenIdx));
+    const picked = tracks[chosenIdx]!;
+    if (options?.forceShuffle && !st.shuffleEnabled) {
+      set({ shuffleEnabled: true });
+    }
+    await get().playTrack(picked, tracks, undefined, 'next');
+    if (options?.forceShuffle || useShuffle) {
+      persistPrefsFromStore();
     }
   },
 
@@ -3783,6 +3972,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       });
     }
     void recomputeActiveDjPlan();
+    persistPrefsFromStore();
   },
 
   cycleRepeatMode: () => {
@@ -3917,6 +4107,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       queueIndex: newCurrentIdx >= 0 ? newCurrentIdx : 0,
     });
     void recomputeActiveDjPlan();
+    persistPrefsFromStore();
   },
 
   removeQueueItem: (index) => {
@@ -3932,6 +4123,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       queueIndex: newCurrentIdx,
     });
     void recomputeActiveDjPlan();
+    persistPrefsFromStore();
   },
 
   clearUpNextQueue: () => {
@@ -3971,6 +4163,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     });
     st.showToast('Añadida a la cola');
     void recomputeActiveDjPlan();
+    persistPrefsFromStore();
   },
 
   playNextInQueue: (track) => {
@@ -3993,6 +4186,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     djPreloadedKey = '';
     st.showToast('Sonará a continuación');
     void recomputeActiveDjPlan();
+    persistPrefsFromStore();
   },
 
   replenishRecommendedQueue: async (force = false) => {
@@ -4004,10 +4198,22 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       const excludedIds = new Set<string>([
         st.currentTrack.id,
         ...st.queue.map((t) => t.id),
-        ...st.sessionPrevStack.slice(-8).map((t) => t.id),
+        ...st.sessionPrevStack.map((t) => t.id),
+        ...sessionPlayedTrackIds,
+        ...activePlaylistExcludedIds,
+      ]);
+      const excludedKeys = new Set<string>([
+        normalizeTrackMetaKey(st.currentTrack),
+        ...st.queue.map(normalizeTrackMetaKey),
+        ...st.sessionPrevStack.map(normalizeTrackMetaKey),
+        ...sessionPlayedTrackKeys,
+        ...activePlaylistExcludedKeys,
       ]);
       const baseExisting = force ? [] : st.recommendedQueue;
-      for (const t of baseExisting) excludedIds.add(t.id);
+      for (const t of baseExisting) {
+        excludedIds.add(t.id);
+        excludedKeys.add(normalizeTrackMetaKey(t));
+      }
 
       const primaryFetched: Track[] = [];
       try {
@@ -4025,16 +4231,34 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         // ignore and search artist scene below
       }
 
-      if (primaryFetched.length < 4) {
-        try {
-          const seedArtist = st.currentTrack.artists[0]?.name?.trim();
-          const query = seedArtist || st.currentTrack.title;
-          if (query) {
-            const bundle = await musicProvider.search(query, 'song');
-            primaryFetched.push(...(bundle.songs ?? []));
+      const freshPrimaryCount = primaryFetched.filter(
+        (t) =>
+          t?.id &&
+          !excludedIds.has(t.id) &&
+          !excludedKeys.has(normalizeTrackMetaKey(t))
+      ).length;
+
+      if (freshPrimaryCount < 5) {
+        const favNames = st.favoriteArtists.map((a) => a.artistName);
+        const topNames = recommendationEngine
+          .getAffinityProfile()
+          .slice(0, 6)
+          .map((a) => a.artistName);
+        const seedArtist = st.currentTrack.artists[0]?.name?.trim();
+        const searchCandidates = Array.from(
+          new Set([
+            ...(seedArtist ? [seedArtist] : []),
+            ...favNames,
+            ...topNames,
+          ].filter(Boolean))
+        ).slice(0, 3);
+        const searches = await Promise.allSettled(
+          searchCandidates.map((q) => musicProvider.search(q, 'song'))
+        );
+        for (const sRes of searches) {
+          if (sRes.status === 'fulfilled') {
+            primaryFetched.push(...(sRes.value.songs ?? []));
           }
-        } catch {
-          // ignore search failure
         }
       }
 
@@ -4049,13 +4273,13 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
       const uniquePrimary: Track[] = [];
       const uniqueCushion: Track[] = [];
-      const seenKeys = new Set<string>();
+      const seenKeys = new Set<string>(excludedKeys);
       const pushUnique = (list: Track[], target: Track[]) => {
         for (const item of list) {
           if (!item?.id || excludedIds.has(item.id)) continue;
-          const normKey = `${item.title.trim().toLowerCase()}::${(item.artists[0]?.name ?? '').trim().toLowerCase()}`;
-          if (seenKeys.has(normKey)) continue;
-          seenKeys.add(normKey);
+          const normKey = normalizeTrackMetaKey(item);
+          if (normKey !== '::' && seenKeys.has(normKey)) continue;
+          if (normKey !== '::') seenKeys.add(normKey);
           excludedIds.add(item.id);
           target.push(item);
         }
@@ -4541,8 +4765,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     };
     audioEngine.setDjMode(nextDjMode);
     set({ djMode: nextDjMode });
-    persistPrefsFromStore();
     void recomputeActiveDjPlan();
+    persistPrefsFromStore();
   },
 
   triggerDjMixNow: async () => {
@@ -4824,6 +5048,90 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       affinityProfile: recommendationEngine.getAffinityProfile(),
       homeShelves: shelves,
     });
+  },
+
+  toggleFavoriteArtist: async (artist) => {
+    const cleanName = artist.name.trim();
+    const cleanId = artist.id.trim() || cleanName.toLowerCase();
+    const current = get().favoriteArtists;
+    const existing = current.find(
+      (f) => f.artistId === cleanId || isArtistAliasMatch(f.artistName, cleanName)
+    );
+    let nextList: FavoriteArtistRecord[];
+    let likedNow = false;
+    if (existing) {
+      nextList = current.filter(
+        (f) => f.artistId !== existing.artistId && !isArtistAliasMatch(f.artistName, cleanName)
+      );
+      void syncEngine.removeFavoriteArtist?.(existing.artistId);
+      get().showToast(`${cleanName} quitado de artistas favoritos`);
+    } else {
+      likedNow = true;
+      const entry: FavoriteArtistRecord = {
+        artistId: cleanId,
+        artistName: cleanName,
+        thumbnailUrl: artist.thumbnailUrl,
+        likedAt: new Date().toISOString(),
+      };
+      nextList = [entry, ...current];
+      void syncEngine.upsertFavoriteArtist?.(entry);
+      get().showToast(`${cleanName} añadido a tus artistas favoritos`);
+    }
+    recommendationEngine.setFavoriteArtists(nextList);
+    set({
+      favoriteArtists: nextList,
+      affinityProfile: recommendationEngine.getAffinityProfile(),
+    });
+    persistPrefsFromStore();
+    void recommendationEngine.buildHomeShelves().then((shelves) => {
+      set({ homeShelves: shelves });
+      saveCachedHomeShelves(shelves);
+    });
+    return likedNow;
+  },
+
+  isArtistFavorite: (artistIdOrName) => {
+    const list = get().favoriteArtists;
+    return list.some(
+      (f) => f.artistId === artistIdOrName || isArtistAliasMatch(f.artistName, artistIdOrName)
+    );
+  },
+
+  setPlaylistShareMetadata: async (playlistId, patch) => {
+    await libraryStore.updatePlaylist(playlistId, patch);
+    set({ playlists: libraryStore.getPlaylists() });
+    scheduleLibraryCloudSync();
+  },
+
+  setSocialSubTab: (tab) => set({ socialSubTab: tab }),
+  setActiveJamCode: (code) => set({ activeJamCode: code }),
+  openJamView: () => set({ activeTab: 'Social', socialSubTab: 'jam' }),
+
+  updateUserProfile: async (input) => {
+    const st = get();
+    const currentUsername =
+      input.username?.trim().toLowerCase().replace(/^@+/, '') ||
+      st.userProfile?.username ||
+      (st.authState.email?.split('@')[0] ?? 'usuario')
+        .toLowerCase()
+        .replace(/[^a-z0-9._]/g, '_')
+        .slice(0, 20) ||
+      `user_${Math.random().toString(36).slice(2, 6)}`;
+    const safeUsername = /^[a-z0-9._]{3,24}$/.test(currentUsername)
+      ? currentUsername
+      : `pm_${Math.random().toString(36).slice(2, 8)}`;
+    const updated = await syncEngine.upsertProfile!({
+      username: safeUsername,
+      displayName: input.displayName,
+      avatarUrl: input.avatarUrl !== undefined ? input.avatarUrl : (st.userProfile?.avatarUrl ?? null),
+    });
+    set({
+      userProfile: updated,
+      authState: syncEngine.getAuthState(),
+      needsProfileSetup: false,
+    });
+    get().showToast('Perfil actualizado en pMusic');
+    return updated;
   },
 
   removeSeedArtist: async (artistKey) => {
@@ -5375,6 +5683,15 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   },
 
   handleAuthCallbackUrl: async (callbackUrl) => {
+    const playlistDeepMatch = callbackUrl.match(/^pmusic:\/\/playlist\/([A-Za-z0-9]{4,16})/i);
+    if (playlistDeepMatch?.[1] && typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('pmusic:open-shared-playlist', {
+          detail: playlistDeepMatch[1].toUpperCase(),
+        })
+      );
+      return;
+    }
     set({ authCallbackError: null });
     try {
       const auth = await syncEngine.completeOAuthCallback?.(callbackUrl);
@@ -5445,7 +5762,16 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       cloudPrefsSaveTimer = null;
     }
     pendingCloudPrefsPayload = null;
+    clearSessionTrackMemory();
+    recommendationEngine.setFavoriteArtists([]);
     await syncEngine.signOut();
+    if (typeof window !== 'undefined') {
+      try {
+        await (window as any).pmusicDesktop?.clearAuthState?.();
+      } catch {
+        // ignore desktop clearAuthState failure
+      }
+    }
     try {
       await recommendationEngine.resetTastes();
     } catch {
@@ -5468,6 +5794,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       authState: syncEngine.getAuthState(),
       userProfile: null,
       needsProfileSetup: false,
+      favoriteArtists: [],
+      activeJamCode: null,
       onlineDevices: syncEngine.getOnlineDevices(),
       remoteControlledDeviceId: null,
       remoteDeviceSnapshot: null,
@@ -5522,8 +5850,81 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     const remoteEvents = (await syncEngine.fetchYearListenEvents?.(targetYear)) ?? [];
     const merged = mergeWrappedEvents(localEvents, remoteEvents);
     const summary = computeWrappedSummary(merged, targetYear);
+
+    const st = get();
+    const catalogPool = new Map<string, Track>();
+    for (const l of st.likedTracks) {
+      if (l.track?.id) catalogPool.set(l.track.id, canonicalizeTrackArtists(l.track));
+    }
+    for (const h of st.playHistory) {
+      if (h.track?.id) catalogPool.set(h.track.id, canonicalizeTrackArtists(h.track));
+    }
+    for (const p of st.playlists) {
+      for (const t of p.tracks) {
+        if (t?.id) catalogPool.set(t.id, canonicalizeTrackArtists(t));
+      }
+    }
+    for (const s of st.homeShelves) {
+      for (const t of s.tracks ?? []) {
+        if (t?.id) catalogPool.set(t.id, canonicalizeTrackArtists(t));
+      }
+    }
+
+    const soundtrack: Track[] = [];
+    const seenIds = new Set<string>();
+    const allPool = Array.from(catalogPool.values());
+
+    // 1. Prioritize top wrapped tracks if present in pool
+    for (const top of summary.topTracks.slice(0, 6)) {
+      const hit =
+        catalogPool.get(top.key) ??
+        allPool.find(
+          (t) =>
+            t.id === top.key ||
+            t.title.trim().toLowerCase() === top.title.trim().toLowerCase()
+        );
+      if (hit && !seenIds.has(hit.id)) {
+        seenIds.add(hit.id);
+        soundtrack.push(hit);
+      }
+    }
+
+    // 2. Supplement with favorite artists & top affinity tracks matching user taste
+    const rankedTasteTracks = recommendationEngine.rerankTracks(allPool, {
+      maxPerArtistInWindow: 2,
+      limit: 16,
+    });
+    for (const t of rankedTasteTracks) {
+      if (!seenIds.has(t.id)) {
+        seenIds.add(t.id);
+        soundtrack.push(t);
+      }
+      if (soundtrack.length >= 12) break;
+    }
+
+    // 3. If pool still empty, fetch live tracks matching top wrapped artist/first favorite artist
+    if (soundtrack.length === 0) {
+      const seedQuery =
+        summary.topArtists[0]?.title ??
+        st.favoriteArtists[0]?.artistName ??
+        recommendationEngine.getAffinityProfile()[0]?.artistName ??
+        'Cruzzi';
+      try {
+        const res = await musicProvider.search(seedQuery, 'song');
+        for (const t of res.songs.slice(0, 8)) {
+          if (!seenIds.has(t.id)) {
+            seenIds.add(t.id);
+            soundtrack.push(canonicalizeTrackArtists(t));
+          }
+        }
+      } catch {
+        soundtrack.push(...canonicalFallbackQueue.slice(0, 6));
+      }
+    }
+
     set({
       wrappedSummary: summary,
+      wrappedSoundtrackTracks: soundtrack,
       wrappedModalOpen: true,
     });
   },

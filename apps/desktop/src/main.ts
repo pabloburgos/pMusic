@@ -611,10 +611,105 @@ ipcMain.handle('pmusic:open-external-url', async (_event, url: string) => {
     await shell.openExternal(url);
   }
 });
+ipcMain.handle('pmusic:get-oauth-redirect-url', () => 'pmusic://auth/callback');
 ipcMain.handle('pmusic:consume-pending-auth-callback', () => {
   const url = pendingAuthCallbackUrl;
   pendingAuthCallbackUrl = null;
   return url;
+});
+
+function getVaultFilePath(): string {
+  return join(app.getPath('userData'), 'pmusic-vault.json');
+}
+
+function getPrefsFilePath(): string {
+  return join(app.getPath('userData'), 'pmusic-prefs.json');
+}
+
+function readVaultMap(): Record<string, string> {
+  try {
+    const p = getVaultFilePath();
+    if (!existsSync(p)) return {};
+    const parsed = JSON.parse(readFileSync(p, 'utf8')) as unknown;
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeVaultMap(map: Record<string, string>): void {
+  try {
+    writeFileSync(getVaultFilePath(), JSON.stringify(map), 'utf8');
+  } catch {
+    // ignore disk write error
+  }
+}
+
+ipcMain.handle('pmusic:vault-get', (_event, key: string) => {
+  if (typeof key !== 'string' || !key) return null;
+  const map = readVaultMap();
+  return typeof map[key] === 'string' ? map[key] : null;
+});
+ipcMain.handle('pmusic:vault-set', (_event, key: string, value: string) => {
+  if (typeof key !== 'string' || !key || typeof value !== 'string') return;
+  const map = readVaultMap();
+  map[key] = value;
+  writeVaultMap(map);
+});
+ipcMain.handle('pmusic:vault-remove', (_event, key: string) => {
+  if (typeof key !== 'string' || !key) return;
+  const map = readVaultMap();
+  if (key in map) {
+    delete map[key];
+    writeVaultMap(map);
+  }
+});
+ipcMain.handle('pmusic:read-prefs-file', () => {
+  try {
+    const p = getPrefsFilePath();
+    if (!existsSync(p)) return null;
+    return readFileSync(p, 'utf8');
+  } catch {
+    return null;
+  }
+});
+ipcMain.handle('pmusic:write-prefs-file', (_event, jsonText: string) => {
+  if (typeof jsonText !== 'string') return;
+  try {
+    writeFileSync(getPrefsFilePath(), jsonText, 'utf8');
+  } catch {
+    // ignore disk write error
+  }
+});
+ipcMain.handle('pmusic:clear-auth-state', async () => {
+  pendingAuthCallbackUrl = null;
+  const map = readVaultMap();
+  let changed = false;
+  for (const k of Object.keys(map)) {
+    if (
+      k.startsWith('sb-') ||
+      k.startsWith('supabase.') ||
+      k.startsWith('pmusic.profile.') ||
+      k.startsWith('pmusic.auth.') ||
+      k === 'pmusic_user_prefs_v1'
+    ) {
+      delete map[k];
+      changed = true;
+    }
+  }
+  if (changed) writeVaultMap(map);
+  try {
+    if (existsSync(getPrefsFilePath())) {
+      writeFileSync(getPrefsFilePath(), '{}', 'utf8');
+    }
+  } catch {
+    // ignore
+  }
+  try {
+    await mainWindow?.webContents.session?.clearStorageData({ storages: ['cookies'] });
+  } catch {
+    // ignore cookie cleanup error
+  }
 });
 ipcMain.handle('pmusic:toggle-fullscreen', () => {
   if (!mainWindow || mainWindow.isDestroyed()) return false;

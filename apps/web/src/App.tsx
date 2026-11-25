@@ -68,6 +68,7 @@ import { AuthOnboardingModal } from './components/AuthOnboardingModal.tsx';
 import { WrappedStoriesModal } from './components/WrappedStoriesModal.tsx';
 import { SocialScreen } from './components/SocialScreen.tsx';
 import { PublicJamGuestPage } from './components/PublicJamGuestPage.tsx';
+import { SharedPlaylistLinkModal } from './components/SharedPlaylistLinkModal.tsx';
 import {
   clearDraggedTrack,
   readTrackFromDropEvent,
@@ -214,6 +215,25 @@ const PMusicMainApp: React.FC = () => {
   const [islandMenuOpen, setIslandMenuOpen] = useState(false);
   const [isDockReceding, setIsDockReceding] = useState(false);
   const [isRealFullscreen, setIsRealFullscreen] = useState(false);
+  const [sharedLinkCode, setSharedLinkCode] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const qp = new URLSearchParams(window.location.search).get('playlist');
+    if (qp) return qp.trim().toUpperCase();
+    const pm = window.location.pathname.match(/^\/playlist\/([A-Za-z0-9]{4,16})\/?$/);
+    return pm ? pm[1]!.toUpperCase() : null;
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onOpenShared = (ev: Event) => {
+      const code = (ev as CustomEvent<string>).detail;
+      if (typeof code === 'string' && code.trim()) {
+        setSharedLinkCode(code.trim().toUpperCase());
+      }
+    };
+    window.addEventListener('pmusic:open-shared-playlist', onOpenShared);
+    return () => window.removeEventListener('pmusic:open-shared-playlist', onOpenShared);
+  }, []);
   const [dockColorWave, setDockColorWave] = useState<{ key: string; prevColor: string } | null>(
     null
   );
@@ -748,10 +768,11 @@ const PMusicMainApp: React.FC = () => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Global keyboard shortcuts (strictly guarded when typing in text inputs)
+  // Global keyboard shortcuts (strictly guarded when typing in text inputs or Wrapped modal is open)
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (usePMusicStore.getState().wrappedModalOpen) return;
       const target = e.target as HTMLElement | null;
       const tag = target?.tagName?.toLowerCase();
       const isTextInput =
@@ -3301,6 +3322,23 @@ const PMusicMainApp: React.FC = () => {
       <SettingsModal />
       <AuthOnboardingModal />
       <WrappedStoriesModal />
+      <SharedPlaylistLinkModal
+        shareCode={sharedLinkCode}
+        onClose={() => {
+          setSharedLinkCode(null);
+          if (typeof window !== 'undefined' && window.history?.replaceState) {
+            try {
+              const u = new URL(window.location.href);
+              if (u.searchParams.has('playlist')) {
+                u.searchParams.delete('playlist');
+                window.history.replaceState({}, '', `${u.pathname}${u.search}`);
+              }
+            } catch {
+              // ignore
+            }
+          }
+        }}
+      />
       <TrackInfoModal />
       <TrackContextMenu />
       <AppToast />

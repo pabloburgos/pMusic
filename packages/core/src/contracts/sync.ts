@@ -23,6 +23,13 @@ export interface SyncAuthState {
   avatarUrl?: string | null;
 }
 
+export interface FavoriteArtistRecord {
+  artistId: string;
+  artistName: string;
+  thumbnailUrl?: string;
+  likedAt: string;
+}
+
 export interface UserProfile {
   userId: string;
   username: string;
@@ -197,6 +204,11 @@ export interface ISyncEngine {
     avatarUrl?: string | null;
   }): Promise<UserProfile>;
   isUsernameAvailable?(username: string): Promise<boolean>;
+  saveAccountPreferences?(prefs: Record<string, unknown>): Promise<void>;
+  loadAccountPreferences?(): Promise<Record<string, unknown> | null>;
+  listFavoriteArtists?(): Promise<FavoriteArtistRecord[]>;
+  upsertFavoriteArtist?(artist: FavoriteArtistRecord): Promise<void>;
+  removeFavoriteArtist?(artistId: string): Promise<void>;
   recordListenEvent?(event: WrappedListenEvent): Promise<void>;
   fetchYearListenEvents?(year: number): Promise<WrappedListenEvent[]>;
   persistDeviceSession?(snapshot: PlaybackTransferSnapshot): Promise<void>;

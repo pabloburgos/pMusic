@@ -6,15 +6,15 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(__dirname, '..');
 const pkg = JSON.parse(readFileSync(resolve(desktopRoot, 'package.json'), 'utf-8'));
-const version = pkg.version || '0.14.3';
+const version = pkg.version || '0.19.0';
 
-const outDirArg = process.argv[2] || 'release/v14_3';
+const outDirArg = process.argv[2] || 'release';
 const releaseDir = resolve(desktopRoot, outDirArg);
 const unpackedDir = resolve(releaseDir, 'win-unpacked');
 const workDir = resolve(releaseDir, '_custom_installer_work');
 const payloadZip = resolve(workDir, 'payload.zip');
 const csPath = resolve(workDir, 'PMusicInstaller.cs');
-const outExe = resolve(releaseDir, `pMusic-Setup-${version}.exe`);
+const outExe = resolve(releaseDir, 'pMusic-Setup.exe');
 const iconIco = resolve(desktopRoot, 'build/icon.ico');
 const iconPng = resolve(desktopRoot, 'build/icon.png');
 
@@ -48,8 +48,7 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 
 namespace PMusicSetup {
-  public class MinimalPMusicInstaller : Form {
-    private const string APP_VERSION = "${version}";
+  public class ModernPMusicInstaller : Form {
     private const int WM_NCLBUTTONDOWN = 0xA1;
     private const int HT_CAPTION = 0x2;
 
@@ -63,6 +62,7 @@ namespace PMusicSetup {
     private CheckBox desktopCheck;
     private Button installBtn;
     private Button browseBtn;
+    private Label statusLabel;
     private Label pctLabel;
     private Panel progressTrack;
     private float progressValue = 0f;
@@ -70,11 +70,11 @@ namespace PMusicSetup {
     private bool installed = false;
     private string installedExePath = "";
 
-    public MinimalPMusicInstaller() {
+    public ModernPMusicInstaller() {
       this.FormBorderStyle = FormBorderStyle.None;
       this.StartPosition = FormStartPosition.CenterScreen;
-      this.ClientSize = new Size(520, 360);
-      this.BackColor = Color.FromArgb(5, 5, 7);
+      this.ClientSize = new Size(540, 396);
+      this.BackColor = Color.FromArgb(6, 6, 10);
       this.DoubleBuffered = true;
       this.Text = "pMusic";
 
@@ -88,7 +88,7 @@ namespace PMusicSetup {
         this.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
       } catch {}
 
-      this.Region = CreateRoundedRegion(this.ClientSize.Width, this.ClientSize.Height, 22);
+      this.Region = CreateRoundedRegion(this.ClientSize.Width, this.ClientSize.Height, 26);
       this.MouseDown += (s, e) => {
         if (e.Button == MouseButtons.Left) {
           ReleaseCapture();
@@ -113,19 +113,31 @@ namespace PMusicSetup {
     private void BuildUi() {
       Button closeBtn = new Button {
         Text = "✕",
-        ForeColor = Color.FromArgb(160, 160, 172),
-        BackColor = Color.FromArgb(14, 14, 18),
+        ForeColor = Color.FromArgb(185, 185, 200),
+        BackColor = Color.FromArgb(20, 20, 28),
         FlatStyle = FlatStyle.Flat,
-        Font = new Font("Segoe UI", 9f, FontStyle.Bold),
-        Size = new Size(32, 32),
-        Location = new Point(this.ClientSize.Width - 46, 16),
+        Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
+        Size = new Size(34, 34),
+        Location = new Point(this.ClientSize.Width - 50, 16),
         Cursor = Cursors.Hand,
         TabStop = false
       };
-      closeBtn.FlatAppearance.BorderColor = Color.FromArgb(34, 34, 42);
+      closeBtn.FlatAppearance.BorderColor = Color.FromArgb(42, 42, 56);
       closeBtn.FlatAppearance.BorderSize = 1;
+      closeBtn.Region = CreateRoundedRegion(34, 34, 17);
       closeBtn.Click += (s, e) => { if (!installing) this.Close(); };
       this.Controls.Add(closeBtn);
+
+      Label subtitleLabel = new Label {
+        Text = "Tu música, sin límites.",
+        ForeColor = Color.FromArgb(164, 164, 184),
+        BackColor = Color.Transparent,
+        Font = new Font("Segoe UI", 9.8f, FontStyle.Regular),
+        TextAlign = ContentAlignment.MiddleCenter,
+        Location = new Point(40, 172),
+        Size = new Size(this.ClientSize.Width - 80, 22)
+      };
+      this.Controls.Add(subtitleLabel);
 
       string defaultDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -133,28 +145,38 @@ namespace PMusicSetup {
         "pmusic"
       );
 
+      Label folderLbl = new Label {
+        Text = "CARPETA DE INSTALACIÓN",
+        ForeColor = Color.FromArgb(120, 122, 142),
+        BackColor = Color.Transparent,
+        Font = new Font("Segoe UI", 7.6f, FontStyle.Bold),
+        Location = new Point(42, 208),
+        AutoSize = true
+      };
+      this.Controls.Add(folderLbl);
+
       pathBox = new TextBox {
         Text = defaultDir,
-        ForeColor = Color.FromArgb(215, 215, 224),
-        BackColor = Color.FromArgb(14, 14, 18),
+        ForeColor = Color.FromArgb(232, 232, 242),
+        BackColor = Color.FromArgb(16, 16, 23),
         BorderStyle = BorderStyle.FixedSingle,
         Font = new Font("Segoe UI", 9.5f),
-        Location = new Point(44, 198),
-        Size = new Size(382, 28)
+        Location = new Point(42, 226),
+        Size = new Size(404, 28)
       };
       this.Controls.Add(pathBox);
 
       browseBtn = new Button {
         Text = "...",
-        ForeColor = Color.FromArgb(200, 200, 212),
-        BackColor = Color.FromArgb(20, 20, 26),
+        ForeColor = Color.FromArgb(215, 215, 228),
+        BackColor = Color.FromArgb(24, 24, 33),
         FlatStyle = FlatStyle.Flat,
-        Font = new Font("Segoe UI", 9f, FontStyle.Bold),
-        Location = new Point(432, 197),
-        Size = new Size(44, 28),
+        Font = new Font("Segoe UI", 9.2f, FontStyle.Bold),
+        Location = new Point(452, 225),
+        Size = new Size(46, 28),
         Cursor = Cursors.Hand
       };
-      browseBtn.FlatAppearance.BorderColor = Color.FromArgb(40, 40, 48);
+      browseBtn.FlatAppearance.BorderColor = Color.FromArgb(46, 46, 62);
       browseBtn.FlatAppearance.BorderSize = 1;
       browseBtn.Click += (s, e) => {
         using (FolderBrowserDialog fbd = new FolderBrowserDialog()) {
@@ -167,53 +189,72 @@ namespace PMusicSetup {
       this.Controls.Add(browseBtn);
 
       desktopCheck = new CheckBox {
-        Text = "Acceso directo en Escritorio",
+        Text = "Crear acceso directo en el Escritorio",
         Checked = true,
-        ForeColor = Color.FromArgb(150, 152, 165),
+        ForeColor = Color.FromArgb(170, 172, 190),
         BackColor = Color.Transparent,
         Font = new Font("Segoe UI", 9f),
-        Location = new Point(44, 236),
+        Location = new Point(42, 264),
         AutoSize = true,
         Cursor = Cursors.Hand
       };
       this.Controls.Add(desktopCheck);
 
       progressTrack = new Panel {
-        Location = new Point(44, 272),
-        Size = new Size(432, 3),
-        BackColor = Color.FromArgb(26, 26, 32)
+        Location = new Point(42, 300),
+        Size = new Size(456, 7),
+        BackColor = Color.FromArgb(24, 24, 34)
       };
+      progressTrack.Region = CreateRoundedRegion(456, 7, 3);
       progressTrack.Paint += (s, e) => {
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         int fillW = (int)(progressTrack.Width * Math.Max(0f, Math.Min(1f, progressValue)));
         if (fillW > 0) {
-          using (SolidBrush br = new SolidBrush(Color.White)) {
+          using (LinearGradientBrush br = new LinearGradientBrush(
+            new Rectangle(0, 0, Math.Max(2, fillW), progressTrack.Height),
+            Color.FromArgb(196, 152, 255),
+            Color.White,
+            0f
+          )) {
             e.Graphics.FillRectangle(br, 0, 0, fillW, progressTrack.Height);
           }
         }
       };
       this.Controls.Add(progressTrack);
 
+      statusLabel = new Label {
+        Text = "Listo para instalar pMusic en este equipo",
+        ForeColor = Color.FromArgb(145, 148, 166),
+        BackColor = Color.Transparent,
+        Font = new Font("Segoe UI", 8.6f),
+        Location = new Point(42, 314),
+        Size = new Size(220, 20)
+      };
+      this.Controls.Add(statusLabel);
+
       pctLabel = new Label {
         Text = "",
-        ForeColor = Color.FromArgb(130, 132, 145),
+        ForeColor = Color.FromArgb(220, 220, 236),
         BackColor = Color.Transparent,
-        Font = new Font("Segoe UI", 8.8f),
-        Location = new Point(44, 284),
-        Size = new Size(220, 22)
+        Font = new Font("Segoe UI", 8.8f, FontStyle.Bold),
+        TextAlign = ContentAlignment.MiddleRight,
+        Location = new Point(220, 314),
+        Size = new Size(68, 20)
       };
       this.Controls.Add(pctLabel);
 
       installBtn = new Button {
-        Text = "Instalar",
-        ForeColor = Color.FromArgb(5, 5, 7),
+        Text = "Instalar pMusic",
+        ForeColor = Color.FromArgb(8, 8, 12),
         BackColor = Color.White,
         FlatStyle = FlatStyle.Flat,
-        Font = new Font("Segoe UI", 10f, FontStyle.Bold),
-        Location = new Point(316, 294),
-        Size = new Size(160, 42),
+        Font = new Font("Segoe UI", 10.2f, FontStyle.Bold),
+        Location = new Point(316, 326),
+        Size = new Size(182, 44),
         Cursor = Cursors.Hand
       };
       installBtn.FlatAppearance.BorderSize = 0;
+      installBtn.Region = CreateRoundedRegion(182, 44, 22);
       installBtn.Click += async (s, e) => {
         if (installed) {
           try {
@@ -235,44 +276,54 @@ namespace PMusicSetup {
       g.SmoothingMode = SmoothingMode.AntiAlias;
       g.InterpolationMode = InterpolationMode.HighQualityBicubic;
 
-      // Pure obsidian monochrome canvas
-      g.Clear(Color.FromArgb(5, 5, 7));
+      g.Clear(Color.FromArgb(6, 6, 10));
 
-      // Subtle monochrome silver aura (zero red)
+      // Subtle pMusic violet/indigo atmospheric aura at the top
       using (GraphicsPath gp = new GraphicsPath()) {
-        gp.AddEllipse(100, -110, 320, 260);
+        gp.AddEllipse(80, -120, 380, 280);
         using (PathGradientBrush glow = new PathGradientBrush(gp)) {
-          glow.CenterColor = Color.FromArgb(30, 255, 255, 255);
+          glow.CenterColor = Color.FromArgb(46, 168, 118, 255);
           glow.SurroundColors = new Color[] { Color.Transparent };
           g.FillPath(glow, gp);
         }
       }
 
-      // Hairline border
-      using (Pen borderPen = new Pen(Color.FromArgb(32, 255, 255, 255), 1.5f)) {
-        g.DrawRectangle(borderPen, 1, 1, this.ClientSize.Width - 3, this.ClientSize.Height - 3);
+      // Clean rounded hairline glass frame
+      using (GraphicsPath borderPath = new GraphicsPath()) {
+        int w = this.ClientSize.Width - 2;
+        int h = this.ClientSize.Height - 2;
+        int d = 50;
+        borderPath.AddArc(1, 1, d, d, 180, 90);
+        borderPath.AddArc(w - d, 1, d, d, 270, 90);
+        borderPath.AddArc(w - d, h - d, d, d, 0, 90);
+        borderPath.AddArc(1, h - d, d, d, 90, 90);
+        borderPath.CloseFigure();
+        using (Pen borderPen = new Pen(Color.FromArgb(42, 255, 255, 255), 1.4f)) {
+          g.DrawPath(borderPen, borderPath);
+        }
       }
 
-      // Centered p icon
+      // Centered pMusic squircle icon
       if (logoImg != null) {
-        g.DrawImage(logoImg, (this.ClientSize.Width - 78) / 2, 42, 78, 78);
+        g.DrawImage(logoImg, (this.ClientSize.Width - 82) / 2, 36, 82, 82);
       }
 
-      // Minimal centered "pMusic" title
-      using (Font titleFont = new Font("Segoe UI", 20f, FontStyle.Bold))
+      // Clean "pMusic" wordmark without version clutter
+      using (Font titleFont = new Font("Segoe UI", 22f, FontStyle.Bold))
       using (Brush whiteBrush = new SolidBrush(Color.White))
       using (StringFormat sf = new StringFormat { Alignment = StringAlignment.Center }) {
-        g.DrawString("pMusic", titleFont, whiteBrush, this.ClientSize.Width / 2f, 132, sf);
+        g.DrawString("pMusic", titleFont, whiteBrush, this.ClientSize.Width / 2f, 128, sf);
       }
     }
 
-    private void SetProgress(float p, string text) {
+    private void SetProgress(float p, string status, string pctText) {
       if (this.InvokeRequired) {
-        this.BeginInvoke(new Action(() => SetProgress(p, text)));
+        this.BeginInvoke(new Action(() => SetProgress(p, status, pctText)));
         return;
       }
       progressValue = p;
-      pctLabel.Text = text;
+      statusLabel.Text = status;
+      pctLabel.Text = pctText;
       progressTrack.Invalidate();
     }
 
@@ -289,7 +340,7 @@ namespace PMusicSetup {
 
       try {
         await Task.Run(() => {
-          SetProgress(0.05f, "5%");
+          SetProgress(0.05f, "Preparando archivos...", "5%");
           Directory.CreateDirectory(targetDir);
 
           try {
@@ -315,7 +366,7 @@ namespace PMusicSetup {
                 done++;
                 if (done % 6 == 0 || done == total) {
                   float ratio = 0.08f + 0.84f * ((float)done / total);
-                  SetProgress(ratio, string.Format("{0}%", (int)(ratio * 100)));
+                  SetProgress(ratio, "Instalando pMusic...", string.Format("{0}%", (int)(ratio * 100)));
                 }
               }
             }
@@ -324,7 +375,9 @@ namespace PMusicSetup {
           string exePath = Path.Combine(targetDir, "pmusic.exe");
           installedExePath = exePath;
 
+          SetProgress(0.95f, "Configurando accesos directos...", "95%");
           RegisterProtocol(exePath);
+          RegisterUninstallEntry(targetDir, exePath);
           CreateShortcut(
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "pMusic.lnk"),
             exePath,
@@ -337,14 +390,14 @@ namespace PMusicSetup {
               targetDir
             );
           }
-          SetProgress(1.0f, "100%");
+          SetProgress(1.0f, "¡Listo! pMusic instalado", "100%");
         });
 
         installed = true;
         installBtn.Text = "Abrir pMusic";
         installBtn.Enabled = true;
       } catch (Exception ex) {
-        SetProgress(0f, ex.Message);
+        SetProgress(0f, ex.Message, "Error");
         installBtn.Text = "Reintentar";
         installBtn.Enabled = true;
         browseBtn.Enabled = true;
@@ -357,13 +410,28 @@ namespace PMusicSetup {
 
     private static void RegisterProtocol(string exePath) {
       try {
-        using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"Software\Classes\pmusic")) {
+        using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"Software\\Classes\\pmusic")) {
           if (key != null) {
             key.SetValue("", "URL:pMusic Protocol");
             key.SetValue("URL Protocol", "");
-            using (RegistryKey cmd = key.CreateSubKey(@"shell\open\command")) {
+            using (RegistryKey cmd = key.CreateSubKey(@"shell\\open\\command")) {
               if (cmd != null) cmd.SetValue("", "\\"" + exePath + "\\" \\"%1\\"");
             }
+          }
+        }
+      } catch {}
+    }
+
+    private static void RegisterUninstallEntry(string targetDir, string exePath) {
+      try {
+        using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\pMusic")) {
+          if (key != null) {
+            key.SetValue("DisplayName", "pMusic");
+            key.SetValue("DisplayIcon", exePath + ",0");
+            key.SetValue("InstallLocation", targetDir);
+            key.SetValue("Publisher", "pMusic");
+            key.SetValue("NoModify", 1, RegistryValueKind.DWord);
+            key.SetValue("NoRepair", 1, RegistryValueKind.DWord);
           }
         }
       } catch {}
@@ -387,7 +455,7 @@ namespace PMusicSetup {
     public static void Main() {
       Application.EnableVisualStyles();
       Application.SetCompatibleTextRenderingDefault(false);
-      Application.Run(new MinimalPMusicInstaller());
+      Application.Run(new ModernPMusicInstaller());
     }
   }
 }
@@ -396,7 +464,7 @@ namespace PMusicSetup {
 writeFileSync(csPath, csSource, 'utf-8');
 
 const cscPath = 'C:/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe';
-console.log('Compiling minimal pMusic installer...');
+console.log(`Compiling modern versionless pMusic installer (app ${version})...`);
 execFileSync(
   cscPath,
   [

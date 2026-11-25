@@ -12,6 +12,7 @@ import {
   type ArtistAffinityRecord,
   type ArtistSummary,
   type AutocompleteSuggestion,
+  type FavoriteArtistRecord,
   type HomeEditorialMix,
   type HomeEditorialShelf,
   type IMusicProvider,
@@ -78,6 +79,62 @@ const KNOWN_ES_SCENE_ARTISTS = new Set([
 
 function collapseNormalized(input: string): string {
   return normalizeSearchText(input).replace(/[^a-z0-9]+/g, '');
+}
+
+function hashString32(input: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+export function seededShuffle<T>(items: readonly T[], seed: string): T[] {
+  const arr = [...items];
+  let state = hashString32(seed) || 1;
+  for (let i = arr.length - 1; i > 0; i--) {
+    state = (Math.imul(1664525, state) + 1013904223) >>> 0;
+    const j = state % (i + 1);
+    const tmp = arr[i]!;
+    arr[i] = arr[j]!;
+    arr[j] = tmp;
+  }
+  return arr;
+}
+
+export function getDailyMixDateKey(now: Date = new Date()): string {
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * Computes the weekly release-radar cycle key updating every Thursday at 12:00 local time.
+ */
+export function getThursdayNoonCycleKey(now: Date = new Date()): string {
+  const cursor = new Date(now.getTime());
+  const day = cursor.getDay(); // 0=Sun ... 4=Thu ... 6=Sat
+  let daysSinceThu = (day - 4 + 7) % 7;
+  if (daysSinceThu === 0 && cursor.getHours() < 12) {
+    daysSinceThu = 7;
+  }
+  cursor.setDate(cursor.getDate() - daysSinceThu);
+  cursor.setHours(12, 0, 0, 0);
+  return `${getDailyMixDateKey(cursor)}-T12`;
+}
+
+function isSameArtistAlias(normA: string, normB: string): boolean {
+  if (!normA || !normB) return false;
+  if (normA === normB) return true;
+  if (
+    (normA === 'cruz cafune' || normA === 'cruzzi') &&
+    (normB === 'cruz cafune' || normB === 'cruzzi')
+  ) {
+    return true;
+  }
+  return false;
 }
 
 const SYNTHETIC_TRACK_ID_SET = new Set([
@@ -211,6 +268,7 @@ export class RecommendationEngine implements IRecommendationEngine {
 
   private seeds = new Map<string, SeedArtistConfig>();
   private affinities = new Map<string, ArtistAffinityRecord>();
+  private favoriteArtists = new Map<string, FavoriteArtistRecord>();
   private history: PlayHistoryRecord[] = [];
   private recentSearchQueries: string[] = [];
 
@@ -379,9 +437,27 @@ export class RecommendationEngine implements IRecommendationEngine {
     }
   }
 
+  public setFavoriteArtists(artists: readonly FavoriteArtistRecord[]): void {
+    this.favoriteArtists.clear();
+    for (const a of artists) {
+      const key = normalizeArtistKey(a.artistName);
+      if (!key) continue;
+      this.favoriteArtists.set(key, a);
+    }
+  }
+
+  public getFavoriteArtists(): FavoriteArtistRecord[] {
+    return Array.from(this.favoriteArtists.values());
+  }
+
   public getEffectiveAffinity(artistName: string, nowMs = Date.now()): number {
     const key = normalizeArtistKey(artistName);
     if (!key) return 0;
+
+    const isFavorite =
+      this.favoriteArtists.has(key) ||
+      Array.from(this.favoriteArtists.keys()).some((fk) => isSameArtistAlias(fk, key));
+    const favBoost = isFavorite ? 24 : 0;
 
     const seed = this.seeds.get(key);
     // Smoothly attenuate seed prior as organic listening history grows, while always retaining base affinity
@@ -394,7 +470,7 @@ export class RecommendationEngine implements IRecommendationEngine {
 
     const record = this.affinities.get(key);
     if (!record) {
-      return Number(clampAffinityScore(seedBoost).toFixed(3));
+      return Number(clampAffinityScore(seedBoost + favBoost).toFixed(3));
     }
 
     const updatedMs = Date.parse(record.updatedAt);
@@ -406,7 +482,7 @@ export class RecommendationEngine implements IRecommendationEngine {
     return Number(
       Math.max(
         AFFINITY_SCORE_MIN,
-        Math.min(AFFINITY_SCORE_MAX, decayedDynamic + seedBoost)
+        Math.min(AFFINITY_SCORE_MAX, decayedDynamic + seedBoost + favBoost)
       ).toFixed(3)
     );
   }
@@ -852,22 +928,54 @@ export class RecommendationEngine implements IRecommendationEngine {
   }
 
   public async buildHomeShelves(signal?: AbortSignal): Promise<HomeEditorialShelf[]> {
+    const now = new Date();
+    const dailyKey = getDailyMixDateKey(now);
+    const thursdayKey = getThursdayNoonCycleKey(now);
+    const currentYear = now.getFullYear();
+
+    const favNames = Array.from(this.favoriteArtists.values()).map((a) => a.artistName);
     const rankedArtists = this.getRankedArtists();
-    const topArtist1 = rankedArtists[0]?.name ?? 'Cruzzi';
-    const topArtist2 = rankedArtists[1]?.name ?? 'La Pantera';
-    const topArtist3 = rankedArtists[2]?.name ?? 'Bad Bunny';
+    const mergedTopNames: string[] = [];
+    const seenArtistKeys = new Set<string>();
+    const pushTopArtist = (name?: string) => {
+      if (!name) return;
+      const k = normalizeArtistKey(name);
+      if (!k || seenArtistKeys.has(k)) return;
+      seenArtistKeys.add(k);
+      mergedTopNames.push(name);
+    };
+    for (const fn of favNames) pushTopArtist(fn);
+    for (const ra of rankedArtists) pushTopArtist(ra.name);
+    for (const def of ['Cruzzi', 'La Pantera', 'Bad Bunny', 'Quevedo', 'Rels B', 'Saiko']) {
+      pushTopArtist(def);
+    }
+
+    const topArtist1 = mergedTopNames[0] ?? 'Cruzzi';
+    const topArtist2 = mergedTopNames[1] ?? 'La Pantera';
+    const topArtist3 = mergedTopNames[2] ?? 'Bad Bunny';
+    const topArtist4 = mergedTopNames[3] ?? 'Quevedo';
+    const topArtist5 = mergedTopNames[4] ?? 'Rels B';
 
     let catalogSongs: Track[] = [];
     let catalogAlbums: AlbumSummary[] = [];
+    let releaseRadarSongs: Track[] = [];
 
     if (this.musicProvider) {
-      const queries = Array.from(new Set(['', topArtist1, topArtist2, topArtist3]));
-      const bundles = await Promise.all(
-        queries.map((q) =>
-          this.musicProvider!.search(q, 'all', signal).catch(() => null)
-        )
-      );
-      const ok = bundles.filter((b): b is NonNullable<typeof b> => Boolean(b));
+      const queries = Array.from(new Set(['', topArtist1, topArtist2, topArtist3, topArtist4]));
+      const radarQueries = [
+        `${topArtist1} ${currentYear}`,
+        `${topArtist2} ${currentYear}`,
+        `${topArtist3} nuevo`,
+      ];
+      const [mainBundles, radarBundles] = await Promise.all([
+        Promise.all(
+          queries.map((q) => this.musicProvider!.search(q, 'all', signal).catch(() => null))
+        ),
+        Promise.all(
+          radarQueries.map((q) => this.musicProvider!.search(q, 'song', signal).catch(() => null))
+        ),
+      ]);
+      const ok = mainBundles.filter((b): b is NonNullable<typeof b> => Boolean(b));
       const seen = new Set<string>();
       const merged: Track[] = [];
       const maxLen = Math.max(0, ...ok.map((b) => b.songs.length));
@@ -881,8 +989,37 @@ export class RecommendationEngine implements IRecommendationEngine {
         }
       }
       catalogSongs = this.rerankTracks(merged);
-      catalogAlbums = ok.flatMap((b) => b.albums).filter((a, i, arr) => arr.findIndex((x) => x.id === a.id) === i).slice(0, 10);
+      catalogAlbums = ok
+        .flatMap((b) => b.albums)
+        .filter((a, i, arr) => arr.findIndex((x) => x.id === a.id) === i)
+        .sort((a, b) => (b.year ?? 0) - (a.year ?? 0))
+        .slice(0, 12);
+
+      const okRadar = radarBundles.filter((b): b is NonNullable<typeof b> => Boolean(b));
+      const radarSeen = new Set<string>();
+      const radarRaw: Track[] = [];
+      for (const b of okRadar) {
+        for (const s of b.songs) {
+          if (s?.id && !radarSeen.has(s.id)) {
+            radarSeen.add(s.id);
+            radarRaw.push(s);
+          }
+        }
+      }
+      releaseRadarSongs = this.rerankTracks(radarRaw);
     }
+
+    const heardIds = new Set(this.history.map((h) => h.trackId));
+    const heardKeys = new Set(
+      this.history.map(
+        (h) => `${normalizeSearchText(h.track.title)}::${normalizeArtistKey(h.track.artists[0]?.name ?? '')}`
+      )
+    );
+    const isUnheard = (t: Track): boolean => {
+      if (heardIds.has(t.id)) return false;
+      const k = `${normalizeSearchText(t.title)}::${normalizeArtistKey(t.artists[0]?.name ?? '')}`;
+      return !heardKeys.has(k);
+    };
 
     const listenAgainTracks: Track[] = [];
     const seenIds = new Set<string>();
@@ -905,36 +1042,141 @@ export class RecommendationEngine implements IRecommendationEngine {
       }
     }
 
+    const matchArtistInList = (track: Track, targets: readonly string[]): boolean => {
+      const targetNorms = targets.map((t) => normalizeArtistKey(t)).filter(Boolean);
+      return track.artists.some((a) => {
+        const ak = normalizeArtistKey(a.name);
+        return targetNorms.some((tk) => isSameArtistAlias(ak, tk));
+      });
+    };
+
+    const pickDistinctMixTracks = (
+      primaryPool: readonly Track[],
+      fallbackPool: readonly Track[],
+      seed: string,
+      maxCount = 14
+    ): Track[] => {
+      const shuffledPrimary = seededShuffle(primaryPool, seed);
+      const shuffledFallback = seededShuffle(fallbackPool, `${seed}:fb`);
+      const out: Track[] = [];
+      const localIds = new Set<string>();
+      const localKeys = new Set<string>();
+      const addList = (list: readonly Track[]) => {
+        for (const t of list) {
+          if (!t?.id || localIds.has(t.id)) continue;
+          const k = `${normalizeSearchText(t.title)}::${normalizeArtistKey(t.artists[0]?.name ?? '')}`;
+          if (localKeys.has(k)) continue;
+          localIds.add(t.id);
+          localKeys.add(k);
+          out.push(t);
+          if (out.length >= maxCount) return;
+        }
+      };
+      addList(shuffledPrimary);
+      if (out.length < maxCount) addList(shuffledFallback);
+      return out;
+    };
+
+    // 1. Descubre lo Nuevo (Weekly refresh every Thursday 12:00)
+    const radarCombined = [...releaseRadarSongs, ...catalogSongs]
+      .sort((a, b) => (b.releaseYear ?? 0) - (a.releaseYear ?? 0));
+    const unheardRadar = radarCombined.filter(isUnheard);
+    const radarTracks = pickDistinctMixTracks(
+      unheardRadar.length >= 6 ? unheardRadar : radarCombined,
+      catalogSongs,
+      `radar:${thursdayKey}`,
+      16
+    );
+
+    // 2. Daily Mix 1 — Core favorite & top affinity cluster
+    const mix1Cluster = catalogSongs.filter((t) =>
+      matchArtistInList(t, [topArtist1, topArtist3])
+    );
+    const mix1Tracks = pickDistinctMixTracks(
+      mix1Cluster.length >= 4 ? mix1Cluster : catalogSongs,
+      catalogSongs,
+      `daily1:${dailyKey}`,
+      14
+    );
+
+    // 3. Daily Mix 2 — Second distinct style / scene cluster
+    const mix2Cluster = catalogSongs.filter(
+      (t) =>
+        matchArtistInList(t, [topArtist2, topArtist4]) &&
+        !mix1Tracks.slice(0, 4).some((m) => m.id === t.id)
+    );
+    const mix2Tracks = pickDistinctMixTracks(
+      mix2Cluster.length >= 4 ? mix2Cluster : catalogSongs.filter((t) => !matchArtistInList(t, [topArtist1])),
+      catalogSongs,
+      `daily2:${dailyKey}`,
+      14
+    );
+
+    // 4. Daily Mix 3 — Discovery / third style blend
+    const mix3Cluster = catalogSongs.filter(
+      (t) =>
+        matchArtistInList(t, [topArtist4, topArtist5]) ||
+        (!matchArtistInList(t, [topArtist1, topArtist2]) && isUnheard(t))
+    );
+    const mix3Tracks = pickDistinctMixTracks(
+      mix3Cluster.length >= 4 ? mix3Cluster : [...catalogSongs].reverse(),
+      catalogSongs,
+      `daily3:${dailyKey}`,
+      14
+    );
+
     const mixes: HomeEditorialMix[] = [
       {
-        id: 'mix_cruz_urbano_es',
-        title: `Mix ${topArtist1}`,
-        subtitle: `${topArtist1}, ${topArtist2}, Quevedo y escena urbana ES`,
+        id: 'mix_descubre_lo_nuevo',
+        title: 'Descubre lo Nuevo',
+        subtitle: `Novedades de ${topArtist1}, ${topArtist2} y tu escena · Jueves 12:00`,
+        badge: 'JUEVES 12:00',
         coverUrl:
+          radarTracks[0]?.thumbnailHighUrl ??
+          radarTracks[0]?.thumbnailUrl ??
           catalogSongs[0]?.thumbnailUrl ??
-          'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&q=80',
+          '',
+        accentColor: MIX_PALETTES[4]!,
+        tracks: radarTracks,
+      },
+      {
+        id: 'mix_daily_1',
+        title: 'Daily Mix 1',
+        subtitle: `${topArtist1}, ${topArtist3} y favoritos de hoy`,
+        badge: 'DAILY MIX',
+        coverUrl:
+          mix1Tracks[0]?.thumbnailHighUrl ??
+          mix1Tracks[0]?.thumbnailUrl ??
+          catalogSongs[0]?.thumbnailUrl ??
+          '',
         accentColor: MIX_PALETTES[0]!,
-        tracks: catalogSongs.slice(0, 8),
+        tracks: mix1Tracks,
       },
       {
-        id: 'mix_trap_canarias',
-        title: `Mix ${topArtist2} & Canarias`,
-        subtitle: `${topArtist2}, ${topArtist1}, Juseph y trap isleño`,
+        id: 'mix_daily_2',
+        title: 'Daily Mix 2',
+        subtitle: `${topArtist2}, ${topArtist4} y vibes alternativos`,
+        badge: 'DAILY MIX',
         coverUrl:
-          catalogSongs[3]?.thumbnailUrl ??
-          'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=400&q=80',
+          mix2Tracks[0]?.thumbnailHighUrl ??
+          mix2Tracks[0]?.thumbnailUrl ??
+          catalogSongs[2]?.thumbnailUrl ??
+          '',
         accentColor: MIX_PALETTES[1]!,
-        tracks: [...catalogSongs.slice(2), ...catalogSongs.slice(0, 2)],
+        tracks: mix2Tracks,
       },
       {
-        id: 'mix_sesion_dj_club',
-        title: `Sesión DJ: ${topArtist3} & Urbano`,
-        subtitle: `${topArtist3}, Saiko, Morad y himnos de club`,
+        id: 'mix_daily_3',
+        title: 'Daily Mix 3',
+        subtitle: `${topArtist4}, ${topArtist5} y descubrimientos del día`,
+        badge: 'DAILY MIX',
         coverUrl:
-          catalogSongs[5]?.thumbnailUrl ??
-          'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=400&q=80',
+          mix3Tracks[0]?.thumbnailHighUrl ??
+          mix3Tracks[0]?.thumbnailUrl ??
+          catalogSongs[4]?.thumbnailUrl ??
+          '',
         accentColor: MIX_PALETTES[2]!,
-        tracks: [...catalogSongs].reverse(),
+        tracks: mix3Tracks,
       },
     ];
 
@@ -945,14 +1187,7 @@ export class RecommendationEngine implements IRecommendationEngine {
 
     const anchorNorm = normalizeArtistKey(anchorArtist);
     const artistSpecificSongs = catalogSongs.filter((t) =>
-      t.artists.some((a) => {
-        const k = normalizeArtistKey(a.name);
-        return (
-          k === anchorNorm ||
-          (anchorNorm === 'cruz cafune' && k === 'cruzzi') ||
-          (anchorNorm === 'cruzzi' && k === 'cruz cafune')
-        );
-      })
+      t.artists.some((a) => isSameArtistAlias(normalizeArtistKey(a.name), anchorNorm))
     );
     const restSongs = catalogSongs.filter(
       (t) => !artistSpecificSongs.some((as) => as.id === t.id)
@@ -974,14 +1209,14 @@ export class RecommendationEngine implements IRecommendationEngine {
         id: 'shelf_mixes_for_you',
         kind: 'mixes_for_you',
         title: 'Mixes para ti',
-        subtitle: 'Generados por tu algoritmo con Modo Sesión DJ',
+        subtitle: 'Recomendados según tu estilo · Actualizados cada día',
         mixes,
       },
       {
         id: 'shelf_because_you_listened',
         kind: 'because_you_listened',
         title: `Porque escuchaste a ${anchorArtist}`,
-        subtitle: 'Recomendaciones adaptadas a tu perfil urbano',
+        subtitle: 'Recomendaciones adaptadas a tu estilo',
         anchorArtist,
         tracks: becauseTracks.slice(0, 8),
       },
@@ -991,7 +1226,7 @@ export class RecommendationEngine implements IRecommendationEngine {
         title: 'Novedades de tus artistas favoritos',
         subtitle: `Lanzamientos destacados de ${topArtist1}, ${topArtist2} y ${topArtist3}`,
         albums: catalogAlbums,
-        tracks: catalogSongs.slice(0, 6),
+        tracks: radarTracks.slice(0, 8),
       },
     ];
 

@@ -10,6 +10,7 @@ import {
   Download,
   GripVertical,
   Heart,
+  Link2,
   ListMusic,
   ListPlus,
   Loader2,
@@ -25,14 +26,20 @@ import {
   Shuffle,
   Sparkles,
   Trash2,
+  Users,
   X,
 } from 'lucide-react';
 import { formatDurationSec, type Track } from '@pmusic/core';
 import {
+  getSyncSupabaseClient,
   usePMusicStore,
   type LibraryCategoryTab,
   type SearchScopeTab,
 } from '../store/usePMusicStore.ts';
+import {
+  buildPlaylistShareUrl,
+  publishOrUpdateSharedPlaylistLink,
+} from '../services/social-service.ts';
 import { extractCharacteristicImageColor, type RgbTriple } from '../utils/cover-color.ts';
 import {
   clearDraggedTrack,
@@ -233,6 +240,11 @@ export const TrackListRow: React.FC<{
             {track.album && (
               <span className="hidden min-w-0 flex-1 truncate leading-[1.2] pm-text-tertiary lg:inline">
                 · {track.album.name}
+              </span>
+            )}
+            {track.addedBy?.displayName && (
+              <span className="hidden shrink-0 items-center gap-1 rounded-full bg-white/[0.06] px-2 py-0.5 text-[10.5px] font-semibold pm-text-secondary sm:inline-flex">
+                <span>Añadida por {track.addedBy.displayName}</span>
               </span>
             )}
           </div>
@@ -482,11 +494,18 @@ export const DetailViewPanel: React.FC = () => {
     alwaysShuffle,
     playlists,
     likedTracks,
+    favoriteArtists,
     dismissedPlaylistRecs,
     searchResults,
+    authState,
+    userProfile,
     playTrack,
+    playCollection,
     togglePlayPause,
     playArtistShuffled,
+    toggleFavoriteArtist,
+    isArtistFavorite,
+    setPlaylistShareMetadata,
     toggleDjMode,
     startTrackRadio,
     renamePlaylist,
@@ -663,6 +682,18 @@ export const DetailViewPanel: React.FC = () => {
 
     const [hdrR, hdrG, hdrB] = artistHeaderRgb ?? [20, 20, 26];
     const stickyBgGradient = `linear-gradient(180deg, rgba(${hdrR}, ${hdrG}, ${hdrB}, 0.96) 0%, rgba(${Math.round(hdrR * 0.64)}, ${Math.round(hdrG * 0.64)}, ${Math.round(hdrB * 0.64)}, 0.96) 100%)`;
+    const isLikedArtist =
+      favoriteArtists.some(
+        (fa) => fa.artistId === artist.id || fa.artistName.toLowerCase() === artist.name.toLowerCase()
+      ) || isArtistFavorite(artist.name);
+
+    const handleToggleArtistLike = () => {
+      void toggleFavoriteArtist({
+        id: artist.id,
+        name: artist.name,
+        thumbnailUrl: artist.thumbnailUrl ?? activeHeroImage ?? undefined,
+      });
+    };
 
     const renderStickyHeaderRow = (isStickyTestTarget: boolean) => (
       <>
@@ -685,17 +716,28 @@ export const DetailViewPanel: React.FC = () => {
           </span>
         </div>
 
-        <button
-          type="button"
-          aria-label={`Aleatorio ${artist.name}`}
-          onClick={handleArtistShuffle}
-          className="pm-pressable relative flex h-10 w-10 shrink-0 items-center justify-center bg-transparent text-white/85 transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none"
-        >
-          <Shuffle className="h-5 w-5" />
-          {isPlayingThisArtist && shuffleEnabled && (
-            <span className="absolute bottom-1 h-1 w-1 rounded-full bg-white" />
-          )}
-        </button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <button
+            type="button"
+            aria-label={isLikedArtist ? `Quitar ${artist.name} de favoritos` : `Dar me gusta a ${artist.name}`}
+            aria-pressed={isLikedArtist}
+            onClick={handleToggleArtistLike}
+            className="pm-pressable flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-white transition-transform duration-150 hover:scale-110 hover:bg-white/20 active:scale-90"
+          >
+            <Heart className={`h-4 w-4 ${isLikedArtist ? 'fill-rose-500 text-rose-400' : ''}`} />
+          </button>
+          <button
+            type="button"
+            aria-label={`Aleatorio ${artist.name}`}
+            onClick={handleArtistShuffle}
+            className="pm-pressable relative flex h-10 w-10 shrink-0 items-center justify-center bg-transparent text-white/85 transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none"
+          >
+            <Shuffle className="h-5 w-5" />
+            {isPlayingThisArtist && shuffleEnabled && (
+              <span className="absolute bottom-1 h-1 w-1 rounded-full bg-white" />
+            )}
+          </button>
+        </div>
       </>
     );
 
@@ -794,6 +836,22 @@ export const DetailViewPanel: React.FC = () => {
             </div>
 
             <div className="flex shrink-0 items-center gap-2 pb-0.5 sm:gap-3.5">
+              <button
+                type="button"
+                data-testid="artist-like-btn"
+                aria-label={isLikedArtist ? `Quitar ${artist.name} de favoritos` : `Dar me gusta a ${artist.name}`}
+                aria-pressed={isLikedArtist}
+                onClick={handleToggleArtistLike}
+                className={`pm-pressable inline-flex items-center gap-1.5 rounded-full border px-4 py-2 text-xs font-bold shadow-lg backdrop-blur-md transition-all ${
+                  isLikedArtist
+                    ? 'border-rose-400/50 bg-rose-500/25 text-white'
+                    : 'border-white/20 bg-white/10 text-white/90 hover:bg-white/20'
+                }`}
+              >
+                <Heart className={`h-4 w-4 ${isLikedArtist ? 'fill-rose-400 text-rose-300' : ''}`} />
+                <span className="hidden sm:inline">{isLikedArtist ? 'Favorito' : 'Me gusta'}</span>
+              </button>
+
               <button
                 type="button"
                 data-testid="artist-shuffle-btn"
@@ -1139,7 +1197,7 @@ export const DetailViewPanel: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
-                  if (tracks[0]) void playTrack(tracks[0], tracks);
+                  if (tracks.length > 0) void playCollection(tracks, { isPlaylist: true });
                 }}
                 className="pm-btn-primary inline-flex items-center gap-2 rounded-full px-6 py-2.5 text-xs font-bold"
               >
@@ -1150,7 +1208,7 @@ export const DetailViewPanel: React.FC = () => {
                 type="button"
                 onClick={async () => {
                   await toggleDjMode(true);
-                  if (tracks[0]) await playTrack(tracks[0], tracks);
+                  if (tracks.length > 0) await playCollection(tracks, { isPlaylist: true });
                 }}
                 className="pm-btn-secondary inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-xs font-semibold"
               >
@@ -1244,22 +1302,78 @@ export const DetailViewPanel: React.FC = () => {
   const totalPlMins = Math.max(0, Math.round(totalPlDurationSec / 60));
   const isAddFinderOpen = addFinderOverride ?? localPl.tracks.length < 3;
 
-  const handleSharePlaylist = async () => {
+  const handleSharePlaylist = async (makeCollab?: boolean) => {
+    const sb = getSyncSupabaseClient();
+    const wantCollab = makeCollab ?? Boolean(localPl.isCollaborative);
+    if (sb && authState.connected && authState.userId) {
+      try {
+        const synced = await publishOrUpdateSharedPlaylistLink(sb, {
+          ownerId: authState.userId,
+          name: localPl.name,
+          description: localPl.description,
+          tracks: localPl.tracks,
+          isCollaborative: wantCollab,
+          existingShareCode: localPl.shareCode,
+          ownerProfile: userProfile,
+        });
+        await setPlaylistShareMetadata(localPl.id, {
+          shareCode: synced.shareCode ?? localPl.shareCode,
+          isCollaborative: wantCollab,
+          isPublicLink: true,
+        });
+        const shareUrl = buildPlaylistShareUrl(synced.shareCode ?? localPl.shareCode ?? '');
+        try {
+          if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+            await navigator.share({ title: localPl.name, url: shareUrl });
+          } else {
+            await navigator.clipboard?.writeText(shareUrl);
+          }
+        } catch {
+          await navigator.clipboard?.writeText(shareUrl).catch(() => {});
+        }
+        showToast(
+          wantCollab
+            ? 'Enlace de playlist colaborativa copiado'
+            : 'Enlace para compartir playlist copiado'
+        );
+        return;
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : 'No se pudo publicar el enlace');
+      }
+    }
+
     const trackLines = localPl.tracks
       .slice(0, 12)
       .map((t, i) => `${i + 1}. ${t.title} — ${t.artists.map((a) => a.name).join(', ')}`)
       .join('\n');
     const summary = `Playlist pMusic: ${localPl.name} (${localPl.tracks.length} pistas)\n${trackLines}`;
     try {
-      if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
-        await navigator.share({ title: localPl.name, text: summary });
-      } else {
-        await navigator.clipboard?.writeText(summary);
-      }
-      showToast('Playlist lista para compartir (copiada al portapapeles)');
+      await navigator.clipboard?.writeText(summary);
+      showToast('Lista copiada al portapapeles (inicia sesión para crear enlace web)');
     } catch {
-      await navigator.clipboard?.writeText(summary).catch(() => {});
-      showToast('Enlace y lista copiados al portapapeles');
+      showToast('Inicia sesión para generar un enlace web compartible');
+    }
+  };
+
+  const handleToggleCollaborative = async () => {
+    const nextCollab = !localPl.isCollaborative;
+    await setPlaylistShareMetadata(localPl.id, { isCollaborative: nextCollab });
+    if (nextCollab) {
+      await handleSharePlaylist(true);
+    } else {
+      const sb = getSyncSupabaseClient();
+      if (sb && authState.connected && authState.userId && localPl.shareCode) {
+        void publishOrUpdateSharedPlaylistLink(sb, {
+          ownerId: authState.userId,
+          name: localPl.name,
+          description: localPl.description,
+          tracks: localPl.tracks,
+          isCollaborative: false,
+          existingShareCode: localPl.shareCode,
+          ownerProfile: userProfile,
+        }).catch(() => {});
+      }
+      showToast('Playlist cambiada a solo lectura');
     }
   };
 
@@ -1363,9 +1477,9 @@ export const DetailViewPanel: React.FC = () => {
             <button
               type="button"
               onClick={() => {
-                if (localPl.tracks[0]) {
+                if (localPl.tracks.length > 0) {
                   recordPlaylistPlay(localPl);
-                  void playTrack(localPl.tracks[0], localPl.tracks);
+                  void playCollection(localPl.tracks, { isPlaylist: true });
                 }
               }}
               className="pm-btn-primary inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-xs font-bold"
@@ -1378,9 +1492,9 @@ export const DetailViewPanel: React.FC = () => {
               type="button"
               onClick={async () => {
                 await toggleDjMode(true);
-                if (localPl.tracks[0]) {
+                if (localPl.tracks.length > 0) {
                   recordPlaylistPlay(localPl);
-                  await playTrack(localPl.tracks[0], localPl.tracks);
+                  await playCollection(localPl.tracks, { isPlaylist: true });
                 }
               }}
               className="pm-btn-secondary inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold"
@@ -1391,12 +1505,27 @@ export const DetailViewPanel: React.FC = () => {
 
             <button
               type="button"
-              aria-label="Compartir playlist"
+              aria-label="Compartir enlace de playlist"
               onClick={() => void handleSharePlaylist()}
               className="pm-btn-secondary inline-flex items-center gap-1.5 rounded-full px-4 py-2.5 text-xs font-semibold"
             >
-              <Share2 className="h-3.5 w-3.5" />
-              <span>Compartir</span>
+              <Link2 className="h-3.5 w-3.5" />
+              <span>Compartir enlace</span>
+            </button>
+
+            <button
+              type="button"
+              aria-label="Activar playlist colaborativa"
+              aria-pressed={Boolean(localPl.isCollaborative)}
+              onClick={() => void handleToggleCollaborative()}
+              className={`inline-flex items-center gap-1.5 rounded-full px-4 py-2.5 text-xs font-semibold transition-colors ${
+                localPl.isCollaborative
+                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/35'
+                  : 'pm-btn-secondary'
+              }`}
+            >
+              <Users className="h-3.5 w-3.5" />
+              <span>{localPl.isCollaborative ? 'Colaborativa' : 'Hacer colaborativa'}</span>
             </button>
 
             <button
@@ -1811,8 +1940,9 @@ export const HomeScreen: React.FC = () => {
     isOfflineNetwork,
     wrappedSeasonActive,
     openWrappedModal,
+    favoriteArtists,
     playTrack,
-    toggleDjMode,
+    playCollection,
     openAlbumDetail,
     openArtistDetail,
     openLocalPlaylistDetail,
@@ -1846,16 +1976,32 @@ export const HomeScreen: React.FC = () => {
   const show = (name: (typeof HOME_CHIPS)[number]) =>
     chip === 'Todo' || chip === name;
 
-  const artistCards = Array.from(
-    new Map(
-      (releases?.tracks ?? []).flatMap((t) =>
-        t.artists.slice(0, 1).map((a) => [
-          a.id ?? a.name,
-          { a, img: t.thumbnailHighUrl ?? t.thumbnailUrl },
-        ] as const)
-      )
-    ).values()
-  );
+  const favArtistMap = new Map<string, { a: { id?: string; name: string }; img: string }>();
+  for (const fa of favoriteArtists) {
+    const thumb =
+      fa.thumbnailUrl ||
+      (releases?.tracks ?? []).find((t) =>
+        t.artists.some((ar) => ar.name.toLowerCase() === fa.artistName.toLowerCase())
+      )?.thumbnailHighUrl ||
+      listen?.tracks?.[0]?.thumbnailUrl ||
+      '';
+    favArtistMap.set(fa.artistName.toLowerCase(), {
+      a: { id: fa.artistId, name: fa.artistName },
+      img: thumb,
+    });
+  }
+  for (const t of releases?.tracks ?? []) {
+    const a = t.artists[0];
+    if (!a?.name) continue;
+    const key = a.name.toLowerCase();
+    if (!favArtistMap.has(key)) {
+      favArtistMap.set(key, {
+        a,
+        img: t.thumbnailHighUrl ?? t.thumbnailUrl,
+      });
+    }
+  }
+  const artistCards = Array.from(favArtistMap.values()).slice(0, 12);
 
   return (
     <div className="pm-page-enter space-y-6 sm:space-y-8">
@@ -1984,9 +2130,9 @@ export const HomeScreen: React.FC = () => {
                     aria-label={`Reproducir playlist ${pl.name}`}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (pl.tracks[0]) {
+                      if (pl.tracks.length > 0) {
                         recordPlaylistPlay(pl);
-                        void playTrack(pl.tracks[0], pl.tracks);
+                        void playCollection(pl.tracks, { isPlaylist: true });
                       }
                     }}
                     className="pm-cover-play pm-btn-primary hidden h-9 w-9 shrink-0 items-center justify-center rounded-full shadow-md sm:flex"
@@ -2083,11 +2229,11 @@ export const HomeScreen: React.FC = () => {
         </section>
       )}
 
-      {/* Mixes para ti (Solid artwork cards, ZERO gradient overlays) */}
+      {/* Mixes para ti (Daily Mixes + Descubre lo Nuevo cada jueves 12:00, sin DJ) */}
       {show('Mixes') && mixes?.mixes && (
         <CarouselSection
           title="Mixes para ti"
-          subtitle="Mezclas personalizadas con Modo Sesión DJ"
+          subtitle={mixes.subtitle ?? 'Recomendados según tu estilo · Actualizados cada día'}
         >
           {mixes.mixes.map((mix) => (
             <CoverCard
@@ -2095,13 +2241,29 @@ export const HomeScreen: React.FC = () => {
               image={mix.coverUrl}
               title={mix.title}
               subtitle={mix.subtitle}
-              badge="AUTOMIX"
-              onOpen={() =>
-                mix.tracks[0] && void playTrack(mix.tracks[0], mix.tracks)
-              }
+              badge={mix.badge}
+              onOpen={() => {
+                usePMusicStore.setState({
+                  activeDetailView: {
+                    kind: 'playlist',
+                    data: {
+                      playlist: {
+                        id: mix.id,
+                        title: mix.title,
+                        author: 'pMusic Mixes',
+                        trackCount: mix.tracks.length,
+                        thumbnailUrl: mix.coverUrl,
+                        source: 'mix',
+                      },
+                      tracks: mix.tracks,
+                    },
+                  },
+                });
+              }}
               onPlay={() => {
-                void toggleDjMode(true);
-                if (mix.tracks[0]) void playTrack(mix.tracks[0], mix.tracks);
+                if (mix.tracks.length > 0) {
+                  void playCollection(mix.tracks, { isPlaylist: true });
+                }
               }}
             />
           ))}
@@ -2933,6 +3095,7 @@ export const LibraryScreen: React.FC = () => {
     libraryFilterQuery,
     playlists,
     likedTracks,
+    favoriteArtists,
     playHistory,
     offlineEntries,
     searchResults,
@@ -2942,9 +3105,12 @@ export const LibraryScreen: React.FC = () => {
     deletePlaylist,
     addTrackToPlaylist,
     openLocalPlaylistDetail,
+    openArtistDetail,
+    toggleFavoriteArtist,
     setImportModalOpen,
     removeOfflineTrack,
     playTrack,
+    playCollection,
     recordPlaylistPlay,
     showToast,
   } = usePMusicStore();
@@ -2958,6 +3124,7 @@ export const LibraryScreen: React.FC = () => {
   const categories: readonly LibraryCategoryTab[] = [
     'Todo',
     'Playlists',
+    'Artistas',
     'Me gusta',
     'Descargas',
     'Historial',
@@ -3127,7 +3294,7 @@ export const LibraryScreen: React.FC = () => {
             onClick={(e) => {
               e.stopPropagation();
               const list = likedTracks.map((l) => l.track);
-              if (list[0]) void playTrack(list[0], list);
+              if (list.length > 0) void playCollection(list, { isPlaylist: true });
             }}
             className="pm-btn-primary pm-pressable inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full shadow-md"
           >
@@ -3209,9 +3376,9 @@ export const LibraryScreen: React.FC = () => {
                           type="button"
                           aria-label={`Reproducir ${pl.name}`}
                           onClick={() => {
-                            if (pl.tracks[0]) {
+                            if (pl.tracks.length > 0) {
                               recordPlaylistPlay(pl);
-                              void playTrack(pl.tracks[0], pl.tracks);
+                              void playCollection(pl.tracks, { isPlaylist: true });
                             }
                           }}
                           className="pm-btn-secondary pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full"
@@ -3316,6 +3483,76 @@ export const LibraryScreen: React.FC = () => {
           ) : (
             <p className="text-xs pm-text-tertiary">
               Aún no has creado playlists personalizadas. Toca «Nueva» o importa desde Spotify/YouTube.
+            </p>
+          )}
+        </section>
+      )}
+
+      {/* Favorite Artists Section */}
+      {(libraryCategory === 'Todo' || libraryCategory === 'Artistas') && (
+        <section className="space-y-2.5">
+          <h2 className="text-[18px] font-bold pm-text-primary">
+            Artistas favoritos ({favoriteArtists.length})
+          </h2>
+          {favoriteArtists.length > 0 ? (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+              {favoriteArtists
+                .filter(
+                  (a) => !filterNorm || a.artistName.toLowerCase().includes(filterNorm)
+                )
+                .map((fa) => (
+                  <div
+                    key={fa.artistId}
+                    data-surface="content"
+                    onClick={() =>
+                      void openArtistDetail(fa.artistId, {
+                        name: fa.artistName,
+                        thumbnailUrl: fa.thumbnailUrl,
+                      })
+                    }
+                    className="pm-surface-card pm-card-lift flex cursor-pointer items-center justify-between gap-2.5 rounded-[14px] p-3"
+                  >
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      {fa.thumbnailUrl ? (
+                        <img
+                          src={fa.thumbnailUrl}
+                          alt={fa.artistName}
+                          className="h-11 w-11 shrink-0 rounded-full object-cover"
+                        />
+                      ) : (
+                        <div className="pm-elevated flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-bold pm-text-primary">
+                          {fa.artistName.slice(0, 1).toUpperCase()}
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <div className="truncate text-xs font-bold pm-text-primary">
+                          {fa.artistName}
+                        </div>
+                        <div className="text-[10.5px] pm-text-tertiary">Artista favorito</div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label={`Quitar ${fa.artistName} de favoritos`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void toggleFavoriteArtist({
+                          id: fa.artistId,
+                          name: fa.artistName,
+                          thumbnailUrl: fa.thumbnailUrl,
+                        });
+                      }}
+                      className="rounded-full p-1.5 text-rose-400 hover:bg-rose-500/15"
+                    >
+                      <Heart className="h-3.5 w-3.5 fill-current" />
+                    </button>
+                  </div>
+                ))}
+            </div>
+          ) : (
+            <p className="text-xs pm-text-tertiary">
+              Pulsa «Me gusta» en el perfil de cualquier artista para ver sus temas recomendados
+              aquí y en tus mixes diarios.
             </p>
           )}
         </section>

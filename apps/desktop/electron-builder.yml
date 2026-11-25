@@ -31,7 +31,7 @@ win:
       arch:
         - x64
 nsis:
-  artifactName: pMusic-Setup-${version}.${ext}
+  artifactName: pMusic-Setup.${ext}
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
@@ -48,7 +48,7 @@ nsis:
   language: "3082"
   runAfterFinish: true
 portable:
-  artifactName: pMusic-Portable-${version}.${ext}
+  artifactName: pMusic-Portable.${ext}
   splashImage: build/portableSplash.bmp
 linux:
   icon: build/icon.png

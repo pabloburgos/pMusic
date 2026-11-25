@@ -14,6 +14,14 @@ export interface AlbumRef {
   name: string;
 }
 
+export interface TrackContributor {
+  userId?: string;
+  username?: string;
+  displayName: string;
+  avatarUrl?: string | null;
+  addedAt?: string;
+}
+
 export interface Track {
   /** Canonical YouTube videoId (typically 11-char) */
   id: string;
@@ -28,6 +36,8 @@ export interface Track {
   releaseYear?: number;
   /** Optional metadata for DJ / Recommendation engines */
   genres?: string[];
+  /** Present when track belongs to a collaborative/shared playlist */
+  addedBy?: TrackContributor;
 }
 
 export interface ArtistSummary {
@@ -78,6 +88,9 @@ export interface PlaylistRecord {
   source: PlaylistRecordSource;
   sourceUrl?: string;
   tracks: Track[];
+  shareCode?: string | null;
+  isCollaborative?: boolean;
+  isPublicLink?: boolean;
   /** ISO-8601 UTC timestamp */
   createdAt: string;
   /** ISO-8601 UTC timestamp */

@@ -44,6 +44,9 @@ interface ElectronDesktopWindowBridge {
   vaultGet?: (key: string) => Promise<string | null>;
   vaultSet?: (key: string, value: string) => Promise<void>;
   vaultRemove?: (key: string) => Promise<void>;
+  readPrefsFile?: () => Promise<string | null>;
+  writePrefsFile?: (jsonText: string) => Promise<void>;
+  clearAuthState?: () => Promise<void>;
 }
 
 function createElectronVaultPreferencesStorage(

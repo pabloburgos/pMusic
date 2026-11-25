@@ -1,7 +1,9 @@
 -- =============================================================================
--- pMusic — Esquema SQL Completo e Idempotente para Supabase (Free Tier)
+-- pMusic — Esquema SQL Completo e Idempotente para Supabase
 -- Tablas: playlists, playlist_tracks, liked_tracks, play_history,
---         artist_affinity, device_sessions
+--         artist_affinity, device_sessions, profiles, friendships,
+--         shared_playlists, jam_sessions, jam_requests,
+--         user_preferences, favorite_artists
 -- Incluye: Row Level Security (RLS), REPLICA IDENTITY FULL y Supabase Realtime
 -- =============================================================================
 
@@ -29,12 +31,23 @@ create table if not exists public.playlists (
   cover_url text,
   source text not null default 'local' check (source in ('local', 'imported_spotify', 'imported_youtube', 'mix')),
   source_url text,
+  share_code text unique,
+  is_public_link boolean not null default false,
+  is_collaborative boolean not null default false,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
 
+alter table public.playlists
+  add column if not exists share_code text unique,
+  add column if not exists is_public_link boolean not null default false,
+  add column if not exists is_collaborative boolean not null default false;
+
 create index if not exists idx_playlists_user_updated
   on public.playlists (user_id, updated_at desc);
+create index if not exists idx_playlists_share_code
+  on public.playlists (share_code)
+  where share_code is not null;
 
 drop trigger if exists trg_playlists_updated_at on public.playlists;
 create trigger trg_playlists_updated_at
@@ -62,10 +75,18 @@ create table if not exists public.playlist_tracks (
   track_id text not null,
   position integer not null default 0 check (position >= 0),
   track_data jsonb not null,
+  added_by_user_id uuid references auth.users(id) on delete set null,
+  added_by_name text,
+  added_by_avatar text,
   added_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now()),
   unique (playlist_id, track_id)
 );
+
+alter table public.playlist_tracks
+  add column if not exists added_by_user_id uuid references auth.users(id) on delete set null,
+  add column if not exists added_by_name text,
+  add column if not exists added_by_avatar text;
 
 create index if not exists idx_playlist_tracks_playlist_pos
   on public.playlist_tracks (playlist_id, position asc);
@@ -309,12 +330,23 @@ create table if not exists public.shared_playlists (
   member_ids uuid[] not null default '{}',
   tracks jsonb not null default '[]'::jsonb,
   compatibility_score smallint check (compatibility_score between 0 and 100),
+  share_code text unique,
+  is_public_link boolean not null default false,
+  allow_link_edit boolean not null default false,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
 
+alter table public.shared_playlists
+  add column if not exists share_code text unique,
+  add column if not exists is_public_link boolean not null default false,
+  add column if not exists allow_link_edit boolean not null default false;
+
 create index if not exists idx_shared_playlists_members
   on public.shared_playlists using gin (member_ids);
+create index if not exists idx_shared_playlists_share_code
+  on public.shared_playlists (share_code)
+  where share_code is not null;
 
 drop trigger if exists trg_shared_playlists_updated_at on public.shared_playlists;
 create trigger trg_shared_playlists_updated_at
@@ -325,12 +357,46 @@ alter table public.shared_playlists replica identity full;
 alter table public.shared_playlists enable row level security;
 
 drop policy if exists "shared_playlists_members_all" on public.shared_playlists;
-create policy "shared_playlists_members_all"
+drop policy if exists "shared_playlists_select_policy" on public.shared_playlists;
+create policy "shared_playlists_select_policy"
   on public.shared_playlists
-  for all
+  for select
+  to anon, authenticated
+  using (
+    is_public_link = true
+    or (select auth.uid()) = owner_id
+    or (select auth.uid()) = any(member_ids)
+  );
+
+drop policy if exists "shared_playlists_insert_policy" on public.shared_playlists;
+create policy "shared_playlists_insert_policy"
+  on public.shared_playlists
+  for insert
   to authenticated
-  using ((select auth.uid()) = owner_id or (select auth.uid()) = any(member_ids))
-  with check ((select auth.uid()) = owner_id or (select auth.uid()) = any(member_ids));
+  with check ((select auth.uid()) = owner_id);
+
+drop policy if exists "shared_playlists_update_policy" on public.shared_playlists;
+create policy "shared_playlists_update_policy"
+  on public.shared_playlists
+  for update
+  to authenticated
+  using (
+    (select auth.uid()) = owner_id
+    or (select auth.uid()) = any(member_ids)
+    or (is_public_link = true and allow_link_edit = true)
+  )
+  with check (
+    (select auth.uid()) = owner_id
+    or (select auth.uid()) = any(member_ids)
+    or (is_public_link = true and allow_link_edit = true)
+  );
+
+drop policy if exists "shared_playlists_delete_policy" on public.shared_playlists;
+create policy "shared_playlists_delete_policy"
+  on public.shared_playlists
+  for delete
+  to authenticated
+  using ((select auth.uid()) = owner_id);
 
 -- -----------------------------------------------------------------------------
 -- 10. public.jam_sessions y public.jam_requests (Jam en vivo + Web de peticiones sin app)
@@ -409,14 +475,78 @@ create policy "jam_requests_host_update"
   using (exists (select 1 from public.jam_sessions s where s.code = jam_code and s.host_user_id = (select auth.uid())));
 
 -- -----------------------------------------------------------------------------
--- 11. Publicación en Supabase Realtime (Idempotente)
+-- 11. public.user_preferences (Archivo compacto de preferencias por usuario)
+-- -----------------------------------------------------------------------------
+create table if not exists public.user_preferences (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  prefs jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+drop trigger if exists trg_user_preferences_updated_at on public.user_preferences;
+create trigger trg_user_preferences_updated_at
+  before update on public.user_preferences
+  for each row execute function public.pmusic_set_updated_at();
+
+alter table public.user_preferences replica identity full;
+alter table public.user_preferences enable row level security;
+
+drop policy if exists "user_preferences_owner_all" on public.user_preferences;
+create policy "user_preferences_owner_all"
+  on public.user_preferences
+  for all
+  to authenticated
+  using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id);
+
+-- -----------------------------------------------------------------------------
+-- 12. public.favorite_artists (Artistas favoritos / Me gusta en perfil)
+-- -----------------------------------------------------------------------------
+create table if not exists public.favorite_artists (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  artist_id text not null,
+  artist_name text not null,
+  thumbnail_url text,
+  liked_at timestamptz not null default timezone('utc', now()),
+  primary key (user_id, artist_id)
+);
+
+create index if not exists idx_favorite_artists_user_liked
+  on public.favorite_artists (user_id, liked_at desc);
+
+alter table public.favorite_artists replica identity full;
+alter table public.favorite_artists enable row level security;
+
+drop policy if exists "favorite_artists_owner_all" on public.favorite_artists;
+create policy "favorite_artists_owner_all"
+  on public.favorite_artists
+  for all
+  to authenticated
+  using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id);
+
+-- -----------------------------------------------------------------------------
+-- 13. Publicación en Supabase Realtime (Idempotente)
 -- -----------------------------------------------------------------------------
 do $$
 declare
   tbl text;
 begin
   if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
-    foreach tbl in array array['playlists', 'playlist_tracks', 'liked_tracks', 'artist_affinity', 'device_sessions', 'profiles', 'friendships', 'shared_playlists', 'jam_sessions', 'jam_requests']
+    foreach tbl in array array[
+      'playlists',
+      'playlist_tracks',
+      'liked_tracks',
+      'artist_affinity',
+      'device_sessions',
+      'profiles',
+      'friendships',
+      'shared_playlists',
+      'jam_sessions',
+      'jam_requests',
+      'user_preferences',
+      'favorite_artists'
+    ]
     loop
       if not exists (
         select 1
@@ -433,11 +563,12 @@ end;
 $$;
 
 -- -----------------------------------------------------------------------------
--- 12. Permisos explícitos para roles anon, authenticated y service_role (Idempotente)
+-- 14. Permisos explícitos para roles anon, authenticated y service_role (Idempotente)
 -- -----------------------------------------------------------------------------
 grant usage on schema public to anon, authenticated, service_role;
 grant select on table public.jam_sessions to anon;
 grant select, insert on table public.jam_requests to anon;
+grant select on table public.shared_playlists to anon;
 grant all on table
   public.profiles,
   public.playlists,
@@ -449,5 +580,7 @@ grant all on table
   public.friendships,
   public.shared_playlists,
   public.jam_sessions,
-  public.jam_requests
+  public.jam_requests,
+  public.user_preferences,
+  public.favorite_artists
   to authenticated, service_role;

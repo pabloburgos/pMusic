@@ -454,7 +454,12 @@ export class LibraryStore {
 
   public async updatePlaylist(
     playlistId: string,
-    patch: Partial<Pick<PlaylistRecord, 'name' | 'description' | 'coverUrl' | 'tracks'>>
+    patch: Partial<
+      Pick<
+        PlaylistRecord,
+        'name' | 'description' | 'coverUrl' | 'tracks' | 'shareCode' | 'isCollaborative' | 'isPublicLink'
+      >
+    >
   ): Promise<PlaylistRecord | null> {
     const idx = this.playlists.findIndex((p) => p.id === playlistId);
     if (idx === -1) return null;
@@ -465,6 +470,9 @@ export class LibraryStore {
       ...(patch.description !== undefined ? { description: patch.description } : {}),
       ...(patch.coverUrl !== undefined ? { coverUrl: patch.coverUrl } : {}),
       ...(patch.tracks !== undefined ? { tracks: patch.tracks.map(canonicalizeStoredTrack) } : {}),
+      ...(patch.shareCode !== undefined ? { shareCode: patch.shareCode } : {}),
+      ...(patch.isCollaborative !== undefined ? { isCollaborative: patch.isCollaborative } : {}),
+      ...(patch.isPublicLink !== undefined ? { isPublicLink: patch.isPublicLink } : {}),
       updatedAt: new Date().toISOString(),
     };
     this.playlists[idx] = updated;

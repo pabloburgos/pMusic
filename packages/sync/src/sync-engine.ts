@@ -3,6 +3,7 @@ import type {
   DevicePlatform,
   DevicePresenceState,
   DeviceSessionRecord,
+  FavoriteArtistRecord,
   IPreferencesStorageBridge,
   ISyncEngine,
   PlaybackTransferSnapshot,
@@ -89,6 +90,7 @@ export class SyncEngine implements ISyncEngine {
   private syncInFlight: Promise<void> | null = null;
   private syncPendingAgain = false;
   private realtimeSyncTimer: ReturnType<typeof setTimeout> | null = null;
+  private signingOut = false;
 
   private readonly remoteCommandListeners = new Set<(cmd: RemoteCommand) => void>();
   private readonly devicesListeners = new Set<(devices: DevicePresenceState[]) => void>();
@@ -288,6 +290,7 @@ export class SyncEngine implements ISyncEngine {
       if (!this.authListenerRegistered) {
         this.authListenerRegistered = true;
         this.supabaseBackend.client.auth.onAuthStateChange((_event, nextSession) => {
+          if (this.signingOut) return;
           if (nextSession?.user) {
             const changed = this.authState.userId !== nextSession.user.id || !this.authState.connected;
             this.updateAuthState(this.extractAuthMeta(nextSession.user));
@@ -407,6 +410,7 @@ export class SyncEngine implements ISyncEngine {
         queryParams: {
           access_type: 'offline',
           prompt: 'select_account',
+          max_age: '0',
         },
       },
     });
@@ -554,7 +558,8 @@ export class SyncEngine implements ISyncEngine {
     if (!cleanDisplayName) {
       throw new Error('Introduce un nombre visible.');
     }
-    const avatarUrl = input.avatarUrl ?? this.authState.avatarUrl ?? null;
+    const avatarUrl =
+      input.avatarUrl !== undefined ? input.avatarUrl : (this.authState.avatarUrl ?? null);
 
     const profile: UserProfile = {
       userId,
@@ -583,12 +588,26 @@ export class SyncEngine implements ISyncEngine {
           throw new Error(error.message || 'No se pudo guardar el perfil en Supabase.');
         }
       }
+      // Keep auth metadata in sync so display name/avatar survive reloads even offline
+      await this.supabaseBackend.client.auth
+        .updateUser({
+          data: {
+            full_name: cleanDisplayName,
+            ...(avatarUrl && avatarUrl.length < 4096 ? { avatar_url: avatarUrl } : {}),
+          },
+        })
+        .catch(() => {});
     }
 
     await this.preferencesStorage.setItem(
       `pmusic.profile.${userId}`,
       JSON.stringify(profile)
     );
+    this.updateAuthState({
+      ...this.authState,
+      displayName: cleanDisplayName,
+      avatarUrl,
+    });
     return profile;
   }
 
@@ -687,22 +706,98 @@ export class SyncEngine implements ISyncEngine {
   }
 
   public async signOut(): Promise<void> {
-    await this.disconnectRealtime();
-    if (this.supabaseBackend) {
-      try {
-        await this.supabaseBackend.client.auth.signOut();
-      } catch {
-        // ignore network error on signout
+    this.signingOut = true;
+    const prevUserId = this.authState.userId;
+    try {
+      await this.disconnectRealtime();
+      if (this.supabaseBackend) {
+        try {
+          await this.supabaseBackend.client.auth.signOut({ scope: 'local' });
+        } catch {
+          // ignore network error on signout
+        }
       }
+
+      // Derive Supabase auth storage key (sb-<project-ref>-auth-token) and purge all stale auth keys
+      const authKeysToPurge = new Set<string>([
+        'pmusic_user_prefs_v1',
+        'pmusic.profile.guest',
+      ]);
+      if (prevUserId) {
+        authKeysToPurge.add(`pmusic.profile.${prevUserId}`);
+      }
+      if (this.supabaseUrl) {
+        try {
+          const ref = new URL(this.supabaseUrl).hostname.split('.')[0];
+          if (ref) {
+            authKeysToPurge.add(`sb-${ref}-auth-token`);
+            authKeysToPurge.add(`sb-${ref}-auth-token-code-verifier`);
+          }
+        } catch {
+          // ignore malformed URL
+        }
+      }
+      if (typeof localStorage !== 'undefined') {
+        const dynamicKeys: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (
+            k &&
+            (k.startsWith('sb-') ||
+              k.startsWith('supabase.') ||
+              k.startsWith('pmusic.profile.') ||
+              k.startsWith('pmusic.auth.'))
+          ) {
+            dynamicKeys.push(k);
+          }
+        }
+        for (const k of dynamicKeys) authKeysToPurge.add(k);
+      }
+      if (typeof sessionStorage !== 'undefined') {
+        try {
+          const sKeys: string[] = [];
+          for (let i = 0; i < sessionStorage.length; i++) {
+            const k = sessionStorage.key(i);
+            if (k && (k.startsWith('sb-') || k.startsWith('supabase.'))) sKeys.push(k);
+          }
+          for (const k of sKeys) sessionStorage.removeItem(k);
+        } catch {
+          // ignore sessionStorage errors
+        }
+      }
+
+      await Promise.all(
+        Array.from(authKeysToPurge).map((k) => this.preferencesStorage.removeItem(k).catch(() => {}))
+      );
+
+      // Clear any leftover OAuth ?code= or #access_token= from browser URL so reloads don't re-exchange
+      if (typeof window !== 'undefined' && window.history?.replaceState && window.location) {
+        try {
+          const u = new URL(window.location.href);
+          if (u.searchParams.has('code') || u.hash.includes('access_token=')) {
+            u.searchParams.delete('code');
+            u.searchParams.delete('state');
+            u.hash = '';
+            window.history.replaceState({}, '', `${u.pathname}${u.search}`);
+          }
+        } catch {
+          // ignore history errors
+        }
+      }
+
+      await this.libraryStore.clearAllUserData();
+      this.updateAuthState({
+        userId: null,
+        email: null,
+        connected: false,
+        displayName: null,
+        avatarUrl: null,
+      });
+    } finally {
+      setTimeout(() => {
+        this.signingOut = false;
+      }, 200);
     }
-    await this.libraryStore.clearAllUserData();
-    this.updateAuthState({
-      userId: null,
-      email: null,
-      connected: false,
-      displayName: null,
-      avatarUrl: null,
-    });
   }
 
   /**
@@ -1583,7 +1678,21 @@ export class SyncEngine implements ISyncEngine {
   }
 
   public async saveAccountPreferences(prefs: Record<string, unknown>): Promise<void> {
-    if (!this.supabaseBackend || !this.authState.connected) return;
+    if (!this.supabaseBackend || !this.authState.connected || !this.authState.userId) return;
+    const nowIso = new Date().toISOString();
+    try {
+      const { error } = await this.supabaseBackend.client.from('user_preferences').upsert(
+        {
+          user_id: this.authState.userId,
+          prefs,
+          updated_at: nowIso,
+        },
+        { onConflict: 'user_id' }
+      );
+      if (!error) return;
+    } catch {
+      // fall through to auth metadata fallback if table isn't created yet
+    }
     try {
       await this.supabaseBackend.client.auth.updateUser({
         data: {
@@ -1597,22 +1706,89 @@ export class SyncEngine implements ISyncEngine {
   }
 
   public async loadAccountPreferences(): Promise<Record<string, unknown> | null> {
-    if (!this.supabaseBackend || !this.authState.connected) return null;
+    if (!this.supabaseBackend || !this.authState.connected || !this.authState.userId) return null;
+    try {
+      const { data: tableRow, error } = await this.supabaseBackend.client
+        .from('user_preferences')
+        .select('prefs')
+        .eq('user_id', this.authState.userId)
+        .maybeSingle();
+      if (!error && tableRow?.prefs && typeof tableRow.prefs === 'object') {
+        return tableRow.prefs as Record<string, unknown>;
+      }
+    } catch {
+      // fallback to metadata
+    }
     try {
       const { data } = await this.supabaseBackend.client.auth.getUser();
       const meta = data?.user?.user_metadata as Record<string, unknown> | undefined;
       if (meta?.pmusic_prefs && typeof meta.pmusic_prefs === 'object') {
-        return meta.pmusic_prefs as Record<string, unknown>;
+        const legacyPrefs = meta.pmusic_prefs as Record<string, unknown>;
+        void this.saveAccountPreferences(legacyPrefs);
+        return legacyPrefs;
       }
       const { data: sessionData } = await this.supabaseBackend.client.auth.getSession();
       const sessMeta = sessionData?.session?.user?.user_metadata as Record<string, unknown> | undefined;
       if (sessMeta?.pmusic_prefs && typeof sessMeta.pmusic_prefs === 'object') {
-        return sessMeta.pmusic_prefs as Record<string, unknown>;
+        const legacyPrefs = sessMeta.pmusic_prefs as Record<string, unknown>;
+        void this.saveAccountPreferences(legacyPrefs);
+        return legacyPrefs;
       }
     } catch {
       // ignore offline read errors
     }
     return null;
+  }
+
+  public async listFavoriteArtists(): Promise<FavoriteArtistRecord[]> {
+    if (!this.supabaseBackend || !this.authState.connected || !this.authState.userId) return [];
+    try {
+      const { data, error } = await this.supabaseBackend.client
+        .from('favorite_artists')
+        .select('artist_id,artist_name,thumbnail_url,liked_at')
+        .eq('user_id', this.authState.userId)
+        .order('liked_at', { ascending: false });
+      if (error || !Array.isArray(data)) return [];
+      return data.map((row) => ({
+        artistId: String(row.artist_id),
+        artistName: String(row.artist_name),
+        thumbnailUrl: (row.thumbnail_url as string | null) ?? undefined,
+        likedAt: String(row.liked_at ?? new Date().toISOString()),
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  public async upsertFavoriteArtist(artist: FavoriteArtistRecord): Promise<void> {
+    if (!this.supabaseBackend || !this.authState.connected || !this.authState.userId) return;
+    try {
+      await this.supabaseBackend.client.from('favorite_artists').upsert(
+        {
+          user_id: this.authState.userId,
+          artist_id: artist.artistId,
+          artist_name: artist.artistName,
+          thumbnail_url: artist.thumbnailUrl ?? null,
+          liked_at: artist.likedAt || new Date().toISOString(),
+        },
+        { onConflict: 'user_id,artist_id' }
+      );
+    } catch {
+      // ignore offline errors; stored in compact prefs too
+    }
+  }
+
+  public async removeFavoriteArtist(artistId: string): Promise<void> {
+    if (!this.supabaseBackend || !this.authState.connected || !this.authState.userId) return;
+    try {
+      await this.supabaseBackend.client
+        .from('favorite_artists')
+        .delete()
+        .eq('user_id', this.authState.userId)
+        .eq('artist_id', artistId);
+    } catch {
+      // ignore offline errors
+    }
   }
 
   public onAuthStateChanged(cb: (state: SyncAuthState) => void): Unsubscribe {

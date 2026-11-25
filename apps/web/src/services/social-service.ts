@@ -34,6 +34,9 @@ export interface SharedPlaylistRecord {
   memberIds: string[];
   tracks: Track[];
   compatibilityScore?: number | null;
+  shareCode?: string | null;
+  isPublicLink?: boolean;
+  allowLinkEdit?: boolean;
   updatedAt: string;
 }
 
@@ -68,6 +71,19 @@ export function generateJamCode(): string {
   return out;
 }
 
+export function generateShareCode(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let out = '';
+  for (let i = 0; i < 8; i++) {
+    out += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return out;
+}
+
+export function buildPlaylistShareUrl(shareCode: string): string {
+  return `${PUBLIC_WEB_BASE_URL}/?playlist=${encodeURIComponent(shareCode.toUpperCase())}`;
+}
+
 export function buildJamShareUrl(code: string): string {
   return `${PUBLIC_WEB_BASE_URL}/jam/${code.toUpperCase()}`;
 }
@@ -75,6 +91,69 @@ export function buildJamShareUrl(code: string): string {
 export function buildJamQrImageUrl(code: string): string {
   const url = buildJamShareUrl(code);
   return `https://api.qrserver.com/v1/create-qr-code/?size=240x240&bgcolor=050507&color=FFFFFF&margin=12&data=${encodeURIComponent(url)}`;
+}
+
+function formatSocialError(err: { message?: string; code?: string } | null | undefined, fallback: string): string {
+  const msg = err?.message ?? '';
+  if (
+    err?.code === 'PGRST205' ||
+    err?.code === '42P01' ||
+    msg.includes('Could not find the table') ||
+    msg.includes('does not exist')
+  ) {
+    return 'Faltan las tablas sociales en Supabase. Ejecuta el script SQL actualizado en Supabase → SQL Editor.';
+  }
+  return msg || fallback;
+}
+
+export async function ensureOwnProfileExists(
+  client: SupabaseClient,
+  input: { userId: string; email?: string | null; displayName?: string | null; avatarUrl?: string | null }
+): Promise<UserProfile | null> {
+  try {
+    const { data: existing } = await client
+      .from('profiles')
+      .select('user_id,username,display_name,avatar_url')
+      .eq('user_id', input.userId)
+      .maybeSingle();
+    if (existing) {
+      return {
+        userId: String(existing.user_id),
+        username: String(existing.username),
+        displayName: String(existing.display_name),
+        avatarUrl: (existing.avatar_url as string | null) ?? null,
+      };
+    }
+    const baseName =
+      (input.email?.split('@')[0] ?? input.displayName ?? 'usuario')
+        .toLowerCase()
+        .replace(/[^a-z0-9._]/g, '_')
+        .slice(0, 16) || 'pmusic';
+    const candidateUsername = `${baseName.length >= 3 ? baseName : 'pm'}_${input.userId.slice(0, 4)}`.toLowerCase();
+    const display = (input.displayName || input.email?.split('@')[0] || 'Usuario pMusic').slice(0, 50);
+    const { data: inserted } = await client
+      .from('profiles')
+      .upsert(
+        {
+          user_id: input.userId,
+          username: candidateUsername,
+          display_name: display,
+          avatar_url: input.avatarUrl ?? null,
+        },
+        { onConflict: 'user_id' }
+      )
+      .select('user_id,username,display_name,avatar_url')
+      .maybeSingle();
+    if (!inserted) return null;
+    return {
+      userId: String(inserted.user_id),
+      username: String(inserted.username),
+      displayName: String(inserted.display_name),
+      avatarUrl: (inserted.avatar_url as string | null) ?? null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -90,9 +169,12 @@ export async function searchProfilesByUsername(
   const { data, error } = await client
     .from('profiles')
     .select('user_id,username,display_name,avatar_url')
-    .ilike('username', `%${clean}%`)
+    .or(`username.ilike.%${clean}%,display_name.ilike.%${clean}%`)
     .limit(12);
-  if (error || !Array.isArray(data)) return [];
+  if (error) {
+    throw new Error(formatSocialError(error, 'No se pudieron buscar usuarios'));
+  }
+  if (!Array.isArray(data)) return [];
   return data
     .filter((row) => row.user_id !== excludeUserId)
     .map((row) => ({
@@ -166,7 +248,7 @@ export async function sendFriendRequest(
     },
     { onConflict: 'requester_id,addressee_id' }
   );
-  if (error) throw new Error(error.message || 'No se pudo enviar la solicitud');
+  if (error) throw new Error(formatSocialError(error, 'No se pudo enviar la solicitud'));
 }
 
 export async function respondFriendRequest(
@@ -178,24 +260,14 @@ export async function respondFriendRequest(
     .from('friendships')
     .update({ status })
     .eq('id', friendshipId);
-  if (error) throw new Error(error.message || 'No se pudo actualizar la solicitud');
+  if (error) throw new Error(formatSocialError(error, 'No se pudo actualizar la solicitud'));
 }
 
 // -----------------------------------------------------------------------------
 // Shared / Collaborative Playlists & Blend
 // -----------------------------------------------------------------------------
-export async function listSharedPlaylists(
-  client: SupabaseClient,
-  myUserId: string
-): Promise<SharedPlaylistRecord[]> {
-  const { data, error } = await client
-    .from('shared_playlists')
-    .select('id,owner_id,name,description,cover_url,kind,member_ids,tracks,compatibility_score,updated_at')
-    .or(`owner_id.eq.${myUserId},member_ids.cs.{${myUserId}}`)
-    .order('updated_at', { ascending: false })
-    .limit(40);
-  if (error || !Array.isArray(data)) return [];
-  return data.map((row) => ({
+function mapSharedPlaylistRow(row: any): SharedPlaylistRecord {
+  return {
     id: String(row.id),
     ownerId: String(row.owner_id),
     name: String(row.name),
@@ -205,8 +277,28 @@ export async function listSharedPlaylists(
     memberIds: Array.isArray(row.member_ids) ? row.member_ids.map(String) : [],
     tracks: Array.isArray(row.tracks) ? (row.tracks as Track[]) : [],
     compatibilityScore: typeof row.compatibility_score === 'number' ? row.compatibility_score : null,
+    shareCode: (row.share_code as string | null) ?? null,
+    isPublicLink: Boolean(row.is_public_link ?? false),
+    allowLinkEdit: Boolean(row.allow_link_edit ?? false),
     updatedAt: String(row.updated_at ?? new Date().toISOString()),
-  }));
+  };
+}
+
+const SHARED_PLAYLIST_SELECT =
+  'id,owner_id,name,description,cover_url,kind,member_ids,tracks,compatibility_score,share_code,is_public_link,allow_link_edit,updated_at';
+
+export async function listSharedPlaylists(
+  client: SupabaseClient,
+  myUserId: string
+): Promise<SharedPlaylistRecord[]> {
+  const { data, error } = await client
+    .from('shared_playlists')
+    .select(SHARED_PLAYLIST_SELECT)
+    .or(`owner_id.eq.${myUserId},member_ids.cs.{${myUserId}}`)
+    .order('updated_at', { ascending: false })
+    .limit(40);
+  if (error || !Array.isArray(data)) return [];
+  return data.map(mapSharedPlaylistRow);
 }
 
 export async function createSharedPlaylist(
@@ -219,10 +311,29 @@ export async function createSharedPlaylist(
     memberIds: string[];
     tracks: Track[];
     compatibilityScore?: number | null;
+    isPublicLink?: boolean;
+    allowLinkEdit?: boolean;
+    shareCode?: string | null;
+    ownerProfile?: UserProfile | null;
   }
 ): Promise<SharedPlaylistRecord> {
   const members = Array.from(new Set([input.ownerId, ...input.memberIds]));
   const coverUrl = input.tracks[0]?.thumbnailHighUrl ?? input.tracks[0]?.thumbnailUrl ?? null;
+  const shareCode = input.shareCode ?? generateShareCode();
+  const stampedTracks = input.tracks.slice(0, 150).map((t) =>
+    t.addedBy || !input.ownerProfile
+      ? t
+      : {
+          ...t,
+          addedBy: {
+            userId: input.ownerProfile.userId,
+            username: input.ownerProfile.username,
+            displayName: input.ownerProfile.displayName,
+            avatarUrl: input.ownerProfile.avatarUrl ?? null,
+            addedAt: new Date().toISOString(),
+          },
+        }
+  );
   const { data, error } = await client
     .from('shared_playlists')
     .insert({
@@ -232,41 +343,178 @@ export async function createSharedPlaylist(
       cover_url: coverUrl,
       kind: input.kind,
       member_ids: members,
-      tracks: input.tracks.slice(0, 100),
+      tracks: stampedTracks,
       compatibility_score: input.compatibilityScore ?? null,
+      share_code: shareCode,
+      is_public_link: input.isPublicLink ?? true,
+      allow_link_edit: input.allowLinkEdit ?? input.kind === 'collab',
     })
-    .select('id,owner_id,name,description,cover_url,kind,member_ids,tracks,compatibility_score,updated_at')
+    .select(SHARED_PLAYLIST_SELECT)
     .single();
   if (error || !data) {
-    throw new Error(error?.message || 'No se pudo crear la playlist compartida');
+    throw new Error(formatSocialError(error, 'No se pudo crear la playlist compartida'));
   }
-  return {
-    id: String(data.id),
-    ownerId: String(data.owner_id),
-    name: String(data.name),
-    description: String(data.description ?? ''),
-    coverUrl: (data.cover_url as string | null) ?? null,
-    kind: data.kind === 'blend' ? 'blend' : 'collab',
-    memberIds: Array.isArray(data.member_ids) ? data.member_ids.map(String) : [],
-    tracks: Array.isArray(data.tracks) ? (data.tracks as Track[]) : [],
-    compatibilityScore: typeof data.compatibility_score === 'number' ? data.compatibility_score : null,
-    updatedAt: String(data.updated_at ?? new Date().toISOString()),
-  };
+  return mapSharedPlaylistRow(data);
+}
+
+export async function publishOrUpdateSharedPlaylistLink(
+  client: SupabaseClient,
+  input: {
+    ownerId: string;
+    name: string;
+    description?: string;
+    tracks: Track[];
+    isCollaborative: boolean;
+    existingShareCode?: string | null;
+    ownerProfile?: UserProfile | null;
+  }
+): Promise<SharedPlaylistRecord> {
+  const shareCode = (input.existingShareCode || generateShareCode()).toUpperCase();
+  const stampedTracks = input.tracks.slice(0, 150).map((t) =>
+    t.addedBy || !input.ownerProfile
+      ? t
+      : {
+          ...t,
+          addedBy: {
+            userId: input.ownerProfile.userId,
+            username: input.ownerProfile.username,
+            displayName: input.ownerProfile.displayName,
+            avatarUrl: input.ownerProfile.avatarUrl ?? null,
+            addedAt: new Date().toISOString(),
+          },
+        }
+  );
+  const coverUrl = stampedTracks[0]?.thumbnailHighUrl ?? stampedTracks[0]?.thumbnailUrl ?? null;
+
+  const { data: existing } = await client
+    .from('shared_playlists')
+    .select(SHARED_PLAYLIST_SELECT)
+    .eq('share_code', shareCode)
+    .maybeSingle();
+
+  if (existing) {
+    const existingRec = mapSharedPlaylistRow(existing);
+    // Preserve tracks added by other collaborators while merging owner updates
+    const byId = new Map<string, Track>();
+    for (const t of stampedTracks) byId.set(t.id, t);
+    for (const rt of existingRec.tracks) {
+      if (!byId.has(rt.id) && rt.addedBy?.userId && rt.addedBy.userId !== input.ownerId) {
+        byId.set(rt.id, rt);
+      }
+    }
+    const mergedTracks = Array.from(byId.values()).slice(0, 150);
+    const { data, error } = await client
+      .from('shared_playlists')
+      .update({
+        name: input.name.trim().slice(0, 140),
+        description: (input.description ?? '').trim().slice(0, 300),
+        cover_url: coverUrl,
+        tracks: mergedTracks,
+        is_public_link: true,
+        allow_link_edit: input.isCollaborative,
+      })
+      .eq('id', existingRec.id)
+      .select(SHARED_PLAYLIST_SELECT)
+      .single();
+    if (error || !data) {
+      throw new Error(formatSocialError(error, 'No se pudo actualizar el enlace de la playlist'));
+    }
+    return mapSharedPlaylistRow(data);
+  }
+
+  return createSharedPlaylist(client, {
+    ownerId: input.ownerId,
+    name: input.name,
+    description: input.description,
+    kind: 'collab',
+    memberIds: [input.ownerId],
+    tracks: stampedTracks,
+    isPublicLink: true,
+    allowLinkEdit: input.isCollaborative,
+    shareCode,
+    ownerProfile: input.ownerProfile,
+  });
+}
+
+export async function fetchSharedPlaylistByCode(
+  code: string,
+  client?: SupabaseClient | null
+): Promise<SharedPlaylistRecord | null> {
+  const cleanCode = code.trim().toUpperCase();
+  if (!cleanCode) return null;
+  const sb = client ?? getAnonClient();
+  const { data, error } = await sb
+    .from('shared_playlists')
+    .select(SHARED_PLAYLIST_SELECT)
+    .eq('share_code', cleanCode)
+    .maybeSingle();
+  if (error || !data) return null;
+  return mapSharedPlaylistRow(data);
+}
+
+export async function joinSharedPlaylistByCode(
+  client: SupabaseClient,
+  playlist: SharedPlaylistRecord,
+  myUserId: string
+): Promise<SharedPlaylistRecord> {
+  if (!playlist.allowLinkEdit) return playlist;
+  if (playlist.ownerId === myUserId || playlist.memberIds.includes(myUserId)) return playlist;
+  const nextMembers = Array.from(new Set([...playlist.memberIds, myUserId]));
+  const { data, error } = await client
+    .from('shared_playlists')
+    .update({ member_ids: nextMembers })
+    .eq('id', playlist.id)
+    .select(SHARED_PLAYLIST_SELECT)
+    .single();
+  if (error || !data) {
+    return { ...playlist, memberIds: nextMembers };
+  }
+  return mapSharedPlaylistRow(data);
 }
 
 export async function addTrackToSharedPlaylist(
   client: SupabaseClient,
   playlist: SharedPlaylistRecord,
-  track: Track
+  track: Track,
+  adderProfile?: { userId?: string; username?: string; displayName?: string; avatarUrl?: string | null } | null
 ): Promise<SharedPlaylistRecord> {
   if (playlist.tracks.some((t) => t.id === track.id)) return playlist;
-  const nextTracks = [...playlist.tracks, track].slice(0, 150);
+  const enrichedTrack: Track = {
+    ...track,
+    addedBy: {
+      userId: adderProfile?.userId,
+      username: adderProfile?.username,
+      displayName: adderProfile?.displayName || adderProfile?.username || 'Colaborador',
+      avatarUrl: adderProfile?.avatarUrl ?? null,
+      addedAt: new Date().toISOString(),
+    },
+  };
+  const nextTracks = [...playlist.tracks, enrichedTrack].slice(0, 150);
   const coverUrl = playlist.coverUrl ?? track.thumbnailHighUrl ?? track.thumbnailUrl ?? null;
+  const nextMembers =
+    adderProfile?.userId && !playlist.memberIds.includes(adderProfile.userId)
+      ? [...playlist.memberIds, adderProfile.userId]
+      : playlist.memberIds;
+  const { error } = await client
+    .from('shared_playlists')
+    .update({ tracks: nextTracks, cover_url: coverUrl, member_ids: nextMembers })
+    .eq('id', playlist.id);
+  if (error) throw new Error(formatSocialError(error, 'No se pudo añadir la canción'));
+  return { ...playlist, tracks: nextTracks, coverUrl, memberIds: nextMembers };
+}
+
+export async function removeTrackFromSharedPlaylist(
+  client: SupabaseClient,
+  playlist: SharedPlaylistRecord,
+  trackId: string
+): Promise<SharedPlaylistRecord> {
+  const nextTracks = playlist.tracks.filter((t) => t.id !== trackId);
+  const coverUrl = nextTracks[0]?.thumbnailHighUrl ?? nextTracks[0]?.thumbnailUrl ?? null;
   const { error } = await client
     .from('shared_playlists')
     .update({ tracks: nextTracks, cover_url: coverUrl })
     .eq('id', playlist.id);
-  if (error) throw new Error(error.message || 'No se pudo añadir la canción');
+  if (error) throw new Error(formatSocialError(error, 'No se pudo quitar la canción'));
   return { ...playlist, tracks: nextTracks, coverUrl };
 }
 
@@ -315,8 +563,24 @@ export async function createJamSession(
     .select('*')
     .single();
   if (error || !data) {
-    throw new Error(error?.message || 'No se pudo iniciar la sala Jam (¿ejecutaste el nuevo schema.sql?)');
+    throw new Error(formatSocialError(error, 'No se pudo iniciar la sala Jam'));
   }
+  return mapJamRow(data);
+}
+
+export async function fetchActiveHostJamSession(
+  client: SupabaseClient,
+  hostUserId: string
+): Promise<JamSessionRecord | null> {
+  const { data, error } = await client
+    .from('jam_sessions')
+    .select('*')
+    .eq('host_user_id', hostUserId)
+    .eq('active', true)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error || !data) return null;
   return mapJamRow(data);
 }
 

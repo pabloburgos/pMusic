@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { Track } from '@pmusic/core';
-import { RecommendationEngine } from '../index.ts';
+import {
+  RecommendationEngine,
+  getDailyMixDateKey,
+  getThursdayNoonCycleKey,
+} from '../index.ts';
 
 const TRACK_CRUZ: Track = {
   id: 'cc_1',
@@ -205,5 +209,35 @@ describe('@pmusic/recommendations', () => {
     if (reranked.topResult?.kind === 'song') {
       expect(reranked.topResult.item.title).toBe('SUPERESTRELLA');
     }
+  });
+
+  it('updates Thursday 12:00 cycle key cleanly and boosts favorite artists across Daily Mixes without DJ labels', async () => {
+    const beforeNoon = new Date(2026, 10, 26, 11, 55, 0); // Thursday Nov 26 2026 11:55
+    const afterNoon = new Date(2026, 10, 26, 12, 5, 0); // Thursday Nov 26 2026 12:05
+    const friday = new Date(2026, 10, 27, 9, 0, 0);
+    expect(getThursdayNoonCycleKey(beforeNoon)).toBe('2026-11-19-T12');
+    expect(getThursdayNoonCycleKey(afterNoon)).toBe('2026-11-26-T12');
+    expect(getThursdayNoonCycleKey(friday)).toBe('2026-11-26-T12');
+    expect(getDailyMixDateKey(afterNoon)).toBe('2026-11-26');
+
+    const engine = new RecommendationEngine();
+    const baseAffinity = engine.getEffectiveAffinity('Artist Nuevo');
+    engine.setFavoriteArtists([
+      {
+        artistId: 'fav_1',
+        artistName: 'Artist Nuevo',
+        likedAt: new Date().toISOString(),
+      },
+    ]);
+    expect(engine.getEffectiveAffinity('Artist Nuevo')).toBeGreaterThanOrEqual(baseAffinity + 20);
+
+    const shelves = await engine.buildHomeShelves();
+    const mixesShelf = shelves.find((s) => s.kind === 'mixes_for_you');
+    expect(mixesShelf).toBeDefined();
+    expect(mixesShelf?.subtitle?.toLowerCase()).not.toContain('dj');
+    const titles = mixesShelf?.mixes?.map((m) => m.title) ?? [];
+    expect(titles[0]).toBe('Descubre lo Nuevo');
+    expect(titles.some((t) => /Daily Mix/i.test(t))).toBe(true);
+    expect(titles.some((t) => /Sesión DJ/i.test(t))).toBe(false);
   });
 });

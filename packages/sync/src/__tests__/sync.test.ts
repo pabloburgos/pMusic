@@ -234,5 +234,35 @@ describe('@pmusic/sync', () => {
     await engine.signOut();
     expect(store.getOwnerUserId()).toBeNull();
     expect(store.getPlaylists()).toHaveLength(0);
+    expect(engine.getAuthState().connected).toBe(false);
+  });
+
+  it('purges sb-* session tokens, cached profiles, and prefs keys on signOut so a previous account never auto-logs in', async () => {
+    const kv = new Map<string, string>([
+      ['sb-zlaxnxkfwngmwqnqnqtu-auth-token', '{"access_token":"stale"}'],
+      ['pmusic.profile.guest', '{"userId":"guest"}'],
+      ['pmusic_user_prefs_v1', '{"themeId":"obsidian"}'],
+    ]);
+    const storage = {
+      async getItem(k: string) {
+        return kv.get(k) ?? null;
+      },
+      async setItem(k: string, v: string) {
+        kv.set(k, v);
+      },
+      async removeItem(k: string) {
+        kv.delete(k);
+      },
+    };
+    const engine = new SyncEngine({
+      supabaseUrl: 'https://zlaxnxkfwngmwqnqnqtu.supabase.co',
+      supabaseAnonKey: 'sb_publishable_FksjG7J-ZnFPpsT07uLg3g_kzCzgBdJ',
+      preferencesStorage: storage,
+    });
+    await engine.signOut();
+    expect(kv.has('sb-zlaxnxkfwngmwqnqnqtu-auth-token')).toBe(false);
+    expect(kv.has('pmusic.profile.guest')).toBe(false);
+    expect(kv.has('pmusic_user_prefs_v1')).toBe(false);
+    expect(engine.getAuthState().connected).toBe(false);
   });
 });

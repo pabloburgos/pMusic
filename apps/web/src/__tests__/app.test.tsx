@@ -913,4 +913,90 @@ describe('@pmusic/web UI', () => {
     expect(document.documentElement.classList.contains('pm-app-hidden')).toBe(false);
     expect(screen.getByTestId('exotic-backdrop-canvas')).toBeDefined();
   });
+
+  it('supports v0.19.0 playlist shuffle playback, anti-repeat post-playlist filtering, favorite artists, and Wrapped hotkey lock', async () => {
+    const plTrack1 = {
+      id: 'dz:701',
+      title: 'Tema Playlist 1',
+      artists: [{ id: 'ar701', name: 'Cruzzi' }],
+      durationSec: 180,
+      thumbnailUrl: 'https://example.com/1.jpg',
+      source: 'ytmusic' as const,
+    };
+    const plTrack2 = {
+      id: 'dz:702',
+      title: 'Tema Playlist 2',
+      artists: [{ id: 'ar702', name: 'La Pantera' }],
+      durationSec: 195,
+      thumbnailUrl: 'https://example.com/2.jpg',
+      source: 'ytmusic' as const,
+    };
+    const plTrack3 = {
+      id: 'dz:703',
+      title: 'Tema Playlist 3',
+      artists: [{ id: 'ar703', name: 'Quevedo' }],
+      durationSec: 205,
+      thumbnailUrl: 'https://example.com/3.jpg',
+      source: 'ytmusic' as const,
+    };
+
+    // 1. playCollection with isPlaylist excludes playlist tracks from subsequent recommendedQueue
+    await act(async () => {
+      await usePMusicStore.getState().playCollection([plTrack1, plTrack2, plTrack3], {
+        forceShuffle: true,
+        isPlaylist: true,
+      });
+    });
+    expect(usePMusicStore.getState().shuffleEnabled).toBe(true);
+    expect([plTrack1.id, plTrack2.id, plTrack3.id]).toContain(
+      usePMusicStore.getState().currentTrack.id
+    );
+    const recIds = new Set(usePMusicStore.getState().recommendedQueue.map((t) => t.id));
+    expect(recIds.has(plTrack1.id)).toBe(false);
+    expect(recIds.has(plTrack2.id)).toBe(false);
+    expect(recIds.has(plTrack3.id)).toBe(false);
+
+    // 2. Favorite artists toggle updates favoriteArtists & isArtistFavorite
+    let likedNow = false;
+    await act(async () => {
+      likedNow = await usePMusicStore.getState().toggleFavoriteArtist({
+        id: '73148212',
+        name: 'Cruzzi',
+      });
+    });
+    expect(likedNow).toBe(true);
+    expect(usePMusicStore.getState().isArtistFavorite('Cruzzi')).toBe(true);
+
+    // 3. Wrapped modal locks global player ArrowRight skip shortcut
+    act(() => {
+      usePMusicStore.setState({
+        wrappedModalOpen: true,
+        wrappedSummary: {
+          year: 2026,
+          totalMinutes: 420,
+          totalHours: 7,
+          totalPlays: 120,
+          uniqueArtists: 14,
+          uniqueTracks: 45,
+          uniqueGenres: 3,
+          longestStreakDays: 9,
+          peakHour: 22,
+          topMonth: { name: 'Noviembre', minutes: 140 },
+          mostLoopedTrack: null,
+          topArtists: [],
+          topTracks: [],
+          topGenres: [{ genre: 'Urbano ES', minutes: 240, plays: 42, percent: 65 }],
+          listeningPersona: { title: 'Nocturno', subtitle: 'Tu ritmo brilla de noche' },
+        },
+        wrappedSoundtrackTracks: [],
+      });
+    });
+    const beforeTrackId = usePMusicStore.getState().currentTrack.id;
+    render(<App />);
+    fireEvent.keyDown(window, { key: 'ArrowRight' });
+    expect(usePMusicStore.getState().currentTrack.id).toBe(beforeTrackId);
+    act(() => {
+      usePMusicStore.getState().closeWrappedModal();
+    });
+  });
 });

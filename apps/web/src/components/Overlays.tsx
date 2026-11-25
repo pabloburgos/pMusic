@@ -4340,7 +4340,7 @@ export const DevicesConnectSheet: React.FC = () => {
             type="button"
             onClick={() => {
               setDevicesSheetOpen(false);
-              usePMusicStore.getState().setActiveTab('Social');
+              usePMusicStore.getState().openJamView();
             }}
             className="shrink-0 rounded-full bg-white px-3 py-1 text-[11px] font-bold text-[#070709] shadow-sm transition-opacity hover:opacity-90"
           >

@@ -42,10 +42,11 @@ export type HomeEditorialShelfKind =
 
 export interface HomeEditorialMix {
   id: string;
-  /** e.g. 'Mix Cruz Cafuné' */
+  /** e.g. 'Daily Mix 1' or 'Descubre lo Nuevo' */
   title: string;
-  /** e.g. 'Cruz Cafuné, La Pantera, Quevedo y más' */
+  /** e.g. 'Cruzzi, La Pantera, Quevedo y escena urbana ES' */
   subtitle: string;
+  badge?: string;
   coverUrl: string;
   accentColor: string;
   tracks: Track[];

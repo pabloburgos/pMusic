@@ -158,6 +158,7 @@ export const SettingsModal: React.FC = () => {
     signInSupabase,
     signUpSupabase,
     signOutSupabase,
+    updateUserProfile,
     clearOfflineCache,
     exportLibraryJson,
     importLibraryJson,
@@ -172,7 +173,22 @@ export const SettingsModal: React.FC = () => {
   const [authNotice, setAuthNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [deviceNameDraft, setDeviceNameDraft] = useState(deviceName);
   const [clientIdInput, setClientIdInput] = useState(discordRpcConfig.clientId);
+  const [profileNameDraft, setProfileNameDraft] = useState(
+    userProfile?.displayName ?? authState.displayName ?? ''
+  );
+  const [profileUsernameDraft, setProfileUsernameDraft] = useState(userProfile?.username ?? '');
+  const [profileAvatarDraft, setProfileAvatarDraft] = useState<string>(
+    userProfile?.avatarUrl ?? authState.avatarUrl ?? ''
+  );
+  const [profileSaving, setProfileSaving] = useState(false);
+  const avatarFileInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    setProfileNameDraft(userProfile?.displayName ?? authState.displayName ?? '');
+    setProfileUsernameDraft(userProfile?.username ?? '');
+    setProfileAvatarDraft(userProfile?.avatarUrl ?? authState.avatarUrl ?? '');
+  }, [userProfile?.displayName, userProfile?.username, userProfile?.avatarUrl, authState.displayName, authState.avatarUrl]);
 
   useEffect(() => {
     setDeviceNameDraft(deviceName);
@@ -1470,6 +1486,129 @@ export const SettingsModal: React.FC = () => {
                             className="pm-btn-primary rounded-full px-4 py-2 text-xs font-bold"
                           >
                             Guardar nombre
+                          </button>
+                        </div>
+
+                        {/* Profile Customization Card */}
+                        <div className="space-y-3 rounded-2xl border pm-border bg-white/[0.03] p-3.5">
+                          <div className="text-xs font-bold pm-text-primary">
+                            Tu perfil pMusic
+                          </div>
+                          <div className="flex flex-wrap items-center gap-3">
+                            {profileAvatarDraft ? (
+                              <img
+                                src={profileAvatarDraft}
+                                alt={profileNameDraft || 'Avatar'}
+                                className="h-14 w-14 shrink-0 rounded-full border border-white/20 object-cover"
+                              />
+                            ) : (
+                              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-white/15 bg-white/10 text-lg font-bold pm-text-primary">
+                                {(profileNameDraft || authState.email || 'P').slice(0, 1).toUpperCase()}
+                              </div>
+                            )}
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => avatarFileInputRef.current?.click()}
+                                className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-semibold"
+                              >
+                                Subir avatar
+                              </button>
+                              {profileAvatarDraft && (
+                                <button
+                                  type="button"
+                                  onClick={() => setProfileAvatarDraft('')}
+                                  className="pm-btn-secondary rounded-full px-3 py-1.5 text-xs text-rose-300"
+                                >
+                                  Quitar
+                                </button>
+                              )}
+                              <input
+                                ref={avatarFileInputRef}
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (!file) return;
+                                  const reader = new FileReader();
+                                  reader.onload = () => {
+                                    const img = new Image();
+                                    img.onload = () => {
+                                      const size = 256;
+                                      const canvas = document.createElement('canvas');
+                                      canvas.width = size;
+                                      canvas.height = size;
+                                      const ctx = canvas.getContext('2d');
+                                      if (!ctx) return;
+                                      const minSide = Math.min(img.width, img.height);
+                                      const sx = (img.width - minSide) / 2;
+                                      const sy = (img.height - minSide) / 2;
+                                      ctx.drawImage(img, sx, sy, minSide, minSide, 0, 0, size, size);
+                                      setProfileAvatarDraft(canvas.toDataURL('image/jpeg', 0.82));
+                                    };
+                                    img.src = String(reader.result ?? '');
+                                  };
+                                  reader.readAsDataURL(file);
+                                  e.target.value = '';
+                                }}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <input
+                              type="text"
+                              aria-label="Nombre visible"
+                              value={profileNameDraft}
+                              onChange={(e) => setProfileNameDraft(e.target.value)}
+                              placeholder="Tu nombre visible"
+                              className="pm-input rounded-xl px-3.5 py-2 text-xs"
+                            />
+                            <input
+                              type="text"
+                              aria-label="Nombre de usuario"
+                              value={profileUsernameDraft}
+                              onChange={(e) => setProfileUsernameDraft(e.target.value)}
+                              placeholder="@usuario"
+                              className="pm-input rounded-xl px-3.5 py-2 text-xs"
+                            />
+                          </div>
+
+                          <input
+                            type="url"
+                            aria-label="URL de avatar (opcional)"
+                            value={profileAvatarDraft.startsWith('data:') ? '' : profileAvatarDraft}
+                            onChange={(e) => setProfileAvatarDraft(e.target.value)}
+                            placeholder="O pega URL de foto de perfil (https://...)"
+                            className="pm-input w-full rounded-xl px-3.5 py-2 text-xs"
+                          />
+
+                          <button
+                            type="button"
+                            disabled={profileSaving || !profileNameDraft.trim()}
+                            onClick={async () => {
+                              setProfileSaving(true);
+                              setAuthNotice(null);
+                              try {
+                                await updateUserProfile({
+                                  displayName: profileNameDraft.trim(),
+                                  username: profileUsernameDraft.trim() || undefined,
+                                  avatarUrl: profileAvatarDraft.trim() || null,
+                                });
+                                setAuthNotice({ kind: 'ok', text: 'Perfil guardado y sincronizado.' });
+                              } catch (err) {
+                                setAuthNotice({
+                                  kind: 'err',
+                                  text: err instanceof Error ? err.message : 'No se pudo guardar el perfil',
+                                });
+                              } finally {
+                                setProfileSaving(false);
+                              }
+                            }}
+                            className="pm-btn-primary rounded-full px-4 py-2 text-xs font-bold disabled:opacity-50"
+                          >
+                            {profileSaving ? 'Guardando perfil...' : 'Guardar perfil'}
                           </button>
                         </div>
                       </div>

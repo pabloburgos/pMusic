@@ -66,4 +66,8 @@ contextBridge.exposeInMainWorld('pmusicDesktop', {
   vaultSet: (key: string, value: string): Promise<void> =>
     ipcRenderer.invoke('pmusic:vault-set', key, value),
   vaultRemove: (key: string): Promise<void> => ipcRenderer.invoke('pmusic:vault-remove', key),
+  readPrefsFile: (): Promise<string | null> => ipcRenderer.invoke('pmusic:read-prefs-file'),
+  writePrefsFile: (jsonText: string): Promise<void> =>
+    ipcRenderer.invoke('pmusic:write-prefs-file', jsonText),
+  clearAuthState: (): Promise<void> => ipcRenderer.invoke('pmusic:clear-auth-state'),
 });
