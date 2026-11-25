@@ -333,7 +333,7 @@ export const SpotlightSearchModal: React.FC = () => {
                           if (song) {
                             addRecentSearchTrack(song);
                             setSpotlightOpen(false);
-                            void playTrack(song, searchResults.songs);
+                            void playTrack(song, [song]);
                           }
                         }}
                         className="pm-btn-primary flex h-9 w-9 shrink-0 items-center justify-center rounded-full hover:scale-105"
@@ -355,7 +355,7 @@ export const SpotlightSearchModal: React.FC = () => {
                             onClick={() => {
                               addRecentSearchTrack(bestResult.item);
                               setSpotlightOpen(false);
-                              void playTrack(bestResult.item, searchResults.songs);
+                              void playTrack(bestResult.item, [bestResult.item]);
                             }}
                             className="shrink-0"
                           >
@@ -371,7 +371,7 @@ export const SpotlightSearchModal: React.FC = () => {
                               onClick={() => {
                                 addRecentSearchTrack(bestResult.item);
                                 setSpotlightOpen(false);
-                                void playTrack(bestResult.item, searchResults.songs);
+                                void playTrack(bestResult.item, [bestResult.item]);
                               }}
                               className="block max-w-full truncate text-left text-[14px] font-bold pm-text-primary hover:underline"
                             >
@@ -392,7 +392,7 @@ export const SpotlightSearchModal: React.FC = () => {
                           onClick={() => {
                             addRecentSearchTrack(bestResult.item);
                             setSpotlightOpen(false);
-                            void playTrack(bestResult.item, searchResults.songs);
+                            void playTrack(bestResult.item, [bestResult.item]);
                           }}
                           className="pm-btn-primary flex h-9 w-9 shrink-0 items-center justify-center rounded-full hover:scale-105"
                         >
@@ -422,7 +422,7 @@ export const SpotlightSearchModal: React.FC = () => {
                           onClick={() => {
                             addRecentSearchTrack(t);
                             setSpotlightOpen(false);
-                            void playTrack(t, searchResults.songs);
+                            void playTrack(t, [t]);
                           }}
                           className="relative h-10 w-10 shrink-0 overflow-hidden rounded-[7px]"
                         >
@@ -442,7 +442,7 @@ export const SpotlightSearchModal: React.FC = () => {
                             onClick={() => {
                               addRecentSearchTrack(t);
                               setSpotlightOpen(false);
-                              void playTrack(t, searchResults.songs);
+                              void playTrack(t, [t]);
                             }}
                             className="block max-w-full truncate text-left text-[14px] font-semibold pm-text-primary hover:underline"
                           >

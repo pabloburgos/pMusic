@@ -628,14 +628,18 @@ export class RecommendationEngine implements IRecommendationEngine {
     const queryTokens = tokenizeNormalized(query);
 
     const trackSceneMap = new Map<string, number>();
+    const songArtistNames = new Set<string>();
     for (const song of songs) {
       const cue = this.scoreTrackSceneFit(song);
-      if (cue <= 0) continue;
       for (const a of song.artists) {
         const k = normalizeArtistKey(a.name);
         const ck = collapseNormalized(a.name);
-        trackSceneMap.set(k, Math.max(trackSceneMap.get(k) ?? 0, cue));
-        trackSceneMap.set(ck, Math.max(trackSceneMap.get(ck) ?? 0, cue));
+        if (k) songArtistNames.add(k);
+        if (ck) songArtistNames.add(ck);
+        if (cue > 0) {
+          trackSceneMap.set(k, Math.max(trackSceneMap.get(k) ?? 0, cue));
+          trackSceneMap.set(ck, Math.max(trackSceneMap.get(ck) ?? 0, cue));
+        }
       }
     }
 
@@ -663,14 +667,21 @@ export class RecommendationEngine implements IRecommendationEngine {
         ) {
           matchScore = 115;
         }
-        const affinityBonus = this.getEffectiveAffinity(artist.name) * 4;
-        const sceneBonus = this.scoreArtistSceneBonus(artist, trackSceneMap);
+        const appearsInSongs =
+          songArtistNames.has(normalizeArtistKey(artist.name)) ||
+          songArtistNames.has(collapsedName);
+        if (normQuery.length > 0 && matchScore === 0 && !appearsInSongs) {
+          return null;
+        }
+        const affinityBonus = matchScore > 0 ? this.getEffectiveAffinity(artist.name) * 4 : 0;
+        const sceneBonus = matchScore > 0 ? this.scoreArtistSceneBonus(artist, trackSceneMap) : 0;
         return {
           artist,
           idx,
           score: matchScore + affinityBonus + sceneBonus,
         };
       })
+      .filter((x): x is { artist: ArtistSummary; idx: number; score: number } => x !== null)
       .sort((a, b) => b.score - a.score || a.idx - b.idx)
       .map((x) => x.artist);
 
@@ -702,6 +713,27 @@ export class RecommendationEngine implements IRecommendationEngine {
     };
   }
 
+  private parseSubscribersCount(text?: string): number | null {
+    if (!text) return null;
+    const m = text.match(/([\d.,]+)\s*([kmb]|mil)?/i);
+    if (!m || !m[1]) return null;
+    let numStr = m[1];
+    if (numStr.includes('.') && numStr.includes(',')) {
+      numStr = numStr.replace(/\./g, '').replace(',', '.');
+    } else if (/^\d{1,3}(\.\d{3})+$/.test(numStr)) {
+      numStr = numStr.replace(/\./g, '');
+    } else {
+      numStr = numStr.replace(',', '.');
+    }
+    const val = Number.parseFloat(numStr);
+    if (!Number.isFinite(val)) return null;
+    const unit = (m[2] ?? '').toLowerCase();
+    if (unit === 'k' || unit === 'mil') return Math.round(val * 1_000);
+    if (unit === 'm') return Math.round(val * 1_000_000);
+    if (unit === 'b') return Math.round(val * 1_000_000_000);
+    return Math.round(val);
+  }
+
   public selectBestResult(
     query: string,
     bundle: SearchResultBundle
@@ -723,7 +755,7 @@ export class RecommendationEngine implements IRecommendationEngine {
       }
     }
 
-    let bestCandidate: TopResultMatch | undefined = bundle.topResult;
+    let bestCandidate: TopResultMatch | undefined;
     let bestScore = -Infinity;
 
     for (const artist of bundle.artists) {
@@ -748,9 +780,17 @@ export class RecommendationEngine implements IRecommendationEngine {
         exact === 0 && normQuery.length > 0 && (normName.includes(normQuery) || normQuery.includes(normName))
           ? 140
           : 0;
-      const affinity = rawAffinity * 12;
+      let textMatch = Math.max(exact, allTokensInArtist, favoritePrefixBoost, partial);
+      if (normQuery.length > 0 && textMatch === 0) {
+        continue;
+      }
+      const subs = this.parseSubscribersCount(artist.subscribersText);
+      if (subs !== null && subs < 500 && rawAffinity <= 0) {
+        textMatch = Math.min(textMatch, 420);
+      }
+      const affinity = Math.min(120, Math.max(-40, rawAffinity * 3));
       const sceneBonus = this.scoreArtistSceneBonus(artist, trackSceneMap) * 0.6;
-      const score = Math.max(exact, allTokensInArtist, favoritePrefixBoost, partial) + affinity + sceneBonus;
+      const score = textMatch + affinity + sceneBonus;
       if (score > bestScore) {
         bestScore = score;
         bestCandidate = { kind: 'artist', item: artist };
@@ -764,6 +804,9 @@ export class RecommendationEngine implements IRecommendationEngine {
         song.artists.map((a) => a.name),
         song.album?.name
       );
+      if (normQuery.length > 0 && queryMatch === 0) {
+        continue;
+      }
       const normTitle = normalizeSearchText(song.title);
       const titleWordSet = new Set(tokenizeNormalized(song.title));
       const titleWordHits = queryTokens.filter((t) => titleWordSet.has(t)).length;
@@ -810,7 +853,7 @@ export class RecommendationEngine implements IRecommendationEngine {
 
   public async buildHomeShelves(signal?: AbortSignal): Promise<HomeEditorialShelf[]> {
     const rankedArtists = this.getRankedArtists();
-    const topArtist1 = rankedArtists[0]?.name ?? 'Cruz Cafuné';
+    const topArtist1 = rankedArtists[0]?.name ?? 'Cruzzi';
     const topArtist2 = rankedArtists[1]?.name ?? 'La Pantera';
     const topArtist3 = rankedArtists[2]?.name ?? 'Bad Bunny';
 
@@ -818,8 +861,9 @@ export class RecommendationEngine implements IRecommendationEngine {
     let catalogAlbums: AlbumSummary[] = [];
 
     if (this.musicProvider) {
+      const queries = Array.from(new Set(['', topArtist1, topArtist2, topArtist3]));
       const bundles = await Promise.all(
-        ['', topArtist1, topArtist2, topArtist3, 'Cruzzi'].map((q) =>
+        queries.map((q) =>
           this.musicProvider!.search(q, 'all', signal).catch(() => null)
         )
       );

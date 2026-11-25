@@ -114,7 +114,7 @@ export class YouTubeMusicProvider implements IMusicProvider {
                       id: a?.channel_id ?? a?.id,
                       name: String(a?.name ?? 'Artista'),
                     }))
-                  : [{ name: 'Artista Urbano' }];
+                  : [{ name: 'Artista' }];
               songs.push({
                 id,
                 title,
@@ -128,12 +128,14 @@ export class YouTubeMusicProvider implements IMusicProvider {
           }
         }
         if (songs.length > 0) {
-          const fallback = searchFallbackCatalog(query, filter);
           return {
-            ...fallback,
             query,
-            songs,
             topResult: { kind: 'song', item: songs[0]! },
+            songs: filter === 'all' || filter === 'song' ? songs : [],
+            videos: filter === 'all' || filter === 'video' ? songs.slice(0, 4) : [],
+            artists: [],
+            albums: [],
+            playlists: [],
           };
         }
       } catch {

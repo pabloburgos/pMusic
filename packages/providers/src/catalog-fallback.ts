@@ -332,14 +332,14 @@ export function searchFallbackCatalog(
     return hay.includes(norm);
   });
 
-  const songs = matchedSongs.length > 0 ? matchedSongs : [...FALLBACK_TRACKS];
-  const artists = matchedArtists.length > 0 ? matchedArtists : FALLBACK_ARTISTS.slice(0, 4);
-  const albums = matchedAlbums.length > 0 ? matchedAlbums : FALLBACK_ALBUMS.slice(0, 3);
-  const playlists = matchedPlaylists.length > 0 ? matchedPlaylists : [...FALLBACK_PLAYLISTS];
+  const songs = matchedSongs;
+  const artists = matchedArtists;
+  const albums = matchedAlbums;
+  const playlists = matchedPlaylists;
 
   let topResult: TopResultMatch | undefined;
-  if (matchedArtists[0]) {
-    topResult = { kind: 'artist', item: matchedArtists[0] };
+  if (artists[0]) {
+    topResult = { kind: 'artist', item: artists[0] };
   } else if (songs[0]) {
     topResult = { kind: 'song', item: songs[0] };
   }

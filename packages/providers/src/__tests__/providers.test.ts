@@ -16,6 +16,7 @@ import {
   parseYtmAudienceCount,
   sanitizeArtistImageUrl,
   scoreAudioCandidate,
+  searchFallbackCatalog,
   splitSpotifySubtitleArtists,
   synthesizeDeterministicWavBuffer,
 } from '../index.ts';
@@ -1534,5 +1535,7 @@ describe('@pmusic/providers', () => {
       avatarUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Features211/v4/fd/9b/d1/mza_8866.jpg/800x800cc.webp',
       bannerUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Features211/v4/fd/9b/d1/mza_8866.jpg/1200x1200bb.jpg',
     });
+
+    expect(searchFallbackCatalog('superestrella').artists).toEqual([]);
   });
 });

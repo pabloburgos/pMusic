@@ -2656,7 +2656,7 @@ export const SearchScreen: React.FC = () => {
                               (a) => a.name === bestResult.item.name
                             )
                           ) ?? searchResults.songs[0];
-                        if (song) void playTrack(song, searchResults.songs);
+                        if (song) void playTrack(song, [song]);
                       }}
                       className="pm-btn-primary inline-flex items-center gap-1.5 rounded-full px-5 py-2 text-xs font-bold"
                     >
@@ -2710,7 +2710,7 @@ export const SearchScreen: React.FC = () => {
                       type="button"
                       aria-label={`Reproducir ${bestResult.item.title}`}
                       onClick={() =>
-                        void playTrack(bestResult.item, searchResults.songs)
+                        void playTrack(bestResult.item, [bestResult.item])
                       }
                       className="pm-btn-primary inline-flex items-center gap-1.5 rounded-full px-5 py-2 text-xs font-bold"
                     >
@@ -2731,7 +2731,7 @@ export const SearchScreen: React.FC = () => {
                   key={track.id}
                   track={track}
                   index={idx}
-                  queueContext={searchResults.songs}
+                  queueContext={[track]}
                 />
               ))}
             </div>
@@ -2806,7 +2806,7 @@ export const SearchScreen: React.FC = () => {
                     <button
                       type="button"
                       onClick={() =>
-                        void playTrack(bestResult.item, searchResults.songs)
+                        void playTrack(bestResult.item, [bestResult.item])
                       }
                       className="pm-btn-primary rounded-full px-5 py-2 text-xs font-bold"
                     >
@@ -2832,7 +2832,7 @@ export const SearchScreen: React.FC = () => {
                 key={track.id}
                 track={track}
                 index={idx}
-                queueContext={searchResults.songs}
+                queueContext={[track]}
               />
             ))}
           </div>
@@ -2850,7 +2850,7 @@ export const SearchScreen: React.FC = () => {
                 key={track.id}
                 track={track}
                 index={idx + 4}
-                queueContext={searchResults.songs}
+                queueContext={[track]}
               />
             ))}
           </div>

@@ -1030,18 +1030,20 @@ export class DeezerCatalog {
       .sort((a, b) => b.score - a.score || a.idx - b.idx)
       .map((x) => x.track);
 
-    const artistList = combinedRawArtists
+    const artistRanked = combinedRawArtists
       .map((raw: Json, idx: number) => {
         const artist = this.mapArtist(raw);
-        const fanBoost = Math.log10(Math.max(1, Number(raw.nb_fan) || 0) + 1) * 8;
+        const fans = Number(raw.nb_fan) || 0;
+        const fanBoost = Math.log10(Math.max(1, fans) + 1) * 8;
         return {
           artist,
+          fans,
           idx,
           score: scoreArtistForQuery(artist, rawQ) + fanBoost,
         };
       })
-      .sort((a: { score: number; idx: number }, b: { score: number; idx: number }) => b.score - a.score || a.idx - b.idx)
-      .map((x: { artist: ArtistSummary }) => x.artist);
+      .sort((a: { score: number; idx: number }, b: { score: number; idx: number }) => b.score - a.score || a.idx - b.idx);
+    const artistList = artistRanked.map((x: { artist: ArtistSummary }) => x.artist);
 
     // Promote shared joint-album collaborators discovered in enriched search tracks onto album summaries
     const albumExtraArtists = new Map<string, Map<string, { ref: { id?: string; name: string }; count: number }>>();
@@ -1086,6 +1088,7 @@ export class DeezerCatalog {
 
     const topSong = songList[0];
     const topArtist = artistList[0];
+    const topArtistFans = artistRanked[0]?.fans ?? 0;
     const topAlbum = albumList[0];
 
     const normQ = normalizeSearchStr(rawQ);
@@ -1107,7 +1110,11 @@ export class DeezerCatalog {
         ? rawSongScore
         : Math.min(rawSongScore, 340)
       : -1;
-    const artistScore = topArtist ? scoreArtistForQuery(topArtist, rawQ) : -1;
+    const rawArtistScore = topArtist ? scoreArtistForQuery(topArtist, rawQ) : -1;
+    const artistScore =
+      topSongNormTitle === normQ && topArtistFans < 500
+        ? Math.min(rawArtistScore, Math.max(0, songScore - 20))
+        : rawArtistScore;
     const albumScore = topAlbum ? scoreAlbumForQuery(topAlbum, rawQ) : -1;
 
     let topResult: SearchResultBundle['topResult'];

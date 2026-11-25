@@ -164,4 +164,46 @@ describe('@pmusic/recommendations', () => {
       expect(bestSong.item.id).toBe('lp_1');
     }
   });
+
+  it('never lets unrelated high-affinity or 0-fan homonym artists hijack non-matching searches like superestrella', async () => {
+    const engine = new RecommendationEngine();
+    await engine.recordSignal(TRACK_PANTERA, 'like');
+    await engine.recordSignal(TRACK_PANTERA, 'complete_listen', { completionRatio: 1 });
+
+    const songHit: Track = {
+      id: 'dz:3566475931',
+      title: 'SUPERESTRELLA',
+      artists: [{ id: '123', name: 'Aitana' }],
+      durationSec: 184,
+      thumbnailUrl: 'https://example.com/aitana.jpg',
+      source: 'ytmusic',
+    };
+    const obscureHomonym = {
+      id: '9999999',
+      name: 'Super Estrella',
+      thumbnailUrl: 'https://example.com/se.jpg',
+      subscribersText: '10 fans',
+    };
+    const laPantera = {
+      id: '7524936',
+      name: 'La Pantera',
+      thumbnailUrl: 'https://example.com/lp.jpg',
+      subscribersText: '500000 fans',
+    };
+
+    const reranked = engine.rerankSearchBundle('superestrella', {
+      query: 'superestrella',
+      songs: [songHit],
+      videos: [],
+      artists: [laPantera, obscureHomonym],
+      albums: [],
+      playlists: [],
+    });
+
+    expect(reranked.artists.map((a) => a.name)).toEqual(['Super Estrella']);
+    expect(reranked.topResult?.kind).toBe('song');
+    if (reranked.topResult?.kind === 'song') {
+      expect(reranked.topResult.item.title).toBe('SUPERESTRELLA');
+    }
+  });
 });
