@@ -81,6 +81,7 @@ import {
 } from '../utils/cover-color.ts';
 import { ArtistLinks } from './ArtistLinks.tsx';
 import { PMusicSwitch } from './PMusicSwitch.tsx';
+import { MobileFluidBackdropCanvas } from './MobileFluidBackdropCanvas.tsx';
 import { clearDraggedTrack, setDraggedTrack } from '../utils/track-dnd.ts';
 
 function normalizeLyricToken(raw: string): string {
@@ -1934,102 +1935,81 @@ export const NowPlayingSheet: React.FC = () => {
           transform: 'scale(var(--pm-beat-scale, 1))',
         }}
       >
-        {/* Double-Buffered Artwork Slots (Active + Simultaneous Fading Outgoing, Zero Sticky Prev) */}
-        {([0, 1] as const).map((slotIdx) => {
-          const isSlotActive = backdropSlots.active === slotIdx;
-          const isSlotOutgoing = backdropSlots.outgoing === slotIdx;
-          const slotOpacity = isSlotActive
-            ? backdropSlots.fadeStarted
-              ? 1
-              : 0
-            : isSlotOutgoing
+        {/* Double-Buffered Desktop Slots OR Zero-Flicker Single-Canvas Mobile Fluid Backdrop */}
+        {isMobileBackdrop && nowPlayingBackdropStyle === 'fluid' ? (
+          <div
+            className="pointer-events-none fixed inset-0"
+            style={{ zIndex: 2 }}
+          >
+            <MobileFluidBackdropCanvas
+              coverUrl={targetBackdropUrl}
+              crossfadeMs={cfActiveBackdrop ? Math.round(cfDurBackdropSec * 1000) : 950}
+              crossfadeLinear={cfActiveBackdrop}
+              ambientMotionEnabled={ambientMotionEnabled}
+              reducedMotionPref={reducedMotionPref}
+            />
+          </div>
+        ) : (
+          ([0, 1] as const).map((slotIdx) => {
+            const isSlotActive = backdropSlots.active === slotIdx;
+            const isSlotOutgoing = backdropSlots.outgoing === slotIdx;
+            const slotOpacity = isSlotActive
               ? backdropSlots.fadeStarted
-                ? 0
-                : 1
-              : 0;
-          const showCoverLayers = nowPlayingBackdropStyle === 'fluid';
-          const slotTintOpacity = showCoverLayers ? 1 : 0;
-          return (
-            <div
-              key={`backdrop-slot-${slotIdx}`}
-              data-testid={`backdrop-slot-${slotIdx}`}
-              className="pointer-events-none absolute -inset-24 will-change-[opacity]"
-              style={{
-                zIndex: isSlotActive ? 2 : isSlotOutgoing ? 1 : 0,
-                opacity: slotOpacity * slotTintOpacity,
-                visibility:
-                  !showCoverLayers && !isSlotActive ? 'hidden' : 'visible',
-                transition:
-                  reducedMotionPref || !backdropSlots.fadeStarted || (!isSlotActive && !isSlotOutgoing)
-                    ? 'none'
-                    : `opacity ${backdropSlots.fadeMs}ms ${
-                        backdropSlots.linear ? 'linear' : 'cubic-bezier(0.37, 0, 0.63, 1)'
-                      }`,
-              }}
-            >
-              {isMobileBackdrop ? (
-                <>
-                  <canvas
-                    ref={(el) => {
-                      mobileBackdropCanvasRefs.current[slotIdx][0] = el;
-                    }}
-                    width={48}
-                    height={48}
-                    data-testid={isSlotActive ? 'live-backdrop-img' : undefined}
-                    aria-hidden="true"
-                    className="pm-fluid-cover-a-baked pointer-events-none absolute inset-0 h-full w-full select-none opacity-55"
-                    style={slotIdx === 1 ? { animationDelay: '-5s' } : undefined}
-                  />
-                  <canvas
-                    ref={(el) => {
-                      mobileBackdropCanvasRefs.current[slotIdx][1] = el;
-                    }}
-                    width={48}
-                    height={48}
-                    aria-hidden="true"
-                    className="pm-fluid-cover-b-baked pointer-events-none absolute inset-0 h-full w-full -scale-x-100 select-none opacity-35"
-                    style={slotIdx === 1 ? { animationDelay: '-8s' } : undefined}
-                  />
-                </>
-              ) : (
-                <>
-                  <img
-                    data-testid={isSlotActive ? 'live-backdrop-img' : undefined}
-                    src={backdropSlots.urls[slotIdx]}
-                    alt=""
-                    draggable={false}
-                    className="pm-fluid-cover-a absolute inset-0 h-full w-full select-none object-cover opacity-55"
-                    style={slotIdx === 1 ? { animationDelay: '-5s' } : undefined}
-                  />
-                  <img
-                    src={backdropSlots.urls[slotIdx]}
-                    alt=""
-                    draggable={false}
-                    className="pm-fluid-cover-b absolute inset-0 h-full w-full -scale-x-100 select-none object-cover opacity-35"
-                    style={slotIdx === 1 ? { animationDelay: '-8s' } : undefined}
-                  />
-                </>
-              )}
-            </div>
-          );
-        })}
+                ? 1
+                : 0
+              : isSlotOutgoing
+                ? backdropSlots.fadeStarted
+                  ? 0
+                  : 1
+                : 0;
+            const showCoverLayers = nowPlayingBackdropStyle === 'fluid';
+            const slotTintOpacity = showCoverLayers ? 1 : 0;
+            return (
+              <div
+                key={`backdrop-slot-${slotIdx}`}
+                data-testid={`backdrop-slot-${slotIdx}`}
+                className="pointer-events-none absolute -inset-24 will-change-[opacity]"
+                style={{
+                  zIndex: isSlotActive ? 2 : isSlotOutgoing ? 1 : 0,
+                  opacity: slotOpacity * slotTintOpacity,
+                  visibility:
+                    !showCoverLayers && !isSlotActive ? 'hidden' : 'visible',
+                  transition:
+                    reducedMotionPref || !backdropSlots.fadeStarted || (!isSlotActive && !isSlotOutgoing)
+                      ? 'none'
+                      : `opacity ${backdropSlots.fadeMs}ms ${
+                          backdropSlots.linear ? 'linear' : 'cubic-bezier(0.37, 0, 0.63, 1)'
+                        }`,
+                }}
+              >
+                <img
+                  data-testid={isSlotActive ? 'live-backdrop-img' : undefined}
+                  src={backdropSlots.urls[slotIdx]}
+                  alt=""
+                  draggable={false}
+                  className="pm-fluid-cover-a absolute inset-0 h-full w-full select-none object-cover opacity-55"
+                  style={slotIdx === 1 ? { animationDelay: '-5s' } : undefined}
+                />
+                <img
+                  src={backdropSlots.urls[slotIdx]}
+                  alt=""
+                  draggable={false}
+                  className="pm-fluid-cover-b absolute inset-0 h-full w-full -scale-x-100 select-none object-cover opacity-35"
+                  style={slotIdx === 1 ? { animationDelay: '-8s' } : undefined}
+                />
+              </div>
+            );
+          })
+        )}
 
-        {nowPlayingBackdropStyle === 'fluid' &&
-          (isMobileBackdrop ? (
-            /* Mobile GPU-Safe Living Orbs matching Desktop layout & gradients without mix-blend flicker */
-            <div className="pointer-events-none absolute inset-0" style={{ zIndex: 3 }}>
-              <div className="pm-orb-1-mobile pointer-events-none absolute -left-[16vmax] -top-[6vmax] h-[72vmax] w-[72vmax] rounded-full" />
-              <div className="pm-orb-2-mobile pointer-events-none absolute -bottom-[18vmax] -right-[16vmax] h-[82vmax] w-[82vmax] rounded-full" />
-              <div className="pm-orb-3-mobile pointer-events-none absolute left-[10%] top-[24%] h-[68vmax] w-[68vmax] rounded-full" />
-            </div>
-          ) : (
-            /* Desktop GPU-Composited Living Fluid Cover-Palette Orbs (Balanced top luminosity) */
-            <div className="pointer-events-none absolute inset-0" style={{ zIndex: 3 }}>
-              <div className="pm-orb-1 pointer-events-none absolute -left-[16vmax] -top-[6vmax] h-[72vmax] w-[72vmax] rounded-full mix-blend-screen" />
-              <div className="pm-orb-2 pointer-events-none absolute -bottom-[18vmax] -right-[16vmax] h-[82vmax] w-[82vmax] rounded-full mix-blend-screen" />
-              <div className="pm-orb-3 pointer-events-none absolute left-[10%] top-[24%] h-[68vmax] w-[68vmax] rounded-full mix-blend-screen" />
-            </div>
-          ))}
+        {nowPlayingBackdropStyle === 'fluid' && !isMobileBackdrop && (
+          /* Desktop GPU-Composited Living Fluid Cover-Palette Orbs (Balanced top luminosity) */
+          <div className="pointer-events-none absolute inset-0" style={{ zIndex: 3 }}>
+            <div className="pm-orb-1 pointer-events-none absolute -left-[16vmax] -top-[6vmax] h-[72vmax] w-[72vmax] rounded-full mix-blend-screen" />
+            <div className="pm-orb-2 pointer-events-none absolute -bottom-[18vmax] -right-[16vmax] h-[82vmax] w-[82vmax] rounded-full mix-blend-screen" />
+            <div className="pm-orb-3 pointer-events-none absolute left-[10%] top-[24%] h-[68vmax] w-[68vmax] rounded-full mix-blend-screen" />
+          </div>
+        )}
 
         {(nowPlayingBackdropStyle === 'paint' ||
           nowPlayingBackdropStyle === 'prism' ||

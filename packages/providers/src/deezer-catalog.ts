@@ -29,11 +29,12 @@ function collectObjectsByKey(
   root: unknown,
   targetKey: string,
   out: Array<Record<string, any>> = [],
-  depth = 0
+  depth = 0,
+  maxItems = 60
 ): Array<Record<string, any>> {
-  if (!root || typeof root !== 'object' || depth > 24 || out.length >= 60) return out;
+  if (!root || typeof root !== 'object' || depth > 24 || out.length >= maxItems) return out;
   if (Array.isArray(root)) {
-    for (const item of root) collectObjectsByKey(item, targetKey, out, depth + 1);
+    for (const item of root) collectObjectsByKey(item, targetKey, out, depth + 1, maxItems);
     return out;
   }
   const rec = root as Record<string, any>;
@@ -42,7 +43,7 @@ function collectObjectsByKey(
       out.push(v as Record<string, any>);
     }
     if (v && typeof v === 'object') {
-      collectObjectsByKey(v, targetKey, out, depth + 1);
+      collectObjectsByKey(v, targetKey, out, depth + 1, maxItems);
     }
   }
   return out;
@@ -122,6 +123,18 @@ export function parseFeaturedArtistsFromTitle(title: string): string[] {
 }
 
 type Json = Record<string, any>;
+
+export function normalizeReleaseTitle(title: string): string {
+  return String(title ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\([^)]*(?:feat\.?|ft\.?|con|with|deluxe|edici[oó]n|explicit|remix|remaster|version|versi[oó]n)[^)]*\)/gi, ' ')
+    .replace(/\[[^\]]*(?:deluxe|explicit|remix|remaster|version|versi[oó]n)[^\]]*\]/gi, ' ')
+    .replace(/[^a-z0-9\s]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 function normalizeSearchStr(input: string): string {
   return input
@@ -291,7 +304,18 @@ export class DeezerCatalog {
   private readonly searchCache = new Map<string, { at: number; bundle: SearchResultBundle }>();
   private readonly ytmVisualsCache = new Map<
     string,
-    { at: number; data: { avatarUrl?: string; bannerUrl?: string; listenersText?: string; bio?: string } | null }
+    {
+      at: number;
+      data: {
+        avatarUrl?: string;
+        bannerUrl?: string;
+        listenersText?: string;
+        bio?: string;
+        ytmAlbumTitles?: string[];
+        ytmSingleOrEpTitles?: string[];
+        ytmHasFullDiscography?: boolean;
+      } | null;
+    }
   >();
   private readonly artistDetailCache = new Map<string, { at: number; detail: ArtistDetail }>();
 
@@ -885,6 +909,9 @@ export class DeezerCatalog {
     bannerUrl?: string;
     listenersText?: string;
     bio?: string;
+    ytmAlbumTitles?: string[];
+    ytmSingleOrEpTitles?: string[];
+    ytmHasFullDiscography?: boolean;
   } | null> {
     const cleanName = artistName.trim();
     if (!cleanName) return null;
@@ -980,11 +1007,66 @@ export class DeezerCatalog {
         undefined;
       const bio = readRunsText(header?.description) || undefined;
 
+      // Also extract verified official release titles & album/single-EP split from YTM artist shelves
+      const ytmAlbumTitlesSet = new Set<string>();
+      const ytmSingleOrEpTitlesSet = new Set<string>();
+      const moreBrowseIds = new Set<string>();
+      let ytmHasFullDiscography = false;
+
+      const shelves = collectObjectsByKey(browseJson, 'musicCarouselShelfRenderer', [], 0, 30);
+      for (const shelf of shelves) {
+        const headerRenderer = shelf?.header?.musicCarouselShelfBasicHeaderRenderer;
+        const shelfTitle = readRunsText(headerRenderer?.title).toLowerCase();
+        const isAlbumShelf = /^[áa]lbum(?:es)?\b|\balbums\b/.test(shelfTitle);
+        const isSingleOrEpShelf = /^(?:single|sencillo|ep)/.test(shelfTitle);
+        if (!isAlbumShelf && !isSingleOrEpShelf) continue;
+
+        const targetSet = isAlbumShelf ? ytmAlbumTitlesSet : ytmSingleOrEpTitlesSet;
+        const shelfItems = Array.isArray(shelf?.contents) ? shelf.contents : [];
+        for (const entry of shelfItems) {
+          const twoRow = entry?.musicTwoRowItemRenderer;
+          if (!twoRow) continue;
+          const normTitle = normalizeReleaseTitle(readRunsText(twoRow.title));
+          if (normTitle) targetSet.add(normTitle);
+        }
+
+        const moreId = String(
+          headerRenderer?.moreContentButton?.buttonRenderer?.navigationEndpoint?.browseEndpoint?.browseId ?? ''
+        ).trim();
+        if (moreId) moreBrowseIds.add(moreId);
+      }
+
+      if (moreBrowseIds.size > 0) {
+        const moreResults = await Promise.allSettled(
+          Array.from(moreBrowseIds)
+            .slice(0, 2)
+            .map((mid) => ytmPost('browse', { browseId: mid }))
+        );
+        for (const r of moreResults) {
+          if (r.status !== 'fulfilled' || !r.value) continue;
+          const twoRows = collectObjectsByKey(r.value, 'musicTwoRowItemRenderer', [], 0, 220);
+          if (twoRows.length > 0) ytmHasFullDiscography = true;
+          for (const twoRow of twoRows) {
+            const normTitle = normalizeReleaseTitle(readRunsText(twoRow.title));
+            if (!normTitle) continue;
+            const sub = readRunsText(twoRow.subtitle).toLowerCase();
+            if (/\b(?:[áa]lbum|album)\b/.test(sub)) {
+              ytmAlbumTitlesSet.add(normTitle);
+            } else {
+              ytmSingleOrEpTitlesSet.add(normTitle);
+            }
+          }
+        }
+      }
+
       const result = {
         avatarUrl: searchAvatarUrl || bannerUrl,
         bannerUrl,
         listenersText,
         bio,
+        ytmAlbumTitles: Array.from(ytmAlbumTitlesSet),
+        ytmSingleOrEpTitles: Array.from(ytmSingleOrEpTitlesSet),
+        ytmHasFullDiscography,
       };
       this.ytmVisualsCache.set(normCacheKey, { at: Date.now(), data: result });
       if (this.ytmVisualsCache.size > 120) {
@@ -1012,8 +1094,8 @@ export class DeezerCatalog {
 
     const [a, top, albumsRes, related, ytmVisuals] = await Promise.all([
       artistPromise,
-      this.get(`/artist/${encodeURIComponent(id)}/top?limit=20`, signal),
-      this.get(`/artist/${encodeURIComponent(id)}/albums?limit=30`, signal),
+      this.get(`/artist/${encodeURIComponent(id)}/top?limit=50`, signal),
+      this.get(`/artist/${encodeURIComponent(id)}/albums?limit=60`, signal),
       this.get(`/artist/${encodeURIComponent(id)}/related?limit=10`, signal),
       ytmVisualsPromise,
     ]);
@@ -1034,6 +1116,59 @@ export class DeezerCatalog {
     );
 
     const rawReleases = Array.isArray(albumsRes?.data) ? (albumsRes.data as Json[]) : [];
+    const ytmAlbumSet = new Set(ytmVisuals?.ytmAlbumTitles ?? []);
+    const ytmSingleSet = new Set(ytmVisuals?.ytmSingleOrEpTitles ?? []);
+    const ytmAllSet = new Set<string>([...ytmAlbumSet, ...ytmSingleSet]);
+    const hasYtmCatalog = ytmAllSet.size >= 2;
+    const artistFans = Number(a?.nb_fan ?? 0);
+
+    const matchesYtmCatalog = (normTitle: string, set: Set<string>): boolean => {
+      if (!normTitle) return false;
+      if (set.has(normTitle)) return true;
+      if (normTitle.length < 4) return false;
+      for (const entry of set) {
+        if (entry.length >= 4 && (entry.startsWith(normTitle) || normTitle.startsWith(entry))) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    // Filter out homonym / fake AI spam releases uploaded to shared artist IDs on Deezer
+    // and deduplicate identical normalized titles (keeping highest fan count / newest release).
+    const keptByTitle = new Map<string, Json>();
+    for (const al of rawReleases) {
+      const recType = String(al?.record_type ?? '').toLowerCase();
+      if (recType === 'compile') continue;
+      const normTitle = normalizeReleaseTitle(String(al?.title ?? ''));
+      if (!normTitle) continue;
+      const fans = Number(al?.fans ?? 0);
+
+      if (hasYtmCatalog) {
+        const matchedYtm = matchesYtmCatalog(normTitle, ytmAllSet);
+        if (!matchedYtm) {
+          if (ytmVisuals?.ytmHasFullDiscography) {
+            if (fans < 150) continue;
+          } else if (artistFans >= 1500 && fans < 25) {
+            continue;
+          }
+        }
+      }
+
+      const prev = keptByTitle.get(normTitle);
+      if (!prev) {
+        keptByTitle.set(normTitle, al);
+      } else {
+        const prevFans = Number(prev?.fans ?? 0);
+        const prevDate = String(prev?.release_date ?? '');
+        const nextDate = String(al?.release_date ?? '');
+        if (fans > prevFans || (fans === prevFans && nextDate.localeCompare(prevDate) > 0)) {
+          keptByTitle.set(normTitle, al);
+        }
+      }
+    }
+
+    const filteredReleases = Array.from(keptByTitle.values());
     const sortNewestFirst = (list: Json[]) =>
       [...list].sort((x, y) => {
         const dx = String(x.release_date ?? '');
@@ -1041,12 +1176,22 @@ export class DeezerCatalog {
         return dy.localeCompare(dx);
       });
 
+    const isAlbumRelease = (al: Json): boolean => {
+      const normTitle = normalizeReleaseTitle(String(al?.title ?? ''));
+      const recType = String(al?.record_type ?? '').toLowerCase();
+      if (hasYtmCatalog) {
+        if (matchesYtmCatalog(normTitle, ytmAlbumSet)) return true;
+        if (matchesYtmCatalog(normTitle, ytmSingleSet)) return false;
+      }
+      return recType !== 'single' && recType !== 'ep';
+    };
+
     const albumsList = sortNewestFirst(
-      rawReleases.filter((al) => String(al.record_type ?? '').toLowerCase() !== 'single')
+      filteredReleases.filter((al) => isAlbumRelease(al))
     ).map((al) => this.mapAlbum(al, a));
 
     const singlesList = sortNewestFirst(
-      rawReleases.filter((al) => String(al.record_type ?? '').toLowerCase() === 'single')
+      filteredReleases.filter((al) => !isAlbumRelease(al))
     ).map((al) => this.mapAlbum(al, a));
 
     const detail = {

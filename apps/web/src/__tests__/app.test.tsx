@@ -8,7 +8,7 @@ import { InkBleedCoverTransition } from '../components/InkBleedCoverTransition.t
 import { isSameAlbumOrCover } from '../components/Overlays.tsx';
 import { PMusicSwitch } from '../components/PMusicSwitch.tsx';
 import { mergeAccountTasteProfiles } from '../lib/taste-sync.ts';
-import { usePMusicStore } from '../store/usePMusicStore.ts';
+import { diversifyAndShuffleTracks, usePMusicStore } from '../store/usePMusicStore.ts';
 
 afterEach(() => {
   cleanup();
@@ -746,20 +746,49 @@ describe('@pmusic/web UI', () => {
     const heroBanner = screen.getByTestId('artist-hero-banner');
     expect(heroBanner).toBeDefined();
     expect(heroBanner.querySelectorAll('img').length).toBe(1);
+    expect(heroBanner.querySelector('[data-testid="artist-play-btn"]')).not.toBeNull();
+    expect(heroBanner.querySelector('[data-testid="artist-shuffle-btn"]')).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Radio' })).toBeNull();
+    expect(screen.queryByText(/Sesión DJ La Pantera/i)).toBeNull();
+    expect(screen.getByTestId('artist-sticky-header')).toBeDefined();
+    expect(screen.getByTestId('artist-sticky-play-btn')).toBeDefined();
     expect(screen.getByText('Último lanzamiento')).toBeDefined();
     fireEvent.click(screen.getByRole('tab', { name: 'Sencillos y EP' }));
     expect(screen.getAllByText('TÓCATE SOLA').length).toBeGreaterThan(0);
 
-    // 5. Car Mode opens with voice search & 3 one-tap tabs and closes cleanly
+    // Clicking hero shuffle activates true multi-album shuffle without repeats
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('artist-shuffle-btn'));
+    });
+    expect(usePMusicStore.getState().shuffleEnabled).toBe(true);
+
+    const spreadTracks = diversifyAndShuffleTracks([
+      { ...albumTrackA, id: 'alb1-1', title: 'A1', album: { id: 'alb1', name: 'Album 1' } },
+      { ...albumTrackA, id: 'alb1-2', title: 'A2', album: { id: 'alb1', name: 'Album 1' } },
+      { ...albumTrackB, id: 'alb2-1', title: 'B1', album: { id: 'alb2', name: 'Album 2' } },
+      { ...albumTrackB, id: 'alb2-2', title: 'B2', album: { id: 'alb2', name: 'Album 2' } },
+      { ...otherAlbumTrack, id: 'alb3-1', title: 'C1', album: { id: 'alb3', name: 'Album 3' } },
+      { ...otherAlbumTrack, id: 'alb3-2', title: 'C2', album: { id: 'alb3', name: 'Album 3' } },
+    ]);
+    expect(spreadTracks).toHaveLength(6);
+    for (let i = 1; i < spreadTracks.length; i++) {
+      expect(spreadTracks[i]?.album?.id).not.toBe(spreadTracks[i - 1]?.album?.id);
+    }
+
+    // 5. Car Mode has NO manual top-bar button and opens automatically when Android Auto / CarPlay triggers __pmusicSetCarMode
+    expect(screen.queryByTestId('open-car-mode-btn')).toBeNull();
+    expect(screen.queryByTestId('settings-car-mode-btn')).toBeNull();
     act(() => {
-      usePMusicStore.getState().setCarModeOpen(true);
+      (window as any).__pmusicSetCarMode?.(true);
     });
     rerender(<App />);
     expect(screen.getByTestId('car-mode-view')).toBeDefined();
     expect(screen.getByTestId('car-voice-search-btn')).toBeDefined();
     expect(screen.getByTestId('car-play-pause-btn')).toBeDefined();
     fireEvent.click(screen.getByRole('tab', { name: 'Playlists' }));
-    fireEvent.click(screen.getByTestId('car-mode-close-btn'));
+    act(() => {
+      (window as any).__pmusicSetCarMode?.(false);
+    });
     expect(usePMusicStore.getState().carModeOpen).toBe(false);
   });
 });

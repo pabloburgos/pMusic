@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
-  Car,
   Check,
   Compass,
   Disc3,
@@ -161,7 +160,6 @@ const PMusicMainApp: React.FC = () => {
     setDevicesSheetOpen,
     setImportModalOpen,
     setSettingsOpen,
-    setCarModeOpen,
     setSpotlightOpen,
     playFromVoiceQuery,
     setLibraryCategory,
@@ -1123,6 +1121,97 @@ const PMusicMainApp: React.FC = () => {
         </header>
       )}
 
+      {/* Pinned Mobile Top Command Bar (outside scroll container so pMusic & profile stay locked on screen) */}
+      {isMobileViewport && (
+        <div
+          data-testid="mobile-top-header"
+          className={
+            activeDetailView?.kind === 'artist'
+              ? 'fixed inset-x-0 top-0 z-40 flex items-center justify-between gap-3 bg-gradient-to-b from-[#070709]/80 via-[#070709]/40 to-transparent px-4 pt-[max(0.8rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3'
+              : 'pm-mobile-glass-header relative z-40 flex shrink-0 items-center justify-between gap-3 px-4 pt-[max(0.8rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3'
+          }
+        >
+          <div className="flex items-center gap-2.5">
+            {activeDetailView ? (
+              <button
+                type="button"
+                aria-label="Volver"
+                onClick={() => closeDetailView()}
+                className="pm-glass-chip inline-flex h-10 items-center gap-1.5 rounded-full px-3.5 text-xs font-semibold pm-text-primary"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                <span>Volver</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                aria-label="Ir al inicio"
+                onClick={() => setActiveTab('Inicio')}
+                className="pm-pressable py-0.5 text-left"
+              >
+                <PMusicLogo size={28} variant="wordmark-only" />
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            {authState.connected ? (
+              <button
+                type="button"
+                data-testid="mobile-profile-btn"
+                aria-label="Tu perfil"
+                onClick={() => setSettingsOpen(true)}
+                className="pm-glass-chip pm-pressable inline-flex h-9 items-center gap-1.5 rounded-full pl-1.5 pr-2.5 text-xs font-semibold pm-text-primary"
+              >
+                {userProfile?.avatarUrl || authState.avatarUrl ? (
+                  <img
+                    src={userProfile?.avatarUrl || authState.avatarUrl || ''}
+                    alt=""
+                    className="h-6 w-6 rounded-full object-cover"
+                  />
+                ) : (
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#fa233b] text-[10px] font-black text-white">
+                    {(userProfile?.displayName || authState.email || 'P').slice(0, 1).toUpperCase()}
+                  </span>
+                )}
+                <span className="max-w-[76px] truncate">
+                  {userProfile?.username ? `@${userProfile.username}` : 'Cuenta'}
+                </span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                data-testid="mobile-signin-btn"
+                onClick={() => setAuthOnboardingOpen(true)}
+                className="pm-btn-primary pm-pressable inline-flex h-9 items-center rounded-full px-3 text-xs font-bold"
+              >
+                Entrar
+              </button>
+            )}
+
+            <button
+              type="button"
+              data-testid="mobile-devices-btn"
+              aria-label="Dispositivos"
+              onClick={() => setDevicesSheetOpen(true)}
+              className="pm-glass-chip pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full text-emerald-400"
+            >
+              <Wifi className="h-4 w-4" />
+            </button>
+
+            <button
+              type="button"
+              data-testid="mobile-settings-btn"
+              aria-label="Ajustes"
+              onClick={() => setSettingsOpen(true)}
+              className="pm-glass-chip pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-secondary"
+            >
+              <Settings className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       <div
         className={`relative z-10 flex min-h-0 flex-1 ${
           !isMobileViewport
@@ -1518,112 +1607,14 @@ const PMusicMainApp: React.FC = () => {
           data-surface="content"
           className={
             isMobileViewport
-              ? 'min-w-0 flex-1 overflow-y-auto px-4 pb-48 pt-0'
+              ? `min-w-0 flex-1 overflow-y-auto px-4 pb-48 ${
+                  activeDetailView?.kind === 'artist' ? 'pt-0' : 'pt-3'
+                }`
               : `h-full min-w-0 flex-1 overflow-y-auto px-7 pt-3 ${
                   playerBarStyle === 'floating-island' ? 'pb-28' : 'pb-8'
                 }`
           }
         >
-          {/* Mobile Top Command Bar (Liquid Glass normally, transparent overlay over artist banner) */}
-          {isMobileViewport && (
-            <div
-              className={`sticky top-0 z-20 -mx-4 mb-4 flex items-center justify-between gap-3 px-4 pt-[max(0.8rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3 ${
-                activeDetailView?.kind === 'artist'
-                  ? 'bg-transparent border-none shadow-none'
-                  : 'pm-mobile-glass-header'
-              }`}
-            >
-              <div className="flex items-center gap-2.5">
-                {activeDetailView ? (
-                  <button
-                    type="button"
-                    aria-label="Volver"
-                    onClick={() => closeDetailView()}
-                    className="pm-glass-chip inline-flex h-10 items-center gap-1.5 rounded-full px-3.5 text-xs font-semibold pm-text-primary"
-                  >
-                    <ArrowLeft className="h-4 w-4" />
-                    <span>Volver</span>
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    aria-label="Ir al inicio"
-                    onClick={() => setActiveTab('Inicio')}
-                    className="pm-pressable py-0.5 text-left"
-                  >
-                    <PMusicLogo size={28} variant="wordmark-only" />
-                  </button>
-                )}
-              </div>
-
-              <div className="flex items-center gap-2">
-                {authState.connected ? (
-                  <button
-                    type="button"
-                    data-testid="mobile-profile-btn"
-                    aria-label="Tu perfil"
-                    onClick={() => setSettingsOpen(true)}
-                    className="pm-glass-chip pm-pressable inline-flex h-9 items-center gap-1.5 rounded-full pl-1.5 pr-2.5 text-xs font-semibold pm-text-primary"
-                  >
-                    {userProfile?.avatarUrl || authState.avatarUrl ? (
-                      <img
-                        src={userProfile?.avatarUrl || authState.avatarUrl || ''}
-                        alt=""
-                        className="h-6 w-6 rounded-full object-cover"
-                      />
-                    ) : (
-                      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#fa233b] text-[10px] font-black text-white">
-                        {(userProfile?.displayName || authState.email || 'P').slice(0, 1).toUpperCase()}
-                      </span>
-                    )}
-                    <span className="max-w-[76px] truncate">
-                      {userProfile?.username ? `@${userProfile.username}` : 'Cuenta'}
-                    </span>
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    data-testid="mobile-signin-btn"
-                    onClick={() => setAuthOnboardingOpen(true)}
-                    className="pm-btn-primary pm-pressable inline-flex h-9 items-center rounded-full px-3 text-xs font-bold"
-                  >
-                    Entrar
-                  </button>
-                )}
-
-                <button
-                  type="button"
-                  data-testid="open-car-mode-btn"
-                  aria-label="Modo Coche"
-                  onClick={() => setCarModeOpen(true)}
-                  className="pm-glass-chip pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-secondary"
-                >
-                  <Car className="h-4 w-4" />
-                </button>
-
-                <button
-                  type="button"
-                  data-testid="mobile-devices-btn"
-                  aria-label="Dispositivos"
-                  onClick={() => setDevicesSheetOpen(true)}
-                  className="pm-glass-chip pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full text-emerald-400"
-                >
-                  <Wifi className="h-4 w-4" />
-                </button>
-
-                <button
-                  type="button"
-                  data-testid="mobile-settings-btn"
-                  aria-label="Ajustes"
-                  onClick={() => setSettingsOpen(true)}
-                  className="pm-glass-chip pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-secondary"
-                >
-                  <Settings className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-          )}
-
           <div key={viewTransitionKey} className="pm-view-transition">
             {activeDetailView ? (
               <DetailViewPanel />

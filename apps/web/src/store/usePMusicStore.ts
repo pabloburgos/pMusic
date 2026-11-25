@@ -6,6 +6,7 @@ import {
   DEFAULT_USER_EQ_CONFIG,
   USER_EQ_PRESET_MAP,
   type AlbumDetail,
+  type AlbumSummary,
   type ArtistAffinityRecord,
   type ArtistDetail,
   type ArtistSummary,
@@ -477,6 +478,98 @@ function fisherYatesShuffle<T>(items: readonly T[]): T[] {
   return arr;
 }
 
+function normalizeTrackShuffleTitle(title: string): string {
+  return String(title ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\([^)]*(?:feat\.?|ft\.?|con|with|official|audio|video)[^)]*\)/gi, ' ')
+    .replace(/[^a-z0-9\s]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Diversifies shuffled queues across albums/releases and removes duplicate song titles
+ * (e.g. a single release appearing alongside its album version) so shuffle truly spans
+ * an artist's catalog instead of clustering onto one latest album.
+ */
+export function diversifyAndShuffleTracks(
+  tracks: readonly Track[],
+  avoidFirstTrackId?: string
+): Track[] {
+  if (tracks.length <= 1) return [...tracks];
+
+  const deduped: Track[] = [];
+  const seenIds = new Set<string>();
+  const seenTitleArtist = new Set<string>();
+  for (const t of tracks) {
+    if (!t?.id || seenIds.has(t.id)) continue;
+    const normTitle = normalizeTrackShuffleTitle(t.title);
+    const primaryArtist = (t.artists[0]?.name ?? '').toLowerCase().trim();
+    const titleKey = `${normTitle}::${primaryArtist}`;
+    if (normTitle && seenTitleArtist.has(titleKey)) continue;
+    seenIds.add(t.id);
+    if (normTitle) seenTitleArtist.add(titleKey);
+    deduped.push(t);
+  }
+  if (deduped.length <= 1) return deduped;
+
+  const buckets = new Map<string, Track[]>();
+  for (const t of deduped) {
+    const albumKey =
+      (t.album?.id && `id:${t.album.id}`) ||
+      (t.album?.name && `name:${t.album.name.toLowerCase().trim()}`) ||
+      `single:${t.id}`;
+    const bucket = buckets.get(albumKey);
+    if (bucket) bucket.push(t);
+    else buckets.set(albumKey, [t]);
+  }
+
+  for (const [k, list] of buckets.entries()) {
+    buckets.set(k, fisherYatesShuffle(list));
+  }
+
+  const result: Track[] = [];
+  let prevAlbumKey: string | null = null;
+  while (buckets.size > 0) {
+    const allKeys = Array.from(buckets.keys());
+    const eligible = allKeys.filter((k) => k !== prevAlbumKey);
+    const poolKeys = eligible.length > 0 ? eligible : allKeys;
+
+    let totalWeight = 0;
+    for (const k of poolKeys) totalWeight += buckets.get(k)!.length;
+    let pick = Math.random() * totalWeight;
+    let chosenKey = poolKeys[0]!;
+    for (const k of poolKeys) {
+      pick -= buckets.get(k)!.length;
+      if (pick <= 0) {
+        chosenKey = k;
+        break;
+      }
+    }
+
+    const bucket = buckets.get(chosenKey)!;
+    const nextTrack = bucket.pop()!;
+    result.push(nextTrack);
+    prevAlbumKey = chosenKey;
+    if (bucket.length === 0) {
+      buckets.delete(chosenKey);
+    }
+  }
+
+  if (avoidFirstTrackId && result[0]?.id === avoidFirstTrackId && result.length > 1) {
+    const altIdx = 1 + Math.floor(Math.random() * (result.length - 1));
+    const tmp = result[0]!;
+    result[0] = result[altIdx]!;
+    result[altIdx] = tmp;
+  }
+
+  return result;
+}
+
+let activeArtistShuffleToken = 0;
+
 const preloadedCoverUrls = new Set<string>();
 function preloadTrackCoverArt(track: Track | null | undefined): void {
   if (!track || typeof Image === 'undefined') return;
@@ -751,6 +844,12 @@ export interface PMusicStoreState {
   promoteRecommendedTrack: (trackId: string) => void;
   dismissRecommendedTrack: (trackId: string) => void;
   startTrackRadio: (track: Track, withDj?: boolean) => Promise<void>;
+  playArtistShuffled: (
+    artist: ArtistSummary,
+    topSongs: Track[],
+    albums?: AlbumSummary[],
+    singles?: AlbumSummary[]
+  ) => Promise<void>;
   startFullDjRadio: () => Promise<void>;
   setAutoplayEnabled: (enabled: boolean) => void;
   setAmbientMotionEnabled: (enabled: boolean) => void;
@@ -2750,8 +2849,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       void recomputeActiveDjPlan();
     }
 
-    // Expose native car/media callbacks for Android Auto & OS voice search
+    // Expose native car/media callbacks for Android Auto, CarPlay & OS voice search
     if (typeof window !== 'undefined') {
+      (window as any).__pmusicSetCarMode = (active: boolean) => {
+        get().setCarModeOpen(Boolean(active));
+      };
       (window as any).__pmusicPlayFromSearch = (q: string) => {
         void get().playFromVoiceQuery(q);
       };
@@ -3036,7 +3138,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           : st.unshuffledQueue.length > 0
             ? st.unshuffledQueue
             : [...queue];
-        queue = [track, ...fisherYatesShuffle(others)];
+        queue = [track, ...diversifyAndShuffleTracks(others)];
       }
 
       let idx = queue.findIndex((t) => t.id === track.id);
@@ -3293,13 +3395,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     if (!st.shuffleEnabled) {
       const original = [...st.queue];
       const others = original.filter((t) => t.id !== st.currentTrack.id);
-      for (let i = others.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        const tmp = others[i]!;
-        others[i] = others[j]!;
-        others[j] = tmp;
-      }
-      const shuffled = [st.currentTrack, ...others];
+      const shuffled = [st.currentTrack, ...diversifyAndShuffleTracks(others)];
       set({
         shuffleEnabled: true,
         unshuffledQueue: original,
@@ -3697,6 +3793,82 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }
     await get().playTrack(track, radioQueue);
     get().showToast(`Radio de «${track.title}» iniciada`);
+  },
+
+  playArtistShuffled: async (artist, topSongs, albums = [], singles = []) => {
+    const basePool = [...topSongs];
+    if (basePool.length === 0) return;
+
+    const token = ++activeArtistShuffleToken;
+    const shuffled = diversifyAndShuffleTracks(basePool, get().currentTrack?.id);
+    const first = shuffled[0] ?? basePool[0]!;
+    set({ shuffleEnabled: true });
+    await get().playTrack(first, shuffled);
+    set({ unshuffledQueue: [...basePool], shuffleEnabled: true });
+
+    // Background enrichment: mix in tracks from the artist's albums & EPs so older releases
+    // get equal representation alongside their newest album.
+    const countsByAlbumId = new Map<string, number>();
+    for (const t of basePool) {
+      if (t.album?.id) {
+        countsByAlbumId.set(t.album.id, (countsByAlbumId.get(t.album.id) ?? 0) + 1);
+      }
+    }
+    const candidateReleases = [...albums, ...singles].filter((r) => Boolean(r?.id));
+    if (!isLiveRuntime() || candidateReleases.length === 0) return;
+
+    const prioritizedReleases = candidateReleases
+      .sort((a, b) => (countsByAlbumId.get(a.id) ?? 0) - (countsByAlbumId.get(b.id) ?? 0))
+      .slice(0, 4);
+
+    void Promise.allSettled(
+      prioritizedReleases.map((rel) =>
+        musicProvider.getAlbum(rel.id, undefined, {
+          title: rel.title,
+          artist: artist.name,
+        })
+      )
+    ).then((results) => {
+      if (token !== activeArtistShuffleToken) return;
+      const curState = get();
+      if (!curState.shuffleEnabled || curState.currentTrack.id !== first.id) return;
+
+      const artistNorm = artist.name.trim().toLowerCase();
+      const extraTracks: Track[] = [];
+      for (const r of results) {
+        if (r.status !== 'fulfilled' || !r.value?.tracks) continue;
+        for (const t of r.value.tracks) {
+          const belongs = t.artists.some(
+            (ar) => ar.id === artist.id || ar.name.trim().toLowerCase() === artistNorm
+          );
+          if (belongs) extraTracks.push(t);
+        }
+      }
+      if (extraTracks.length === 0) return;
+
+      const curIdx = Math.max(0, curState.queueIndex);
+      const playedOrCurrent = curState.queue.slice(0, curIdx + 1);
+      const playedIds = new Set(playedOrCurrent.map((t) => t.id));
+      const playedTitles = new Set(
+        playedOrCurrent.map((t) => normalizeTrackShuffleTitle(t.title)).filter(Boolean)
+      );
+      const upcoming = [
+        ...curState.queue.slice(curIdx + 1),
+        ...extraTracks,
+      ].filter((t) => {
+        if (playedIds.has(t.id)) return false;
+        const nt = normalizeTrackShuffleTitle(t.title);
+        return !nt || !playedTitles.has(nt);
+      });
+      if (upcoming.length === 0) return;
+
+      const diversifiedUpcoming = diversifyAndShuffleTracks(upcoming);
+      set({
+        queue: [...playedOrCurrent, ...diversifiedUpcoming],
+        unshuffledQueue: [...basePool, ...extraTracks],
+      });
+      void recomputeActiveDjPlan();
+    });
   },
 
   startFullDjRadio: async () => {

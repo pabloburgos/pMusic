@@ -971,4 +971,119 @@ describe('@pmusic/providers', () => {
     expect(detail.albums.map((a) => a.title)).toEqual(['UNA SEMANA INCREÍBLE']);
     expect(detail.singles.map((s) => s.title)).toEqual(['SINGLE NUEVO', 'SINGLE ANTIGUO']);
   });
+
+  it('filters out fake/homonym Deezer releases via YTM official channel discography and classifies EPs into singles', async () => {
+    const mockFetch = (async (input: RequestInfo | URL) => {
+      const u = String(input);
+      if (u.endsWith('/artist/7524936')) {
+        return new Response(
+          JSON.stringify({
+            id: 7524936,
+            name: 'La Pantera',
+            nb_fan: 7500,
+            picture_big: 'https://cdn-images.dzcdn.net/old-500.jpg',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('/artist/7524936/top')) {
+        return new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (u.includes('/artist/7524936/albums')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              { id: 10, title: 'FILIPENSES', record_type: 'album', release_date: '2026-11-06', fans: 132, cover_big: 'https://e/f.jpg' },
+              { id: 11, title: 'Afterglow', record_type: 'album', release_date: '2026-07-27', fans: 10, cover_big: 'https://e/a.jpg' },
+              { id: 12, title: 'UNA SEMANA INCREÍBLE', record_type: 'album', release_date: '2024-09-27', fans: 339, cover_big: 'https://e/u.jpg' },
+              { id: 13, title: 'STONE BOY EUROPA', record_type: 'ep', release_date: '2026-06-18', fans: 78, cover_big: 'https://e/s.jpg' },
+              { id: 14, title: 'Entre Tú Y Yo', record_type: 'single', release_date: '2026-11-21', fans: 0, cover_big: 'https://e/e.jpg' },
+              { id: 15, title: 'TONY STARK', record_type: 'single', release_date: '2026-11-05', fans: 6, cover_big: 'https://e/t.jpg' },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('/artist/7524936/related')) {
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      }
+      if (u.includes('music.youtube.com/youtubei/v1/search')) {
+        return new Response(
+          JSON.stringify({
+            contents: {
+              musicResponsiveListItemRenderer: {
+                flexColumns: [{ musicResponsiveListItemFlexColumnRenderer: { text: { runs: [{ text: 'La Pantera' }] } } }],
+                navigationEndpoint: { browseEndpoint: { browseId: 'UCtestPanteraReal' } },
+              },
+            },
+          }),
+          { status: 200 }
+        );
+      }
+      if (u.includes('music.youtube.com/youtubei/v1/browse')) {
+        return new Response(
+          JSON.stringify({
+            header: {
+              musicImmersiveHeaderRenderer: {
+                monthlyListenerCount: { runs: [{ text: '2,59 M usuarios mensuales' }] },
+              },
+            },
+            contents: {
+              singleColumnBrowseResultsRenderer: {
+                tabs: [
+                  {
+                    tabRenderer: {
+                      content: {
+                        sectionListRenderer: {
+                          contents: [
+                            {
+                              musicCarouselShelfRenderer: {
+                                header: {
+                                  musicCarouselShelfBasicHeaderRenderer: {
+                                    title: { runs: [{ text: 'Álbumes' }] },
+                                  },
+                                },
+                                contents: [
+                                  { musicTwoRowItemRenderer: { title: { runs: [{ text: 'FILIPENSES' }] } } },
+                                  { musicTwoRowItemRenderer: { title: { runs: [{ text: 'UNA SEMANA INCREÍBLE' }] } } },
+                                ],
+                              },
+                            },
+                            {
+                              musicCarouselShelfRenderer: {
+                                header: {
+                                  musicCarouselShelfBasicHeaderRenderer: {
+                                    title: { runs: [{ text: 'Singles y EPs' }] },
+                                  },
+                                },
+                                contents: [
+                                  { musicTwoRowItemRenderer: { title: { runs: [{ text: 'STONE BOY EUROPA' }] } } },
+                                  { musicTwoRowItemRenderer: { title: { runs: [{ text: 'TONY STARK' }] } } },
+                                ],
+                              },
+                            },
+                          ],
+                        },
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }) as typeof fetch;
+
+    const catalog = new DeezerCatalog(mockFetch);
+    const detail = await catalog.artist('7524936');
+
+    expect(detail.albums.map((a) => a.title)).toEqual(['FILIPENSES', 'UNA SEMANA INCREÍBLE']);
+    expect(detail.singles.map((s) => s.title)).toEqual(['TONY STARK', 'STONE BOY EUROPA']);
+  });
 });

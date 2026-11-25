@@ -40,6 +40,7 @@ import {
   setDraggedTrack,
 } from '../utils/track-dnd.ts';
 import { ArtistLinks } from './ArtistLinks.tsx';
+import { RoundedPauseIcon, RoundedPlayIcon } from './TransportIcons.tsx';
 
 function getSpanishGreeting(): string {
   const hour = new Date().getHours();
@@ -474,11 +475,17 @@ const CarouselSection: React.FC<{
 export const DetailViewPanel: React.FC = () => {
   const {
     activeDetailView,
+    currentTrack,
+    isPlaying,
+    shuffleEnabled,
+    alwaysShuffle,
     playlists,
     likedTracks,
     dismissedPlaylistRecs,
     searchResults,
     playTrack,
+    togglePlayPause,
+    playArtistShuffled,
     toggleDjMode,
     startTrackRadio,
     renamePlaylist,
@@ -512,6 +519,8 @@ export const DetailViewPanel: React.FC = () => {
   const [sessionSkippedIds, setSessionSkippedIds] = useState<string[]>([]);
   const [artistDiscoTab, setArtistDiscoTab] = useState<'all' | 'albums' | 'singles'>('all');
   const [showAllPopular, setShowAllPopular] = useState(false);
+  const artistHeroRef = useRef<HTMLElement | null>(null);
+  const [artistStickyVisible, setArtistStickyVisible] = useState(false);
 
   const activeArtistDetailId =
     activeDetailView?.kind === 'artist' ? activeDetailView.data.artist.id : null;
@@ -519,6 +528,28 @@ export const DetailViewPanel: React.FC = () => {
   useEffect(() => {
     setArtistDiscoTab('all');
     setShowAllPopular(false);
+    setArtistStickyVisible(false);
+  }, [activeArtistDetailId]);
+
+  useEffect(() => {
+    if (!activeArtistDetailId) return;
+    const heroEl = artistHeroRef.current;
+    const scrollEl = heroEl?.closest('main') as HTMLElement | null;
+    if (!heroEl || !scrollEl) return;
+
+    const updateSticky = () => {
+      const rect = heroEl.getBoundingClientRect();
+      const mainRect = scrollEl.getBoundingClientRect();
+      setArtistStickyVisible(rect.bottom <= mainRect.top + 88);
+    };
+
+    updateSticky();
+    scrollEl.addEventListener('scroll', updateSticky, { passive: true });
+    window.addEventListener('resize', updateSticky, { passive: true });
+    return () => {
+      scrollEl.removeEventListener('scroll', updateSticky);
+      window.removeEventListener('resize', updateSticky);
+    };
   }, [activeArtistDetailId]);
 
   const activeLocalPlaylistId =
@@ -565,13 +596,85 @@ export const DetailViewPanel: React.FC = () => {
       Boolean(trimmedDesc) &&
       trimmedDesc.toLowerCase() !== (artist.subscribersText ?? '').trim().toLowerCase();
 
+    const artistNameNorm = artist.name.trim().toLowerCase();
+    const isPlayingThisArtist = Boolean(
+      currentTrack &&
+        currentTrack.artists.some(
+          (a) => a.id === artist.id || a.name.trim().toLowerCase() === artistNameNorm
+        )
+    );
+
+    const handleArtistPlay = () => {
+      if (isPlayingThisArtist) {
+        void togglePlayPause();
+      } else if (alwaysShuffle) {
+        void playArtistShuffled(artist, topSongs, albums, singles);
+      } else if (topSongs[0]) {
+        void playTrack(topSongs[0], topSongs);
+      }
+    };
+
+    const handleArtistShuffle = () => {
+      void playArtistShuffled(artist, topSongs, albums, singles);
+    };
+
     return (
-      <div className="pm-page-enter space-y-7">
-        {/* Full-Bleed Atmospheric Banner-Only pMusic Artist Hero (edge-to-edge on mobile top with soft bottom fade) */}
+      <div className="pm-page-enter space-y-6">
+        {/* Spotify-style Sticky Scroll Bar (slides in below pinned mobile top header, or top edge on desktop) */}
+        <div className="sticky top-[calc(3.6rem+var(--pm-safe-top,env(safe-area-inset-top)))] z-30 -mx-4 h-0 overflow-visible sm:top-0 sm:-mx-7 sm:-mt-3">
+          <div
+            data-testid="artist-sticky-header"
+            data-visible={artistStickyVisible ? 'true' : 'false'}
+            aria-hidden={!artistStickyVisible}
+            style={{
+              background:
+                'linear-gradient(90deg, color-mix(in srgb, var(--pm-ambient-1, #2a2a35) 36%, rgba(10,10,14,0.94)) 0%, rgba(10,10,14,0.96) 100%)',
+            }}
+            className={`flex h-[56px] items-center justify-between gap-3 border-b border-white/[0.08] px-4 backdrop-blur-xl transition-all duration-200 sm:h-[64px] sm:px-7 ${
+              artistStickyVisible
+                ? 'pointer-events-auto translate-y-0 opacity-100'
+                : 'pointer-events-none -translate-y-2 opacity-0'
+            }`}
+          >
+            <div className="flex min-w-0 items-center gap-2.5 sm:gap-3.5">
+              <button
+                type="button"
+                data-testid="artist-sticky-play-btn"
+                aria-label={isPlayingThisArtist && isPlaying ? 'Pausar' : `Reproducir ${artist.name}`}
+                onClick={handleArtistPlay}
+                className="pm-pressable flex h-10 w-10 shrink-0 items-center justify-center bg-transparent text-white transition-transform duration-150 hover:scale-110 active:scale-90 focus:outline-none"
+              >
+                {isPlayingThisArtist && isPlaying ? (
+                  <RoundedPauseIcon className="h-7 w-7 drop-shadow-[0_2px_10px_rgba(0,0,0,0.45)]" />
+                ) : (
+                  <RoundedPlayIcon className="h-7 w-7 translate-x-[1px] drop-shadow-[0_2px_10px_rgba(0,0,0,0.45)]" />
+                )}
+              </button>
+              <span className="truncate text-lg font-black tracking-tight text-white sm:text-xl">
+                {artist.name}
+              </span>
+            </div>
+
+            <button
+              type="button"
+              aria-label={`Aleatorio ${artist.name}`}
+              onClick={handleArtistShuffle}
+              className="pm-pressable relative flex h-10 w-10 shrink-0 items-center justify-center bg-transparent text-white/85 transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none"
+            >
+              <Shuffle className="h-5 w-5" />
+              {isPlayingThisArtist && shuffleEnabled && (
+                <span className="absolute bottom-1 h-1 w-1 rounded-full bg-white" />
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Full-Bleed Atmospheric Banner-Only pMusic Artist Hero with Giant Right-Aligned Play & Shuffle */}
         <section
+          ref={artistHeroRef}
           data-testid="artist-hero-banner"
           data-surface="content"
-          className="relative -mx-4 -mt-[calc(4.6rem+var(--pm-safe-top,env(safe-area-inset-top)))] flex min-h-[340px] flex-col justify-end overflow-hidden bg-[#0e0e13] px-5 pt-[calc(5.2rem+var(--pm-safe-top,env(safe-area-inset-top)))] pb-6 sm:mx-0 sm:mt-0 sm:min-h-[350px] sm:rounded-[22px] sm:p-8 sm:shadow-[0_24px_64px_rgba(0,0,0,0.45)]"
+          className="relative -mx-4 flex min-h-[340px] flex-col justify-end overflow-hidden bg-[#0e0e13] px-5 pt-[calc(5.2rem+var(--pm-safe-top,env(safe-area-inset-top)))] pb-6 sm:mx-0 sm:min-h-[350px] sm:rounded-[22px] sm:p-8 sm:shadow-[0_24px_64px_rgba(0,0,0,0.45)]"
         >
           {heroImage && (
             <img
@@ -595,68 +698,53 @@ export const DetailViewPanel: React.FC = () => {
             className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#070709]/65 via-transparent to-transparent"
           />
 
-          <div className="relative z-10 min-w-0 space-y-1.5">
-            <div className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-[11px] font-bold tracking-wide text-white backdrop-blur-md">
-              <Sparkles className="h-3 w-3 text-purple-300" />
-              <span>Artista verificado · pMusic</span>
+          <div className="relative z-10 flex items-end justify-between gap-4">
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <div className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-[11px] font-bold tracking-wide text-white backdrop-blur-md">
+                <Sparkles className="h-3 w-3 text-purple-300" />
+                <span>Artista verificado · pMusic</span>
+              </div>
+              <h1 className="truncate text-4xl font-black tracking-tight text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.65)] sm:text-5xl md:text-6xl">
+                {artist.name}
+              </h1>
+              {(artist.subscribersText || description) && (
+                <p className="text-xs font-semibold text-white/85 drop-shadow sm:text-sm">
+                  {artist.subscribersText ?? description}
+                </p>
+              )}
             </div>
-            <h1 className="truncate text-4xl font-black tracking-tight text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.65)] sm:text-5xl md:text-6xl">
-              {artist.name}
-            </h1>
-            {(artist.subscribersText || description) && (
-              <p className="text-xs font-semibold text-white/85 drop-shadow sm:text-sm">
-                {artist.subscribersText ?? description}
-              </p>
-            )}
+
+            <div className="flex shrink-0 items-center gap-2 pb-0.5 sm:gap-3.5">
+              <button
+                type="button"
+                data-testid="artist-shuffle-btn"
+                aria-label="Aleatorio"
+                aria-pressed={isPlayingThisArtist && shuffleEnabled}
+                onClick={handleArtistShuffle}
+                className="pm-pressable relative flex h-12 w-12 items-center justify-center bg-transparent text-white/85 drop-shadow-[0_4px_14px_rgba(0,0,0,0.55)] transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none sm:h-14 sm:w-14"
+              >
+                <Shuffle className="h-6 w-6 sm:h-7 sm:w-7" />
+                {isPlayingThisArtist && shuffleEnabled && (
+                  <span className="absolute bottom-1 h-1.5 w-1.5 rounded-full bg-white shadow" />
+                )}
+              </button>
+
+              <button
+                type="button"
+                data-testid="artist-play-btn"
+                aria-label={isPlayingThisArtist && isPlaying ? 'Pausar' : 'Reproducir'}
+                onClick={handleArtistPlay}
+                className="pm-pressable flex h-14 w-14 items-center justify-center overflow-visible bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.6)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none sm:h-16 sm:w-16"
+              >
+                {isPlayingThisArtist && isPlaying ? (
+                  <RoundedPauseIcon className="h-[46px] w-[46px] sm:h-[56px] sm:w-[56px]" />
+                ) : (
+                  <RoundedPlayIcon className="h-[46px] w-[46px] translate-x-[2px] sm:h-[56px] sm:w-[56px]" />
+                )}
+              </button>
+            </div>
           </div>
         </section>
-
-        {/* Action Toolbar: Play, Shuffle, Radio, DJ Session */}
-        <div className="flex flex-wrap items-center gap-2.5">
-          <button
-            type="button"
-            onClick={() => {
-              if (popularSongs[0]) void playTrack(popularSongs[0], popularSongs);
-            }}
-            className="pm-btn-primary pm-pressable inline-flex items-center gap-2 rounded-full px-6 py-2.5 text-xs font-bold shadow-lg"
-          >
-            <Play className="h-4 w-4 fill-current" />
-            <span>Reproducir</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (popularSongs.length === 0) return;
-              const shuffled = [...popularSongs].sort(() => Math.random() - 0.5);
-              if (shuffled[0]) void playTrack(shuffled[0], shuffled);
-            }}
-            className="pm-btn-secondary pm-pressable inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold"
-          >
-            <Shuffle className="h-3.5 w-3.5" />
-            <span>Aleatorio</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (popularSongs[0]) void startTrackRadio(popularSongs[0]);
-            }}
-            className="pm-btn-secondary pm-pressable inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold"
-          >
-            <Radio className="h-3.5 w-3.5" />
-            <span>Radio</span>
-          </button>
-          <button
-            type="button"
-            onClick={async () => {
-              await toggleDjMode(true);
-              if (popularSongs[0]) await playTrack(popularSongs[0], popularSongs);
-            }}
-            className="pm-btn-secondary pm-pressable inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-xs font-semibold"
-          >
-            <Disc3 className="h-4 w-4 text-purple-400" />
-            <span>Sesión DJ {artist.name}</span>
-          </button>
-        </div>
 
         {/* Popular Songs + Latest Release Feature Grid */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
@@ -684,7 +772,7 @@ export const DetailViewPanel: React.FC = () => {
                   key={track.id}
                   track={track}
                   index={idx}
-                  queueContext={popularSongs}
+                  queueContext={topSongs}
                 />
               ))}
             </div>

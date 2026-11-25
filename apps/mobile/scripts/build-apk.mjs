@@ -134,19 +134,93 @@ function generateIconPng(size = 192) {
   ]);
 }
 
+function generateNotificationIconPng(size = 96) {
+  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(size, 0);
+  ihdr.writeUInt32BE(size, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  const rawRows = Buffer.alloc(size * (1 + size * 4));
+  // Pure white silhouette of pMusic "p" loop + play glyph on transparent background (Android Material status icon)
+  const cx = size * 0.52;
+  const cy = size * 0.41;
+  const rOuter = size * 0.30;
+  const rInner = size * 0.175;
+  const stemL = size * 0.22;
+  const stemR = size * 0.345;
+  const stemT = size * 0.24;
+  const stemB = size * 0.88;
+  const pAx = cx - size * 0.055;
+  const pAy = cy - size * 0.085;
+  const pBx = cx - size * 0.055;
+  const pBy = cy + size * 0.085;
+  const pCx = cx + size * 0.095;
+  const pCy = cy;
+  const sign = (ax, ay, bx, by, px, py) => (ax - px) * (by - py) - (bx - px) * (ay - py);
+
+  for (let y = 0; y < size; y++) {
+    const rowStart = y * (1 + size * 4);
+    rawRows[rowStart] = 0;
+    for (let x = 0; x < size; x++) {
+      const px = rowStart + 1 + x * 4;
+      const dx = x - cx;
+      const dy = y - cy;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const inRing = dist <= rOuter && dist >= rInner;
+      const inStem = x >= stemL && x <= stemR && y >= stemT && y <= stemB;
+      const d1 = sign(pAx, pAy, pBx, pBy, x, y);
+      const d2 = sign(pBx, pBy, pCx, pCy, x, y);
+      const d3 = sign(pCx, pCy, pAx, pAy, x, y);
+      const inTri = (d1 >= 0 && d2 >= 0 && d3 >= 0) || (d1 <= 0 && d2 <= 0 && d3 <= 0);
+      if (inRing || inStem || inTri) {
+        rawRows[px] = 255;
+        rawRows[px + 1] = 255;
+        rawRows[px + 2] = 255;
+        rawRows[px + 3] = 255;
+      } else {
+        rawRows[px] = 0;
+        rawRows[px + 1] = 0;
+        rawRows[px + 2] = 0;
+        rawRows[px + 3] = 0;
+      }
+    }
+  }
+  return Buffer.concat([
+    sig,
+    makePngChunk('IHDR', ihdr),
+    makePngChunk('IDAT', deflateSync(rawRows)),
+    makePngChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
 const androidBrandIcon = resolve(__dirname, '../../desktop/build/icon-android.png');
 if (existsSync(androidBrandIcon)) {
   cpSync(androidBrandIcon, resolve(drawableDir, 'ic_launcher.png'));
 } else {
   writeFileSync(resolve(drawableDir, 'ic_launcher.png'), generateIconPng(192));
 }
+writeFileSync(resolve(drawableDir, 'ic_stat_pmusic.png'), generateNotificationIconPng(96));
 
-// 3. Write res/values/strings.xml
+// 3. Write res/values/strings.xml & pure-black splash theme res/values/styles.xml
 writeFileSync(
   resolve(valuesDir, 'strings.xml'),
   `<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">pMusic</string>
+</resources>
+`,
+  'utf-8'
+);
+
+writeFileSync(
+  resolve(valuesDir, 'styles.xml'),
+  `<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="PMusicTheme" parent="android:Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowBackground">#000000</item>
+        <item name="android:colorBackground">#000000</item>
+    </style>
 </resources>
 `,
   'utf-8'
@@ -169,8 +243,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="36"
-    android:versionName="0.18.0">
+    android:versionCode="37"
+    android:versionName="0.18.1">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -186,14 +260,14 @@ writeFileSync(
         android:label="@string/app_name"
         android:usesCleartextTraffic="true"
         android:hardwareAccelerated="true"
-        android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+        android:theme="@style/PMusicTheme">
 
         <meta-data
             android:name="com.google.android.gms.car.application"
             android:resource="@xml/automotive_app_desc" />
         <meta-data
             android:name="com.google.android.gms.car.notification.SmallIcon"
-            android:resource="@drawable/ic_launcher" />
+            android:resource="@drawable/ic_stat_pmusic" />
 
         <activity
             android:name="es.pmusic.app.MainActivity"
@@ -247,9 +321,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.media.AudioAttributes;
-import android.media.AudioFocusRequest;
-import android.media.AudioManager;
 import android.media.MediaMetadata;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
@@ -296,16 +367,6 @@ public class PMusicPlaybackService extends Service {
     private static volatile long sDurationMs = 200000L;
 
     private PowerManager.WakeLock wakeLock;
-    private AudioManager audioManager;
-    private Object audioFocusRequestObj;
-    private final AudioManager.OnAudioFocusChangeListener focusListener = new AudioManager.OnAudioFocusChangeListener() {
-        @Override
-        public void onAudioFocusChange(int focusChange) {
-            if (focusChange == AudioManager.AUDIOFOCUS_LOSS || focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
-                MainActivity.dispatchMediaAction(PMusicPlaybackService.this, "pause", -1);
-            }
-        }
-    };
 
     public static synchronized MediaSession.Token getOrCreateSessionToken(Context ctx) {
         ensureMediaSessionStatic(ctx.getApplicationContext());
@@ -364,29 +425,41 @@ public class PMusicPlaybackService extends Service {
     public static void updateFromJson(final Context ctx, final String jsonStr) {
         try {
             JSONObject obj = new JSONObject(jsonStr);
-            sTitle = obj.optString("title", "pMusic");
-            sArtist = obj.optString("artist", "");
-            sAlbum = obj.optString("album", "pMusic");
+            String nextTitle = obj.optString("title", "pMusic");
+            String nextArtist = obj.optString("artist", "");
+            String nextAlbum = obj.optString("album", "pMusic");
             String nextArt = obj.optString("artworkUrl", "");
+            boolean nextPlaying = obj.optBoolean("isPlaying", false);
+
+            boolean metaChanged = !nextTitle.equals(sTitle)
+                    || !nextArtist.equals(sArtist)
+                    || !nextAlbum.equals(sAlbum)
+                    || !nextArt.equals(sArtworkUrl)
+                    || nextPlaying != sIsPlaying;
             boolean artChanged = !nextArt.equals(sArtworkUrl);
+
+            sTitle = nextTitle;
+            sArtist = nextArtist;
+            sAlbum = nextAlbum;
             sArtworkUrl = nextArt;
-            sIsPlaying = obj.optBoolean("isPlaying", false);
+            sIsPlaying = nextPlaying;
             sPositionMs = Math.max(0L, obj.optLong("positionMs", 0L));
             sDurationMs = Math.max(1000L, obj.optLong("durationMs", 200000L));
 
-            Intent svc = new Intent(ctx, PMusicPlaybackService.class);
-            try {
-                if (Build.VERSION.SDK_INT >= 26) {
-                    ctx.startForegroundService(svc);
-                } else {
-                    ctx.startService(svc);
+            if (sServiceInstance == null) {
+                Intent svc = new Intent(ctx, PMusicPlaybackService.class);
+                try {
+                    if (Build.VERSION.SDK_INT >= 26) {
+                        ctx.startForegroundService(svc);
+                    } else {
+                        ctx.startService(svc);
+                    }
+                } catch (Throwable ignored) {
                 }
-            } catch (Throwable ignored) {
+            } else {
+                sServiceInstance.syncMediaSessionAndNotification(metaChanged);
             }
 
-            if (sServiceInstance != null) {
-                sServiceInstance.syncMediaSessionAndNotification();
-            }
             if (artChanged && !nextArt.isEmpty()) {
                 Bitmap cached = getCachedBitmap(nextArt);
                 if (cached == null) {
@@ -398,7 +471,7 @@ public class PMusicPlaybackService extends Service {
                             if (bmp != null) {
                                 putCachedBitmap(targetUrl, bmp);
                                 if (targetUrl.equals(sArtworkUrl) && sServiceInstance != null) {
-                                    sServiceInstance.syncMediaSessionAndNotification();
+                                    sServiceInstance.syncMediaSessionAndNotification(true);
                                 }
                             }
                         }
@@ -425,7 +498,7 @@ public class PMusicPlaybackService extends Service {
             conn.setConnectTimeout(3500);
             conn.setReadTimeout(4500);
             conn.setInstanceFollowRedirects(true);
-            conn.setRequestProperty("User-Agent", "pMusic-Android/0.18.0");
+            conn.setRequestProperty("User-Agent", "pMusic-Android/0.18.1");
             if (conn.getResponseCode() >= 200 && conn.getResponseCode() < 300) {
                 InputStream in = conn.getInputStream();
                 ByteArrayOutputStream bos = new ByteArrayOutputStream();
@@ -460,50 +533,13 @@ public class PMusicPlaybackService extends Service {
         return PendingIntent.getService(this, reqCode, i, flags);
     }
 
-    private void requestPlaybackAudioFocus() {
-        try {
-            if (audioManager == null) {
-                audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
-            }
-            if (audioManager == null) return;
-            if (Build.VERSION.SDK_INT >= 26) {
-                if (audioFocusRequestObj == null) {
-                    AudioAttributes attrs = new AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                            .build();
-                    audioFocusRequestObj = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                            .setAudioAttributes(attrs)
-                            .setAcceptsDelayedFocusGain(true)
-                            .setOnAudioFocusChangeListener(focusListener)
-                            .build();
-                }
-                audioManager.requestAudioFocus((AudioFocusRequest) audioFocusRequestObj);
-            } else {
-                audioManager.requestAudioFocus(focusListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN);
-            }
-        } catch (Throwable ignored) {
-        }
+    public void syncMediaSessionAndNotification() {
+        syncMediaSessionAndNotification(true);
     }
 
-    public void syncMediaSessionAndNotification() {
+    public void syncMediaSessionAndNotification(boolean refreshNotification) {
         try {
             ensureMediaSessionStatic(getApplicationContext());
-            if (sIsPlaying) {
-                requestPlaybackAudioFocus();
-            }
-
-            Bitmap artBmp = !sArtworkUrl.isEmpty() ? getCachedBitmap(sArtworkUrl) : null;
-            MediaMetadata.Builder meta = new MediaMetadata.Builder()
-                    .putString(MediaMetadata.METADATA_KEY_TITLE, sTitle != null && !sTitle.isEmpty() ? sTitle : "pMusic")
-                    .putString(MediaMetadata.METADATA_KEY_ARTIST, sArtist != null ? sArtist : "")
-                    .putString(MediaMetadata.METADATA_KEY_ALBUM, sAlbum != null && !sAlbum.isEmpty() ? sAlbum : "pMusic")
-                    .putLong(MediaMetadata.METADATA_KEY_DURATION, sDurationMs);
-            if (artBmp != null) {
-                meta.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, artBmp);
-                meta.putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, artBmp);
-            }
-            sMediaSession.setMetadata(meta.build());
 
             long actions = PlaybackState.ACTION_PLAY
                     | PlaybackState.ACTION_PAUSE
@@ -518,6 +554,29 @@ public class PMusicPlaybackService extends Service {
                     .setState(pbState, sPositionMs, sIsPlaying ? 1.0f : 0.0f)
                     .build();
             sMediaSession.setPlaybackState(state);
+
+            if (!refreshNotification) {
+                return;
+            }
+
+            Bitmap artBmp = !sArtworkUrl.isEmpty() ? getCachedBitmap(sArtworkUrl) : null;
+            if (artBmp == null) {
+                try {
+                    artBmp = BitmapFactory.decodeResource(getResources(), R.drawable.ic_launcher);
+                } catch (Throwable ignored) {
+                }
+            }
+            MediaMetadata.Builder meta = new MediaMetadata.Builder()
+                    .putString(MediaMetadata.METADATA_KEY_TITLE, sTitle != null && !sTitle.isEmpty() ? sTitle : "pMusic")
+                    .putString(MediaMetadata.METADATA_KEY_ARTIST, sArtist != null ? sArtist : "")
+                    .putString(MediaMetadata.METADATA_KEY_ALBUM, sAlbum != null && !sAlbum.isEmpty() ? sAlbum : "pMusic")
+                    .putLong(MediaMetadata.METADATA_KEY_DURATION, sDurationMs);
+            if (artBmp != null) {
+                meta.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, artBmp);
+                meta.putBitmap(MediaMetadata.METADATA_KEY_ART, artBmp);
+                meta.putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, artBmp);
+            }
+            sMediaSession.setMetadata(meta.build());
 
             NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
             if (Build.VERSION.SDK_INT >= 26 && nm != null) {
@@ -551,7 +610,8 @@ public class PMusicPlaybackService extends Service {
             builder.setContentTitle(sTitle != null && !sTitle.isEmpty() ? sTitle : "pMusic")
                     .setContentText(sArtist != null && !sArtist.isEmpty() ? sArtist : "pMusic Audio")
                     .setSubText("pMusic")
-                    .setSmallIcon(R.drawable.ic_launcher)
+                    .setSmallIcon(R.drawable.ic_stat_pmusic)
+                    .setColor(0xFF070709)
                     .setContentIntent(contentPi)
                     .setOngoing(sIsPlaying)
                     .setOnlyAlertOnce(true)
@@ -564,6 +624,9 @@ public class PMusicPlaybackService extends Service {
                     )
                     .addAction(android.R.drawable.ic_media_next, "Siguiente", makeServiceActionIntent(ACTION_NEXT, 12))
                     .setStyle(mediaStyle);
+            if (Build.VERSION.SDK_INT >= 26) {
+                builder.setColorized(true);
+            }
 
             if (artBmp != null) {
                 builder.setLargeIcon(artBmp);
@@ -778,10 +841,14 @@ writeFileSync(
   `package es.pmusic.app;
 
 import android.app.Activity;
+import android.app.UiModeManager;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
@@ -980,10 +1047,10 @@ public class MainActivity extends Activity {
         }
 
         if (window != null) {
-            window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.parseColor("#070709")));
+            window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.BLACK));
         }
         webView = new WebView(this);
-        webView.setBackgroundColor(Color.parseColor("#070709"));
+        webView.setBackgroundColor(Color.BLACK);
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
         if (Build.VERSION.SDK_INT >= 26) {
             try {
@@ -1160,6 +1227,9 @@ public class MainActivity extends Activity {
                     sPendingCarMediaId = null;
                     dispatchCarPlayMediaIdToJs(mid);
                 }
+                if (isCurrentlyInCarMode()) {
+                    dispatchCarModeToJs(true);
+                }
             }
 
             @Override
@@ -1293,6 +1363,33 @@ public class MainActivity extends Activity {
         }
 
         handleDeepLinkIntent(getIntent());
+        try {
+            carModeReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    if (intent == null) return;
+                    String act = intent.getAction();
+                    if (UiModeManager.ACTION_ENTER_CAR_MODE.equals(act)) {
+                        dispatchCarModeToJs(true);
+                    } else if (UiModeManager.ACTION_EXIT_CAR_MODE.equals(act)) {
+                        dispatchCarModeToJs(false);
+                    } else if (Intent.ACTION_DOCK_EVENT.equals(act)) {
+                        int dockState = intent.getIntExtra(Intent.EXTRA_DOCK_STATE, Intent.EXTRA_DOCK_STATE_UNDOCKED);
+                        dispatchCarModeToJs(dockState == Intent.EXTRA_DOCK_STATE_CAR || isCurrentlyInCarMode());
+                    }
+                }
+            };
+            IntentFilter carFilter = new IntentFilter();
+            carFilter.addAction(UiModeManager.ACTION_ENTER_CAR_MODE);
+            carFilter.addAction(UiModeManager.ACTION_EXIT_CAR_MODE);
+            carFilter.addAction(Intent.ACTION_DOCK_EVENT);
+            if (Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(carModeReceiver, carFilter, Context.RECEIVER_EXPORTED);
+            } else {
+                registerReceiver(carModeReceiver, carFilter);
+            }
+        } catch (Throwable ignored) {
+        }
         startLocalStreamServer();
         webView.loadUrl("https://appassets.pmusic.local/index.html");
     }
@@ -1381,8 +1478,50 @@ public class MainActivity extends Activity {
         });
     }
 
+    private BroadcastReceiver carModeReceiver;
+
+    private boolean isCurrentlyInCarMode() {
+        try {
+            UiModeManager um = (UiModeManager) getSystemService(Context.UI_MODE_SERVICE);
+            if (um != null && um.getCurrentModeType() == Configuration.UI_MODE_TYPE_CAR) {
+                return true;
+            }
+            int uiMask = getResources().getConfiguration().uiMode & Configuration.UI_MODE_TYPE_MASK;
+            return uiMask == Configuration.UI_MODE_TYPE_CAR;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private void dispatchCarModeToJs(final boolean active) {
+        if (webView == null || Build.VERSION.SDK_INT < 19) return;
+        final String js = "window.__pmusicSetCarMode && window.__pmusicSetCarMode(" + (active ? "true" : "false") + ");";
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (webView != null) webView.evaluateJavascript(js, null);
+            }
+        });
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        if (newConfig != null) {
+            boolean inCar = (newConfig.uiMode & Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_CAR;
+            dispatchCarModeToJs(inCar || isCurrentlyInCarMode());
+        }
+    }
+
     @Override
     protected void onDestroy() {
+        if (carModeReceiver != null) {
+            try {
+                unregisterReceiver(carModeReceiver);
+            } catch (Exception ignored) {
+            }
+            carModeReceiver = null;
+        }
         if (sInstance == this) {
             sInstance = null;
         }
