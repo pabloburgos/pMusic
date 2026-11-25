@@ -33,6 +33,7 @@ import {
   type LibraryCategoryTab,
   type SearchScopeTab,
 } from '../store/usePMusicStore.ts';
+import { extractCharacteristicImageColor, type RgbTriple } from '../utils/cover-color.ts';
 import {
   clearDraggedTrack,
   getDraggedSource,
@@ -521,15 +522,29 @@ export const DetailViewPanel: React.FC = () => {
   const [showAllPopular, setShowAllPopular] = useState(false);
   const artistHeroRef = useRef<HTMLElement | null>(null);
   const [artistStickyVisible, setArtistStickyVisible] = useState(false);
+  const [artistHeaderRgb, setArtistHeaderRgb] = useState<RgbTriple | null>(null);
 
   const activeArtistDetailId =
     activeDetailView?.kind === 'artist' ? activeDetailView.data.artist.id : null;
+  const activeArtistBannerUrl =
+    activeDetailView?.kind === 'artist' ? activeDetailView.data.bannerUrl : undefined;
+  const activeArtistThumbUrl =
+    activeDetailView?.kind === 'artist' ? activeDetailView.data.artist.thumbnailUrl : undefined;
 
   useEffect(() => {
     setArtistDiscoTab('all');
     setShowAllPopular(false);
     setArtistStickyVisible(false);
-  }, [activeArtistDetailId]);
+    setArtistHeaderRgb(null);
+    if (!activeArtistDetailId) return;
+    let cancelled = false;
+    void extractCharacteristicImageColor([activeArtistBannerUrl, activeArtistThumbUrl]).then((rgb) => {
+      if (!cancelled && rgb) setArtistHeaderRgb(rgb);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeArtistDetailId, activeArtistBannerUrl, activeArtistThumbUrl]);
 
   useEffect(() => {
     if (!activeArtistDetailId) return;
@@ -618,19 +633,20 @@ export const DetailViewPanel: React.FC = () => {
       void playArtistShuffled(artist, topSongs, albums, singles);
     };
 
+    const [hdrR, hdrG, hdrB] = artistHeaderRgb ?? [22, 22, 28];
+
     return (
       <div className="pm-page-enter space-y-6">
-        {/* Spotify-style Sticky Scroll Bar (slides in flush below pinned mobile top header, or top edge on desktop) */}
+        {/* Spotify-style Sticky Scroll Bar colored from the artist's photo */}
         <div className="sticky top-[calc(3.6rem+var(--pm-safe-top,env(safe-area-inset-top)))] z-30 -mx-4 h-0 overflow-visible sm:top-0 sm:-mx-7 sm:mt-0">
           <div
             data-testid="artist-sticky-header"
             data-visible={artistStickyVisible ? 'true' : 'false'}
             aria-hidden={!artistStickyVisible}
             style={{
-              background:
-                'linear-gradient(180deg, color-mix(in srgb, var(--pm-ambient-1, #22222c) 40%, rgba(10,10,14,0.96)) 0%, rgba(8,8,12,0.95) 100%)',
+              background: `linear-gradient(180deg, rgba(${hdrR}, ${hdrG}, ${hdrB}, 0.96) 0%, rgba(${Math.round(hdrR * 0.62)}, ${Math.round(hdrG * 0.62)}, ${Math.round(hdrB * 0.62)}, 0.96) 100%)`,
             }}
-            className={`flex h-[56px] items-center justify-between gap-3 border-b border-white/[0.08] px-4 backdrop-blur-2xl transition-all duration-200 sm:h-[64px] sm:rounded-t-[20px] sm:px-7 ${
+            className={`flex h-[56px] items-center justify-between gap-3 px-4 shadow-[0_10px_28px_rgba(0,0,0,0.45)] backdrop-blur-2xl transition-all duration-200 sm:h-[64px] sm:rounded-t-[20px] sm:px-7 ${
               artistStickyVisible
                 ? 'pointer-events-auto translate-y-0 opacity-100'
                 : 'pointer-events-none -translate-y-2 opacity-0'
@@ -669,12 +685,12 @@ export const DetailViewPanel: React.FC = () => {
           </div>
         </div>
 
-        {/* Full-Bleed Atmospheric Banner-Only pMusic Artist Hero with Giant Right-Aligned Play & Shuffle */}
+        {/* Full-Bleed Atmospheric Banner-Only pMusic Artist Hero flush to top edge */}
         <section
           ref={artistHeroRef}
           data-testid="artist-hero-banner"
           data-surface="content"
-          className="relative -mx-4 flex min-h-[340px] flex-col justify-end overflow-hidden bg-[#0e0e13] px-5 pt-[calc(5.2rem+var(--pm-safe-top,env(safe-area-inset-top)))] pb-6 sm:-mx-7 sm:min-h-[360px] sm:rounded-none sm:rounded-t-[20px] sm:p-8 sm:shadow-[0_24px_64px_rgba(0,0,0,0.45)]"
+          className="relative !mt-0 -mx-4 flex min-h-[340px] flex-col justify-end overflow-hidden bg-[#0e0e13] px-5 pt-[calc(5.2rem+var(--pm-safe-top,env(safe-area-inset-top)))] pb-6 sm:-mx-7 sm:min-h-[360px] sm:rounded-none sm:rounded-t-[20px] sm:p-8 sm:shadow-[0_24px_64px_rgba(0,0,0,0.45)]"
         >
           {heroImage && (
             <img

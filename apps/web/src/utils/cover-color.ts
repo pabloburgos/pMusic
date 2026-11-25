@@ -417,3 +417,107 @@ export function animateAmbientPaletteFromCover(track: Track | null, durationMs =
 export function applyAmbientPaletteFromCover(track: Track | null, durationMs = 1100): void {
   animateAmbientPaletteFromCover(track, durationMs);
 }
+
+const characteristicColorCache = new Map<string, RgbTriple>();
+
+function sampleImageCharacteristicColor(url: string): Promise<RgbTriple | null> {
+  if (!url) return Promise.resolve(null);
+  const hit = characteristicColorCache.get(url);
+  if (hit) return Promise.resolve(hit);
+  if (typeof document === 'undefined' || typeof Image === 'undefined') {
+    return Promise.resolve(null);
+  }
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = 32;
+          canvas.height = 32;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(null);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, 32, 32);
+          const { data } = ctx.getImageData(0, 0, 32, 32);
+
+          // 12-bucket hue histogram weighted by saturation so we find the artist photo's dominant color
+          const buckets = Array.from({ length: 12 }, () => ({ weight: 0, hSum: 0, sSum: 0 }));
+          let sumR = 0;
+          let sumG = 0;
+          let sumB = 0;
+          let count = 0;
+
+          for (let i = 0; i < data.length; i += 4) {
+            const r = data[i] ?? 0;
+            const g = data[i + 1] ?? 0;
+            const b = data[i + 2] ?? 0;
+            const a = data[i + 3] ?? 255;
+            if (a < 180) continue;
+            sumR += r;
+            sumG += g;
+            sumB += b;
+            count++;
+
+            const [h, s, l] = rgbToHsl(r, g, b);
+            if (s < 0.16 || l < 0.08 || l > 0.88) continue;
+            const bIdx = Math.floor((((h % 360) + 360) % 360) / 30) % 12;
+            const w = s * (1 - Math.abs(l - 0.45) * 1.1);
+            if (w <= 0) continue;
+            const bkt = buckets[bIdx]!;
+            bkt.weight += w;
+            bkt.hSum += h * w;
+            bkt.sSum += s * w;
+          }
+
+          let chosen: RgbTriple;
+          const bestBucket = buckets.reduce((a, b) => (b.weight > a.weight ? b : a), buckets[0]!);
+          if (bestBucket.weight > 0.6) {
+            const avgHue = bestBucket.hSum / bestBucket.weight;
+            const avgSat = bestBucket.sSum / bestBucket.weight;
+            const satPct = Math.min(72, Math.max(32, Math.round(avgSat * 100)));
+            chosen = hslToRgb(avgHue, satPct, 28);
+          } else if (count > 0) {
+            const [avgH, avgS] = rgbToHsl(sumR / count, sumG / count, sumB / count);
+            const satPct = avgS > 0.12 ? Math.min(54, Math.max(24, Math.round(avgS * 100))) : 16;
+            chosen = hslToRgb(avgH, satPct, 22);
+          } else {
+            resolve(null);
+            return;
+          }
+
+          characteristicColorCache.set(url, chosen);
+          if (characteristicColorCache.size > 64) {
+            const oldest = characteristicColorCache.keys().next().value;
+            if (oldest) characteristicColorCache.delete(oldest);
+          }
+          resolve(chosen);
+        } catch {
+          resolve(null);
+        }
+      };
+      img.onerror = () => resolve(null);
+      img.src = url;
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+/**
+ * Extracts the most characteristic color from an artist banner/avatar URL list for sticky header styling.
+ */
+export async function extractCharacteristicImageColor(
+  urls: readonly (string | null | undefined)[]
+): Promise<RgbTriple | null> {
+  for (const raw of urls) {
+    const url = raw?.trim();
+    if (!url) continue;
+    const rgb = await sampleImageCharacteristicColor(url);
+    if (rgb) return rgb;
+  }
+  return null;
+}

@@ -827,26 +827,41 @@ describe('@pmusic/web UI', () => {
     fireEvent.click(screen.getByTestId('studio-bar-style-floating-island'));
     expect(usePMusicStore.getState().playerBarStyle).toBe('floating-island');
 
-    // Inside fullscreen, 3rd studio tab becomes "Pantalla", swaps prism for rhythm, and hides EQ/Crossfade
+    // Inside fullscreen, 3rd studio tab becomes "Pantalla", hides EQ/Crossfade, keeps only smooth non-reactive backdrops, and footer button says "Opciones"
     act(() => {
       usePMusicStore.setState({ nowPlayingOpen: true, eqSheetOpen: true, audioPanelTab: 'display' });
     });
+    expect(screen.getByTestId('nowplaying-dj-btn').textContent).toContain('Opciones');
     expect(screen.getByTestId('audio-panel-tab-display').textContent).toContain('Pantalla');
     expect(screen.getByTestId('nowplaying-display-panel')).toBeDefined();
     expect(screen.queryByText('Ecualizador')).toBeNull();
     expect(screen.queryByTestId('backdrop-style-prism')).toBeNull();
+    expect(screen.queryByTestId('backdrop-style-nebula')).toBeNull();
+    expect(screen.queryByTestId('backdrop-style-rhythm')).toBeNull();
 
-    fireEvent.click(screen.getByTestId('backdrop-style-rhythm'));
-    expect(usePMusicStore.getState().nowPlayingBackdropStyle).toBe('rhythm');
+    fireEvent.click(screen.getByTestId('backdrop-style-pulse'));
+    expect(usePMusicStore.getState().nowPlayingBackdropStyle).toBe('pulse');
     expect(
       screen.getByTestId('exotic-backdrop-canvas').getAttribute('data-exotic-style')
-    ).toBe('rhythm');
+    ).toBe('pulse');
 
-    // Legacy saved 'prism' maps gracefully to 'rhythm'
+    // Legacy removed backdrop IDs migrate cleanly to 'fluid'
     act(() => {
-      usePMusicStore.getState().setNowPlayingBackdropStyle('prism' as any);
+      usePMusicStore.getState().setNowPlayingBackdropStyle('nebula' as any);
     });
-    expect(usePMusicStore.getState().nowPlayingBackdropStyle).toBe('rhythm');
+    expect(usePMusicStore.getState().nowPlayingBackdropStyle).toBe('fluid');
+    act(() => {
+      usePMusicStore.getState().setNowPlayingBackdropStyle('rhythm' as any);
+    });
+    expect(usePMusicStore.getState().nowPlayingBackdropStyle).toBe('fluid');
+
+    // Desktop center frame keeps rounded shape without borders
+    act(() => {
+      usePMusicStore.setState({ nowPlayingOpen: false });
+    });
+    const mainFrame = screen.getByTestId('main-content-frame');
+    expect(mainFrame.className).toContain('rounded-[20px]');
+    expect(mainFrame.className).not.toContain('border-white');
 
     // 2. DevicesConnectSheet renders as an anchored dock popover matching Studio
     act(() => {

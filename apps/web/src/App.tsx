@@ -1621,7 +1621,7 @@ const PMusicMainApp: React.FC = () => {
               ? `min-w-0 flex-1 overflow-y-auto px-4 pb-48 ${
                   activeDetailView?.kind === 'artist' ? 'pt-0' : 'pt-3'
                 }`
-              : `pm-canvas h-full min-w-0 flex-1 overflow-y-auto overflow-x-hidden rounded-[20px] border border-white/[0.06] px-7 ${
+              : `pm-canvas h-full min-w-0 flex-1 overflow-y-auto overflow-x-hidden rounded-[20px] px-7 ${
                   activeDetailView?.kind === 'artist' ? 'pt-0' : 'pt-5'
                 } ${playerBarStyle === 'floating-island' ? 'pb-28' : 'pb-8'}`
           }

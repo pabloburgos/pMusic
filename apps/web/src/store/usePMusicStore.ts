@@ -379,18 +379,14 @@ export type LyricsVisualStyle =
 export type NowPlayingBackdropStyle =
   | 'fluid'
   | 'paint'
-  | 'nebula'
   | 'pulse'
-  | 'rhythm'
   | 'minimal';
 export type RepeatMode = 'off' | 'all' | 'one';
 
 const BACKDROP_STYLES: readonly NowPlayingBackdropStyle[] = [
   'fluid',
   'paint',
-  'nebula',
   'pulse',
-  'rhythm',
   'minimal',
 ];
 
@@ -402,10 +398,14 @@ function parseNowPlayingBackdropStyle(
   if ((BACKDROP_STYLES as readonly string[]).includes(value)) {
     return value as NowPlayingBackdropStyle;
   }
-  if (value === 'prism') {
-    return 'rhythm';
-  }
-  if (value === 'mesh' || value === 'vinyl' || value === 'waves') {
+  if (
+    value === 'prism' ||
+    value === 'nebula' ||
+    value === 'rhythm' ||
+    value === 'mesh' ||
+    value === 'vinyl' ||
+    value === 'waves'
+  ) {
     return 'fluid';
   }
   return fallback;

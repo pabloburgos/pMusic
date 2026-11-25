@@ -60,7 +60,6 @@ import {
   type Track,
 } from '@pmusic/core';
 import {
-  getLiveAnalyserData,
   getLivePlaybackPosition,
   usePMusicStore,
   type LyricsVisualStyle,
@@ -185,10 +184,8 @@ const BACKDROP_STYLE_OPTIONS: readonly {
   desc: string;
 }[] = [
   { id: 'fluid', label: 'Fluido', desc: 'Portada viva y orbes' },
-  { id: 'paint', label: 'Pintura', desc: 'Óleo vivo en expansión' },
-  { id: 'nebula', label: 'Nebulosa', desc: 'Viaje espacial al ritmo' },
+  { id: 'paint', label: 'Pintura', desc: 'Óleo líquido en movimiento' },
   { id: 'pulse', label: 'Pulso', desc: 'Caleidoscopio orgánico blur' },
-  { id: 'rhythm', label: 'Ritmo', desc: 'Ondas y golpes al compás' },
   { id: 'minimal', label: 'Minimal', desc: 'Estudio editorial oscuro' },
 ];
 
@@ -238,7 +235,6 @@ export const NowPlayingSheet: React.FC = () => {
     lyricsStyle,
     setLyricsStyle,
     ambientMotionEnabled,
-    visualizerEnabled,
     nowPlayingBackdropStyle,
     skipSameAlbumCoverTransition,
     marqueeTextEnabled,
@@ -299,7 +295,6 @@ export const NowPlayingSheet: React.FC = () => {
   const sheetRootRef = useRef<HTMLDivElement | null>(null);
   const lyricsContainerRef = useRef<HTMLDivElement | null>(null);
   const activeLyricRef = useRef<HTMLButtonElement | null>(null);
-  const backdropBeatRef = useRef<HTMLDivElement | null>(null);
   const progressInputRef = useRef<HTMLInputElement | null>(null);
   const sheetFillRef = useRef<HTMLDivElement | null>(null);
   const sheetRewindGlowRef = useRef<HTMLSpanElement | null>(null);
@@ -735,57 +730,6 @@ export const NowPlayingSheet: React.FC = () => {
       if (rafB && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafB);
     };
   }, [targetBackdropUrl, cfActiveBackdrop, cfDurBackdropSec, isMobileBackdrop, reducedMotionPref]);
-
-  useEffect(() => {
-    const isTouchOrSmall =
-      typeof window !== 'undefined' &&
-      typeof window.matchMedia === 'function' &&
-      window.matchMedia('(max-width: 767px), (hover: none) and (pointer: coarse)').matches;
-    if (
-      !nowPlayingOpen ||
-      !isPlaying ||
-      !ambientMotionEnabled ||
-      !visualizerEnabled ||
-      reducedMotionPref ||
-      isTouchOrSmall ||
-      typeof requestAnimationFrame !== 'function'
-    ) {
-      if (backdropBeatRef.current) {
-        backdropBeatRef.current.style.setProperty('--pm-beat-scale', '1');
-      }
-      return;
-    }
-    let rafId = 0;
-    let smoothBass = 0;
-    let lastBeatSampleMs = 0;
-    let lastBeatScale = 1;
-    const pulse = (now: number) => {
-      if (now - lastBeatSampleMs >= 33) {
-        lastBeatSampleMs = now;
-        const data = getLiveAnalyserData();
-        const bins = data.frequencyBins;
-        const lowAvg =
-          bins.length >= 4
-            ? ((bins[0] ?? 0) + (bins[1] ?? 0) + (bins[2] ?? 0) + (bins[3] ?? 0)) / (4 * 255)
-            : data.rmsLevel;
-        const bassLevel = Math.max(lowAvg, data.rmsLevel * 0.85);
-        smoothBass = smoothBass * 0.74 + bassLevel * 0.26;
-        const nextScale = 1 + smoothBass * 0.045;
-        if (Math.abs(nextScale - lastBeatScale) >= 0.0005 && backdropBeatRef.current) {
-          lastBeatScale = nextScale;
-          backdropBeatRef.current.style.setProperty('--pm-beat-scale', nextScale.toFixed(4));
-        }
-      }
-      rafId = requestAnimationFrame(pulse);
-    };
-    rafId = requestAnimationFrame(pulse);
-    return () => {
-      cancelAnimationFrame(rafId);
-      if (backdropBeatRef.current) {
-        backdropBeatRef.current.style.setProperty('--pm-beat-scale', '1');
-      }
-    };
-  }, [nowPlayingOpen, isPlaying, ambientMotionEnabled, visualizerEnabled, reducedMotionPref]);
 
   useEffect(() => {
     if (
@@ -1941,9 +1885,8 @@ export const NowPlayingSheet: React.FC = () => {
       }}
       className="pm-sheet-spring-in pm-dark-sliders fixed inset-0 z-50 flex h-dvh w-screen flex-col overflow-hidden bg-[#070709] text-[#F5F5F7]"
     >
-      {/* Dynamic Selectable Fullscreen Backdrop (Identical Fluid Look on Desktop & Mobile + 5 Styles, Zero Cuts) */}
+      {/* Dynamic Selectable Fullscreen Backdrop (Smooth Motion, Non-Audio-Reactive) */}
       <div
-        ref={backdropBeatRef}
         data-testid="live-backdrop-container"
         data-backdrop-style={nowPlayingBackdropStyle}
         aria-hidden="true"
@@ -1955,7 +1898,6 @@ export const NowPlayingSheet: React.FC = () => {
             nowPlayingBackdropStyle === 'minimal'
               ? 'radial-gradient(ellipse at 50% 24%, color-mix(in srgb, var(--pm-ambient-1) 30%, #070709) 0%, color-mix(in srgb, var(--pm-ambient-3) 38%, #070709) 55%, #070709 100%)'
               : 'radial-gradient(circle at 20% 24%, var(--pm-ambient-1), transparent 58%), radial-gradient(circle at 80% 76%, var(--pm-ambient-2), transparent 60%), linear-gradient(180deg, var(--pm-ambient-3) 0%, #070709 100%)',
-          transform: 'scale(var(--pm-beat-scale, 1))',
         }}
       >
         {/* Double-Buffered Desktop Slots OR Zero-Flicker Single-Canvas Mobile Fluid Backdrop */}
@@ -2035,9 +1977,7 @@ export const NowPlayingSheet: React.FC = () => {
         )}
 
         {(nowPlayingBackdropStyle === 'paint' ||
-          nowPlayingBackdropStyle === 'nebula' ||
-          nowPlayingBackdropStyle === 'pulse' ||
-          nowPlayingBackdropStyle === 'rhythm') && (
+          nowPlayingBackdropStyle === 'pulse') && (
           <div className="pointer-events-none absolute inset-16" style={{ zIndex: 3 }}>
             <ExoticBackdropCanvas
               key={nowPlayingBackdropStyle}
@@ -3427,7 +3367,7 @@ export const NowPlayingSheet: React.FC = () => {
               }`}
             />
             <span className="hidden md:inline">
-              {djMode.enabled ? 'Audio y DJ · Activo' : 'Audio y DJ'}
+              {djMode.enabled ? 'Opciones · DJ' : 'Opciones'}
             </span>
           </button>
         </div>
@@ -3578,8 +3518,6 @@ export const AudioStudioSheet: React.FC = () => {
     setAmbientMotionEnabled,
     showRemainingTime,
     setShowRemainingTime,
-    visualizerEnabled,
-    setVisualizerEnabled,
   } = usePMusicStore();
 
   const isOpen = eqSheetOpen || djPopoverOpen;
@@ -4077,7 +4015,7 @@ export const AudioStudioSheet: React.FC = () => {
               </p>
             </div>
 
-            <div className="grid grid-cols-3 gap-1.5">
+            <div className="grid grid-cols-2 gap-1.5">
               {BACKDROP_STYLE_OPTIONS.map((opt) => {
                 const selected = nowPlayingBackdropStyle === opt.id;
                 return (
@@ -4087,7 +4025,7 @@ export const AudioStudioSheet: React.FC = () => {
                     data-testid={`backdrop-style-${opt.id}`}
                     aria-pressed={selected}
                     onClick={() => setNowPlayingBackdropStyle(opt.id)}
-                    className={`flex items-center gap-2 rounded-[10px] px-2 py-2 text-left transition-all ${
+                    className={`flex items-center gap-2 rounded-[10px] px-2.5 py-2 text-left transition-all ${
                       selected
                         ? 'bg-white text-[#070709] shadow-sm'
                         : 'bg-white/[0.08] opacity-85 hover:bg-white/[0.15] hover:opacity-100'
@@ -4101,13 +4039,9 @@ export const AudioStudioSheet: React.FC = () => {
                           ? { background: 'linear-gradient(135deg, var(--pm-ambient-1), var(--pm-ambient-2))' }
                           : opt.id === 'paint'
                             ? { background: 'conic-gradient(from 20deg, #ff3d8b, var(--pm-ambient-1), #38bdf8, var(--pm-ambient-2), #ff3d8b)' }
-                            : opt.id === 'nebula'
-                              ? { background: 'radial-gradient(circle at 60% 35%, #e9d5ff 0%, #6366f1 42%, #07070c 100%)' }
-                              : opt.id === 'pulse'
-                                ? { background: 'radial-gradient(circle, var(--pm-ambient-1) 0%, var(--pm-ambient-2) 55%, #160f24 100%)', filter: 'blur(0.5px)' }
-                                : opt.id === 'rhythm'
-                                  ? { background: 'linear-gradient(135deg, var(--pm-ambient-1) 0%, #c084fc 50%, var(--pm-ambient-2) 100%)' }
-                                  : { background: '#111116' }
+                            : opt.id === 'pulse'
+                              ? { background: 'radial-gradient(circle, var(--pm-ambient-1) 0%, var(--pm-ambient-2) 55%, #160f24 100%)', filter: 'blur(0.5px)' }
+                              : { background: '#111116' }
                       }
                     />
                     <span className="min-w-0">
@@ -4216,13 +4150,6 @@ export const AudioStudioSheet: React.FC = () => {
                   desc: 'Cuenta regresiva en lugar de duración total',
                   checked: showRemainingTime,
                   onToggle: () => setShowRemainingTime(!showRemainingTime),
-                },
-                {
-                  testId: 'pref-visualizer-switch',
-                  label: 'Pulso visual al ritmo',
-                  desc: 'Reacción sutil a graves en escritorio',
-                  checked: visualizerEnabled,
-                  onToggle: () => setVisualizerEnabled(!visualizerEnabled),
                 },
               ].map((item) => (
                 <div key={item.testId} className="flex items-center justify-between gap-3">
