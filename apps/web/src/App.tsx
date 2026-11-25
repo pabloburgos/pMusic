@@ -56,6 +56,7 @@ import {
 } from './platform/web-bridge.ts';
 import { PMusicLogo } from './components/PMusicLogo.tsx';
 import { MarqueeText } from './components/MarqueeText.tsx';
+import { OverlayScrollbar } from './components/OverlayScrollbar.tsx';
 import { useDelayedBuffering } from './hooks/useDelayedBuffering.ts';
 import { SpotlightSearchModal } from './components/SpotlightSearchModal.tsx';
 import { AppToast, TrackContextMenu } from './components/TrackMenu.tsx';
@@ -234,6 +235,7 @@ const PMusicMainApp: React.FC = () => {
   }, []);
 
   const swipeStartXRef = useRef<number | null>(null);
+  const mainScrollRef = useRef<HTMLElement | null>(null);
   const heartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dockBarRef = useRef<HTMLElement | null>(null);
   const ambientFillRef = useRef<HTMLDivElement | null>(null);
@@ -933,13 +935,21 @@ const PMusicMainApp: React.FC = () => {
 
   const viewTransitionKey = activeDetailView
     ? activeDetailView.kind === 'artist'
-      ? `artist:${activeDetailView.data.artist.id}`
+      ? `artist:${activeDetailView.transitionKey ?? activeDetailView.data.artist.id}`
       : activeDetailView.kind === 'album'
-        ? `album:${activeDetailView.data.album.id}`
+        ? `album:${activeDetailView.transitionKey ?? activeDetailView.data.album.id}`
         : activeDetailView.kind === 'playlist'
           ? `playlist:${activeDetailView.data.playlist.id}`
           : `local:${activeDetailView.playlistId}`
     : `tab:${activeTab}`;
+
+  useEffect(() => {
+    if (isMobileViewport) {
+      window.scrollTo({ top: 0, behavior: 'auto' });
+    } else if (mainScrollRef.current) {
+      mainScrollRef.current.scrollTop = 0;
+    }
+  }, [viewTransitionKey, isMobileViewport]);
 
   const navTabs: Array<{ id: MainNavTab; label: string; icon: React.ReactNode }> = [
     { id: 'Inicio', label: 'Inicio', icon: <Home className="h-[18px] w-[18px]" /> },
@@ -1000,20 +1010,12 @@ const PMusicMainApp: React.FC = () => {
   return (
     <div
       className={`relative flex w-full flex-col ${
-        isMobileViewport
-          ? 'pm-canvas min-h-dvh'
-          : themeId === 'nordic-light'
-            ? 'pm-canvas h-dvh overflow-hidden'
-            : 'h-dvh overflow-hidden bg-[#000000] text-[var(--pm-text-primary)]'
+        isMobileViewport ? 'pm-canvas min-h-dvh' : 'pm-canvas h-dvh overflow-hidden'
       }`}
     >
       {/* Unified Desktop Header & Integrated Frameless Windows Drag Bar (borderless unified canvas) */}
       {!isMobileViewport && (
-        <header
-          className={`relative z-30 flex h-12 w-full shrink-0 items-center gap-2 px-3 ${
-            themeId === 'nordic-light' ? 'pm-canvas' : 'bg-[#000000]'
-          }`}
-        >
+        <header className="pm-canvas relative z-30 flex h-12 w-full shrink-0 items-center gap-2 px-3">
           <div className="pm-no-drag relative z-20 flex shrink-0 items-center gap-2">
             <button
               type="button"
@@ -1137,7 +1139,7 @@ const PMusicMainApp: React.FC = () => {
           data-testid="mobile-top-header"
           className={
             activeDetailView?.kind === 'artist'
-              ? 'fixed inset-x-0 top-0 z-40 flex items-center justify-between gap-3 bg-gradient-to-b from-[#070709]/80 via-[#070709]/40 to-transparent px-4 pt-[max(0.8rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3'
+              ? 'fixed inset-x-0 top-0 z-40 flex items-center justify-between gap-3 bg-gradient-to-b from-black/65 via-black/25 to-transparent px-4 pt-[max(0.8rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3'
               : 'pm-mobile-glass-header relative z-40 flex shrink-0 items-center justify-between gap-3 px-4 pt-[max(0.8rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3'
           }
         >
@@ -1613,34 +1615,66 @@ const PMusicMainApp: React.FC = () => {
           </aside>
         )}
 
-        {/* Center Main Canvas (Rounded Framed Container flush-aligned with side panels) */}
-        <main
-          data-surface="content"
-          data-testid="main-content-frame"
-          className={
-            isMobileViewport
-              ? `min-w-0 flex-1 overflow-y-auto px-4 pb-48 ${
-                  activeDetailView?.kind === 'artist' ? 'pt-0' : 'pt-3'
-                }`
-              : `pm-canvas h-full min-w-0 flex-1 overflow-y-auto overflow-x-hidden rounded-[20px] px-7 ${
-                  activeDetailView?.kind === 'artist' ? 'pt-0' : 'pt-5'
-                } ${playerBarStyle === 'floating-island' ? 'pb-28' : 'pb-8'}`
-          }
-        >
-          <div key={viewTransitionKey} className="pm-view-transition">
-            {activeDetailView ? (
-              <DetailViewPanel />
-            ) : (
-              <>
-                {activeTab === 'Inicio' && <HomeScreen />}
-                {activeTab === 'Explorar' && <ExploreScreen />}
-                {activeTab === 'Buscar' && <SearchScreen />}
-                {activeTab === 'Biblioteca' && <LibraryScreen />}
-                {activeTab === 'Social' && <SocialScreen />}
-              </>
-            )}
+        {/* Center Main Canvas (Rounded Framed Container with floating inset overlay scrollbar) */}
+        {isMobileViewport ? (
+          <main
+            ref={mainScrollRef}
+            data-surface="content"
+            data-testid="main-content-frame"
+            className={`min-w-0 flex-1 overflow-y-auto px-4 pb-48 ${
+              activeDetailView?.kind === 'artist' ? 'pt-0' : 'pt-3'
+            }`}
+          >
+            <div key={viewTransitionKey} className="pm-view-transition">
+              {activeDetailView ? (
+                <DetailViewPanel />
+              ) : (
+                <>
+                  {activeTab === 'Inicio' && <HomeScreen />}
+                  {activeTab === 'Explorar' && <ExploreScreen />}
+                  {activeTab === 'Buscar' && <SearchScreen />}
+                  {activeTab === 'Biblioteca' && <LibraryScreen />}
+                  {activeTab === 'Social' && <SocialScreen />}
+                </>
+              )}
+            </div>
+          </main>
+        ) : (
+          <div
+            data-testid="main-content-frame"
+            className="pm-canvas relative h-full min-w-0 flex-1 overflow-hidden rounded-[20px]"
+          >
+            <main
+              ref={mainScrollRef}
+              data-surface="content"
+              className={`pm-canvas pm-no-scrollbar h-full w-full overflow-y-auto overflow-x-hidden px-7 ${
+                activeDetailView?.kind === 'artist' ? 'pt-0' : 'pt-5'
+              } ${playerBarStyle === 'floating-island' ? 'pb-28' : 'pb-8'}`}
+            >
+              <div key={viewTransitionKey} className="pm-view-transition">
+                {activeDetailView ? (
+                  <DetailViewPanel />
+                ) : (
+                  <>
+                    {activeTab === 'Inicio' && <HomeScreen />}
+                    {activeTab === 'Explorar' && <ExploreScreen />}
+                    {activeTab === 'Buscar' && <SearchScreen />}
+                    {activeTab === 'Biblioteca' && <LibraryScreen />}
+                    {activeTab === 'Social' && <SocialScreen />}
+                  </>
+                )}
+              </div>
+            </main>
+            <OverlayScrollbar
+              scrollRef={mainScrollRef}
+              insetClassName={
+                playerBarStyle === 'floating-island'
+                  ? 'top-4 bottom-24 right-1.5'
+                  : 'top-4 bottom-4 right-1.5'
+              }
+            />
           </div>
-        </main>
+        )}
 
         {/* Desktop Collapsible Right "En Reproducción" Panel (>= 1280px) */}
         {!isMobileViewport && rightPanelOpen && (

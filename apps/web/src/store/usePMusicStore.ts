@@ -163,11 +163,34 @@ function persistRecentSearchItems(items: RecentSearchItem[]): void {
 }
 
 export type ActiveDetailView =
-  | { kind: 'artist'; data: ArtistDetail }
-  | { kind: 'album'; data: AlbumDetail }
+  | { kind: 'artist'; data: ArtistDetail; isLoading?: boolean; transitionKey?: string }
+  | { kind: 'album'; data: AlbumDetail; isLoading?: boolean; transitionKey?: string }
   | { kind: 'playlist'; data: PlaylistDetail }
   | { kind: 'local_playlist'; playlistId: string }
   | null;
+
+const DETAIL_CLIENT_CACHE_TTL_MS = 15 * 60_000;
+const artistClientCache = new Map<string, { at: number; data: ArtistDetail }>();
+const albumClientCache = new Map<string, { at: number; data: AlbumDetail }>();
+let detailRequestSeq = 0;
+
+function readClientCache<T>(map: Map<string, { at: number; data: T }>, key: string): T | null {
+  const hit = map.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at >= DETAIL_CLIENT_CACHE_TTL_MS) {
+    map.delete(key);
+    return null;
+  }
+  return hit.data;
+}
+
+function writeClientCache<T>(map: Map<string, { at: number; data: T }>, key: string, data: T): void {
+  map.set(key, { at: Date.now(), data });
+  if (map.size > 24) {
+    const oldest = map.keys().next().value;
+    if (oldest !== undefined) map.delete(oldest);
+  }
+}
 
 // Instantiate domain services once
 const musicProvider = new HttpProxyMusicProvider({
@@ -821,10 +844,13 @@ export interface PMusicStoreState {
   setImportModalOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
   setSpotlightOpen: (open: boolean) => void;
-  openArtistDetail: (artistId: string) => Promise<void>;
+  openArtistDetail: (
+    artistId: string,
+    hint?: { name?: string; thumbnailUrl?: string }
+  ) => Promise<void>;
   openAlbumDetail: (
     albumId: string,
-    hint?: { title?: string; artist?: string }
+    hint?: { title?: string; artist?: string; thumbnailUrl?: string }
   ) => Promise<void>;
   openPlaylistDetail: (playlistId: string) => Promise<void>;
   fetchTrackCredits: (track: Track) => Promise<TrackCredits | null>;
@@ -3099,31 +3125,143 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   setSettingsOpen: (open) => set({ settingsOpen: open }),
   setSpotlightOpen: (open) => set({ spotlightOpen: open }),
 
-  openArtistDetail: async (artistId) => {
+  openArtistDetail: async (artistId, hint) => {
+    const cleanId = artistId.trim();
+    const normKey = `artist:${cleanId.toLowerCase()}`;
+    const nameKey = hint?.name ? `artist:${hint.name.trim().toLowerCase()}` : null;
+    const cached =
+      readClientCache(artistClientCache, normKey) ??
+      (nameKey ? readClientCache(artistClientCache, nameKey) : null);
+
     const prev = get().activeDetailView;
-    const data = await musicProvider.getArtist(artistId);
+    const seq = ++detailRequestSeq;
+    const transitionKey = cleanId || hint?.name || 'artist';
+
+    if (cached) {
+      set((s) => ({
+        detailViewHistory:
+          prev && !(prev.kind === 'artist' && prev.data.artist.id === cached.artist.id)
+            ? [...s.detailViewHistory, prev].slice(-12)
+            : s.detailViewHistory,
+        activeDetailView: { kind: 'artist', data: cached, isLoading: false, transitionKey },
+        spotlightOpen: false,
+        nowPlayingOpen: false,
+      }));
+      return;
+    }
+
+    const displayName =
+      hint?.name?.trim() ||
+      (!/^\d+$/.test(cleanId) && !cleanId.startsWith('UC') ? cleanId : 'Cargando artista…');
+    const optimisticData: ArtistDetail = {
+      artist: {
+        id: cleanId,
+        name: displayName,
+        thumbnailUrl: hint?.thumbnailUrl ?? '',
+      },
+      bannerUrl: hint?.thumbnailUrl || undefined,
+      topSongs: [],
+      albums: [],
+      singles: [],
+      relatedArtists: [],
+    };
+
     set((s) => ({
       detailViewHistory:
-        prev && !(prev.kind === 'artist' && prev.data.artist.id === data.artist.id)
+        prev && !(prev.kind === 'artist' && prev.data.artist.id === cleanId)
           ? [...s.detailViewHistory, prev].slice(-12)
           : s.detailViewHistory,
-      activeDetailView: { kind: 'artist', data },
+      activeDetailView: {
+        kind: 'artist',
+        data: optimisticData,
+        isLoading: true,
+        transitionKey,
+      },
       spotlightOpen: false,
       nowPlayingOpen: false,
     }));
+
+    const data = await musicProvider.getArtist(
+      artistId,
+      undefined,
+      hint?.name ? { name: hint.name } : undefined
+    );
+    writeClientCache(artistClientCache, normKey, data);
+    writeClientCache(artistClientCache, `artist:${data.artist.id.toLowerCase()}`, data);
+    writeClientCache(artistClientCache, `artist:${data.artist.name.trim().toLowerCase()}`, data);
+
+    if (seq !== detailRequestSeq) return;
+    set((s) => {
+      if (s.activeDetailView?.kind !== 'artist') return {};
+      return {
+        activeDetailView: {
+          kind: 'artist',
+          data,
+          isLoading: false,
+          transitionKey: s.activeDetailView.transitionKey ?? transitionKey,
+        },
+      };
+    });
   },
   openAlbumDetail: async (albumId, hint) => {
+    const cleanId = albumId.trim();
+    const normKey = `album:${cleanId.toLowerCase()}`;
+    const cached = readClientCache(albumClientCache, normKey);
     const prev = get().activeDetailView;
-    const data = await musicProvider.getAlbum(albumId, undefined, hint);
+    const seq = ++detailRequestSeq;
+    const transitionKey = cleanId || hint?.title || 'album';
+
+    if (cached) {
+      set((s) => ({
+        detailViewHistory:
+          prev && !(prev.kind === 'album' && prev.data.album.id === cached.album.id)
+            ? [...s.detailViewHistory, prev].slice(-12)
+            : s.detailViewHistory,
+        activeDetailView: { kind: 'album', data: cached, isLoading: false, transitionKey },
+        spotlightOpen: false,
+        nowPlayingOpen: false,
+      }));
+      return;
+    }
+
+    const optimisticAlbum: AlbumDetail = {
+      album: {
+        id: cleanId,
+        title: hint?.title?.trim() || 'Cargando álbum…',
+        artists: hint?.artist ? [{ name: hint.artist }] : [],
+        thumbnailUrl: hint?.thumbnailUrl ?? '',
+      },
+      tracks: [],
+    };
     set((s) => ({
       detailViewHistory:
-        prev && !(prev.kind === 'album' && prev.data.album.id === data.album.id)
+        prev && !(prev.kind === 'album' && prev.data.album.id === cleanId)
           ? [...s.detailViewHistory, prev].slice(-12)
           : s.detailViewHistory,
-      activeDetailView: { kind: 'album', data },
+      activeDetailView: {
+        kind: 'album',
+        data: optimisticAlbum,
+        isLoading: true,
+        transitionKey,
+      },
       spotlightOpen: false,
       nowPlayingOpen: false,
     }));
+
+    const data = await musicProvider.getAlbum(albumId, undefined, hint);
+    writeClientCache(albumClientCache, normKey, data);
+    if (seq !== detailRequestSeq) return;
+    set((s) => {
+      if (s.activeDetailView?.kind !== 'album') return {};
+      return {
+        activeDetailView: {
+          kind: 'album',
+          data,
+          isLoading: false,
+          transitionKey: s.activeDetailView.transitionKey ?? transitionKey,
+        },
+      };
+    });
   },
   openPlaylistDetail: async (playlistId) => {
     const prev = get().activeDetailView;

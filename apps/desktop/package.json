@@ -1,6 +1,6 @@
 {
   "name": "@pmusic/desktop",
-  "version": "0.18.4",
+  "version": "0.18.5",
   "private": true,
   "type": "module",
   "description": "pMusic Desktop — Reproductor de música con Liquid Glass, Sesión DJ AutoMix y sincronización con móvil",

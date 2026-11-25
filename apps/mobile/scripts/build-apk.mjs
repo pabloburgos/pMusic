@@ -1271,9 +1271,15 @@ public class MainActivity extends Activity {
                     if ("/api/ytm-proxy".equals(path)) {
                         String ep = uri.getQueryParameter("ep");
                         String ytmBody = uri.getQueryParameter("body");
-                        if (("search".equals(ep) || "browse".equals(ep)) && ytmBody != null && !ytmBody.isEmpty()) {
+                        if (("search".equals(ep) || "browse".equals(ep) || "player".equals(ep)) && ytmBody != null && !ytmBody.isEmpty()) {
                             try {
-                                byte[] ytmBytes = postJsonBytes("https://music.youtube.com/youtubei/v1/" + ep + "?prettyPrint=false", YT_WEB_UA, "https://music.youtube.com", ytmBody);
+                                String targetUrl = "player".equals(ep)
+                                        ? "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
+                                        : "https://music.youtube.com/youtubei/v1/" + ep + "?prettyPrint=false";
+                                String targetOrigin = "player".equals(ep)
+                                        ? "https://www.youtube.com"
+                                        : "https://music.youtube.com";
+                                byte[] ytmBytes = postJsonBytes(targetUrl, YT_WEB_UA, targetOrigin, ytmBody);
                                 if (ytmBytes != null && ytmBytes.length > 2) {
                                     return new WebResourceResponse(
                                             "application/json",

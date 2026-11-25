@@ -85,7 +85,11 @@ export interface IMusicProvider {
   getHomeFeed(moodFilter?: string, signal?: AbortSignal): Promise<HomeFeedResult>;
   getUpNext(videoId: string, automix?: boolean, signal?: AbortSignal): Promise<Track[]>;
   getRelated(videoId: string, signal?: AbortSignal): Promise<RelatedResult>;
-  getArtist(artistId: string, signal?: AbortSignal): Promise<ArtistDetail>;
+  getArtist(
+    artistId: string,
+    signal?: AbortSignal,
+    hint?: { name?: string }
+  ): Promise<ArtistDetail>;
   getAlbum(albumId: string, signal?: AbortSignal): Promise<AlbumDetail>;
   getPlaylist(playlistId: string, maxItems?: number, signal?: AbortSignal): Promise<PlaylistDetail>;
   getPlainLyricsFallback(videoId: string, signal?: AbortSignal): Promise<string | null>;

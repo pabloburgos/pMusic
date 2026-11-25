@@ -109,6 +109,10 @@ export interface TrackCredits {
   performers: TrackCreditPerson[];
   writers: string[];
   producers: string[];
+  composers?: string[];
+  lyricists?: string[];
+  engineers?: string[];
+  distributor?: string;
   label?: string;
   source?: string;
   albumTitle?: string;

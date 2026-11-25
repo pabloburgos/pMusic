@@ -46,14 +46,14 @@ export const ArtistLinks: React.FC<ArtistLinksProps> = ({
               onClick={(e) => {
                 if (stopPropagation) e.stopPropagation();
                 onBeforeNavigate?.();
-                if (target) void openArtistDetail(target);
+                if (target) void openArtistDetail(target, { name: artist.name });
               }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
                   if (stopPropagation) e.stopPropagation();
                   onBeforeNavigate?.();
-                  if (target) void openArtistDetail(target);
+                  if (target) void openArtistDetail(target, { name: artist.name });
                 }
               }}
               className={`shrink-0 cursor-pointer text-left transition-colors ${linkClassName}`}

@@ -520,9 +520,10 @@ export const DetailViewPanel: React.FC = () => {
   const [sessionSkippedIds, setSessionSkippedIds] = useState<string[]>([]);
   const [artistDiscoTab, setArtistDiscoTab] = useState<'all' | 'albums' | 'singles'>('all');
   const [showAllPopular, setShowAllPopular] = useState(false);
-  const artistHeroRef = useRef<HTMLElement | null>(null);
+  const heroSectionRef = useRef<HTMLElement | null>(null);
   const [artistStickyVisible, setArtistStickyVisible] = useState(false);
   const [artistHeaderRgb, setArtistHeaderRgb] = useState<RgbTriple | null>(null);
+  const [heroCandidateIdx, setHeroCandidateIdx] = useState(0);
 
   const activeArtistDetailId =
     activeDetailView?.kind === 'artist' ? activeDetailView.data.artist.id : null;
@@ -536,6 +537,11 @@ export const DetailViewPanel: React.FC = () => {
     setShowAllPopular(false);
     setArtistStickyVisible(false);
     setArtistHeaderRgb(null);
+    setHeroCandidateIdx(0);
+  }, [activeArtistDetailId]);
+
+  useEffect(() => {
+    setHeroCandidateIdx(0);
     if (!activeArtistDetailId) return;
     let cancelled = false;
     void extractCharacteristicImageColor([activeArtistBannerUrl, activeArtistThumbUrl]).then((rgb) => {
@@ -548,21 +554,31 @@ export const DetailViewPanel: React.FC = () => {
 
   useEffect(() => {
     if (!activeArtistDetailId) return;
-    const heroEl = artistHeroRef.current;
+    const heroEl = heroSectionRef.current;
     const scrollEl = heroEl?.closest('main') as HTMLElement | null;
-    if (!heroEl || !scrollEl) return;
+    if (!heroEl) return;
 
     const updateSticky = () => {
       const rect = heroEl.getBoundingClientRect();
-      const mainRect = scrollEl.getBoundingClientRect();
-      setArtistStickyVisible(rect.bottom <= mainRect.top + 88);
+      const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+      if (isMobile) {
+        const mobileHdrBottom =
+          document.querySelector('[data-testid="mobile-top-header"]')?.getBoundingClientRect()
+            .bottom ?? 64;
+        setArtistStickyVisible(rect.bottom <= mobileHdrBottom + 18);
+      } else if (scrollEl) {
+        const mainRect = scrollEl.getBoundingClientRect();
+        setArtistStickyVisible(rect.bottom <= mainRect.top + 80);
+      }
     };
 
     updateSticky();
-    scrollEl.addEventListener('scroll', updateSticky, { passive: true });
+    scrollEl?.addEventListener('scroll', updateSticky, { passive: true });
+    window.addEventListener('scroll', updateSticky, { passive: true });
     window.addEventListener('resize', updateSticky, { passive: true });
     return () => {
-      scrollEl.removeEventListener('scroll', updateSticky);
+      scrollEl?.removeEventListener('scroll', updateSticky);
+      window.removeEventListener('scroll', updateSticky);
       window.removeEventListener('resize', updateSticky);
     };
   }, [activeArtistDetailId]);
@@ -590,11 +606,23 @@ export const DetailViewPanel: React.FC = () => {
   if (!activeDetailView) return null;
 
   if (activeDetailView.kind === 'artist') {
+    const isArtistLoading = Boolean(activeDetailView.isLoading);
     const { artist, bannerUrl, description, topSongs, albums, singles, relatedArtists } =
       activeDetailView.data;
     const popularSongs = topSongs.slice(0, 10);
     const visiblePopularSongs = showAllPopular ? popularSongs : popularSongs.slice(0, 5);
-    const heroImage = bannerUrl || artist.thumbnailUrl;
+
+    const isValidHeroUrl = (raw?: string | null): raw is string => {
+      const u = (raw ?? '').trim();
+      if (!u) return false;
+      return !/images\/artist\/\/|\/artist\/d41d8cd98f00b204e9800998ecf8427e/i.test(u);
+    };
+    const heroCandidates = Array.from(
+      new Set([bannerUrl, artist.thumbnailUrl].filter(isValidHeroUrl))
+    );
+    const activeHeroImage = heroCandidates[heroCandidateIdx] ?? null;
+    const hasHeroPhoto = Boolean(activeHeroImage);
+
     const allReleases = [
       ...albums.map((al) => ({ ...al, releaseKind: 'Álbum' as const })),
       ...(singles ?? []).map((sg) => ({ ...sg, releaseKind: 'Sencillo' as const })),
@@ -633,94 +661,133 @@ export const DetailViewPanel: React.FC = () => {
       void playArtistShuffled(artist, topSongs, albums, singles);
     };
 
-    const [hdrR, hdrG, hdrB] = artistHeaderRgb ?? [22, 22, 28];
+    const [hdrR, hdrG, hdrB] = artistHeaderRgb ?? [20, 20, 26];
+    const stickyBgGradient = `linear-gradient(180deg, rgba(${hdrR}, ${hdrG}, ${hdrB}, 0.96) 0%, rgba(${Math.round(hdrR * 0.64)}, ${Math.round(hdrG * 0.64)}, ${Math.round(hdrB * 0.64)}, 0.96) 100%)`;
+
+    const renderStickyHeaderRow = (isStickyTestTarget: boolean) => (
+      <>
+        <div className="flex min-w-0 items-center gap-2.5 sm:gap-3.5">
+          <button
+            type="button"
+            data-testid={isStickyTestTarget ? 'artist-sticky-play-btn' : undefined}
+            aria-label={isPlayingThisArtist && isPlaying ? 'Pausar' : `Reproducir ${artist.name}`}
+            onClick={handleArtistPlay}
+            className="pm-pressable flex h-10 w-10 shrink-0 items-center justify-center bg-transparent text-white transition-transform duration-150 hover:scale-110 active:scale-90 focus:outline-none"
+          >
+            {isPlayingThisArtist && isPlaying ? (
+              <RoundedPauseIcon className="h-7 w-7 drop-shadow-[0_2px_10px_rgba(0,0,0,0.45)]" />
+            ) : (
+              <RoundedPlayIcon className="h-7 w-7 translate-x-[1px] drop-shadow-[0_2px_10px_rgba(0,0,0,0.45)]" />
+            )}
+          </button>
+          <span className="truncate text-lg font-black tracking-tight text-white sm:text-xl">
+            {artist.name}
+          </span>
+        </div>
+
+        <button
+          type="button"
+          aria-label={`Aleatorio ${artist.name}`}
+          onClick={handleArtistShuffle}
+          className="pm-pressable relative flex h-10 w-10 shrink-0 items-center justify-center bg-transparent text-white/85 transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none"
+        >
+          <Shuffle className="h-5 w-5" />
+          {isPlayingThisArtist && shuffleEnabled && (
+            <span className="absolute bottom-1 h-1 w-1 rounded-full bg-white" />
+          )}
+        </button>
+      </>
+    );
 
     return (
-      <div className="pm-page-enter space-y-6">
-        {/* Spotify-style Sticky Scroll Bar colored from the artist's photo */}
-        <div className="sticky top-[calc(3.6rem+var(--pm-safe-top,env(safe-area-inset-top)))] z-30 -mx-4 h-0 overflow-visible sm:top-0 sm:-mx-7 sm:mt-0">
+      <div className="pm-page-enter">
+        {/* Desktop Sticky Scroll Bar colored from the artist's photo */}
+        <div className="hidden sm:block sticky top-0 z-30 -mx-7 h-0 overflow-visible">
           <div
             data-testid="artist-sticky-header"
             data-visible={artistStickyVisible ? 'true' : 'false'}
             aria-hidden={!artistStickyVisible}
-            style={{
-              background: `linear-gradient(180deg, rgba(${hdrR}, ${hdrG}, ${hdrB}, 0.96) 0%, rgba(${Math.round(hdrR * 0.62)}, ${Math.round(hdrG * 0.62)}, ${Math.round(hdrB * 0.62)}, 0.96) 100%)`,
-            }}
-            className={`flex h-[56px] items-center justify-between gap-3 px-4 shadow-[0_10px_28px_rgba(0,0,0,0.45)] backdrop-blur-2xl transition-all duration-200 sm:h-[64px] sm:rounded-t-[20px] sm:px-7 ${
+            style={{ background: stickyBgGradient }}
+            className={`flex h-[64px] items-center justify-between gap-3 px-7 shadow-[0_10px_28px_rgba(0,0,0,0.45)] backdrop-blur-2xl transition-all duration-200 ${
               artistStickyVisible
                 ? 'pointer-events-auto translate-y-0 opacity-100'
                 : 'pointer-events-none -translate-y-2 opacity-0'
             }`}
           >
-            <div className="flex min-w-0 items-center gap-2.5 sm:gap-3.5">
-              <button
-                type="button"
-                data-testid="artist-sticky-play-btn"
-                aria-label={isPlayingThisArtist && isPlaying ? 'Pausar' : `Reproducir ${artist.name}`}
-                onClick={handleArtistPlay}
-                className="pm-pressable flex h-10 w-10 shrink-0 items-center justify-center bg-transparent text-white transition-transform duration-150 hover:scale-110 active:scale-90 focus:outline-none"
-              >
-                {isPlayingThisArtist && isPlaying ? (
-                  <RoundedPauseIcon className="h-7 w-7 drop-shadow-[0_2px_10px_rgba(0,0,0,0.45)]" />
-                ) : (
-                  <RoundedPlayIcon className="h-7 w-7 translate-x-[1px] drop-shadow-[0_2px_10px_rgba(0,0,0,0.45)]" />
-                )}
-              </button>
-              <span className="truncate text-lg font-black tracking-tight text-white sm:text-xl">
-                {artist.name}
-              </span>
-            </div>
-
-            <button
-              type="button"
-              aria-label={`Aleatorio ${artist.name}`}
-              onClick={handleArtistShuffle}
-              className="pm-pressable relative flex h-10 w-10 shrink-0 items-center justify-center bg-transparent text-white/85 transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none"
-            >
-              <Shuffle className="h-5 w-5" />
-              {isPlayingThisArtist && shuffleEnabled && (
-                <span className="absolute bottom-1 h-1 w-1 rounded-full bg-white" />
-              )}
-            </button>
+            {renderStickyHeaderRow(true)}
           </div>
         </div>
 
-        {/* Full-Bleed Atmospheric Banner-Only pMusic Artist Hero flush to top edge */}
+        {/* Mobile Sticky Scroll Bar integrated cleanly right below pinned mobile controls */}
+        <div
+          data-testid="artist-sticky-header-mobile"
+          data-visible={artistStickyVisible ? 'true' : 'false'}
+          aria-hidden={!artistStickyVisible}
+          style={{ background: stickyBgGradient }}
+          className={`sm:hidden fixed inset-x-0 top-0 z-[35] rounded-b-[20px] px-4 pt-[calc(max(0.8rem,var(--pm-safe-top,env(safe-area-inset-top)))+3.1rem)] pb-2.5 shadow-[0_12px_32px_rgba(0,0,0,0.5)] backdrop-blur-2xl transition-all duration-200 ${
+            artistStickyVisible
+              ? 'pointer-events-auto translate-y-0 opacity-100'
+              : 'pointer-events-none -translate-y-3 opacity-0'
+          }`}
+        >
+          <div className="flex h-11 items-center justify-between gap-3">
+            {renderStickyHeaderRow(false)}
+          </div>
+        </div>
+
+        {/* Full-Bleed Atmospheric Banner (collapses to compact typographic header when no valid photo) */}
         <section
-          ref={artistHeroRef}
+          ref={heroSectionRef}
           data-testid="artist-hero-banner"
           data-surface="content"
-          className="relative !mt-0 -mx-4 flex min-h-[340px] flex-col justify-end overflow-hidden bg-[#0e0e13] px-5 pt-[calc(5.2rem+var(--pm-safe-top,env(safe-area-inset-top)))] pb-6 sm:-mx-7 sm:min-h-[360px] sm:rounded-none sm:rounded-t-[20px] sm:p-8 sm:shadow-[0_24px_64px_rgba(0,0,0,0.45)]"
+          className={
+            hasHeroPhoto
+              ? 'relative -mx-4 flex min-h-[340px] flex-col justify-end overflow-hidden bg-[var(--pm-bg-canvas)] px-5 pt-[calc(5.2rem+var(--pm-safe-top,env(safe-area-inset-top)))] pb-6 sm:-mx-7 sm:min-h-[360px] sm:p-8 sm:pb-7'
+              : 'relative -mx-4 flex min-h-0 flex-col justify-end overflow-hidden bg-[var(--pm-bg-canvas)] px-5 pt-[calc(4.7rem+var(--pm-safe-top,env(safe-area-inset-top)))] pb-3 sm:-mx-7 sm:px-7 sm:pt-7 sm:pb-3'
+          }
         >
-          {heroImage && (
-            <img
-              src={heroImage}
-              alt={artist.name}
-              decoding="async"
-              fetchPriority="high"
-              className="pointer-events-none absolute inset-0 h-full w-full scale-[1.02] object-cover object-center"
-            />
+          {activeHeroImage && (
+            <>
+              <img
+                src={activeHeroImage}
+                alt=""
+                aria-hidden="true"
+                referrerPolicy="no-referrer"
+                decoding="async"
+                fetchPriority="high"
+                onError={() => setHeroCandidateIdx((i) => i + 1)}
+                className="pointer-events-none absolute inset-0 h-full w-full scale-[1.02] object-cover object-center"
+              />
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0"
+                style={{
+                  background:
+                    'linear-gradient(180deg, color-mix(in srgb, var(--pm-bg-canvas) 18%, transparent) 0%, transparent 24%, color-mix(in srgb, var(--pm-bg-canvas) 14%, transparent) 46%, color-mix(in srgb, var(--pm-bg-canvas) 52%, transparent) 66%, color-mix(in srgb, var(--pm-bg-canvas) 84%, transparent) 82%, color-mix(in srgb, var(--pm-bg-canvas) 97%, transparent) 93%, var(--pm-bg-canvas) 100%)',
+                }}
+              />
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0"
+                style={{
+                  background:
+                    'linear-gradient(90deg, color-mix(in srgb, var(--pm-bg-canvas) 62%, transparent) 0%, transparent 55%)',
+                }}
+              />
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-x-0 bottom-0 h-2 bg-[var(--pm-bg-canvas)]"
+              />
+            </>
           )}
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-0"
-            style={{
-              background:
-                'linear-gradient(180deg, rgba(7,7,9,0.34) 0%, rgba(7,7,9,0.12) 38%, rgba(7,7,9,0.72) 76%, #070709 100%)',
-            }}
-          />
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#070709]/65 via-transparent to-transparent"
-          />
 
           <div className="relative z-10 flex items-end justify-between gap-4">
             <div className="min-w-0 flex-1 space-y-1.5">
-              <h1 className="truncate text-4xl font-black tracking-tight text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.65)] sm:text-5xl md:text-6xl">
+              <h1 className="truncate text-4xl font-black tracking-tight pm-text-primary drop-shadow-[0_4px_20px_rgba(0,0,0,0.65)] sm:text-5xl md:text-6xl">
                 {artist.name}
               </h1>
               {(artist.subscribersText || description) && (
-                <p className="text-xs font-semibold text-white/85 drop-shadow sm:text-sm">
+                <p className="text-xs font-semibold pm-text-secondary drop-shadow sm:text-sm">
                   {artist.subscribersText ?? description}
                 </p>
               )}
@@ -733,7 +800,8 @@ export const DetailViewPanel: React.FC = () => {
                 aria-label="Aleatorio"
                 aria-pressed={isPlayingThisArtist && shuffleEnabled}
                 onClick={handleArtistShuffle}
-                className="pm-pressable relative flex h-12 w-12 items-center justify-center bg-transparent text-white/85 drop-shadow-[0_4px_14px_rgba(0,0,0,0.55)] transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none sm:h-14 sm:w-14"
+                disabled={isArtistLoading && topSongs.length === 0}
+                className="pm-pressable relative flex h-12 w-12 items-center justify-center bg-transparent text-white/85 drop-shadow-[0_4px_14px_rgba(0,0,0,0.55)] transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none disabled:opacity-40 sm:h-14 sm:w-14"
               >
                 <Shuffle className="h-6 w-6 sm:h-7 sm:w-7" />
                 {isPlayingThisArtist && shuffleEnabled && (
@@ -746,7 +814,8 @@ export const DetailViewPanel: React.FC = () => {
                 data-testid="artist-play-btn"
                 aria-label={isPlayingThisArtist && isPlaying ? 'Pausar' : 'Reproducir'}
                 onClick={handleArtistPlay}
-                className="pm-pressable flex h-14 w-14 items-center justify-center overflow-visible bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.6)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none sm:h-16 sm:w-16"
+                disabled={isArtistLoading && topSongs.length === 0}
+                className="pm-pressable flex h-14 w-14 items-center justify-center overflow-visible bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.6)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none disabled:opacity-40 sm:h-16 sm:w-16"
               >
                 {isPlayingThisArtist && isPlaying ? (
                   <RoundedPauseIcon className="h-[46px] w-[46px] sm:h-[56px] sm:w-[56px]" />
@@ -758,160 +827,201 @@ export const DetailViewPanel: React.FC = () => {
           </div>
         </section>
 
-        {/* Popular Songs + Latest Release Feature Grid */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-          <section className={`space-y-2 ${latestRelease ? 'lg:col-span-7' : 'lg:col-span-12'}`}>
-            <div className="flex items-center justify-between">
-              <h2 className="text-[20px] font-bold pm-text-primary">Populares</h2>
-              {popularSongs.length > 5 && (
-                <button
-                  type="button"
-                  onClick={() => setShowAllPopular((v) => !v)}
-                  className="pm-pressable inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold pm-text-secondary hover:bg-white/[0.08] hover:pm-text-primary"
-                >
-                  <span>{showAllPopular ? 'Ver menos' : 'Ver más'}</span>
-                  {showAllPopular ? (
-                    <ChevronUp className="h-3.5 w-3.5" />
-                  ) : (
-                    <ChevronDown className="h-3.5 w-3.5" />
-                  )}
-                </button>
+        <div className="mt-6 space-y-6">
+          {/* Popular Songs + Latest Release Feature Grid */}
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+            <section className={`space-y-2 ${latestRelease || isArtistLoading ? 'lg:col-span-7' : 'lg:col-span-12'}`}>
+              <div className="flex items-center justify-between">
+                <h2 className="text-[20px] font-bold pm-text-primary">Populares</h2>
+                {popularSongs.length > 5 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllPopular((v) => !v)}
+                    className="pm-pressable inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold pm-text-secondary hover:bg-white/[0.08] hover:pm-text-primary"
+                  >
+                    <span>{showAllPopular ? 'Ver menos' : 'Ver más'}</span>
+                    {showAllPopular ? (
+                      <ChevronUp className="h-3.5 w-3.5" />
+                    ) : (
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                )}
+              </div>
+              {isArtistLoading && visiblePopularSongs.length === 0 ? (
+                <div className="space-y-2 py-1" aria-label="Cargando canciones populares">
+                  {[0, 1, 2, 3, 4].map((row) => (
+                    <div
+                      key={row}
+                      className="flex items-center gap-3 rounded-[10px] bg-white/[0.03] px-2.5 py-2"
+                    >
+                      <div className="h-10 w-10 shrink-0 animate-pulse rounded-[7px] bg-white/[0.08]" />
+                      <div className="min-w-0 flex-1 space-y-1.5">
+                        <div className="h-3.5 w-44 animate-pulse rounded bg-white/[0.09]" />
+                        <div className="h-2.5 w-28 animate-pulse rounded bg-white/[0.06]" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-0.5">
+                  {visiblePopularSongs.map((track, idx) => (
+                    <TrackListRow
+                      key={track.id}
+                      track={track}
+                      index={idx}
+                      queueContext={topSongs}
+                    />
+                  ))}
+                </div>
               )}
-            </div>
-            <div className="space-y-0.5">
-              {visiblePopularSongs.map((track, idx) => (
-                <TrackListRow
-                  key={track.id}
-                  track={track}
-                  index={idx}
-                  queueContext={topSongs}
-                />
-              ))}
-            </div>
-          </section>
+            </section>
 
-          {latestRelease && (
-            <section className="space-y-2 lg:col-span-5">
-              <h2 className="text-[20px] font-bold pm-text-primary">Último lanzamiento</h2>
-              <button
-                type="button"
-                onClick={() =>
-                  void openAlbumDetail(latestRelease.id, {
-                    title: latestRelease.title,
-                    artist: latestRelease.artists?.[0]?.name ?? artist.name,
-                  })
-                }
-                className="pm-surface-card pm-card-lift group flex w-full items-center gap-4 rounded-[18px] p-4 text-left"
-              >
-                <img
-                  src={latestRelease.thumbnailUrl}
-                  alt={latestRelease.title}
-                  className="h-24 w-24 shrink-0 rounded-[12px] object-cover shadow-lg transition-transform duration-300 group-hover:scale-[1.04]"
-                />
-                <div className="min-w-0 flex-1 space-y-1">
-                  <span className="inline-block rounded-full bg-white/[0.08] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider pm-text-secondary">
-                    {latestRelease.releaseKind}
-                    {latestRelease.year ? ` · ${latestRelease.year}` : ''}
-                  </span>
-                  <div className="line-clamp-2 text-base font-bold leading-snug pm-text-primary group-hover:underline">
-                    {latestRelease.title}
-                  </div>
-                  <div className="truncate text-xs pm-text-tertiary">
-                    {artist.name}
+            {isArtistLoading && !latestRelease ? (
+              <section className="space-y-2 lg:col-span-5">
+                <h2 className="text-[20px] font-bold pm-text-primary">Último lanzamiento</h2>
+                <div className="pm-surface-card flex items-center gap-4 rounded-[18px] p-4">
+                  <div className="h-24 w-24 shrink-0 animate-pulse rounded-[12px] bg-white/[0.08]" />
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <div className="h-4 w-20 animate-pulse rounded-full bg-white/[0.08]" />
+                    <div className="h-4 w-40 animate-pulse rounded bg-white/[0.09]" />
+                    <div className="h-3 w-24 animate-pulse rounded bg-white/[0.06]" />
                   </div>
                 </div>
-              </button>
+              </section>
+            ) : (
+              latestRelease && (
+                <section className="space-y-2 lg:col-span-5">
+                  <h2 className="text-[20px] font-bold pm-text-primary">Último lanzamiento</h2>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void openAlbumDetail(latestRelease.id, {
+                        title: latestRelease.title,
+                        artist: latestRelease.artists?.[0]?.name ?? artist.name,
+                        thumbnailUrl: latestRelease.thumbnailUrl,
+                      })
+                    }
+                    className="pm-surface-card pm-card-lift group flex w-full items-center gap-4 rounded-[18px] p-4 text-left"
+                  >
+                    <img
+                      src={latestRelease.thumbnailUrl}
+                      alt={latestRelease.title}
+                      className="h-24 w-24 shrink-0 rounded-[12px] object-cover shadow-lg transition-transform duration-300 group-hover:scale-[1.04]"
+                    />
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <span className="inline-block rounded-full bg-white/[0.08] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider pm-text-secondary">
+                        {latestRelease.releaseKind}
+                        {latestRelease.year ? ` · ${latestRelease.year}` : ''}
+                      </span>
+                      <div className="line-clamp-2 text-base font-bold leading-snug pm-text-primary group-hover:underline">
+                        {latestRelease.title}
+                      </div>
+                      <div className="truncate text-xs pm-text-tertiary">
+                        {artist.name}
+                      </div>
+                    </div>
+                  </button>
+                </section>
+              )
+            )}
+          </div>
+
+          {/* Discography Section with Interactive All / Albums / Singles Filter Pills */}
+          {allReleases.length > 0 && (
+            <section className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-[20px] font-bold tracking-tight pm-text-primary md:text-[22px]">
+                  Discografía
+                </h2>
+                <div className="flex items-center gap-1.5" role="tablist" aria-label="Filtrar discografía">
+                  {(
+                    [
+                      { id: 'all', label: 'Todo', count: allReleases.length },
+                      { id: 'albums', label: 'Álbumes', count: albums.length },
+                      { id: 'singles', label: 'Sencillos y EP', count: (singles ?? []).length },
+                    ] as const
+                  )
+                    .filter((tab) => tab.id === 'all' || tab.count > 0)
+                    .map((tab) => (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={artistDiscoTab === tab.id}
+                        onClick={() => setArtistDiscoTab(tab.id)}
+                        className={`pm-pressable rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+                          artistDiscoTab === tab.id
+                            ? 'pm-btn-primary'
+                            : 'pm-btn-secondary'
+                        }`}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                </div>
+              </div>
+
+              <div className="pm-no-scrollbar -mx-4 flex snap-x scroll-pl-4 gap-3.5 overflow-x-auto px-4 py-1.5 sm:mx-0 sm:scroll-pl-1 sm:gap-4 sm:px-1 sm:py-2">
+                {filteredDiscography.map((al) => (
+                  <CoverCard
+                    key={`${al.releaseKind}-${al.id}`}
+                    image={al.thumbnailUrl}
+                    title={al.title}
+                    subtitle={
+                      al.year ? `${al.year} · ${al.releaseKind}` : al.releaseKind
+                    }
+                    badge={al.releaseKind}
+                    onOpen={() =>
+                      void openAlbumDetail(al.id, {
+                        title: al.title,
+                        artist: al.artists?.[0]?.name ?? artist.name,
+                        thumbnailUrl: al.thumbnailUrl,
+                      })
+                    }
+                  />
+                ))}
+              </div>
             </section>
           )}
-        </div>
 
-        {/* Discography Section with Interactive All / Albums / Singles Filter Pills */}
-        {allReleases.length > 0 && (
-          <section className="space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-[20px] font-bold tracking-tight pm-text-primary md:text-[22px]">
-                Discografía
-              </h2>
-              <div className="flex items-center gap-1.5" role="tablist" aria-label="Filtrar discografía">
-                {(
-                  [
-                    { id: 'all', label: 'Todo', count: allReleases.length },
-                    { id: 'albums', label: 'Álbumes', count: albums.length },
-                    { id: 'singles', label: 'Sencillos y EP', count: (singles ?? []).length },
-                  ] as const
-                )
-                  .filter((tab) => tab.id === 'all' || tab.count > 0)
-                  .map((tab) => (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      role="tab"
-                      aria-selected={artistDiscoTab === tab.id}
-                      onClick={() => setArtistDiscoTab(tab.id)}
-                      className={`pm-pressable rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
-                        artistDiscoTab === tab.id
-                          ? 'pm-btn-primary'
-                          : 'pm-btn-secondary'
-                      }`}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
-              </div>
-            </div>
-
-            <div className="pm-no-scrollbar -mx-4 flex snap-x scroll-pl-4 gap-3.5 overflow-x-auto px-4 py-1.5 sm:mx-0 sm:scroll-pl-1 sm:gap-4 sm:px-1 sm:py-2">
-              {filteredDiscography.map((al) => (
+          {relatedArtists && relatedArtists.length > 0 && (
+            <CarouselSection title="Artistas similares">
+              {relatedArtists.map((rel) => (
                 <CoverCard
-                  key={`${al.releaseKind}-${al.id}`}
-                  image={al.thumbnailUrl}
-                  title={al.title}
-                  subtitle={
-                    al.year ? `${al.year} · ${al.releaseKind}` : al.releaseKind
-                  }
-                  badge={al.releaseKind}
+                  key={rel.id}
+                  image={rel.thumbnailUrl}
+                  title={rel.name}
+                  subtitle={rel.subscribersText ?? 'Artista'}
+                  round
                   onOpen={() =>
-                    void openAlbumDetail(al.id, {
-                      title: al.title,
-                      artist: al.artists?.[0]?.name ?? artist.name,
+                    void openArtistDetail(rel.id, {
+                      name: rel.name,
+                      thumbnailUrl: rel.thumbnailUrl,
                     })
                   }
                 />
               ))}
-            </div>
-          </section>
-        )}
+            </CarouselSection>
+          )}
 
-        {relatedArtists && relatedArtists.length > 0 && (
-          <CarouselSection title="Artistas similares">
-            {relatedArtists.map((rel) => (
-              <CoverCard
-                key={rel.id}
-                image={rel.thumbnailUrl}
-                title={rel.name}
-                subtitle={rel.subscribersText ?? 'Artista'}
-                round
-                onOpen={() => void openArtistDetail(rel.id)}
-              />
-            ))}
-          </CarouselSection>
-        )}
-
-        {hasBioText && (
-          <section className="space-y-2.5 pb-4">
-            <h2 className="text-[20px] font-bold pm-text-primary">Información</h2>
-            <div className="pm-surface-card relative overflow-hidden rounded-[20px] p-5 sm:p-6">
-              <p className="relative z-10 max-w-3xl text-sm leading-relaxed pm-text-secondary">
-                {description}
-              </p>
-            </div>
-          </section>
-        )}
+          {hasBioText && (
+            <section className="space-y-2.5 pb-4">
+              <h2 className="text-[20px] font-bold pm-text-primary">Información</h2>
+              <div className="pm-surface-card relative overflow-hidden rounded-[20px] p-5 sm:p-6">
+                <p className="relative z-10 max-w-3xl text-sm leading-relaxed pm-text-secondary">
+                  {description}
+                </p>
+              </div>
+            </section>
+          )}
+        </div>
       </div>
     );
   }
 
   if (activeDetailView.kind === 'album') {
+    const isAlbumLoading = Boolean(activeDetailView.isLoading);
     const { album, tracks } = activeDetailView.data;
     return (
       <div className="pm-page-enter space-y-7">
@@ -919,15 +1029,19 @@ export const DetailViewPanel: React.FC = () => {
           data-surface="content"
           className="pm-surface-card flex flex-col gap-6 rounded-[18px] p-6 sm:flex-row sm:items-end"
         >
-          <img
-            src={album.thumbnailUrl}
-            alt={album.title}
-            className="h-40 w-40 shrink-0 rounded-[12px] object-cover shadow-[0_18px_48px_rgba(0,0,0,0.45)] sm:h-44 sm:w-44"
-          />
+          {album.thumbnailUrl ? (
+            <img
+              src={album.thumbnailUrl}
+              alt={album.title}
+              className="h-40 w-40 shrink-0 rounded-[12px] object-cover shadow-[0_18px_48px_rgba(0,0,0,0.45)] sm:h-44 sm:w-44"
+            />
+          ) : (
+            <div className="h-40 w-40 shrink-0 animate-pulse rounded-[12px] bg-white/[0.08] sm:h-44 sm:w-44" />
+          )}
           <div className="min-w-0 flex-1 space-y-2">
             <span className="pm-elevated inline-block rounded-md border pm-border px-2.5 py-1 text-[11px] font-semibold pm-text-secondary">
-              ÁLBUM {album.year ? `· ${album.year}` : ''} · {tracks.length}{' '}
-              CANCIONES
+              ÁLBUM {album.year ? `· ${album.year}` : ''} ·{' '}
+              {isAlbumLoading && tracks.length === 0 ? 'CARGANDO…' : `${tracks.length} CANCIONES`}
             </span>
             <h1 className="truncate text-3xl font-bold tracking-tight pm-text-primary md:text-4xl">
               {album.title}
@@ -942,21 +1056,23 @@ export const DetailViewPanel: React.FC = () => {
             <div className="flex flex-wrap gap-2.5 pt-2">
               <button
                 type="button"
+                disabled={isAlbumLoading && tracks.length === 0}
                 onClick={() => {
                   if (tracks[0]) void playTrack(tracks[0], tracks);
                 }}
-                className="pm-btn-primary inline-flex items-center gap-2 rounded-full px-6 py-2.5 text-xs font-bold"
+                className="pm-btn-primary inline-flex items-center gap-2 rounded-full px-6 py-2.5 text-xs font-bold disabled:opacity-45"
               >
                 <Play className="h-4 w-4 fill-current" />
                 <span>Reproducir álbum</span>
               </button>
               <button
                 type="button"
+                disabled={isAlbumLoading && tracks.length === 0}
                 onClick={async () => {
                   await toggleDjMode(true);
                   if (tracks[0]) await playTrack(tracks[0], tracks);
                 }}
-                className="pm-btn-secondary inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-xs font-semibold"
+                className="pm-btn-secondary inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-xs font-semibold disabled:opacity-45"
               >
                 <Disc3 className="h-4 w-4 text-purple-500" />
                 <span>Sesión DJ</span>
@@ -965,16 +1081,33 @@ export const DetailViewPanel: React.FC = () => {
           </div>
         </section>
 
-        <div className="space-y-0.5">
-          {tracks.map((t, idx) => (
-            <TrackListRow
-              key={t.id}
-              track={t}
-              index={idx}
-              queueContext={[t]}
-            />
-          ))}
-        </div>
+        {isAlbumLoading && tracks.length === 0 ? (
+          <div className="space-y-2">
+            {[0, 1, 2, 3, 4, 5].map((i) => (
+              <div
+                key={i}
+                className="flex items-center gap-3 rounded-[10px] bg-white/[0.03] px-3 py-2.5"
+              >
+                <div className="h-9 w-9 shrink-0 animate-pulse rounded-[7px] bg-white/[0.08]" />
+                <div className="flex-1 space-y-1.5">
+                  <div className="h-3.5 w-48 animate-pulse rounded bg-white/[0.09]" />
+                  <div className="h-2.5 w-28 animate-pulse rounded bg-white/[0.06]" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-0.5">
+            {tracks.map((t, idx) => (
+              <TrackListRow
+                key={t.id}
+                track={t}
+                index={idx}
+                queueContext={[t]}
+              />
+            ))}
+          </div>
+        )}
       </div>
     );
   }
@@ -2054,7 +2187,9 @@ export const HomeScreen: React.FC = () => {
               title={a.name}
               subtitle="Artista"
               round
-              onOpen={() => void openArtistDetail(a.id ?? a.name)}
+              onOpen={() =>
+                void openArtistDetail(a.id ?? a.name, { name: a.name })
+              }
             />
           ))}
         </CarouselSection>
@@ -2221,7 +2356,12 @@ export const ExploreScreen: React.FC = () => {
                   : 'Escena afín'
               }
               round
-              onOpen={() => void openArtistDetail(ar.id || ar.name)}
+              onOpen={() =>
+                void openArtistDetail(ar.id || ar.name, {
+                  name: ar.name,
+                  thumbnailUrl: ar.thumbnailUrl,
+                })
+              }
             />
           ))}
         </CarouselSection>
@@ -2290,7 +2430,12 @@ export const ExploreScreen: React.FC = () => {
               title={ar.name}
               subtitle={ar.subscribersText ?? 'Artista'}
               round
-              onOpen={() => void openArtistDetail(ar.id)}
+              onOpen={() =>
+                void openArtistDetail(ar.id, {
+                  name: ar.name,
+                  thumbnailUrl: ar.thumbnailUrl,
+                })
+              }
               onPlay={() => {
                 const match =
                   trendingSongs.find((t) =>
@@ -2520,7 +2665,12 @@ export const SearchScreen: React.FC = () => {
                     </button>
                     <button
                       type="button"
-                      onClick={() => void openArtistDetail(bestResult.item.id)}
+                      onClick={() =>
+                        void openArtistDetail(bestResult.item.id, {
+                          name: bestResult.item.name,
+                          thumbnailUrl: bestResult.item.thumbnailUrl,
+                        })
+                      }
                       className="pm-btn-secondary rounded-full px-4 py-2 text-xs font-semibold"
                     >
                       Ver perfil
@@ -2618,7 +2768,12 @@ export const SearchScreen: React.FC = () => {
                   </div>
                   <button
                     type="button"
-                    onClick={() => void openArtistDetail(bestResult.item.id)}
+                    onClick={() =>
+                      void openArtistDetail(bestResult.item.id, {
+                        name: bestResult.item.name,
+                        thumbnailUrl: bestResult.item.thumbnailUrl,
+                      })
+                    }
                     className="pm-btn-primary rounded-full px-5 py-2 text-xs font-bold"
                   >
                     Ver perfil
@@ -2713,7 +2868,12 @@ export const SearchScreen: React.FC = () => {
                 title={artist.name}
                 subtitle={artist.subscribersText ?? 'Artista'}
                 round
-                onOpen={() => void openArtistDetail(artist.id)}
+                onOpen={() =>
+                  void openArtistDetail(artist.id, {
+                    name: artist.name,
+                    thumbnailUrl: artist.thumbnailUrl,
+                  })
+                }
               />
             ))}
           </CarouselSection>

@@ -268,7 +268,13 @@ export function createPMusicApiHandler(options: PMusicApiHandlerOptions = {}) {
 
       if (pathname.startsWith('/api/artist/')) {
         const artistId = decodeURIComponent(pathname.slice('/api/artist/'.length));
-        const detail = await provider.getArtist(artistId);
+        const nameHint = urlObj.searchParams.get('name') ?? undefined;
+        const getArtistFn = provider.getArtist.bind(provider) as (
+          id: string,
+          signal?: AbortSignal,
+          hint?: { name?: string }
+        ) => Promise<unknown>;
+        const detail = await getArtistFn(artistId, undefined, nameHint ? { name: nameHint } : undefined);
         sendJson(res, 200, detail);
         return true;
       }

@@ -29,7 +29,7 @@
   --pm-font-body: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --pm-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 
-  --pm-bg-canvas: #070709;
+  --pm-bg-canvas: #000000;
   --pm-bg-surface: #111116;
   --pm-bg-elevated: #17171E;
   --pm-bg-input: #13131A;
@@ -53,7 +53,7 @@
   --pm-text-tertiary: #8E8E9B;
 
   --pm-accent-primary: #FFFFFF;
-  --pm-accent-fg: #070709;
+  --pm-accent-fg: #000000;
   --pm-accent-dj: #C084FC;
   --pm-accent-connect: #34D399;
   --pm-accent-warning: #FBBF24;
@@ -1292,7 +1292,7 @@ input[type="range"].pm-eq-vertical {
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: none;
   }
 }
 
@@ -1307,7 +1307,7 @@ input[type="range"].pm-eq-vertical {
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: none;
   }
 }
 
@@ -2464,7 +2464,7 @@ html.pm-solid-modern .pm-mobile-glass-header {
   }
   to {
     opacity: 1;
-    transform: translate3d(0, 0, 0);
+    transform: none;
   }
 }
 
@@ -3341,6 +3341,33 @@ html.pm-reduced-motion .pm-lyric-line-inactive {
   }
 }
 
+/* Floating inset overlay scrollbar inside rounded desktop panels */
+.pm-overlay-scrollbar-track {
+  opacity: 0;
+  transition: opacity 220ms var(--ease-out);
+}
+.pm-overlay-scrollbar-track[data-active="true"],
+.pm-overlay-scrollbar-track[data-dragging="true"] {
+  opacity: 1;
+}
+.pm-overlay-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  transition: background-color 160ms var(--ease-out), width 160ms var(--ease-out);
+  will-change: transform;
+}
+.pm-overlay-scrollbar-track:hover .pm-overlay-scrollbar-thumb,
+.pm-overlay-scrollbar-track[data-dragging="true"] .pm-overlay-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.42);
+  width: 6px;
+}
+[data-theme="nordic-light"] .pm-overlay-scrollbar-thumb {
+  background: rgba(20, 20, 26, 0.22);
+}
+[data-theme="nordic-light"] .pm-overlay-scrollbar-track:hover .pm-overlay-scrollbar-thumb,
+[data-theme="nordic-light"] .pm-overlay-scrollbar-track[data-dragging="true"] .pm-overlay-scrollbar-thumb {
+  background: rgba(20, 20, 26, 0.42);
+}
+
 /* Ultra low-power hibernation while window is minimized or hidden */
 html.pm-app-hidden *,
 html.pm-app-hidden *::before,
@@ -3350,4 +3377,7 @@ html.pm-app-hidden *::after {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   will-change: auto !important;
+}
+html.pm-app-hidden .pm-overlay-scrollbar-track {
+  opacity: 0 !important;
 }

@@ -217,11 +217,15 @@ export class YouTubeMusicProvider implements IMusicProvider {
     return getFallbackRelated(videoId);
   }
 
-  public async getArtist(artistId: string, _signal?: AbortSignal): Promise<ArtistDetail> {
+  public async getArtist(
+    artistId: string,
+    _signal?: AbortSignal,
+    hint?: { name?: string }
+  ): Promise<ArtistDetail> {
     if (this.catalog) {
       try {
         if (/^\d+$/.test(artistId)) {
-          return await this.catalog.artist(artistId, _signal);
+          return await this.catalog.artist(artistId, _signal, hint?.name);
         }
         const lookupName = artistId.startsWith('UC_')
           ? artistId.slice(3).replace(/_/g, ' ')
@@ -380,6 +384,13 @@ export class HttpProxyMusicProvider implements IMusicProvider {
               { method: 'GET', signal: init?.signal }
             );
           }
+          if (rawUrl.startsWith('https://www.youtube.com/youtubei/v1/player')) {
+            const bodyStr = typeof init?.body === 'string' ? init.body : '';
+            return this.fetchFn(
+              `https://appassets.pmusic.local/api/ytm-proxy?ep=player&body=${encodeURIComponent(bodyStr)}`,
+              { method: 'GET', signal: init?.signal }
+            );
+          }
           return this.fetchFn(input, init);
         }) as typeof fetch;
         this.mobileProxyCatalog = new YouTubeMusicProvider({
@@ -492,13 +503,18 @@ export class HttpProxyMusicProvider implements IMusicProvider {
     return getFallbackRelated(videoId);
   }
 
-  public async getArtist(artistId: string, signal?: AbortSignal): Promise<ArtistDetail> {
+  public async getArtist(
+    artistId: string,
+    signal?: AbortSignal,
+    hint?: { name?: string }
+  ): Promise<ArtistDetail> {
     const mobileDirect = this.getMobileDirectProvider();
     if (mobileDirect) {
-      return mobileDirect.getArtist(artistId, signal);
+      return mobileDirect.getArtist(artistId, signal, hint);
     }
+    const qs = hint?.name?.trim() ? `?name=${encodeURIComponent(hint.name.trim())}` : '';
     const remote = await this.fetchApiJson<ArtistDetail>(
-      `/api/artist/${encodeURIComponent(artistId)}`,
+      `/api/artist/${encodeURIComponent(artistId)}${qs}`,
       signal
     );
     if (remote && remote.artist) {

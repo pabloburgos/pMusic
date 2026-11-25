@@ -64,20 +64,188 @@ function upscaleYtmImageUrl(url: string, targetW: number, targetH: number): stri
   return url;
 }
 
-function pickBestThumb(thumbs: unknown): { url: string; width: number; height: number } | null {
+function pickPreferredThumb(
+  thumbs: unknown,
+  idealWidth = 1440
+): { url: string; width: number; height: number } | null {
   if (!Array.isArray(thumbs) || thumbs.length === 0) return null;
-  let best: { url: string; width: number; height: number } | null = null;
+  const parsed: Array<{ url: string; width: number; height: number }> = [];
   for (const t of thumbs) {
     if (!t || typeof t !== 'object') continue;
     const url = String((t as any).url ?? '').trim();
     if (!url) continue;
     const width = Number((t as any).width ?? 0);
     const height = Number((t as any).height ?? 0);
-    if (!best || width > best.width) {
-      best = { url, width, height };
+    parsed.push({ url, width, height });
+  }
+  if (parsed.length === 0) return null;
+  const fitting = parsed
+    .filter((t) => t.width >= idealWidth)
+    .sort((a, b) => a.width - b.width);
+  if (fitting.length > 0) return fitting[0]!;
+  return parsed.sort((a, b) => b.width - a.width)[0]!;
+}
+
+/** Rejects Deezer empty-hash artist placeholders that return broken or generic blank silhouette URLs. */
+export function sanitizeArtistImageUrl(rawUrl?: string | null): string {
+  const url = String(rawUrl ?? '').trim();
+  if (!url) return '';
+  if (/images\/artist\/\/|\/artist\/d41d8cd98f00b204e9800998ecf8427e/i.test(url)) {
+    return '';
+  }
+  return url;
+}
+
+export interface ParsedYouTubeCredits {
+  performers: TrackCreditPerson[];
+  producers: string[];
+  composers: string[];
+  lyricists: string[];
+  engineers: string[];
+  label?: string;
+  distributor?: string;
+  releaseDate?: string;
+}
+
+/**
+ * Parses structured DDEX credits from YouTube auto-generated "Provided to YouTube by ..." descriptions
+ * (Producer, Composer, Lyricist, Mixer, Mastering Engineer, label ℗, release date, distributor).
+ */
+export function parseYouTubeDescriptionCredits(shortDescription: string): ParsedYouTubeCredits {
+  const performers: TrackCreditPerson[] = [];
+  const producers: string[] = [];
+  const composers: string[] = [];
+  const lyricists: string[] = [];
+  const engineers: string[] = [];
+  let label: string | undefined;
+  let distributor: string | undefined;
+  let releaseDate: string | undefined;
+
+  if (!shortDescription) {
+    return { performers, producers, composers, lyricists, engineers };
+  }
+
+  const seenPerf = new Set<string>();
+  const seenProd = new Set<string>();
+  const seenComp = new Set<string>();
+  const seenLyric = new Set<string>();
+  const seenEng = new Set<string>();
+
+  const pushUnique = (list: string[], seen: Set<string>, rawVal: string) => {
+    const clean = rawVal.trim().replace(/^[,;·]+|[,;·]+$/g, '').trim();
+    if (!clean || /^auto-generated/i.test(clean)) return;
+    const key = normalizeSearchStr(clean);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    list.push(clean);
+  };
+
+  const pushPerformer = (rawVal: string, roleLabel: string) => {
+    const clean = rawVal.trim();
+    if (!clean) return;
+    const key = `${normalizeSearchStr(clean)}::${roleLabel.toLowerCase()}`;
+    if (!key || seenPerf.has(key)) return;
+    seenPerf.add(key);
+    performers.push({ name: clean, role: roleLabel });
+  };
+
+  const splitCreditNames = (raw: string): string[] =>
+    raw
+      .split(/\s*(?:,|;|\/|\sy\s|\sand\s)\s*/i)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+  const lines = shortDescription.split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    if (/^provided to youtube by\s+/i.test(line)) {
+      const dist = line.replace(/^provided to youtube by\s+/i, '').trim();
+      if (dist && !distributor) distributor = dist;
+      continue;
+    }
+
+    if (/^℗\s*/.test(line)) {
+      const cleaned = line
+        .replace(/^℗\s*/, '')
+        .replace(/^\d{4}\s+/, '')
+        .trim();
+      if (cleaned && !label) label = cleaned;
+      continue;
+    }
+
+    if (/^released on\s*:/i.test(line)) {
+      const dt = line.replace(/^released on\s*:\s*/i, '').trim();
+      if (dt && !releaseDate) releaseDate = dt;
+      continue;
+    }
+
+    const colonIdx = line.indexOf(':');
+    if (colonIdx <= 0 || colonIdx > 48) continue;
+    const rawRole = line.slice(0, colonIdx).trim();
+    const rawNames = line.slice(colonIdx + 1).trim();
+    if (!rawNames) continue;
+    const roleLower = rawRole.toLowerCase();
+
+    if (
+      /^(?:co[- ]?)?producer$|^executive producer$|^additional producer$|^vocal producer$|^beatmaker$|^producci[oó]n$|^productor/i.test(
+        roleLower
+      )
+    ) {
+      for (const n of splitCreditNames(rawNames)) pushUnique(producers, seenProd, n);
+      continue;
+    }
+
+    if (/composer\s*[,&/]?\s*lyricist|writer\s*[,&/]?\s*composer/i.test(roleLower)) {
+      for (const n of splitCreditNames(rawNames)) {
+        pushUnique(composers, seenComp, n);
+        pushUnique(lyricists, seenLyric, n);
+      }
+      continue;
+    }
+
+    if (/^(?:composer|music|composici[oó]n|compositor)/i.test(roleLower)) {
+      for (const n of splitCreditNames(rawNames)) pushUnique(composers, seenComp, n);
+      continue;
+    }
+
+    if (/^(?:lyricist|author|writer|songwriter|text|letra|letrista)/i.test(roleLower)) {
+      for (const n of splitCreditNames(rawNames)) pushUnique(lyricists, seenLyric, n);
+      continue;
+    }
+
+    if (
+      /mixer|mixing|masterer|mastering|recording engineer|sound engineer|studio personnel|\bengineer\b/i.test(
+        roleLower
+      )
+    ) {
+      for (const n of splitCreditNames(rawNames)) {
+        pushUnique(engineers, seenEng, `${n} (${rawRole})`);
+      }
+      continue;
+    }
+
+    if (/associated performer|vocals|featured artist|main artist|background vocals/i.test(roleLower)) {
+      const roleLabel = /featured/i.test(roleLower)
+        ? 'Artista invitado'
+        : /vocal/i.test(roleLower)
+          ? 'Voz'
+          : 'Intérprete';
+      for (const n of splitCreditNames(rawNames)) pushPerformer(n, roleLabel);
     }
   }
-  return best;
+
+  return {
+    performers,
+    producers,
+    composers,
+    lyricists,
+    engineers,
+    ...(label ? { label } : {}),
+    ...(distributor ? { distributor } : {}),
+    ...(releaseDate ? { releaseDate } : {}),
+  };
 }
 
 export const DZ_PREFIX = 'dz:';
@@ -320,6 +488,9 @@ export class DeezerCatalog {
     }
   >();
   private readonly artistDetailCache = new Map<string, { at: number; detail: ArtistDetail }>();
+  private readonly inFlightArtist = new Map<string, Promise<ArtistDetail>>();
+  private readonly albumDetailCache = new Map<string, { at: number; detail: AlbumDetail }>();
+  private readonly inFlightAlbum = new Map<string, Promise<AlbumDetail>>();
   private readonly creditsCache = new Map<string, { at: number; credits: TrackCredits }>();
 
   public constructor(fetchFn?: typeof fetch) {
@@ -415,7 +586,8 @@ export class DeezerCatalog {
     rawTracks: Json[],
     mappedTracks: Track[],
     maxCount = 12,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    timeoutMs = 700
   ): Promise<Track[]> {
     const out = [...mappedTracks];
     const indicesToEnrich: number[] = [];
@@ -434,7 +606,7 @@ export class DeezerCatalog {
         const existing = out[idx];
         if (!raw?.id || !existing) return;
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 1100);
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
         const onOuterAbort = () => controller.abort();
         signal?.addEventListener('abort', onOuterAbort, { once: true });
         try {
@@ -467,7 +639,7 @@ export class DeezerCatalog {
     return {
       id: String(a.id),
       name: String(a.name),
-      thumbnailUrl: a.picture_big ?? a.picture_medium ?? a.picture ?? '',
+      thumbnailUrl: sanitizeArtistImageUrl(a.picture_big ?? a.picture_medium ?? a.picture ?? ''),
       subscribersText: a.nb_fan ? `${Number(a.nb_fan).toLocaleString('es-ES')} fans` : undefined,
     };
   }
@@ -925,9 +1097,13 @@ export class DeezerCatalog {
       return cachedYtm.data;
     }
 
-    const ytmPost = async (ep: 'search' | 'browse', bodyObj: Record<string, unknown>) => {
+    const ytmPost = async (
+      ep: 'search' | 'browse',
+      bodyObj: Record<string, unknown>,
+      timeoutMs = 1700
+    ) => {
       const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-      const timer = controller ? setTimeout(() => controller.abort(), 3200) : null;
+      const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
       const onOuterAbort = () => controller?.abort();
       signal?.addEventListener('abort', onOuterAbort, { once: true });
       try {
@@ -951,7 +1127,7 @@ export class DeezerCatalog {
       const searchJson = await ytmPost('search', {
         query: cleanName,
         params: 'EgWKAQIgAWoMEAMQBBAJEAoQBRAV',
-      });
+      }, 1700);
       if (!searchJson) return null;
 
       const items = collectObjectsByKey(searchJson, 'musicResponsiveListItemRenderer');
@@ -977,8 +1153,9 @@ export class DeezerCatalog {
       }
       if (!chosen) return null;
 
-      const searchThumbRaw = pickBestThumb(
-        chosen?.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails
+      const searchThumbRaw = pickPreferredThumb(
+        chosen?.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails,
+        640
       );
       const searchAvatarUrl = searchThumbRaw
         ? upscaleYtmImageUrl(searchThumbRaw.url, 640, 640)
@@ -988,7 +1165,7 @@ export class DeezerCatalog {
         return searchAvatarUrl ? { avatarUrl: searchAvatarUrl } : null;
       }
 
-      const browseJson = await ytmPost('browse', { browseId });
+      const browseJson = await ytmPost('browse', { browseId }, 1700);
       const header =
         browseJson?.header?.musicImmersiveHeaderRenderer ??
         browseJson?.header?.musicVisualHeaderRenderer ??
@@ -996,8 +1173,9 @@ export class DeezerCatalog {
         collectObjectsByKey(browseJson, 'musicVisualHeaderRenderer')[0] ??
         null;
 
-      const bannerBest = pickBestThumb(
-        header?.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails
+      const bannerBest = pickPreferredThumb(
+        header?.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails,
+        1440
       );
       const bannerUrl = bannerBest
         ? upscaleYtmImageUrl(bannerBest.url, 1440, 600)
@@ -1043,7 +1221,7 @@ export class DeezerCatalog {
         const moreResults = await Promise.allSettled(
           Array.from(moreBrowseIds)
             .slice(0, 2)
-            .map((mid) => ytmPost('browse', { browseId: mid }))
+            .map((mid) => ytmPost('browse', { browseId: mid }, 1000))
         );
         for (const r of moreResults) {
           if (r.status !== 'fulfilled' || !r.value) continue;
@@ -1082,194 +1260,245 @@ export class DeezerCatalog {
     }
   }
 
-  public async artist(id: string, signal?: AbortSignal): Promise<ArtistDetail> {
+  public async artist(id: string, signal?: AbortSignal, hintName?: string): Promise<ArtistDetail> {
     const cachedDetail = this.artistDetailCache.get(id);
-    if (cachedDetail && Date.now() - cachedDetail.at < 5 * 60_000) {
+    if (cachedDetail && Date.now() - cachedDetail.at < 15 * 60_000) {
       return cachedDetail.detail;
     }
 
-    const artistPromise = this.get(`/artist/${encodeURIComponent(id)}`, signal);
-    const ytmVisualsPromise = artistPromise
-      .then((a) =>
-        a?.name ? this.fetchYtMusicArtistVisuals(String(a.name), signal) : null
-      )
-      .catch(() => null);
+    if (!signal) {
+      const pending = this.inFlightArtist.get(id);
+      if (pending) return pending;
+    }
 
-    const [a, top, albumsRes, related, ytmVisuals] = await Promise.all([
-      artistPromise,
-      this.get(`/artist/${encodeURIComponent(id)}/top?limit=50`, signal),
-      this.get(`/artist/${encodeURIComponent(id)}/albums?limit=60`, signal),
-      this.get(`/artist/${encodeURIComponent(id)}/related?limit=10`, signal),
-      ytmVisualsPromise,
-    ]);
+    const exec = (async (): Promise<ArtistDetail> => {
+      const artistPromise = this.get(`/artist/${encodeURIComponent(id)}`, signal);
+      const ytmVisualsPromise = hintName?.trim()
+        ? this.fetchYtMusicArtistVisuals(hintName.trim(), signal).catch(() => null)
+        : artistPromise
+            .then((a) =>
+              a?.name ? this.fetchYtMusicArtistVisuals(String(a.name), signal) : null
+            )
+            .catch(() => null);
 
-    const baseArtist = this.mapArtist(a);
-    const artist: ArtistSummary = {
-      ...baseArtist,
-      thumbnailUrl: ytmVisuals?.avatarUrl || baseArtist.thumbnailUrl,
-      subscribersText: ytmVisuals?.listenersText || baseArtist.subscribersText,
-    };
+      const topTracksPromise = this.get(`/artist/${encodeURIComponent(id)}/top?limit=50`, signal)
+        .then(async (top) => {
+          const rawTop = top.data ?? [];
+          return this.enrichTracks(
+            rawTop,
+            rawTop.map((t: Json) => this.mapTrack(t)),
+            10,
+            signal,
+            650
+          );
+        });
 
-    const rawTop = top.data ?? [];
-    const topSongs = await this.enrichTracks(
-      rawTop,
-      rawTop.map((t: Json) => this.mapTrack(t)),
-      14,
-      signal
-    );
+      const [a, topSongs, albumsRes, related, ytmVisuals] = await Promise.all([
+        artistPromise,
+        topTracksPromise,
+        this.get(`/artist/${encodeURIComponent(id)}/albums?limit=60`, signal),
+        this.get(`/artist/${encodeURIComponent(id)}/related?limit=10`, signal),
+        ytmVisualsPromise,
+      ]);
 
-    const rawReleases = Array.isArray(albumsRes?.data) ? (albumsRes.data as Json[]) : [];
-    const ytmAlbumSet = new Set(ytmVisuals?.ytmAlbumTitles ?? []);
-    const ytmSingleSet = new Set(ytmVisuals?.ytmSingleOrEpTitles ?? []);
-    const ytmAllSet = new Set<string>([...ytmAlbumSet, ...ytmSingleSet]);
-    const hasYtmCatalog = ytmAllSet.size >= 2;
-    const artistFans = Number(a?.nb_fan ?? 0);
+      const baseArtist = this.mapArtist(a);
+      const artist: ArtistSummary = {
+        ...baseArtist,
+        thumbnailUrl: sanitizeArtistImageUrl(ytmVisuals?.avatarUrl) || baseArtist.thumbnailUrl,
+        subscribersText: ytmVisuals?.listenersText || baseArtist.subscribersText,
+      };
 
-    const matchesYtmCatalog = (normTitle: string, set: Set<string>): boolean => {
-      if (!normTitle) return false;
-      if (set.has(normTitle)) return true;
-      if (normTitle.length < 4) return false;
-      for (const entry of set) {
-        if (entry.length >= 4 && (entry.startsWith(normTitle) || normTitle.startsWith(entry))) {
-          return true;
+      const rawReleases = Array.isArray(albumsRes?.data) ? (albumsRes.data as Json[]) : [];
+      const ytmAlbumSet = new Set(ytmVisuals?.ytmAlbumTitles ?? []);
+      const ytmSingleSet = new Set(ytmVisuals?.ytmSingleOrEpTitles ?? []);
+      const ytmAllSet = new Set<string>([...ytmAlbumSet, ...ytmSingleSet]);
+      const hasYtmCatalog = ytmAllSet.size >= 2;
+      const artistFans = Number(a?.nb_fan ?? 0);
+
+      const matchesYtmCatalog = (normTitle: string, set: Set<string>): boolean => {
+        if (!normTitle) return false;
+        if (set.has(normTitle)) return true;
+        if (normTitle.length < 4) return false;
+        for (const entry of set) {
+          if (entry.length >= 4 && (entry.startsWith(normTitle) || normTitle.startsWith(entry))) {
+            return true;
+          }
         }
-      }
-      return false;
-    };
+        return false;
+      };
 
-    // Filter out homonym / fake AI spam releases uploaded to shared artist IDs on Deezer
-    // and deduplicate identical normalized titles (keeping highest fan count / newest release).
-    const keptByTitle = new Map<string, Json>();
-    for (const al of rawReleases) {
-      const recType = String(al?.record_type ?? '').toLowerCase();
-      if (recType === 'compile') continue;
-      const normTitle = normalizeReleaseTitle(String(al?.title ?? ''));
-      if (!normTitle) continue;
-      const fans = Number(al?.fans ?? 0);
+      // Filter out homonym / fake AI spam releases uploaded to shared artist IDs on Deezer
+      // and deduplicate identical normalized titles (keeping highest fan count / newest release).
+      const keptByTitle = new Map<string, Json>();
+      for (const al of rawReleases) {
+        const recType = String(al?.record_type ?? '').toLowerCase();
+        if (recType === 'compile') continue;
+        const normTitle = normalizeReleaseTitle(String(al?.title ?? ''));
+        if (!normTitle) continue;
+        const fans = Number(al?.fans ?? 0);
 
-      if (hasYtmCatalog) {
-        const matchedYtm = matchesYtmCatalog(normTitle, ytmAllSet);
-        if (!matchedYtm) {
-          if (ytmVisuals?.ytmHasFullDiscography) {
-            if (fans < 150) continue;
-          } else if (artistFans >= 1500 && fans < 25) {
-            continue;
+        if (hasYtmCatalog) {
+          const matchedYtm = matchesYtmCatalog(normTitle, ytmAllSet);
+          if (!matchedYtm) {
+            if (ytmVisuals?.ytmHasFullDiscography) {
+              if (fans < 150) continue;
+            } else if (artistFans >= 1500 && fans < 25) {
+              continue;
+            }
+          }
+        }
+
+        const prev = keptByTitle.get(normTitle);
+        if (!prev) {
+          keptByTitle.set(normTitle, al);
+        } else {
+          const prevFans = Number(prev?.fans ?? 0);
+          const prevDate = String(prev?.release_date ?? '');
+          const nextDate = String(al?.release_date ?? '');
+          if (fans > prevFans || (fans === prevFans && nextDate.localeCompare(prevDate) > 0)) {
+            keptByTitle.set(normTitle, al);
           }
         }
       }
 
-      const prev = keptByTitle.get(normTitle);
-      if (!prev) {
-        keptByTitle.set(normTitle, al);
-      } else {
-        const prevFans = Number(prev?.fans ?? 0);
-        const prevDate = String(prev?.release_date ?? '');
-        const nextDate = String(al?.release_date ?? '');
-        if (fans > prevFans || (fans === prevFans && nextDate.localeCompare(prevDate) > 0)) {
-          keptByTitle.set(normTitle, al);
+      const filteredReleases = Array.from(keptByTitle.values());
+      const sortNewestFirst = (list: Json[]) =>
+        [...list].sort((x, y) => {
+          const dx = String(x.release_date ?? '');
+          const dy = String(y.release_date ?? '');
+          return dy.localeCompare(dx);
+        });
+
+      const isAlbumRelease = (al: Json): boolean => {
+        const normTitle = normalizeReleaseTitle(String(al?.title ?? ''));
+        const recType = String(al?.record_type ?? '').toLowerCase();
+        if (hasYtmCatalog) {
+          if (matchesYtmCatalog(normTitle, ytmAlbumSet)) return true;
+          if (matchesYtmCatalog(normTitle, ytmSingleSet)) return false;
         }
+        return recType !== 'single' && recType !== 'ep';
+      };
+
+      const albumsList = sortNewestFirst(
+        filteredReleases.filter((al) => isAlbumRelease(al))
+      ).map((al) => this.mapAlbum(al, a));
+
+      const singlesList = sortNewestFirst(
+        filteredReleases.filter((al) => !isAlbumRelease(al))
+      ).map((al) => this.mapAlbum(al, a));
+
+      const sanitizedBanner =
+        sanitizeArtistImageUrl(ytmVisuals?.bannerUrl) ||
+        sanitizeArtistImageUrl(ytmVisuals?.avatarUrl) ||
+        sanitizeArtistImageUrl(a.picture_xl) ||
+        artist.thumbnailUrl;
+
+      const detail = {
+        artist,
+        bannerUrl: sanitizedBanner || undefined,
+        description: ytmVisuals?.bio || artist.subscribersText || '',
+        topSongs,
+        albums: albumsList,
+        singles: singlesList,
+        relatedArtists: (related.data ?? []).map((r: Json) => this.mapArtist(r)),
+      } as ArtistDetail;
+      this.artistDetailCache.set(id, { at: Date.now(), detail });
+      if (this.artistDetailCache.size > 24) {
+        const oldest = this.artistDetailCache.keys().next().value;
+        if (oldest) this.artistDetailCache.delete(oldest);
       }
+      return detail;
+    })();
+
+    if (!signal) {
+      this.inFlightArtist.set(id, exec);
     }
-
-    const filteredReleases = Array.from(keptByTitle.values());
-    const sortNewestFirst = (list: Json[]) =>
-      [...list].sort((x, y) => {
-        const dx = String(x.release_date ?? '');
-        const dy = String(y.release_date ?? '');
-        return dy.localeCompare(dx);
-      });
-
-    const isAlbumRelease = (al: Json): boolean => {
-      const normTitle = normalizeReleaseTitle(String(al?.title ?? ''));
-      const recType = String(al?.record_type ?? '').toLowerCase();
-      if (hasYtmCatalog) {
-        if (matchesYtmCatalog(normTitle, ytmAlbumSet)) return true;
-        if (matchesYtmCatalog(normTitle, ytmSingleSet)) return false;
-      }
-      return recType !== 'single' && recType !== 'ep';
-    };
-
-    const albumsList = sortNewestFirst(
-      filteredReleases.filter((al) => isAlbumRelease(al))
-    ).map((al) => this.mapAlbum(al, a));
-
-    const singlesList = sortNewestFirst(
-      filteredReleases.filter((al) => !isAlbumRelease(al))
-    ).map((al) => this.mapAlbum(al, a));
-
-    const detail = {
-      artist,
-      bannerUrl:
-        ytmVisuals?.bannerUrl ||
-        ytmVisuals?.avatarUrl ||
-        a.picture_xl ||
-        artist.thumbnailUrl,
-      description: ytmVisuals?.bio || artist.subscribersText || '',
-      topSongs,
-      albums: albumsList,
-      singles: singlesList,
-      relatedArtists: (related.data ?? []).map((r: Json) => this.mapArtist(r)),
-    } as ArtistDetail;
-    this.artistDetailCache.set(id, { at: Date.now(), detail });
-    if (this.artistDetailCache.size > 16) {
-      const oldest = this.artistDetailCache.keys().next().value;
-      if (oldest) this.artistDetailCache.delete(oldest);
+    try {
+      return await exec;
+    } finally {
+      this.inFlightArtist.delete(id);
     }
-    return detail;
   }
 
   public async album(id: string, signal?: AbortSignal): Promise<AlbumDetail> {
-    const a = await this.get(`/album/${encodeURIComponent(id)}`, signal);
-    let trackData: Json[] = a.tracks?.data ?? [];
-    if (a.nb_tracks && trackData.length < Number(a.nb_tracks)) {
-      const fullTracks = await this.get(`/album/${encodeURIComponent(id)}/tracks?limit=100`, signal).catch(() => null);
-      if (Array.isArray(fullTracks?.data) && fullTracks.data.length > trackData.length) {
-        trackData = fullTracks.data;
-      }
+    const cachedAlbum = this.albumDetailCache.get(id);
+    if (cachedAlbum && Date.now() - cachedAlbum.at < 15 * 60_000) {
+      return cachedAlbum.detail;
     }
-    const rawTracks = trackData.map((t: Json) => ({
-      ...t,
-      artist: t.artist ?? a.artist,
-      album: t.album ?? a,
-    }));
-    const tracks = await this.enrichTracks(
-      rawTracks,
-      rawTracks.map((t: Json) => this.mapTrack(t, a)),
-      30,
-      signal
-    );
+    if (!signal) {
+      const pending = this.inFlightAlbum.get(id);
+      if (pending) return pending;
+    }
 
-    // Promote co-headlining joint-album collaborators (e.g. "TA FACIL" -> Lucho RK, La Pantera)
-    const mappedAlbum = this.mapAlbum(a);
-    if (tracks.length >= 2) {
-      const collabCounts = new Map<string, { ref: { id?: string; name: string }; count: number }>();
-      for (const tr of tracks) {
-        const seenInTrack = new Set<string>();
-        for (const ar of tr.artists) {
-          const norm = normalizeSearchStr(ar.name);
-          if (!norm || seenInTrack.has(norm)) continue;
-          seenInTrack.add(norm);
-          const prev = collabCounts.get(norm);
-          collabCounts.set(norm, { ref: prev?.ref ?? ar, count: (prev?.count ?? 0) + 1 });
+    const exec = (async (): Promise<AlbumDetail> => {
+      const a = await this.get(`/album/${encodeURIComponent(id)}`, signal);
+      let trackData: Json[] = a.tracks?.data ?? [];
+      if (a.nb_tracks && trackData.length < Number(a.nb_tracks)) {
+        const fullTracks = await this.get(`/album/${encodeURIComponent(id)}/tracks?limit=100`, signal).catch(() => null);
+        if (Array.isArray(fullTracks?.data) && fullTracks.data.length > trackData.length) {
+          trackData = fullTracks.data;
         }
       }
-      const threshold = Math.max(2, Math.ceil(tracks.length * 0.6));
-      const existingNorms = new Set(mappedAlbum.artists.map((x) => normalizeSearchStr(x.name)));
-      const promoted = [...mappedAlbum.artists];
-      const candidates = Array.from(collabCounts.entries())
-        .filter(([norm, info]) => info.count >= threshold && !existingNorms.has(norm))
-        .sort((x, y) => y[1].count - x[1].count);
-      for (const [norm, info] of candidates) {
-        existingNorms.add(norm);
-        promoted.push(info.ref);
-      }
-      mappedAlbum.artists = promoted;
-    }
+      const rawTracks = trackData.map((t: Json) => ({
+        ...t,
+        artist: t.artist ?? a.artist,
+        album: t.album ?? a,
+      }));
+      const tracks = await this.enrichTracks(
+        rawTracks,
+        rawTracks.map((t: Json) => this.mapTrack(t, a)),
+        30,
+        signal,
+        650
+      );
 
-    return {
-      album: mappedAlbum,
-      tracks,
-    } as AlbumDetail;
+      // Promote co-headlining joint-album collaborators (e.g. "TA FACIL" -> Lucho RK, La Pantera)
+      const mappedAlbum = this.mapAlbum(a);
+      if (tracks.length >= 2) {
+        const collabCounts = new Map<string, { ref: { id?: string; name: string }; count: number }>();
+        for (const tr of tracks) {
+          const seenInTrack = new Set<string>();
+          for (const ar of tr.artists) {
+            const norm = normalizeSearchStr(ar.name);
+            if (!norm || seenInTrack.has(norm)) continue;
+            seenInTrack.add(norm);
+            const prev = collabCounts.get(norm);
+            collabCounts.set(norm, { ref: prev?.ref ?? ar, count: (prev?.count ?? 0) + 1 });
+          }
+        }
+        const threshold = Math.max(2, Math.ceil(tracks.length * 0.6));
+        const existingNorms = new Set(mappedAlbum.artists.map((x) => normalizeSearchStr(x.name)));
+        const promoted = [...mappedAlbum.artists];
+        const candidates = Array.from(collabCounts.entries())
+          .filter(([norm, info]) => info.count >= threshold && !existingNorms.has(norm))
+          .sort((x, y) => y[1].count - x[1].count);
+        for (const [norm, info] of candidates) {
+          existingNorms.add(norm);
+          promoted.push(info.ref);
+        }
+        mappedAlbum.artists = promoted;
+      }
+
+      const detail: AlbumDetail = {
+        album: mappedAlbum,
+        tracks,
+      };
+      this.albumDetailCache.set(id, { at: Date.now(), detail });
+      if (this.albumDetailCache.size > 24) {
+        const oldest = this.albumDetailCache.keys().next().value;
+        if (oldest) this.albumDetailCache.delete(oldest);
+      }
+      return detail;
+    })();
+
+    if (!signal) {
+      this.inFlightAlbum.set(id, exec);
+    }
+    try {
+      return await exec;
+    } finally {
+      this.inFlightAlbum.delete(id);
+    }
   }
 
   public async albumByQuery(title: string, artist?: string, signal?: AbortSignal): Promise<AlbumDetail | null> {
@@ -1547,7 +1776,109 @@ export class DeezerCatalog {
     }
   }
 
-  /** Fetches rich song credits (performers with roles, writers, producers, label, ISRC, release date). */
+  private async fetchYouTubeTrackCredits(
+    title: string,
+    artist?: string,
+    signal?: AbortSignal
+  ): Promise<ParsedYouTubeCredits | null> {
+    const cleanTitle = title.trim();
+    if (!cleanTitle) return null;
+
+    const postWithTimeout = async (url: string, bodyObj: Record<string, unknown>, timeoutMs = 1800) => {
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+      const onOuterAbort = () => controller?.abort();
+      signal?.addEventListener('abort', onOuterAbort, { once: true });
+      try {
+        const res = await this.fetchFn(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(bodyObj),
+          signal: controller?.signal ?? signal,
+        });
+        if (!res.ok) return null;
+        return (await res.json()) as Json;
+      } catch {
+        return null;
+      } finally {
+        if (timer) clearTimeout(timer);
+        signal?.removeEventListener('abort', onOuterAbort);
+      }
+    };
+
+    try {
+      const primaryArtist = (artist ?? '').split(',')[0]?.trim() ?? '';
+      const q = primaryArtist ? `${primaryArtist} ${cleanTitle}` : cleanTitle;
+      const searchJson = await postWithTimeout(
+        'https://music.youtube.com/youtubei/v1/search?prettyPrint=false',
+        {
+          context: { client: YTM_WEB_REMIX_CLIENT },
+          query: q,
+          params: 'EgWKAQIIAWoMEAMQBBAJEAoQBRAV',
+        },
+        1800
+      );
+      if (!searchJson) return null;
+
+      const items = collectObjectsByKey(searchJson, 'musicResponsiveListItemRenderer', [], 0, 20);
+      const wantTitleNorm = normalizeSearchStr(cleanTitle);
+      const wantArtistNorm = normalizeSearchStr(primaryArtist);
+
+      let chosenVideoId = '';
+      let bestCandidateScore = -1;
+      for (const item of items) {
+        const vid = String(
+          item?.playlistItemData?.videoId ??
+            item?.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchEndpoint?.videoId ??
+            ''
+        ).trim();
+        if (!vid || !/^[a-zA-Z0-9_-]{11}$/.test(vid)) continue;
+        const tText = normalizeSearchStr(
+          readRunsText(item?.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text)
+        );
+        const subText = normalizeSearchStr(
+          readRunsText(item?.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text)
+        );
+        let sc = 0;
+        if (tText === wantTitleNorm) sc += 100;
+        else if (wantTitleNorm && (tText.includes(wantTitleNorm) || wantTitleNorm.includes(tText))) sc += 50;
+        if (wantArtistNorm && subText.includes(wantArtistNorm)) sc += 60;
+        if (sc > bestCandidateScore) {
+          bestCandidateScore = sc;
+          chosenVideoId = vid;
+        }
+      }
+
+      if (!chosenVideoId) {
+        const m = JSON.stringify(searchJson).match(/"videoId":"([a-zA-Z0-9_-]{11})"/);
+        chosenVideoId = m?.[1] ?? '';
+      }
+      if (!chosenVideoId) return null;
+
+      const playerJson = await postWithTimeout(
+        'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
+        {
+          context: {
+            client: {
+              clientName: 'WEB',
+              clientVersion: '2.20250310.01.00',
+              hl: 'en',
+              gl: 'US',
+            },
+          },
+          videoId: chosenVideoId,
+        },
+        1800
+      );
+      const desc = String(playerJson?.videoDetails?.shortDescription ?? '');
+      if (!desc) return null;
+      return parseYouTubeDescriptionCredits(desc);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Fetches rich song credits (performers with roles, producers, composers, lyricists, engineers, label, ISRC, release date). */
   public async trackCredits(
     trackId: string,
     hint?: { title?: string; artist?: string },
@@ -1557,38 +1888,56 @@ export class DeezerCatalog {
     const hit = this.creditsCache.get(cacheKey);
     if (hit && Date.now() - hit.at < 30 * 60_000) return hit.credits;
 
-    let rawTrack: Json | null = null;
-    try {
-      if (isDeezerTrackId(trackId) || /^\d+$/.test(trackId)) {
-        rawTrack = await this.get(
-          `/track/${encodeURIComponent(trackId.replace(DZ_PREFIX, ''))}`,
-          signal
-        );
-      } else if (hint?.title) {
-        const q = `${hint.title} ${hint.artist ?? ''}`.trim();
-        const sr = await this.get(`/search/track?q=${encodeURIComponent(q)}&limit=5`, signal);
-        const list = Array.isArray(sr?.data) ? (sr.data as Json[]) : [];
-        const normReqTitle = normalizeSearchStr(hint.title);
-        const best =
-          list.find((item) => normalizeSearchStr(String(item?.title ?? '')) === normReqTitle) ??
-          list[0];
-        if (best?.id) {
-          rawTrack = await this.get(`/track/${encodeURIComponent(String(best.id))}`, signal);
+    const deezerTask = (async () => {
+      let rawTrack: Json | null = null;
+      try {
+        if (isDeezerTrackId(trackId) || /^\d+$/.test(trackId)) {
+          rawTrack = await this.get(
+            `/track/${encodeURIComponent(trackId.replace(DZ_PREFIX, ''))}`,
+            signal
+          );
+        } else if (hint?.title) {
+          const q = `${hint.title} ${hint.artist ?? ''}`.trim();
+          const sr = await this.get(`/search/track?q=${encodeURIComponent(q)}&limit=5`, signal);
+          const list = Array.isArray(sr?.data) ? (sr.data as Json[]) : [];
+          const normReqTitle = normalizeSearchStr(hint.title);
+          const best =
+            list.find((item) => normalizeSearchStr(String(item?.title ?? '')) === normReqTitle) ??
+            list[0];
+          if (best?.id) {
+            rawTrack = await this.get(`/track/${encodeURIComponent(String(best.id))}`, signal);
+          }
         }
+      } catch {
+        rawTrack = null;
       }
-    } catch {
-      rawTrack = null;
-    }
 
-    if (!rawTrack && !hint?.title) return null;
+      let rawAlbum: Json | null = null;
+      if (rawTrack?.album?.id) {
+        rawAlbum = await this.get(
+          `/album/${encodeURIComponent(String(rawTrack.album.id))}`,
+          signal
+        ).catch(() => null);
+      }
+      return { rawTrack, rawAlbum };
+    })();
 
-    let rawAlbum: Json | null = null;
-    if (rawTrack?.album?.id) {
-      rawAlbum = await this.get(
-        `/album/${encodeURIComponent(String(rawTrack.album.id))}`,
-        signal
-      ).catch(() => null);
-    }
+    const ytHintTitle = hint?.title?.trim() ?? '';
+    const ytTask = ytHintTitle
+      ? this.fetchYouTubeTrackCredits(ytHintTitle, hint?.artist, signal).catch(() => null)
+      : deezerTask.then(({ rawTrack }) =>
+          rawTrack?.title
+            ? this.fetchYouTubeTrackCredits(
+                String(rawTrack.title),
+                String(rawTrack.artist?.name ?? ''),
+                signal
+              ).catch(() => null)
+            : null
+        );
+
+    const [{ rawTrack, rawAlbum }, ytCredits] = await Promise.all([deezerTask, ytTask]);
+
+    if (!rawTrack && !hint?.title && !ytCredits) return null;
 
     const performers: TrackCreditPerson[] = [];
     const seenPerformers = new Set<string>();
@@ -1624,16 +1973,25 @@ export class DeezerCatalog {
     for (const feat of parseFeaturedArtistsFromTitle(titleStr)) {
       pushPerformer(feat, 'Artista invitado');
     }
+    if (ytCredits) {
+      for (const yp of ytCredits.performers) {
+        pushPerformer(yp.name, yp.role);
+      }
+    }
     if (performers.length === 0 && hint?.artist) {
       for (const part of hint.artist.split(/\s*(?:,|&)\s*/)) {
         if (part.trim()) pushPerformer(part.trim(), 'Artista principal');
       }
     }
 
-    const writers: string[] = [];
+    const composers: string[] = [];
+    const lyricists: string[] = [];
     const producers: string[] = [];
-    const seenWriters = new Set<string>();
+    const engineers: string[] = [];
+    const seenComposers = new Set<string>();
+    const seenLyricists = new Set<string>();
     const seenProducers = new Set<string>();
+    const seenEngineers = new Set<string>();
     const pushUnique = (list: string[], seen: Set<string>, nameVal: string) => {
       const clean = nameVal.trim();
       if (!clean) return;
@@ -1643,16 +2001,23 @@ export class DeezerCatalog {
       list.push(clean);
     };
 
+    if (ytCredits) {
+      for (const p of ytCredits.producers) pushUnique(producers, seenProducers, p);
+      for (const c of ytCredits.composers) pushUnique(composers, seenComposers, c);
+      for (const l of ytCredits.lyricists) pushUnique(lyricists, seenLyricists, l);
+      for (const e of ytCredits.engineers) pushUnique(engineers, seenEngineers, e);
+    }
+
     const isrc = typeof rawTrack?.isrc === 'string' && rawTrack.isrc.trim() ? rawTrack.isrc.trim() : undefined;
 
-    // Optional MusicBrainz lookup by ISRC for composer / lyricist / producer credits
+    // Optional MusicBrainz lookup by ISRC to enrich or fill composer / lyricist / producer / engineer credits
     if (isrc) {
       const mbCtrl = new AbortController();
-      const mbTimer = setTimeout(() => mbCtrl.abort(), 2400);
+      const mbTimer = setTimeout(() => mbCtrl.abort(), 1800);
       try {
         const mbHeaders = {
           Accept: 'application/json',
-          'User-Agent': 'pMusic/0.18.2 (https://pmusic.app)',
+          'User-Agent': 'pMusic/0.18.5 (https://pmusic.app)',
         };
         const searchRes = await this.fetchFn(
           `https://musicbrainz.org/ws/2/recording?query=isrc:${encodeURIComponent(isrc)}&fmt=json`,
@@ -1674,10 +2039,14 @@ export class DeezerCatalog {
                   const type = String(rel?.type ?? '').toLowerCase();
                   const arName = String(rel?.artist?.name ?? '').trim();
                   if (arName) {
-                    if (/composer|lyricist|writer|author|arranger/.test(type)) {
-                      pushUnique(writers, seenWriters, arName);
-                    } else if (/producer|mix|mastering|engineer|programming|recording/.test(type)) {
+                    if (/composer|arranger/.test(type)) {
+                      pushUnique(composers, seenComposers, arName);
+                    } else if (/lyricist|author|writer/.test(type)) {
+                      pushUnique(lyricists, seenLyricists, arName);
+                    } else if (/producer/.test(type)) {
                       pushUnique(producers, seenProducers, arName);
+                    } else if (/mix|mastering|engineer|programming|recording/.test(type)) {
+                      pushUnique(engineers, seenEngineers, arName);
                     }
                   }
                   if (Array.isArray(rel?.work?.relations)) {
@@ -1696,20 +2065,33 @@ export class DeezerCatalog {
       }
     }
 
+    const writers: string[] = [];
+    const seenWriters = new Set<string>();
+    for (const c of composers) pushUnique(writers, seenWriters, c);
+    for (const l of lyricists) pushUnique(writers, seenWriters, l);
+
     const labelStr =
-      typeof rawAlbum?.label === 'string' && rawAlbum.label.trim()
+      ytCredits?.label ||
+      (typeof rawAlbum?.label === 'string' && rawAlbum.label.trim()
         ? rawAlbum.label.trim()
-        : undefined;
+        : undefined);
     const releaseDate =
       typeof rawTrack?.release_date === 'string' && rawTrack.release_date.trim()
         ? rawTrack.release_date.trim()
         : typeof rawAlbum?.release_date === 'string' && rawAlbum.release_date.trim()
           ? rawAlbum.release_date.trim()
-          : undefined;
+          : ytCredits?.releaseDate;
     const bpmVal =
       typeof rawTrack?.bpm === 'number' && Number.isFinite(rawTrack.bpm) && rawTrack.bpm > 0
         ? Math.round(rawTrack.bpm)
         : undefined;
+
+    const sources: string[] = [];
+    if (rawTrack) sources.push('deezer');
+    if (ytCredits) sources.push('youtube');
+    if (isrc && (composers.length || lyricists.length || producers.length)) {
+      sources.push('musicbrainz');
+    }
 
     const credits: TrackCredits = {
       trackId,
@@ -1717,6 +2099,10 @@ export class DeezerCatalog {
       performers,
       writers,
       producers,
+      ...(composers.length > 0 ? { composers } : {}),
+      ...(lyricists.length > 0 ? { lyricists } : {}),
+      ...(engineers.length > 0 ? { engineers } : {}),
+      ...(ytCredits?.distributor ? { distributor: ytCredits.distributor } : {}),
       ...(labelStr ? { label: labelStr } : {}),
       source: labelStr ?? 'Catálogo pMusic',
       ...(rawTrack?.album?.title ? { albumTitle: String(rawTrack.album.title) } : {}),
@@ -1724,7 +2110,7 @@ export class DeezerCatalog {
       ...(isrc ? { isrc } : {}),
       ...(bpmVal ? { bpm: bpmVal } : {}),
       explicit: Boolean(rawTrack?.explicit_lyrics),
-      fetchedFrom: rawTrack ? (writers.length || producers.length ? 'deezer+musicbrainz' : 'deezer') : 'metadata',
+      fetchedFrom: sources.join('+') || 'metadata',
     };
 
     this.creditsCache.set(cacheKey, { at: Date.now(), credits });

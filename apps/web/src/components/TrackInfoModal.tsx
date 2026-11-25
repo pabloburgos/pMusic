@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Disc3, Info, Sparkles, Users, X } from 'lucide-react';
+import { Disc3, Info, Music2, Sparkles, Users, X } from 'lucide-react';
 import { formatDurationSec, type TrackCredits } from '@pmusic/core';
 import { usePMusicStore } from '../store/usePMusicStore.ts';
 import { ArtistLinks } from './ArtistLinks.tsx';
@@ -10,6 +10,44 @@ function averageStem(vals: readonly number[] | undefined, fallback: number): num
   for (const v of vals) sum += v;
   return sum / vals.length;
 }
+
+function sameCreditList(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  const setB = new Set(b.map((x) => x.trim().toLowerCase()));
+  return a.every((x) => setB.has(x.trim().toLowerCase()));
+}
+
+const CreditNamesBlock: React.FC<{
+  label: string;
+  names: readonly string[];
+  loading: boolean;
+  emptyText?: string;
+}> = ({ label, names, loading, emptyText = 'No especificado' }) => (
+  <div>
+    <div className="text-[11px] font-semibold uppercase tracking-wider pm-text-tertiary">
+      {label}
+    </div>
+    {loading && names.length === 0 ? (
+      <div className="mt-1.5 flex flex-wrap gap-1.5">
+        <span className="h-5 w-24 animate-pulse rounded-full bg-white/[0.08]" />
+        <span className="h-5 w-16 animate-pulse rounded-full bg-white/[0.06]" />
+      </div>
+    ) : names.length > 0 ? (
+      <div className="mt-1.5 flex flex-wrap gap-1.5">
+        {names.map((person) => (
+          <span
+            key={`${label}-${person}`}
+            className="inline-flex items-center rounded-full border pm-border bg-white/[0.06] px-2.5 py-0.5 text-[11.5px] font-medium pm-text-primary"
+          >
+            {person}
+          </span>
+        ))}
+      </div>
+    ) : (
+      <div className="mt-1 text-xs pm-text-tertiary">{emptyText}</div>
+    )}
+  </div>
+);
 
 export const TrackInfoModal: React.FC = () => {
   const track = usePMusicStore((s) => s.trackInfoModalTrack);
@@ -60,6 +98,19 @@ export const TrackInfoModal: React.FC = () => {
           name: ar.name,
           role: idx === 0 ? 'Artista principal' : 'Artista invitado',
         }));
+
+  const producers = credits?.producers ?? [];
+  const composers =
+    credits?.composers && credits.composers.length > 0
+      ? credits.composers
+      : credits?.writers ?? [];
+  const lyricists =
+    credits?.lyricists && credits.lyricists.length > 0
+      ? credits.lyricists
+      : composers;
+  const composersMatchLyricists =
+    composers.length > 0 && sameCreditList(composers, lyricists);
+  const engineers = credits?.engineers ?? [];
 
   const displayBpm = ana?.bpm ? Math.round(ana.bpm) : credits?.bpm ?? 120;
 
@@ -129,6 +180,7 @@ export const TrackInfoModal: React.FC = () => {
                     void openAlbumDetail(id, {
                       title: track.album?.name ?? credits?.albumTitle,
                       artist: track.artists[0]?.name,
+                      thumbnailUrl: track.thumbnailUrl,
                     });
                   }
                 }}
@@ -145,15 +197,15 @@ export const TrackInfoModal: React.FC = () => {
           </div>
         </div>
 
-        {/* Spotify-style Full Credits Card */}
+        {/* Rich pMusic Track Credits Card */}
         <section
           data-testid="track-credits-section"
-          className="pm-surface-card mt-5 space-y-3.5 rounded-[14px] p-4"
+          className="pm-surface-card mt-5 space-y-4 rounded-[16px] p-4"
         >
           <div className="flex items-center justify-between text-xs font-bold pm-text-primary">
             <span className="flex items-center gap-1.5">
               <Users className="h-3.5 w-3.5 pm-text-secondary" />
-              <span>Ficha artística</span>
+              <span>Ficha artística y producción</span>
             </span>
             {creditsLoading && (
               <span className="text-[11px] font-medium pm-text-tertiary">
@@ -162,7 +214,7 @@ export const TrackInfoModal: React.FC = () => {
             )}
           </div>
 
-          <div className="space-y-2 border-t pm-border pt-2.5">
+          <div className="space-y-2 border-t pm-border pt-3">
             <div className="text-[11px] font-semibold uppercase tracking-wider pm-text-tertiary">
               Interpretado por
             </div>
@@ -177,18 +229,25 @@ export const TrackInfoModal: React.FC = () => {
                       type="button"
                       onClick={() => {
                         setTrackInfoModalTrack(null);
-                        void openArtistDetail(person.id!);
+                        void openArtistDetail(person.id!, { name: person.name });
                       }}
                       className="truncate font-semibold pm-text-primary hover:underline"
                     >
                       {person.name}
                     </button>
                   ) : (
-                    <span className="truncate font-semibold pm-text-primary">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTrackInfoModalTrack(null);
+                        void openArtistDetail(person.name, { name: person.name });
+                      }}
+                      className="truncate font-semibold pm-text-primary hover:underline"
+                    >
                       {person.name}
-                    </span>
+                    </button>
                   )}
-                  <span className="shrink-0 rounded-full bg-white/[0.08] px-2 py-0.5 text-[10.5px] font-medium pm-text-secondary">
+                  <span className="shrink-0 rounded-full bg-white/[0.08] px-2.5 py-0.5 text-[10.5px] font-medium pm-text-secondary">
                     {person.role}
                   </span>
                 </div>
@@ -196,44 +255,67 @@ export const TrackInfoModal: React.FC = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 border-t pm-border pt-2.5 sm:grid-cols-2">
-            <div>
-              <div className="text-[11px] font-semibold uppercase tracking-wider pm-text-tertiary">
-                Escrito / Compuesto por
+          <div className="space-y-3 border-t pm-border pt-3">
+            <CreditNamesBlock
+              label="Producido por"
+              names={producers}
+              loading={creditsLoading}
+            />
+
+            {composersMatchLyricists ? (
+              <CreditNamesBlock
+                label="Composición y letra"
+                names={composers}
+                loading={creditsLoading}
+              />
+            ) : (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <CreditNamesBlock
+                  label="Compositores"
+                  names={composers}
+                  loading={creditsLoading}
+                />
+                <CreditNamesBlock
+                  label="Letristas"
+                  names={lyricists}
+                  loading={creditsLoading}
+                />
               </div>
-              <div className="mt-1 text-xs font-medium pm-text-primary">
-                {credits?.writers && credits.writers.length > 0
-                  ? credits.writers.join(', ')
-                  : creditsLoading
-                    ? 'Cargando…'
-                    : track.artists.map((a) => a.name).join(', ')}
-              </div>
-            </div>
-            <div>
-              <div className="text-[11px] font-semibold uppercase tracking-wider pm-text-tertiary">
-                Producido por
-              </div>
-              <div className="mt-1 text-xs font-medium pm-text-primary">
-                {credits?.producers && credits.producers.length > 0
-                  ? credits.producers.join(', ')
-                  : creditsLoading
-                    ? 'Cargando…'
-                    : credits?.label ?? 'Información no declarada'}
-              </div>
-            </div>
+            )}
+
+            {engineers.length > 0 && (
+              <CreditNamesBlock
+                label="Mezcla, masterización e ingeniería"
+                names={engineers}
+                loading={false}
+              />
+            )}
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t pm-border pt-2.5 text-[11px] pm-text-tertiary">
-            <span>
-              Fuente / Sello:{' '}
-              <strong className="font-semibold pm-text-secondary">
-                {credits?.label ?? credits?.source ?? 'Catálogo pMusic'}
-              </strong>
-            </span>
-            {credits?.isrc && (
-              <span className="tabular-nums font-medium">
-                ISRC: {credits.isrc}
+          <div className="space-y-1.5 border-t pm-border pt-3 text-[11px] pm-text-tertiary">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="flex items-center gap-1.5">
+                <Music2 className="h-3.5 w-3.5 pm-text-tertiary" />
+                <span>
+                  Sello / Fuente:{' '}
+                  <strong className="font-semibold pm-text-secondary">
+                    {credits?.label ?? credits?.source ?? 'Catálogo pMusic'}
+                  </strong>
+                </span>
               </span>
+              {credits?.isrc && (
+                <span className="tabular-nums font-medium">
+                  ISRC: {credits.isrc}
+                </span>
+              )}
+            </div>
+            {credits?.distributor && (
+              <div>
+                Distribución:{' '}
+                <strong className="font-semibold pm-text-secondary">
+                  {credits.distributor}
+                </strong>
+              </div>
             )}
           </div>
         </section>
