@@ -76,6 +76,10 @@ const CANONICAL_ARTIST_ID_REDIRECTS: Record<string, string> = {
   '10125390': '73148212',
 };
 
+const MERGED_CANONICAL_ARTIST_IDS: Record<string, readonly string[]> = {
+  '73148212': ['73148212', '10125390'],
+};
+
 export function canonicalizeArtistIdentity(
   id?: string,
   name?: string
@@ -860,6 +864,36 @@ export class DeezerCatalog {
     const rawArtistRows: Json[] = [...(artists?.data ?? [])];
     const extraDotArtists: Json[] = [];
     const extraArtistTracks: Json[] = [];
+    const aliasAlbums: Json[] = [];
+
+    // Canonical artist-alias companion search (e.g. searching Cruzzi also pulls Cruz Cafuné tracks/releases)
+    const normQueryLower = normalizeSearchStr(rawQ);
+    let aliasQuery: string | null = null;
+    if (normQueryLower.includes('cruzzi')) {
+      aliasQuery = rawQ.replace(/cruzzi/gi, 'Cruz Cafuné');
+    } else if (normQueryLower.includes('cruz cafune')) {
+      aliasQuery = rawQ.replace(/cruz\s*cafun[eé]/gi, 'Cruzzi');
+    }
+    if (aliasQuery && aliasQuery.trim().toLowerCase() !== rawQ.toLowerCase()) {
+      const aq = encodeURIComponent(aliasQuery.trim());
+      await Promise.all([
+        want('song') || want('video')
+          ? runTimedGet(`/search?q=${aq}&limit=15`, 850).then((res) => {
+              for (const t of res?.data ?? []) extraArtistTracks.push(t);
+            })
+          : Promise.resolve(),
+        want('artist')
+          ? runTimedGet(`/search/artist?q=${aq}&limit=10`, 850).then((res) => {
+              for (const row of res?.data ?? []) extraDotArtists.push(row);
+            })
+          : Promise.resolve(),
+        want('album')
+          ? runTimedGet(`/search/album?q=${aq}&limit=8`, 850).then((res) => {
+              for (const al of res?.data ?? []) aliasAlbums.push(al);
+            })
+          : Promise.resolve(),
+      ]);
+    }
 
     // Single-token search enhancement for punctuated initial artist names (e.g. "valentino" -> "D.Valentino")
     if (tokens.length === 1 && tokens[0] && tokens[0].length >= 4 && (want('artist') || want('song'))) {
@@ -881,13 +915,27 @@ export class DeezerCatalog {
       );
     }
 
-    const seenArtistIds = new Set<string>();
+    const artistByCanonicalId = new Map<string, Json>();
     const combinedRawArtists: Json[] = [];
-    for (const row of [...extraDotArtists, ...rawArtistRows]) {
-      const idStr = row?.id ? String(row.id) : '';
-      if (!idStr || seenArtistIds.has(idStr)) continue;
-      seenArtistIds.add(idStr);
-      combinedRawArtists.push(row);
+    for (const row of [...rawArtistRows, ...extraDotArtists]) {
+      const rawIdStr = row?.id ? String(row.id) : '';
+      if (!rawIdStr) continue;
+      const canonIdStr = CANONICAL_ARTIST_ID_REDIRECTS[rawIdStr] ?? rawIdStr;
+      const existing = artistByCanonicalId.get(canonIdStr);
+      if (!existing) {
+        const clone = { ...row };
+        artistByCanonicalId.set(canonIdStr, clone);
+        combinedRawArtists.push(clone);
+      } else {
+        existing.nb_fan = (Number(existing.nb_fan) || 0) + (Number(row.nb_fan) || 0);
+        if (String(row.id) === canonIdStr) {
+          existing.id = row.id;
+          existing.name = row.name;
+          if (row.picture_xl) existing.picture_xl = row.picture_xl;
+          if (row.picture_big) existing.picture_big = row.picture_big;
+          if (row.picture_medium) existing.picture_medium = row.picture_medium;
+        }
+      }
     }
 
     // Fetch top tracks for dotted/initial artist variants so their Spanish songs appear alongside global hits
@@ -906,7 +954,7 @@ export class DeezerCatalog {
       );
     }
 
-    const albumListRaw: Json[] = albums?.data ?? [];
+    const albumListRaw: Json[] = [...(albums?.data ?? []), ...aliasAlbums];
     const primaryRawSongs: Json[] = songs?.data ?? [];
     const bestPrimaryScore = primaryRawSongs.reduce((best, raw) => {
       const s = scoreTrackForQuery(this.mapTrack(raw), rawQ);
@@ -1810,23 +1858,54 @@ export class DeezerCatalog {
             )
             .catch(() => null);
 
-      const topTracksPromise = this.get(`/artist/${encodeURIComponent(resolvedId)}/top?limit=50`, signal)
-        .then(async (top) => {
-          const rawTop = top.data ?? [];
-          return this.enrichTracks(
-            rawTop,
-            rawTop.map((t: Json) => this.mapTrack(t)),
-            10,
-            signal,
-            650
-          );
-        });
+      const sourceIds = MERGED_CANONICAL_ARTIST_IDS[resolvedId] ?? [resolvedId];
+      const topTracksPromise = Promise.all(
+        sourceIds.map((sid) =>
+          this.get(`/artist/${encodeURIComponent(sid)}/top?limit=50`, signal)
+            .then((top) => (top?.data ?? []) as Json[])
+            .catch(() => [] as Json[])
+        )
+      ).then(async (rawLists) => {
+        const mergedRawTop: Json[] = [];
+        const seenTrackIds = new Set<string>();
+        const seenTitleArtist = new Set<string>();
+        for (const list of rawLists) {
+          for (const t of list) {
+            if (!t?.id) continue;
+            const mapped = this.mapTrack(t);
+            const sig = `${normalizeSearchStr(mapped.title)}::${normalizeSearchStr(mapped.artists[0]?.name ?? '')}`;
+            if (seenTrackIds.has(mapped.id) || (sig !== '::' && seenTitleArtist.has(sig))) {
+              continue;
+            }
+            seenTrackIds.add(mapped.id);
+            if (sig !== '::') seenTitleArtist.add(sig);
+            mergedRawTop.push(t);
+            if (mergedRawTop.length >= 50) break;
+          }
+          if (mergedRawTop.length >= 50) break;
+        }
+        return this.enrichTracks(
+          mergedRawTop,
+          mergedRawTop.map((t: Json) => this.mapTrack(t)),
+          10,
+          signal,
+          650
+        );
+      });
 
-      const [a, topSongs, albumsRes, related, ytmVisuals] =
+      const albumsPromise = Promise.all(
+        sourceIds.map((sid) =>
+          this.get(`/artist/${encodeURIComponent(sid)}/albums?limit=60`, signal)
+            .then((res) => (Array.isArray(res?.data) ? (res.data as Json[]) : []))
+            .catch(() => [] as Json[])
+        )
+      ).then((lists) => lists.flat());
+
+      const [a, topSongs, mergedRawReleases, related, ytmVisuals] =
         await Promise.all([
           artistPromise,
           topTracksPromise,
-          this.get(`/artist/${encodeURIComponent(resolvedId)}/albums?limit=60`, signal),
+          albumsPromise,
           this.get(`/artist/${encodeURIComponent(resolvedId)}/related?limit=10`, signal),
           ytmVisualsPromise,
         ]);
@@ -1840,7 +1919,7 @@ export class DeezerCatalog {
         subscribersText: ytmVisuals?.listenersText || baseArtist.subscribersText,
       };
 
-      const rawReleases = Array.isArray(albumsRes?.data) ? (albumsRes.data as Json[]) : [];
+      const rawReleases = mergedRawReleases;
       const ytmAlbumSet = new Set(ytmVisuals?.ytmAlbumTitles ?? []);
       const ytmSingleSet = new Set(ytmVisuals?.ytmSingleOrEpTitles ?? []);
       const ytmAllSet = new Set<string>([...ytmAlbumSet, ...ytmSingleSet]);

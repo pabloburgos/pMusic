@@ -3255,16 +3255,22 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   setSpotlightOpen: (open) => set({ spotlightOpen: open }),
 
   openArtistDetail: async (artistId, hint) => {
-    const cleanId = artistId.trim();
+    const canonHint = canonicalizeArtistRefName(artistId, hint?.name ?? '');
+    const rawTrim = artistId.trim();
+    const cleanId =
+      canonHint.id && (rawTrim === '10125390' || !/^\d+$/.test(rawTrim) || canonHint.name === 'Cruzzi')
+        ? canonHint.id
+        : rawTrim;
+    const effectiveHintName = canonHint.name || hint?.name;
     const normKey = `artist:${cleanId.toLowerCase()}`;
-    const nameKey = hint?.name ? `artist:${hint.name.trim().toLowerCase()}` : null;
+    const nameKey = effectiveHintName ? `artist:${effectiveHintName.trim().toLowerCase()}` : null;
     const cached =
       readClientCache(artistClientCache, normKey) ??
       (nameKey ? readClientCache(artistClientCache, nameKey) : null);
 
     const prev = get().activeDetailView;
     const seq = ++detailRequestSeq;
-    const transitionKey = cleanId || hint?.name || 'artist';
+    const transitionKey = cleanId || effectiveHintName || 'artist';
 
     if (cached) {
       set((s) => ({
@@ -3280,7 +3286,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }
 
     const displayName =
-      hint?.name?.trim() ||
+      effectiveHintName?.trim() ||
       (!/^\d+$/.test(cleanId) && !cleanId.startsWith('UC') ? cleanId : 'Cargando artista…');
     const optimisticData: ArtistDetail = {
       artist: {
@@ -3311,13 +3317,20 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }));
 
     const data = await musicProvider.getArtist(
-      artistId,
+      cleanId,
       undefined,
-      hint?.name ? { name: hint.name } : undefined
+      effectiveHintName ? { name: effectiveHintName } : undefined
     );
-    writeClientCache(artistClientCache, normKey, data);
-    writeClientCache(artistClientCache, `artist:${data.artist.id.toLowerCase()}`, data);
-    writeClientCache(artistClientCache, `artist:${data.artist.name.trim().toLowerCase()}`, data);
+    const isFallbackStub =
+      Boolean(data.description?.includes('Escena urbana y tendencias en pMusic')) ||
+      (data.topSongs.length > 0 &&
+        data.topSongs.length <= 5 &&
+        data.topSongs.every((t) => !t.id.startsWith('dz:')));
+    if (!isFallbackStub) {
+      writeClientCache(artistClientCache, normKey, data);
+      writeClientCache(artistClientCache, `artist:${data.artist.id.toLowerCase()}`, data);
+      writeClientCache(artistClientCache, `artist:${data.artist.name.trim().toLowerCase()}`, data);
+    }
 
     if (seq !== detailRequestSeq) return;
     set((s) => {
@@ -3457,7 +3470,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   closeTrackMenu: () => set({ trackMenu: null }),
 
-  playTrack: async (track, newQueue, startSec, direction = 'next') => {
+  playTrack: async (rawTrack, newQueue, startSec, direction = 'next') => {
+    const track = canonicalizeTrackArtists(rawTrack);
     ensureAudioEngineBindings();
     if (seekAutoTriggerTimer) {
       clearTimeout(seekAutoTriggerTimer);
@@ -3475,7 +3489,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           false
         );
       }
-      const rawQueue = newQueue && newQueue.length > 0 ? [...newQueue] : st.queue;
+      const rawQueue =
+        newQueue && newQueue.length > 0
+          ? newQueue.map(canonicalizeTrackArtists)
+          : st.queue.map(canonicalizeTrackArtists);
       const hasNewQueue = Boolean(newQueue && newQueue.length > 0);
       let queue = [...rawQueue];
       let unshuffledQueue = hasNewQueue ? [...rawQueue] : st.unshuffledQueue;
@@ -3930,7 +3947,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     st.showToast('Cola limpiada');
   },
 
-  addToQueue: (track) => {
+  addToQueue: (rawTrack) => {
+    const track = canonicalizeTrackArtists(rawTrack);
     const st = get();
     if (st.queue.some((t) => t.id === track.id)) {
       const idx = st.queue.findIndex((t) => t.id === track.id);

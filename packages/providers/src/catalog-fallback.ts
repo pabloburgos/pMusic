@@ -380,9 +380,15 @@ export function getFallbackHomeFeed(): HomeFeedResult {
 }
 
 export function getFallbackArtistDetail(artistId: string): ArtistDetail {
+  const normId = normalizeSearchText(artistId);
+  const canonicalId =
+    artistId === '10125390' || normId === 'cruz cafune' || normId === 'cruzzi'
+      ? '73148212'
+      : artistId;
   const artist =
-    FALLBACK_ARTISTS.find((a) => a.id === artistId || normalizeSearchText(a.name) === normalizeSearchText(artistId)) ??
-    FALLBACK_ARTISTS[0]!;
+    FALLBACK_ARTISTS.find(
+      (a) => a.id === canonicalId || normalizeSearchText(a.name) === normalizeSearchText(canonicalId)
+    ) ?? FALLBACK_ARTISTS[0]!;
   const topSongs = FALLBACK_TRACKS.filter((t) =>
     t.artists.some((a) => a.id === artist.id || normalizeSearchText(a.name) === normalizeSearchText(artist.name))
   );
@@ -391,8 +397,10 @@ export function getFallbackArtistDetail(artistId: string): ArtistDetail {
     bannerUrl: artist.thumbnailUrl,
     description: `${artist.name} — Escena urbana y tendencias en pMusic.`,
     topSongs: topSongs.length > 0 ? topSongs : FALLBACK_TRACKS.slice(0, 5),
-    albums: FALLBACK_ALBUMS.filter((al) => al.artists.some((a) => a.name === artist.name)),
-    singles: FALLBACK_ALBUMS.slice(0, 2),
+    albums: FALLBACK_ALBUMS.filter((al) =>
+      al.artists.some((a) => a.id === artist.id || normalizeSearchText(a.name) === normalizeSearchText(artist.name))
+    ),
+    singles: [],
     relatedArtists: FALLBACK_ARTISTS.filter((a) => a.id !== artist.id).slice(0, 5),
   };
 }

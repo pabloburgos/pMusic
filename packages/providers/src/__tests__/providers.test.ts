@@ -8,6 +8,7 @@ import {
   YouTubeMusicProvider,
   canonicalizeArtistIdentity,
   createPMusicApiHandler,
+  getFallbackArtistDetail,
   isAuthenticLyricsText,
   parseFeaturedArtistsFromTitle,
   parseSpotifyEmbedHtml,
@@ -1279,7 +1280,73 @@ describe('@pmusic/providers', () => {
           { status: 200, headers: { 'content-type': 'application/json' } }
         );
       }
-      if (u.includes('/artist/73148212/')) {
+      if (u.includes('/artist/73148212/top')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 2288414347,
+                title: 'Folelé',
+                duration: 228,
+                artist: { id: 73148212, name: 'Cruzzi' },
+                album: { id: 442746907, title: 'Me Muevo Con Dios', cover_big: 'https://dz/mmd.jpg' },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('/artist/10125390/top')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 3320658521,
+                title: 'DEVIL JIN',
+                duration: 195,
+                artist: { id: 10125390, name: 'Cruz Cafuné' },
+                album: { id: 741049531, title: 'DEVIL JIN', cover_big: 'https://dz/dj.jpg' },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('/artist/73148212/albums')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 442746907,
+                title: 'Me Muevo Con Dios',
+                record_type: 'album',
+                release_date: '2023-05-25',
+                fans: 5000,
+                cover_big: 'https://dz/mmd.jpg',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('/artist/10125390/albums')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 741049531,
+                title: 'DEVIL JIN',
+                record_type: 'single',
+                release_date: '2025-04-22',
+                fans: 2000,
+                cover_big: 'https://dz/dj.jpg',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('/artist/73148212/') || u.includes('/artist/10125390/')) {
         return new Response(JSON.stringify({ data: [] }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
@@ -1380,6 +1447,14 @@ describe('@pmusic/providers', () => {
     expect(detail.bannerUrl).toBe(
       'https://yt3.googleusercontent.com/cruzzi_real=w1440-h600-p-l90-rj'
     );
+    expect(detail.topSongs.map((t) => t.title)).toEqual(['Folelé', 'DEVIL JIN']);
+    expect(detail.topSongs[1]?.artists[0]).toEqual({ id: '73148212', name: 'Cruzzi' });
+    expect(detail.albums.map((a) => a.title)).toContain('Me Muevo Con Dios');
+    expect((detail.singles ?? []).map((s) => s.title)).toContain('DEVIL JIN');
+
+    const fb = getFallbackArtistDetail('73148212');
+    expect(fb.artist.name).toBe('Cruzzi');
+    expect(fb.singles ?? []).toEqual([]);
   });
 
   it('resolves Wikidata P1902 Spotify oEmbed HD portraits with homonym guard and Apple Music fallback helpers', async () => {

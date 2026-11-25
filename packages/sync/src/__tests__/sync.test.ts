@@ -222,8 +222,15 @@ describe('@pmusic/sync', () => {
     expect(store.outbox.getPending()).toHaveLength(0);
 
     // Creating a playlist on Account B and signing out clears Account B data cleanly
-    await store.createPlaylist({ name: 'Playlist Cuenta B', tracks: [] });
-    expect(store.getPlaylists()).toHaveLength(1);
+    await store.createPlaylist({ name: 'Playlist Cuenta B', tracks: [SAMPLE_TRACK] });
+    const canonPl = store.getPlaylists()[0];
+    expect(canonPl?.tracks[0]?.artists[0]).toEqual({ id: '73148212', name: 'Cruzzi' });
+    await store.toggleLikeTrack(SAMPLE_TRACK);
+    expect(store.getLikedTracks()[0]?.track.artists[0]).toEqual({
+      id: '73148212',
+      name: 'Cruzzi',
+    });
+
     await engine.signOut();
     expect(store.getOwnerUserId()).toBeNull();
     expect(store.getPlaylists()).toHaveLength(0);

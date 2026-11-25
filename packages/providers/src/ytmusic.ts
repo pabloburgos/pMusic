@@ -513,10 +513,19 @@ export class HttpProxyMusicProvider implements IMusicProvider {
       return mobileDirect.getArtist(artistId, signal, hint);
     }
     const qs = hint?.name?.trim() ? `?name=${encodeURIComponent(hint.name.trim())}` : '';
-    const remote = await this.fetchApiJson<ArtistDetail>(
+    let remote = await this.fetchApiJson<ArtistDetail>(
       `/api/artist/${encodeURIComponent(artistId)}${qs}`,
       signal
     );
+    if ((!remote || !remote.artist) && !signal?.aborted) {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      if (!signal?.aborted) {
+        remote = await this.fetchApiJson<ArtistDetail>(
+          `/api/artist/${encodeURIComponent(artistId)}${qs}`,
+          signal
+        );
+      }
+    }
     if (remote && remote.artist) {
       return remote;
     }

@@ -41,6 +41,41 @@ function normalizeTrackDuplicateKey(t: Track): string {
   return `${title}::${artist}`;
 }
 
+function canonicalizeArtistRef(ref: { id?: string; name: string }): { id?: string; name: string } {
+  const norm = (ref.name ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+  if (norm === 'cruz cafune' || norm === 'cruzzi' || ref.id === '10125390') {
+    return { id: '73148212', name: 'Cruzzi' };
+  }
+  return ref;
+}
+
+export function canonicalizeStoredTrack(track: Track): Track {
+  if (!track || !Array.isArray(track.artists)) return track;
+  let changed = false;
+  const nextArtists = track.artists.map((ar) => {
+    const canon = canonicalizeArtistRef(ar);
+    if (canon.name !== ar.name || canon.id !== ar.id) changed = true;
+    return canon;
+  });
+  return changed ? { ...track, artists: nextArtists } : track;
+}
+
+function canonicalizeStoredAffinity(rec: ArtistAffinityRecord): ArtistAffinityRecord {
+  const canon = canonicalizeArtistRef({ id: rec.artistId, name: rec.artistName });
+  if (canon.name === rec.artistName && (canon.id ?? rec.artistId) === rec.artistId) {
+    return rec;
+  }
+  return {
+    ...rec,
+    artistId: canon.id ?? rec.artistId,
+    artistName: canon.name,
+  };
+}
+
 export function mergePlaylistTracksUnique(
   primary: readonly Track[],
   secondary: readonly Track[]
@@ -196,11 +231,22 @@ export class LibraryStore {
     ]);
 
     this.ownerUserId = rawOwner && rawOwner.trim().length > 0 ? rawOwner.trim() : null;
-    this.playlists = this.safeParseArray<PlaylistRecord>(rawPlaylists);
+    this.playlists = this.safeParseArray<PlaylistRecord>(rawPlaylists).map((pl) => ({
+      ...pl,
+      tracks: (pl.tracks ?? []).map(canonicalizeStoredTrack),
+    }));
     await this.deduplicatePlaylists();
-    this.likedTracks = this.safeParseArray<LikedTrackRecord>(rawLiked);
-    this.playHistory = this.safeParseArray<PlayHistoryRecord>(rawHistory);
-    this.affinities = this.safeParseArray<ArtistAffinityRecord>(rawAffinity);
+    this.likedTracks = this.safeParseArray<LikedTrackRecord>(rawLiked).map((rec) => ({
+      ...rec,
+      track: canonicalizeStoredTrack(rec.track),
+    }));
+    this.playHistory = this.safeParseArray<PlayHistoryRecord>(rawHistory).map((rec) => ({
+      ...rec,
+      track: canonicalizeStoredTrack(rec.track),
+    }));
+    this.affinities = this.safeParseArray<ArtistAffinityRecord>(rawAffinity).map(
+      canonicalizeStoredAffinity
+    );
     if (rawSession) {
       try {
         this.deviceSession = JSON.parse(rawSession) as DeviceSessionRecord;
@@ -303,7 +349,10 @@ export class LibraryStore {
   }
 
   public getPlaylists(): PlaylistRecord[] {
-    return [...this.playlists];
+    return this.playlists.map((pl) => ({
+      ...pl,
+      tracks: (pl.tracks ?? []).map(canonicalizeStoredTrack),
+    }));
   }
 
   public async ensureUuidPlaylistIds(): Promise<boolean> {
@@ -349,7 +398,7 @@ export class LibraryStore {
         existing?.coverUrl,
       source: remote.source ?? existing?.source ?? 'local',
       sourceUrl: remote.sourceUrl ?? existing?.sourceUrl,
-      tracks: [...remote.tracks],
+      tracks: remote.tracks.map(canonicalizeStoredTrack),
       createdAt: remote.createdAt ?? existing?.createdAt ?? nowIso,
       updatedAt: remote.updatedAt ?? existing?.updatedAt ?? nowIso,
     };
@@ -366,7 +415,11 @@ export class LibraryStore {
 
   public async upsertRemoteLikedTrack(rec: LikedTrackRecord): Promise<void> {
     if (this.isTrackLiked(rec.trackId)) return;
-    this.likedTracks = [rec, ...this.likedTracks];
+    const normalized: LikedTrackRecord = {
+      ...rec,
+      track: canonicalizeStoredTrack(rec.track),
+    };
+    this.likedTracks = [normalized, ...this.likedTracks];
     await this.storage.setItem(STORAGE_KEYS.liked, JSON.stringify(this.likedTracks));
     this.emitTableChanged('liked_tracks');
   }
@@ -387,7 +440,7 @@ export class LibraryStore {
       coverUrl: input.coverUrl ?? input.tracks?.[0]?.thumbnailUrl,
       source: input.source ?? 'local',
       sourceUrl: input.sourceUrl,
-      tracks: input.tracks ? [...input.tracks] : [],
+      tracks: input.tracks ? input.tracks.map(canonicalizeStoredTrack) : [],
       createdAt: nowIso,
       updatedAt: nowIso,
     };
@@ -411,7 +464,7 @@ export class LibraryStore {
       ...(patch.name !== undefined ? { name: patch.name.trim() || current.name } : {}),
       ...(patch.description !== undefined ? { description: patch.description } : {}),
       ...(patch.coverUrl !== undefined ? { coverUrl: patch.coverUrl } : {}),
-      ...(patch.tracks !== undefined ? { tracks: [...patch.tracks] } : {}),
+      ...(patch.tracks !== undefined ? { tracks: patch.tracks.map(canonicalizeStoredTrack) } : {}),
       updatedAt: new Date().toISOString(),
     };
     this.playlists[idx] = updated;
@@ -476,7 +529,10 @@ export class LibraryStore {
   }
 
   public getLikedTracks(): LikedTrackRecord[] {
-    return [...this.likedTracks];
+    return this.likedTracks.map((rec) => ({
+      ...rec,
+      track: canonicalizeStoredTrack(rec.track),
+    }));
   }
 
   public isTrackLiked(trackId: string): boolean {
@@ -484,17 +540,18 @@ export class LibraryStore {
   }
 
   public async toggleLikeTrack(track: Track): Promise<boolean> {
-    const exists = this.isTrackLiked(track.id);
+    const cleanTrack = canonicalizeStoredTrack(track);
+    const exists = this.isTrackLiked(cleanTrack.id);
     if (exists) {
-      this.likedTracks = this.likedTracks.filter((l) => l.trackId !== track.id);
+      this.likedTracks = this.likedTracks.filter((l) => l.trackId !== cleanTrack.id);
       await this.storage.setItem(STORAGE_KEYS.liked, JSON.stringify(this.likedTracks));
-      await this.outbox.enqueue('liked_tracks', 'delete', { trackId: track.id });
+      await this.outbox.enqueue('liked_tracks', 'delete', { trackId: cleanTrack.id });
       this.emitTableChanged('liked_tracks');
       return false;
     } else {
       const rec: LikedTrackRecord = {
-        trackId: track.id,
-        track,
+        trackId: cleanTrack.id,
+        track: cleanTrack,
         likedAt: new Date().toISOString(),
       };
       this.likedTracks = [rec, ...this.likedTracks];
@@ -506,11 +563,17 @@ export class LibraryStore {
   }
 
   public getPlayHistory(): PlayHistoryRecord[] {
-    return [...this.playHistory];
+    return this.playHistory.map((rec) => ({
+      ...rec,
+      track: canonicalizeStoredTrack(rec.track),
+    }));
   }
 
   public async setPlayHistory(records: PlayHistoryRecord[]): Promise<void> {
-    this.playHistory = [...records].slice(0, 200);
+    this.playHistory = records.slice(0, 200).map((rec) => ({
+      ...rec,
+      track: canonicalizeStoredTrack(rec.track),
+    }));
     await this.storage.setItem(STORAGE_KEYS.history, JSON.stringify(this.playHistory));
   }
 
@@ -519,7 +582,7 @@ export class LibraryStore {
   }
 
   public async setAffinities(records: ArtistAffinityRecord[]): Promise<void> {
-    this.affinities = [...records];
+    this.affinities = records.map(canonicalizeStoredAffinity);
     await this.storage.setItem(STORAGE_KEYS.affinity, JSON.stringify(this.affinities));
     await this.outbox.enqueue('artist_affinity', 'upsert', this.affinities);
     this.emitTableChanged('artist_affinity');
