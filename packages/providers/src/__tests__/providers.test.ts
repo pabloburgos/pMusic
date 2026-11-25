@@ -1375,14 +1375,14 @@ describe('@pmusic/providers', () => {
     expect(detail.artist.name).toBe('Cruzzi');
     expect(detail.artist.subscribersText).toBe('1,07 M usuarios mensuales');
     expect(detail.artist.thumbnailUrl).toBe(
-      'https://i.scdn.co/image/ab6761610000e5eb9f52199eefb0ccb6f69afe2c'
+      'https://yt3.googleusercontent.com/cruzzi_real=w1440-h600-p-l90-rj'
     );
     expect(detail.bannerUrl).toBe(
-      'https://i.scdn.co/image/ab6761610000e5eb9f52199eefb0ccb6f69afe2c'
+      'https://yt3.googleusercontent.com/cruzzi_real=w1440-h600-p-l90-rj'
     );
   });
 
-  it('resolves Wikidata P1902 Spotify oEmbed HD portraits with homonym guard, Apple Music fallback on 404, and enriches search()', async () => {
+  it('resolves Wikidata P1902 Spotify oEmbed HD portraits with homonym guard and Apple Music fallback helpers', async () => {
     const mockFetch = (async (input: RequestInfo | URL) => {
       const u = String(input);
       if (u.includes('wikidata.org/w/api.php') && u.includes('action=wbsearchentities')) {
@@ -1452,9 +1452,7 @@ describe('@pmusic/providers', () => {
     expect(spPortrait).toBe('https://i.scdn.co/image/ab6761610000e5eb0445559a074ca4ac92c4434f');
 
     const bundle = await catalog.search('La Pantera', 'artist');
-    expect(bundle.artists[0]?.thumbnailUrl).toBe(
-      'https://i.scdn.co/image/ab6761610000e5eb0445559a074ca4ac92c4434f'
-    );
+    expect(bundle.artists[0]?.thumbnailUrl).toBe('https://dz/old.jpg');
 
     const appleVisuals = await catalog.fetchAppleMusicArtistVisuals('JC Reyes');
     expect(appleVisuals).toEqual({

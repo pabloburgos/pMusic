@@ -780,18 +780,12 @@ export class DeezerCatalog {
         }
       }
       const songs = await this.enrichTracks(rawUnique, songsInit, 12, signal);
-      const enrichedArtists = await this.enrichArtistListWithPreferredPortraits(
-        (artists.data ?? []).map((a: Json) => this.mapArtist(a)),
-        4,
-        850,
-        signal
-      );
       return {
         query,
         topResult: songs[0] ? { kind: 'song', item: songs[0] } : undefined,
         songs,
         videos: songs.slice(0, 4),
-        artists: enrichedArtists,
+        artists: (artists.data ?? []).map((a: Json) => this.mapArtist(a)),
         albums: (albums.data ?? []).map((a: Json) => this.mapAlbum(a)),
         playlists: (playlists.data ?? []).map((p: Json) => this.mapPlaylist(p)),
       };
@@ -812,12 +806,7 @@ export class DeezerCatalog {
         12,
         signal
       );
-      const artistList = await this.enrichArtistListWithPreferredPortraits(
-        (artists.data ?? []).map((a: Json) => this.mapArtist(a)),
-        4,
-        850,
-        signal
-      );
+      const artistList = (artists.data ?? []).map((a: Json) => this.mapArtist(a));
       return {
         query,
         topResult: songs[0]
@@ -1047,15 +1036,8 @@ export class DeezerCatalog {
       .sort((a: { score: number; idx: number }, b: { score: number; idx: number }) => b.score - a.score || a.idx - b.idx)
       .map((x: { album: AlbumSummary }) => x.album);
 
-    const rawArtistScore = artistList[0];
-    const enrichedArtistList = await this.enrichArtistListWithPreferredPortraits(
-      artistList,
-      3,
-      900,
-      signal
-    );
     const topSong = songList[0];
-    const topArtist = enrichedArtistList[0] ?? rawArtistScore;
+    const topArtist = artistList[0];
     const topAlbum = albumList[0];
 
     const normQ = normalizeSearchStr(rawQ);
@@ -1098,7 +1080,7 @@ export class DeezerCatalog {
       topResult,
       songs: songList,
       videos: songList.slice(0, 4),
-      artists: enrichedArtistList,
+      artists: artistList,
       albums: albumList,
       playlists: (playlists?.data ?? []).map((p: Json) => this.mapPlaylist(p)),
     };
@@ -1125,25 +1107,17 @@ export class DeezerCatalog {
       this.get('/chart/0/playlists?limit=10', signal),
     ]);
     const rawChartTracks = chartTracks.data ?? [];
-    const [enrichedChartTracks, homeArtists] = await Promise.all([
-      this.enrichTracks(
-        rawChartTracks,
-        rawChartTracks.map((t: Json) => this.mapTrack(t)),
-        10,
-        signal
-      ),
-      this.enrichArtistListWithPreferredPortraits(
-        (chartArtists.data ?? []).map((a: Json) => this.mapArtist(a)),
-        4,
-        850,
-        signal
-      ),
-    ]);
+    const enrichedChartTracks = await this.enrichTracks(
+      rawChartTracks,
+      rawChartTracks.map((t: Json) => this.mapTrack(t)),
+      10,
+      signal
+    );
     return {
       moods: ['Para ti', 'Tendencias', 'Reggaeton', 'Pop', 'Hip-Hop', 'Electrónica'],
       shelves: [
         { title: 'Éxitos del momento', items: enrichedChartTracks },
-        { title: 'Artistas del momento', items: homeArtists },
+        { title: 'Artistas del momento', items: (chartArtists.data ?? []).map((a: Json) => this.mapArtist(a)) },
         { title: 'Álbumes populares', items: (chartAlbums.data ?? []).map((a: Json) => this.mapAlbum(a)) },
         { title: 'Listas para descubrir', items: (chartPlaylists.data ?? []).map((p: Json) => this.mapPlaylist(p)) },
       ],
@@ -1836,33 +1810,6 @@ export class DeezerCatalog {
             )
             .catch(() => null);
 
-      const spotifyAvatarPromise = canonHint
-        ? this.fetchSpotifyArtistAvatar(canonHint, signal, { allowMusicBrainz: true }).catch(() => null)
-        : artistPromise
-            .then((a) =>
-              a?.name
-                ? this.fetchSpotifyArtistAvatar(
-                    canonicalizeArtistIdentity(resolvedId, String(a.name)).name,
-                    signal,
-                    { allowMusicBrainz: true }
-                  )
-                : null
-            )
-            .catch(() => null);
-
-      const appleVisualsPromise = canonHint
-        ? this.fetchAppleMusicArtistVisuals(canonHint, signal).catch(() => null)
-        : artistPromise
-            .then((a) =>
-              a?.name
-                ? this.fetchAppleMusicArtistVisuals(
-                    canonicalizeArtistIdentity(resolvedId, String(a.name)).name,
-                    signal
-                  )
-                : null
-            )
-            .catch(() => null);
-
       const topTracksPromise = this.get(`/artist/${encodeURIComponent(resolvedId)}/top?limit=50`, signal)
         .then(async (top) => {
           const rawTop = top.data ?? [];
@@ -1875,26 +1822,19 @@ export class DeezerCatalog {
           );
         });
 
-      const [a, topSongs, albumsRes, related, ytmVisuals, spotifyAvatar, appleVisuals] =
+      const [a, topSongs, albumsRes, related, ytmVisuals] =
         await Promise.all([
           artistPromise,
           topTracksPromise,
           this.get(`/artist/${encodeURIComponent(resolvedId)}/albums?limit=60`, signal),
           this.get(`/artist/${encodeURIComponent(resolvedId)}/related?limit=10`, signal),
           ytmVisualsPromise,
-          spotifyAvatarPromise,
-          appleVisualsPromise,
         ]);
 
       const baseArtist = this.mapArtist(a);
-      const cleanSpotifyAvatar = sanitizeArtistImageUrl(spotifyAvatar);
-      const cleanAppleAvatar = sanitizeArtistImageUrl(appleVisuals?.avatarUrl);
-      const cleanAppleBanner = sanitizeArtistImageUrl(appleVisuals?.bannerUrl);
       const artist: ArtistSummary = {
         ...baseArtist,
         thumbnailUrl:
-          cleanSpotifyAvatar ||
-          cleanAppleAvatar ||
           sanitizeArtistImageUrl(ytmVisuals?.avatarUrl) ||
           baseArtist.thumbnailUrl,
         subscribersText: ytmVisuals?.listenersText || baseArtist.subscribersText,
@@ -1980,19 +1920,10 @@ export class DeezerCatalog {
       ).map((al) => this.mapAlbum(al, a));
 
       const sanitizedBanner =
-        cleanSpotifyAvatar ||
-        cleanAppleBanner ||
         sanitizeArtistImageUrl(ytmVisuals?.bannerUrl) ||
         sanitizeArtistImageUrl(ytmVisuals?.avatarUrl) ||
         sanitizeArtistImageUrl(a.picture_xl) ||
         artist.thumbnailUrl;
-
-      const relatedArtists = await this.enrichArtistListWithPreferredPortraits(
-        (related.data ?? []).map((r: Json) => this.mapArtist(r)),
-        4,
-        850,
-        signal
-      );
 
       const detail = {
         artist,
@@ -2001,7 +1932,7 @@ export class DeezerCatalog {
         topSongs,
         albums: albumsList,
         singles: singlesList,
-        relatedArtists,
+        relatedArtists: (related.data ?? []).map((r: Json) => this.mapArtist(r)),
       } as ArtistDetail;
       this.artistDetailCache.set(resolvedId, { at: Date.now(), detail });
       if (this.artistDetailCache.size > 24) {
