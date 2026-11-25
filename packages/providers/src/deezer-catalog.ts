@@ -10,6 +10,8 @@ import type {
   SearchFilter,
   SearchResultBundle,
   Track,
+  TrackCreditPerson,
+  TrackCredits,
 } from '@pmusic/core';
 
 /**
@@ -318,6 +320,7 @@ export class DeezerCatalog {
     }
   >();
   private readonly artistDetailCache = new Map<string, { at: number; detail: ArtistDetail }>();
+  private readonly creditsCache = new Map<string, { at: number; credits: TrackCredits }>();
 
   public constructor(fetchFn?: typeof fetch) {
     this.fetchFn = fetchFn ?? globalThis.fetch.bind(globalThis);
@@ -1542,6 +1545,193 @@ export class DeezerCatalog {
     } catch {
       return null;
     }
+  }
+
+  /** Fetches rich song credits (performers with roles, writers, producers, label, ISRC, release date). */
+  public async trackCredits(
+    trackId: string,
+    hint?: { title?: string; artist?: string },
+    signal?: AbortSignal
+  ): Promise<TrackCredits | null> {
+    const cacheKey = `${trackId}::${hint?.title ?? ''}::${hint?.artist ?? ''}`;
+    const hit = this.creditsCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < 30 * 60_000) return hit.credits;
+
+    let rawTrack: Json | null = null;
+    try {
+      if (isDeezerTrackId(trackId) || /^\d+$/.test(trackId)) {
+        rawTrack = await this.get(
+          `/track/${encodeURIComponent(trackId.replace(DZ_PREFIX, ''))}`,
+          signal
+        );
+      } else if (hint?.title) {
+        const q = `${hint.title} ${hint.artist ?? ''}`.trim();
+        const sr = await this.get(`/search/track?q=${encodeURIComponent(q)}&limit=5`, signal);
+        const list = Array.isArray(sr?.data) ? (sr.data as Json[]) : [];
+        const normReqTitle = normalizeSearchStr(hint.title);
+        const best =
+          list.find((item) => normalizeSearchStr(String(item?.title ?? '')) === normReqTitle) ??
+          list[0];
+        if (best?.id) {
+          rawTrack = await this.get(`/track/${encodeURIComponent(String(best.id))}`, signal);
+        }
+      }
+    } catch {
+      rawTrack = null;
+    }
+
+    if (!rawTrack && !hint?.title) return null;
+
+    let rawAlbum: Json | null = null;
+    if (rawTrack?.album?.id) {
+      rawAlbum = await this.get(
+        `/album/${encodeURIComponent(String(rawTrack.album.id))}`,
+        signal
+      ).catch(() => null);
+    }
+
+    const performers: TrackCreditPerson[] = [];
+    const seenPerformers = new Set<string>();
+    const pushPerformer = (nameVal: unknown, roleVal: unknown, idVal?: unknown) => {
+      const name = typeof nameVal === 'string' ? nameVal.trim() : '';
+      if (!name) return;
+      const key = normalizeSearchStr(name);
+      if (!key || seenPerformers.has(key)) return;
+      seenPerformers.add(key);
+      const rawRole = typeof roleVal === 'string' ? roleVal.trim() : '';
+      const role =
+        !rawRole || /^main$/i.test(rawRole)
+          ? 'Artista principal'
+          : /^featured?$/i.test(rawRole)
+            ? 'Artista invitado'
+            : rawRole;
+      const id =
+        idVal !== undefined && idVal !== null && String(idVal).trim()
+          ? String(idVal).trim()
+          : undefined;
+      performers.push({ name, role, ...(id ? { id } : {}) });
+    };
+
+    if (rawTrack?.artist) {
+      pushPerformer(rawTrack.artist.name, 'Artista principal', rawTrack.artist.id);
+    }
+    if (Array.isArray(rawTrack?.contributors)) {
+      for (const c of rawTrack.contributors) {
+        if (c) pushPerformer(c.name, c.role, c.id);
+      }
+    }
+    const titleStr = String(rawTrack?.title ?? hint?.title ?? 'Pista');
+    for (const feat of parseFeaturedArtistsFromTitle(titleStr)) {
+      pushPerformer(feat, 'Artista invitado');
+    }
+    if (performers.length === 0 && hint?.artist) {
+      for (const part of hint.artist.split(/\s*(?:,|&)\s*/)) {
+        if (part.trim()) pushPerformer(part.trim(), 'Artista principal');
+      }
+    }
+
+    const writers: string[] = [];
+    const producers: string[] = [];
+    const seenWriters = new Set<string>();
+    const seenProducers = new Set<string>();
+    const pushUnique = (list: string[], seen: Set<string>, nameVal: string) => {
+      const clean = nameVal.trim();
+      if (!clean) return;
+      const k = normalizeSearchStr(clean);
+      if (!k || seen.has(k)) return;
+      seen.add(k);
+      list.push(clean);
+    };
+
+    const isrc = typeof rawTrack?.isrc === 'string' && rawTrack.isrc.trim() ? rawTrack.isrc.trim() : undefined;
+
+    // Optional MusicBrainz lookup by ISRC for composer / lyricist / producer credits
+    if (isrc) {
+      const mbCtrl = new AbortController();
+      const mbTimer = setTimeout(() => mbCtrl.abort(), 2400);
+      try {
+        const mbHeaders = {
+          Accept: 'application/json',
+          'User-Agent': 'pMusic/0.18.2 (https://pmusic.app)',
+        };
+        const searchRes = await this.fetchFn(
+          `https://musicbrainz.org/ws/2/recording?query=isrc:${encodeURIComponent(isrc)}&fmt=json`,
+          { headers: mbHeaders, signal: mbCtrl.signal }
+        );
+        if (searchRes.ok) {
+          const mbJson = (await searchRes.json()) as { recordings?: Array<{ id?: string }> };
+          const recId = mbJson?.recordings?.[0]?.id;
+          if (recId) {
+            const relRes = await this.fetchFn(
+              `https://musicbrainz.org/ws/2/recording/${encodeURIComponent(recId)}?inc=artist-rels+work-rels+work-level-rels&fmt=json`,
+              { headers: mbHeaders, signal: mbCtrl.signal }
+            );
+            if (relRes.ok) {
+              const relData = (await relRes.json()) as { relations?: Array<Record<string, any>> };
+              const visitRelations = (rels: Array<Record<string, any>> | undefined) => {
+                if (!Array.isArray(rels)) return;
+                for (const rel of rels) {
+                  const type = String(rel?.type ?? '').toLowerCase();
+                  const arName = String(rel?.artist?.name ?? '').trim();
+                  if (arName) {
+                    if (/composer|lyricist|writer|author|arranger/.test(type)) {
+                      pushUnique(writers, seenWriters, arName);
+                    } else if (/producer|mix|mastering|engineer|programming|recording/.test(type)) {
+                      pushUnique(producers, seenProducers, arName);
+                    }
+                  }
+                  if (Array.isArray(rel?.work?.relations)) {
+                    visitRelations(rel.work.relations);
+                  }
+                }
+              };
+              visitRelations(relData.relations);
+            }
+          }
+        }
+      } catch {
+        // MusicBrainz is best-effort only; never fail credits endpoint
+      } finally {
+        clearTimeout(mbTimer);
+      }
+    }
+
+    const labelStr =
+      typeof rawAlbum?.label === 'string' && rawAlbum.label.trim()
+        ? rawAlbum.label.trim()
+        : undefined;
+    const releaseDate =
+      typeof rawTrack?.release_date === 'string' && rawTrack.release_date.trim()
+        ? rawTrack.release_date.trim()
+        : typeof rawAlbum?.release_date === 'string' && rawAlbum.release_date.trim()
+          ? rawAlbum.release_date.trim()
+          : undefined;
+    const bpmVal =
+      typeof rawTrack?.bpm === 'number' && Number.isFinite(rawTrack.bpm) && rawTrack.bpm > 0
+        ? Math.round(rawTrack.bpm)
+        : undefined;
+
+    const credits: TrackCredits = {
+      trackId,
+      title: titleStr,
+      performers,
+      writers,
+      producers,
+      ...(labelStr ? { label: labelStr } : {}),
+      source: labelStr ?? 'Catálogo pMusic',
+      ...(rawTrack?.album?.title ? { albumTitle: String(rawTrack.album.title) } : {}),
+      ...(releaseDate ? { releaseDate } : {}),
+      ...(isrc ? { isrc } : {}),
+      ...(bpmVal ? { bpm: bpmVal } : {}),
+      explicit: Boolean(rawTrack?.explicit_lyrics),
+      fetchedFrom: rawTrack ? (writers.length || producers.length ? 'deezer+musicbrainz' : 'deezer') : 'metadata',
+    };
+
+    this.creditsCache.set(cacheKey, { at: Date.now(), credits });
+    if (this.creditsCache.size > 300) {
+      this.creditsCache.delete(this.creditsCache.keys().next().value as string);
+    }
+    return credits;
   }
 
   /** Fragmento de 30 s (siempre disponible) usado como último recurso. */

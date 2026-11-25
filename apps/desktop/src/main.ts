@@ -12,6 +12,31 @@ import type {
   NativeMediaSessionState,
 } from '@pmusic/core';
 
+const isTransientStreamError = (err: unknown): boolean => {
+  const code = (err as { code?: string })?.code ?? '';
+  const msg = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err ?? '');
+  return (
+    code === 'ERR_ASSERTION' ||
+    code === 'ECONNRESET' ||
+    code === 'EPIPE' ||
+    code === 'ERR_STREAM_PREMATURE_CLOSE' ||
+    code === 'ABORT_ERR' ||
+    msg.includes('undici') ||
+    msg.includes('assert(!this.paused)') ||
+    msg.includes('aborted')
+  );
+};
+process.on('uncaughtException', (err) => {
+  if (isTransientStreamError(err)) {
+    console.warn('[pMusic] Ignored transient stream exception:', err?.message ?? err);
+    return;
+  }
+  console.error('[pMusic] Uncaught exception:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.warn('[pMusic] Unhandled rejection:', reason);
+});
+
 let mainWindow: BrowserWindow | null = null;
 let loopbackServer: Server | null = null;
 let loopbackPort = 0;
@@ -449,11 +474,11 @@ async function createMainWindow(): Promise<void> {
     height: 860,
     minWidth: 420,
     minHeight: 640,
-    backgroundColor: '#070709',
+    backgroundColor: '#000000',
     title: 'pMusic',
     titleBarStyle: 'hidden',
     titleBarOverlay: {
-      color: '#070709',
+      color: '#000000',
       symbolColor: '#B4B4BE',
       height: 48,
     },

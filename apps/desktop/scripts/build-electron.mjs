@@ -154,8 +154,34 @@ if (existsSync(canonicalLogoPng)) {
 const mainEntrySource = `import { createServer, type Server } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join, normalize } from 'node:path';
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu, shell } from 'electron';
+import { deflateSync } from 'node:zlib';
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, shell } from 'electron';
 import { createPMusicApiHandler } from '@pmusic/providers';
+
+const isTransientStreamError = (err: unknown): boolean => {
+  const code = (err as { code?: string })?.code ?? '';
+  const msg = err instanceof Error ? \`\${err.message}\\n\${err.stack ?? ''}\` : String(err ?? '');
+  return (
+    code === 'ERR_ASSERTION' ||
+    code === 'ECONNRESET' ||
+    code === 'EPIPE' ||
+    code === 'ERR_STREAM_PREMATURE_CLOSE' ||
+    code === 'ABORT_ERR' ||
+    msg.includes('undici') ||
+    msg.includes('assert(!this.paused)') ||
+    msg.includes('aborted')
+  );
+};
+process.on('uncaughtException', (err) => {
+  if (isTransientStreamError(err)) {
+    console.warn('[pMusic] Ignored transient stream exception:', err?.message ?? err);
+    return;
+  }
+  console.error('[pMusic] Uncaught exception:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.warn('[pMusic] Unhandled rejection:', reason);
+});
 
 function getVaultFilePath(): string {
   return join(app.getPath('userData'), 'pmusic-vault.json');
@@ -183,7 +209,6 @@ function writeVaultData(data: Record<string, string>): void {
 }
 
 let mainWindow: BrowserWindow | null = null;
-let splashWindow: BrowserWindow | null = null;
 let loopbackServer: Server | null = null;
 let loopbackPort = 0;
 let oauthServer: Server | null = null;
@@ -273,54 +298,6 @@ async function startOAuthCallbackServer(): Promise<number> {
   } catch {
     return await tryListen(0);
   }
-}
-
-function createSplashWindow(): void {
-  const wmPath = join(__dirname, '../dist/wordmark.svg');
-  const rawWmSvg = existsSync(wmPath)
-    ? readFileSync(wmPath, 'utf-8')
-        .replace(/currentColor/g, '#FFFFFF')
-        .replace('<svg ', '<svg class="wm" ')
-    : '';
-
-  splashWindow = new BrowserWindow({
-    width: 420,
-    height: 260,
-    frame: false,
-    resizable: false,
-    movable: true,
-    alwaysOnTop: true,
-    center: true,
-    backgroundColor: '#050507',
-    show: true,
-    skipTaskbar: false,
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
-  });
-
-  const splashHtml = \`<!doctype html><html><head><meta charset="utf-8"><style>
-    *{box-sizing:border-box}
-    body{margin:0;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#050507;color:#fff;overflow:hidden;border:1px solid rgba(255,255,255,.11);border-radius:22px;user-select:none;-webkit-app-region:drag;position:relative}
-    .aura{position:absolute;width:300px;height:300px;border-radius:999px;background:radial-gradient(circle,rgba(255,255,255,.16) 0%,rgba(190,200,225,.05) 45%,transparent 70%);filter:blur(28px);animation:auraPulse 3s ease-in-out infinite}
-    .ring{position:absolute;width:120px;height:120px;border-radius:999px;border:1px solid rgba(255,255,255,.22);animation:ringExpand 1.6s cubic-bezier(.16,1,.3,1) forwards}
-    .wm-wrap{position:relative;z-index:2;animation:wmReveal 950ms cubic-bezier(.16,1,.3,1) both}
-    .wm{width:210px;height:auto;display:block;filter:drop-shadow(0 12px 32px rgba(255,255,255,.18))}
-    .wm path{stroke:#fff;stroke-width:3.5;stroke-dasharray:1800;stroke-dashoffset:1800;fill-opacity:0;animation:drawPath 1.05s cubic-bezier(.22,1,.36,1) forwards, fillPath .7s cubic-bezier(.16,1,.3,1) .42s forwards}
-    .bar{position:relative;z-index:2;margin-top:30px;width:148px;height:2px;border-radius:99px;background:rgba(255,255,255,.1);overflow:hidden}
-    .bar::after{content:'';position:absolute;inset:0;width:46%;border-radius:99px;background:linear-gradient(90deg,transparent,#ffffff,transparent);animation:slide 1.1s cubic-bezier(.4,0,.2,1) infinite}
-    @keyframes auraPulse{0%,100%{transform:scale(.95);opacity:.65}50%{transform:scale(1.12);opacity:1}}
-    @keyframes ringExpand{0%{transform:scale(.5);opacity:.65}100%{transform:scale(2.8);opacity:0}}
-    @keyframes wmReveal{0%{opacity:0;transform:translateY(14px) scale(.92);filter:blur(8px)}100%{opacity:1;transform:none;filter:blur(0)}}
-    @keyframes drawPath{0%{stroke-dashoffset:1800;stroke-opacity:.95}70%{stroke-dashoffset:0;stroke-opacity:.9}100%{stroke-dashoffset:0;stroke-opacity:0}}
-    @keyframes fillPath{0%{fill-opacity:0}100%{fill-opacity:1}}
-    @keyframes slide{0%{transform:translateX(-110%)}100%{transform:translateX(260%)}}
-  </style></head><body>
-    <div class="aura"></div>
-    <div class="ring"></div>
-    <div class="wm-wrap">\${rawWmSvg}</div>
-    <div class="bar"></div>
-  </body></html>\`;
-
-  void splashWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(splashHtml));
 }
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
@@ -421,6 +398,88 @@ function sendMediaAction(type: string): void {
   }
 }
 
+function pngChunk(type: string, data: Buffer): Buffer {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length, 0);
+  const tb = Buffer.from(type, 'ascii');
+  let crc = 0xffffffff;
+  const combined = Buffer.concat([tb, data]);
+  for (let i = 0; i < combined.length; i++) {
+    crc ^= combined[i]!;
+    for (let k = 0; k < 8; k++) crc = crc & 1 ? 0xedb88320 ^ (crc >>> 1) : crc >>> 1;
+  }
+  const cb = Buffer.alloc(4);
+  cb.writeUInt32BE((crc ^ 0xffffffff) >>> 0, 0);
+  return Buffer.concat([len, tb, data, cb]);
+}
+
+function makeThumbarIcon(kind: 'prev' | 'play' | 'pause' | 'next'): Electron.NativeImage {
+  const size = 24;
+  const raw = Buffer.alloc(size * (1 + size * 4));
+  const setPx = (x: number, y: number, a = 245) => {
+    if (x < 0 || x >= size || y < 0 || y >= size) return;
+    const i = y * (1 + size * 4) + 1 + x * 4;
+    raw[i] = 255;
+    raw[i + 1] = 255;
+    raw[i + 2] = 255;
+    raw[i + 3] = a;
+  };
+  if (kind === 'play') {
+    for (let y = 5; y <= 18; y++) {
+      const span = Math.round(((6.5 - Math.abs(y - 11.5)) / 6.5) * 10);
+      for (let x = 7; x <= 7 + span; x++) setPx(x, y);
+    }
+  } else if (kind === 'pause') {
+    for (let y = 5; y <= 18; y++) {
+      for (let x = 6; x <= 9; x++) setPx(x, y);
+      for (let x = 14; x <= 17; x++) setPx(x, y);
+    }
+  } else if (kind === 'next') {
+    for (let y = 6; y <= 17; y++) {
+      const span = Math.round(((5.5 - Math.abs(y - 11.5)) / 5.5) * 8);
+      for (let x = 5; x <= 5 + span; x++) setPx(x, y);
+      for (let x = 16; x <= 18; x++) setPx(x, y);
+    }
+  } else {
+    for (let y = 6; y <= 17; y++) {
+      const span = Math.round(((5.5 - Math.abs(y - 11.5)) / 5.5) * 8);
+      for (let x = 18 - span; x <= 18; x++) setPx(x, y);
+      for (let x = 5; x <= 7; x++) setPx(x, y);
+    }
+  }
+  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(size, 0);
+  ihdr.writeUInt32BE(size, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  return nativeImage.createFromBuffer(
+    Buffer.concat([sig, pngChunk('IHDR', ihdr), pngChunk('IDAT', deflateSync(raw)), pngChunk('IEND', Buffer.alloc(0))])
+  );
+}
+
+let cachedThumbarIcons: Record<'prev' | 'play' | 'pause' | 'next', Electron.NativeImage> | null = null;
+function updateTaskbarThumbar(isPlaying: boolean): void {
+  if (process.platform !== 'win32' || !mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    if (!cachedThumbarIcons) {
+      cachedThumbarIcons = {
+        prev: makeThumbarIcon('prev'),
+        play: makeThumbarIcon('play'),
+        pause: makeThumbarIcon('pause'),
+        next: makeThumbarIcon('next'),
+      };
+    }
+    mainWindow.setThumbarButtons([
+      { tooltip: 'Anterior', icon: cachedThumbarIcons.prev, click: () => sendMediaAction('previoustrack') },
+      { tooltip: isPlaying ? 'Pausar' : 'Reproducir', icon: isPlaying ? cachedThumbarIcons.pause : cachedThumbarIcons.play, click: () => sendMediaAction('toggle') },
+      { tooltip: 'Siguiente', icon: cachedThumbarIcons.next, click: () => sendMediaAction('nexttrack') },
+    ]);
+  } catch {
+    // ignore on platforms without thumbar support
+  }
+}
+
 ipcMain.handle('pmusic:get-api-base-url', () => \`http://127.0.0.1:\${loopbackPort}\`);
 ipcMain.handle('pmusic:get-auth-headers', () => ({}));
 ipcMain.handle('pmusic:vault-get', (_event, key: string) => {
@@ -443,6 +502,13 @@ ipcMain.handle('pmusic:vault-remove', (_event, key: string) => {
   }
 });
 ipcMain.handle('pmusic:update-discord', () => undefined);
+ipcMain.handle('pmusic:update-media-session', (_event, state: { isPlaying?: boolean; track?: { title?: string } }) => {
+  updateTaskbarThumbar(Boolean(state?.isPlaying));
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const tTitle = state?.track?.title?.trim();
+    mainWindow.setTitle(tTitle ? \`\${tTitle} — pMusic\` : 'pMusic');
+  }
+});
 ipcMain.handle('pmusic:open-external-url', async (_event, url: string) => {
   if (typeof url === 'string' && /^https?:\\/\\//i.test(url)) {
     await shell.openExternal(url);
@@ -495,12 +561,12 @@ async function createMainWindow(): Promise<void> {
     height: 860,
     minWidth: 420,
     minHeight: 640,
-    backgroundColor: '#070709',
+    backgroundColor: '#000000',
     title: 'pMusic',
     show: false,
     titleBarStyle: 'hidden',
     titleBarOverlay: {
-      color: '#070709',
+      color: '#000000',
       symbolColor: '#B4B4BE',
       height: 48,
     },
@@ -518,7 +584,7 @@ async function createMainWindow(): Promise<void> {
     {
       label: 'pMusic',
       submenu: [
-        { label: 'Reproducir / Pausar', click: () => sendMediaAction('play') },
+        { label: 'Reproducir / Pausar', click: () => sendMediaAction('toggle') },
         { label: 'Siguiente pista', click: () => sendMediaAction('nexttrack') },
         { label: 'Pista anterior', click: () => sendMediaAction('previoustrack') },
         { type: 'separator' },
@@ -531,10 +597,7 @@ async function createMainWindow(): Promise<void> {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
-    if (splashWindow && !splashWindow.isDestroyed()) {
-      splashWindow.close();
-      splashWindow = null;
-    }
+    updateTaskbarThumbar(false);
   });
 
   const targetUrl = process.env.PMUSIC_DEV_URL || \`http://127.0.0.1:\${port}\`;
@@ -549,7 +612,6 @@ async function createMainWindow(): Promise<void> {
 }
 
 void app.whenReady().then(async () => {
-  createSplashWindow();
   void startOAuthCallbackServer();
   try {
     if (process.defaultApp && process.argv.length >= 2 && process.argv[1]) {
@@ -571,7 +633,7 @@ void app.whenReady().then(async () => {
     dispatchAuthCallbackUrl(pendingAuthCallbackUrl);
   }
   try {
-    globalShortcut.register('MediaPlayPause', () => sendMediaAction('play'));
+    globalShortcut.register('MediaPlayPause', () => sendMediaAction('toggle'));
     globalShortcut.register('MediaNextTrack', () => sendMediaAction('nexttrack'));
     globalShortcut.register('MediaPreviousTrack', () => sendMediaAction('previoustrack'));
   } catch {

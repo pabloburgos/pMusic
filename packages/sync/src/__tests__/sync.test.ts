@@ -195,4 +195,37 @@ describe('@pmusic/sync', () => {
     expect(playlists[0]?.name).toBe('LaPanera');
     expect(playlists[0]?.tracks).toHaveLength(32);
   });
+
+  it('isolates library data per account and clears local playlists/likes/outbox when switching accounts or signing out', async () => {
+    const store = new LibraryStore();
+    await store.hydrate();
+    await store.clearAllUserData();
+
+    await store.setOwnerUserId('user_account_a');
+    await store.createPlaylist({ name: 'Playlist Cuenta A', tracks: [SAMPLE_TRACK] });
+    await store.toggleLikeTrack(SAMPLE_TRACK);
+    expect(store.getPlaylists()).toHaveLength(1);
+    expect(store.getLikedTracks()).toHaveLength(1);
+
+    const engine = new SyncEngine({
+      deviceId: 'dev_test',
+      deviceName: 'Test PC',
+      platform: 'windows',
+      libraryStore: store,
+    });
+
+    // Switching to Account B clears Account A's playlists & likes automatically
+    await engine.ensureLocalLibraryOwner('user_account_b');
+    expect(store.getOwnerUserId()).toBe('user_account_b');
+    expect(store.getPlaylists()).toHaveLength(0);
+    expect(store.getLikedTracks()).toHaveLength(0);
+    expect(store.outbox.getPending()).toHaveLength(0);
+
+    // Creating a playlist on Account B and signing out clears Account B data cleanly
+    await store.createPlaylist({ name: 'Playlist Cuenta B', tracks: [] });
+    expect(store.getPlaylists()).toHaveLength(1);
+    await engine.signOut();
+    expect(store.getOwnerUserId()).toBeNull();
+    expect(store.getPlaylists()).toHaveLength(0);
+  });
 });

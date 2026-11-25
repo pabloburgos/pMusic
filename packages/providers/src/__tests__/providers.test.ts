@@ -1086,4 +1086,93 @@ describe('@pmusic/providers', () => {
     expect(detail.albums.map((a) => a.title)).toEqual(['FILIPENSES', 'UNA SEMANA INCREÍBLE']);
     expect(detail.singles.map((s) => s.title)).toEqual(['TONY STARK', 'STONE BOY EUROPA']);
   });
+
+  it('fetches structured track credits via DeezerCatalog and /api/credits/:id endpoint', async () => {
+    const mockFetch = (async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes('api.deezer.com/track/9911')) {
+        return new Response(
+          JSON.stringify({
+            id: 9911,
+            title: 'Luna de Tenerife',
+            isrc: 'ES1232600001',
+            bpm: 124,
+            release_date: '2026-04-12',
+            explicit_lyrics: true,
+            artist: { id: 42, name: 'Quevedo' },
+            contributors: [
+              { id: 42, name: 'Quevedo', role: 'Main' },
+              { id: 77, name: 'Linton', role: 'Featured' },
+            ],
+            album: { id: 881, title: 'Noches Atlánticas' },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('api.deezer.com/album/881')) {
+        return new Response(
+          JSON.stringify({
+            id: 881,
+            title: 'Noches Atlánticas',
+            label: 'Rimas / DQE',
+            release_date: '2026-04-12',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('musicbrainz.org/ws/2/recording?query=isrc:ES1232600001')) {
+        return new Response(JSON.stringify({ recordings: [{ id: 'mb-rec-1' }] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (u.includes('musicbrainz.org/ws/2/recording/mb-rec-1')) {
+        return new Response(
+          JSON.stringify({
+            relations: [
+              { type: 'composer', artist: { name: 'Pedro Domínguez Quevedo' } },
+              { type: 'producer', artist: { name: 'Linton Beats' } },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    }) as typeof fetch;
+
+    const catalog = new DeezerCatalog(mockFetch);
+    const credits = await catalog.trackCredits('dz:9911');
+    expect(credits).not.toBeNull();
+    expect(credits?.performers.map((p) => p.name)).toEqual(['Quevedo', 'Linton']);
+    expect(credits?.performers[0]?.role).toBe('Artista principal');
+    expect(credits?.performers[1]?.role).toBe('Artista invitado');
+    expect(credits?.writers).toEqual(['Pedro Domínguez Quevedo']);
+    expect(credits?.producers).toEqual(['Linton Beats']);
+    expect(credits?.label).toBe('Rimas / DQE');
+    expect(credits?.isrc).toBe('ES1232600001');
+    expect(credits?.bpm).toBe(124);
+
+    // Verify /api/credits/:id handler route responds cleanly
+    const handler = createPMusicApiHandler({ fetchFn: mockFetch });
+    let statusCode = 0;
+    let bodyText = '';
+    const mockRes: any = {
+      statusCode: 200,
+      headers: new Map<string, string>(),
+      setHeader(k: string, v: string) {
+        this.headers.set(k.toLowerCase(), String(v));
+      },
+      end(chunk?: Uint8Array | string) {
+        statusCode = this.statusCode;
+        bodyText = chunk ? Buffer.from(chunk).toString('utf-8') : '';
+      },
+    };
+    const handled = await handler(
+      { url: '/api/credits/cc_me_muevo_01?title=Me+Muevo+Con+Dios&artist=Cruz+Cafune', method: 'GET', headers: {} } as any,
+      mockRes
+    );
+    expect(handled).toBe(true);
+    expect(statusCode).toBe(200);
+    expect(JSON.parse(bodyText)).toHaveProperty('credits');
+  });
 });

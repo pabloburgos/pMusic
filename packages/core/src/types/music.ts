@@ -96,3 +96,25 @@ export interface LikedTrackRecord {
   likedAt: string;
   userId?: string;
 }
+
+export interface TrackCreditPerson {
+  name: string;
+  role: string;
+  id?: string;
+}
+
+export interface TrackCredits {
+  trackId: string;
+  title: string;
+  performers: TrackCreditPerson[];
+  writers: string[];
+  producers: string[];
+  label?: string;
+  source?: string;
+  albumTitle?: string;
+  releaseDate?: string;
+  isrc?: string;
+  bpm?: number;
+  explicit?: boolean;
+  fetchedFrom: string;
+}

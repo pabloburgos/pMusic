@@ -280,6 +280,7 @@ export class SyncEngine implements ISyncEngine {
       const { data } = await this.supabaseBackend.client.auth.getSession();
       const session = data?.session;
       if (session?.user) {
+        await this.ensureLocalLibraryOwner(session.user.id);
         this.updateAuthState(this.extractAuthMeta(session.user));
         await this.connectRealtime();
         await this.syncNow();
@@ -291,8 +292,11 @@ export class SyncEngine implements ISyncEngine {
             const changed = this.authState.userId !== nextSession.user.id || !this.authState.connected;
             this.updateAuthState(this.extractAuthMeta(nextSession.user));
             if (changed) {
-              void this.connectRealtime();
-              void this.syncNow();
+              void (async () => {
+                await this.ensureLocalLibraryOwner(nextSession.user.id);
+                await this.connectRealtime();
+                await this.syncNow();
+              })();
             }
           } else if (this.authState.connected) {
             this.updateAuthState({
@@ -302,6 +306,7 @@ export class SyncEngine implements ISyncEngine {
               displayName: null,
               avatarUrl: null,
             });
+            void this.libraryStore.clearAllUserData();
             void this.disconnectRealtime();
           }
         });
@@ -339,6 +344,9 @@ export class SyncEngine implements ISyncEngine {
     }
 
     const needsEmailConfirmation = !data.session;
+    if (data.session) {
+      await this.ensureLocalLibraryOwner(data.user.id);
+    }
     this.updateAuthState({
       userId: data.user.id,
       email: data.user.email ?? cleanEmail,
@@ -362,6 +370,7 @@ export class SyncEngine implements ISyncEngine {
     }
     if (!this.supabaseBackend) {
       const localUserId = `user_local_${cleanEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}`;
+      await this.ensureLocalLibraryOwner(localUserId);
       this.updateAuthState({ userId: localUserId, email: cleanEmail, connected: true });
       await this.connectRealtime();
       return { userId: localUserId };
@@ -375,6 +384,7 @@ export class SyncEngine implements ISyncEngine {
       throw new Error(this.formatAuthError(error?.message, 'Credenciales incorrectas en Supabase'));
     }
 
+    await this.ensureLocalLibraryOwner(data.user.id);
     this.updateAuthState({
       userId: data.user.id,
       email: data.user.email ?? cleanEmail,
@@ -432,6 +442,7 @@ export class SyncEngine implements ISyncEngine {
           throw new Error(this.formatAuthError(error.message, 'Error completando acceso con Google'));
         }
         if (data.session?.user) {
+          await this.ensureLocalLibraryOwner(data.session.user.id);
           this.updateAuthState(this.extractAuthMeta(data.session.user));
           await this.connectRealtime();
           await this.syncNow();
@@ -452,6 +463,7 @@ export class SyncEngine implements ISyncEngine {
           throw new Error(this.formatAuthError(error.message, 'Error guardando sesión de Google'));
         }
         if (data.session?.user) {
+          await this.ensureLocalLibraryOwner(data.session.user.id);
           this.updateAuthState(this.extractAuthMeta(data.session.user));
           await this.connectRealtime();
           await this.syncNow();
@@ -683,7 +695,56 @@ export class SyncEngine implements ISyncEngine {
         // ignore network error on signout
       }
     }
-    this.updateAuthState({ userId: null, email: null, connected: false });
+    await this.libraryStore.clearAllUserData();
+    this.updateAuthState({
+      userId: null,
+      email: null,
+      connected: false,
+      displayName: null,
+      avatarUrl: null,
+    });
+  }
+
+  /**
+   * Ensures local cached library data belongs exclusively to `userId` so signing in
+   * with a different Google/Supabase account never inherits or uploads another account's playlists.
+   */
+  public async ensureLocalLibraryOwner(userId: string): Promise<void> {
+    if (!userId) return;
+    const prevOwner = this.libraryStore.getOwnerUserId();
+    if (prevOwner === userId) return;
+
+    if (prevOwner && prevOwner !== userId) {
+      await this.libraryStore.clearAllUserData();
+      await this.libraryStore.setOwnerUserId(userId);
+      return;
+    }
+
+    // Legacy unowned local storage (e.g. before ownerUserId tracking or guest session):
+    // if the target account already exists in Supabase, wipe unowned local data so we don't leak it.
+    const hasLocal =
+      this.libraryStore.getPlaylists().length > 0 ||
+      this.libraryStore.getLikedTracks().length > 0;
+    if (hasLocal && this.supabaseBackend) {
+      try {
+        const client = this.supabaseBackend.client;
+        const [plRes, likeRes, profRes] = await Promise.all([
+          client.from('playlists').select('id').eq('user_id', userId).limit(1),
+          client.from('liked_tracks').select('track_id').eq('user_id', userId).limit(1),
+          client.from('profiles').select('user_id').eq('user_id', userId).limit(1),
+        ]);
+        const accountHasRemoteData =
+          (Array.isArray(plRes.data) && plRes.data.length > 0) ||
+          (Array.isArray(likeRes.data) && likeRes.data.length > 0) ||
+          (Array.isArray(profRes.data) && profRes.data.length > 0);
+        if (accountHasRemoteData) {
+          await this.libraryStore.clearAllUserData();
+        }
+      } catch {
+        // If offline/RLS blocks check, preserve local data safely and stamp owner
+      }
+    }
+    await this.libraryStore.setOwnerUserId(userId);
   }
 
   public getAuthState(): SyncAuthState {
@@ -1155,6 +1216,7 @@ export class SyncEngine implements ISyncEngine {
     const client = this.supabaseBackend.client;
     const userId = this.authState.userId;
 
+    await this.ensureLocalLibraryOwner(userId);
     await this.libraryStore.ensureUuidPlaylistIds();
     const pending = this.libraryStore.outbox.getPending();
 

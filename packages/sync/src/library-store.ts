@@ -26,6 +26,7 @@ const STORAGE_KEYS = {
   affinity: 'pmusic.lib.affinity',
   session: 'pmusic.lib.session',
   outbox: 'pmusic.lib.outbox',
+  ownerUserId: 'pmusic.lib.ownerUserId',
 } as const;
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -156,6 +157,11 @@ export class OfflineOutbox {
     await this.persist();
   }
 
+  public async clearAll(): Promise<void> {
+    this.queue = [];
+    await this.storage.setItem(STORAGE_KEYS.outbox, '[]');
+  }
+
   private async persist(): Promise<void> {
     await this.storage.setItem(STORAGE_KEYS.outbox, JSON.stringify(this.queue));
   }
@@ -170,6 +176,7 @@ export class LibraryStore {
   private playHistory: PlayHistoryRecord[] = [];
   private affinities: ArtistAffinityRecord[] = [];
   private deviceSession: DeviceSessionRecord | null = null;
+  private ownerUserId: string | null = null;
   private readonly tableListeners = new Set<(table: SyncTableName) => void>();
 
   public constructor(storage: IPreferencesStorageBridge = createDefaultPreferencesStorage()) {
@@ -179,14 +186,16 @@ export class LibraryStore {
 
   public async hydrate(): Promise<void> {
     await this.outbox.hydrate();
-    const [rawPlaylists, rawLiked, rawHistory, rawAffinity, rawSession] = await Promise.all([
+    const [rawPlaylists, rawLiked, rawHistory, rawAffinity, rawSession, rawOwner] = await Promise.all([
       this.storage.getItem(STORAGE_KEYS.playlists),
       this.storage.getItem(STORAGE_KEYS.liked),
       this.storage.getItem(STORAGE_KEYS.history),
       this.storage.getItem(STORAGE_KEYS.affinity),
       this.storage.getItem(STORAGE_KEYS.session),
+      this.storage.getItem(STORAGE_KEYS.ownerUserId),
     ]);
 
+    this.ownerUserId = rawOwner && rawOwner.trim().length > 0 ? rawOwner.trim() : null;
     this.playlists = this.safeParseArray<PlaylistRecord>(rawPlaylists);
     await this.deduplicatePlaylists();
     this.likedTracks = this.safeParseArray<LikedTrackRecord>(rawLiked);
@@ -199,6 +208,45 @@ export class LibraryStore {
         this.deviceSession = null;
       }
     }
+  }
+
+  public getOwnerUserId(): string | null {
+    return this.ownerUserId;
+  }
+
+  public async setOwnerUserId(userId: string | null): Promise<void> {
+    this.ownerUserId = userId && userId.trim().length > 0 ? userId.trim() : null;
+    if (this.ownerUserId) {
+      await this.storage.setItem(STORAGE_KEYS.ownerUserId, this.ownerUserId);
+    } else {
+      await this.storage.removeItem(STORAGE_KEYS.ownerUserId);
+    }
+  }
+
+  /**
+   * Clears all user-scoped library data (playlists, likes, history, affinity, session, outbox)
+   * when switching Google/Supabase accounts or signing out so accounts never cross-contaminate.
+   */
+  public async clearAllUserData(): Promise<void> {
+    this.playlists = [];
+    this.likedTracks = [];
+    this.playHistory = [];
+    this.affinities = [];
+    this.deviceSession = null;
+    this.ownerUserId = null;
+    await this.outbox.clearAll();
+    await Promise.all([
+      this.storage.removeItem(STORAGE_KEYS.playlists),
+      this.storage.removeItem(STORAGE_KEYS.liked),
+      this.storage.removeItem(STORAGE_KEYS.history),
+      this.storage.removeItem(STORAGE_KEYS.affinity),
+      this.storage.removeItem(STORAGE_KEYS.session),
+      this.storage.removeItem(STORAGE_KEYS.ownerUserId),
+    ]);
+    this.emitTableChanged('playlists');
+    this.emitTableChanged('liked_tracks');
+    this.emitTableChanged('artist_affinity');
+    this.emitTableChanged('device_sessions');
   }
 
   /**

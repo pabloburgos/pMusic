@@ -620,17 +620,17 @@ export const DetailViewPanel: React.FC = () => {
 
     return (
       <div className="pm-page-enter space-y-6">
-        {/* Spotify-style Sticky Scroll Bar (slides in below pinned mobile top header, or top edge on desktop) */}
-        <div className="sticky top-[calc(3.6rem+var(--pm-safe-top,env(safe-area-inset-top)))] z-30 -mx-4 h-0 overflow-visible sm:top-0 sm:-mx-7 sm:-mt-3">
+        {/* Spotify-style Sticky Scroll Bar (slides in flush below pinned mobile top header, or top edge on desktop) */}
+        <div className="sticky top-[calc(3.6rem+var(--pm-safe-top,env(safe-area-inset-top)))] z-30 -mx-4 h-0 overflow-visible sm:top-0 sm:-mx-7 sm:mt-0">
           <div
             data-testid="artist-sticky-header"
             data-visible={artistStickyVisible ? 'true' : 'false'}
             aria-hidden={!artistStickyVisible}
             style={{
               background:
-                'linear-gradient(90deg, color-mix(in srgb, var(--pm-ambient-1, #2a2a35) 36%, rgba(10,10,14,0.94)) 0%, rgba(10,10,14,0.96) 100%)',
+                'linear-gradient(180deg, color-mix(in srgb, var(--pm-ambient-1, #22222c) 40%, rgba(10,10,14,0.96)) 0%, rgba(8,8,12,0.95) 100%)',
             }}
-            className={`flex h-[56px] items-center justify-between gap-3 border-b border-white/[0.08] px-4 backdrop-blur-xl transition-all duration-200 sm:h-[64px] sm:px-7 ${
+            className={`flex h-[56px] items-center justify-between gap-3 border-b border-white/[0.08] px-4 backdrop-blur-2xl transition-all duration-200 sm:h-[64px] sm:rounded-t-[20px] sm:px-7 ${
               artistStickyVisible
                 ? 'pointer-events-auto translate-y-0 opacity-100'
                 : 'pointer-events-none -translate-y-2 opacity-0'
@@ -674,7 +674,7 @@ export const DetailViewPanel: React.FC = () => {
           ref={artistHeroRef}
           data-testid="artist-hero-banner"
           data-surface="content"
-          className="relative -mx-4 flex min-h-[340px] flex-col justify-end overflow-hidden bg-[#0e0e13] px-5 pt-[calc(5.2rem+var(--pm-safe-top,env(safe-area-inset-top)))] pb-6 sm:mx-0 sm:min-h-[350px] sm:rounded-[22px] sm:p-8 sm:shadow-[0_24px_64px_rgba(0,0,0,0.45)]"
+          className="relative -mx-4 flex min-h-[340px] flex-col justify-end overflow-hidden bg-[#0e0e13] px-5 pt-[calc(5.2rem+var(--pm-safe-top,env(safe-area-inset-top)))] pb-6 sm:-mx-7 sm:min-h-[360px] sm:rounded-none sm:rounded-t-[20px] sm:p-8 sm:shadow-[0_24px_64px_rgba(0,0,0,0.45)]"
         >
           {heroImage && (
             <img
@@ -700,10 +700,6 @@ export const DetailViewPanel: React.FC = () => {
 
           <div className="relative z-10 flex items-end justify-between gap-4">
             <div className="min-w-0 flex-1 space-y-1.5">
-              <div className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-[11px] font-bold tracking-wide text-white backdrop-blur-md">
-                <Sparkles className="h-3 w-3 text-purple-300" />
-                <span>Artista verificado · pMusic</span>
-              </div>
               <h1 className="truncate text-4xl font-black tracking-tight text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.65)] sm:text-5xl md:text-6xl">
                 {artist.name}
               </h1>

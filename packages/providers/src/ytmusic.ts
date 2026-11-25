@@ -11,6 +11,7 @@ import type {
   SearchResultBundle,
   StreamResolution,
   Track,
+  TrackCredits,
 } from '@pmusic/core';
 import {
   FALLBACK_TRACKS,
@@ -297,6 +298,21 @@ export class YouTubeMusicProvider implements IMusicProvider {
     return null;
   }
 
+  public async getTrackCredits(
+    trackId: string,
+    hint?: { title?: string; artist?: string },
+    signal?: AbortSignal
+  ): Promise<TrackCredits | null> {
+    if (this.catalog) {
+      try {
+        return await this.catalog.trackCredits(trackId, hint, signal);
+      } catch {
+        // ignore network error
+      }
+    }
+    return null;
+  }
+
   public async resolveAudioStream(
     videoId: string,
     quality: AudioStreamQuality = 'high',
@@ -570,6 +586,26 @@ export class HttpProxyMusicProvider implements IMusicProvider {
       return remote.plainLyrics ?? remote.lyrics ?? null;
     }
     return null;
+  }
+
+  public async getTrackCredits(
+    trackId: string,
+    hint?: { title?: string; artist?: string },
+    signal?: AbortSignal
+  ): Promise<TrackCredits | null> {
+    const mobileDirect = this.getMobileDirectProvider();
+    if (mobileDirect) {
+      return mobileDirect.getTrackCredits(trackId, hint, signal);
+    }
+    const params = new URLSearchParams();
+    if (hint?.title?.trim()) params.set('title', hint.title.trim());
+    if (hint?.artist?.trim()) params.set('artist', hint.artist.trim());
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    const remote = await this.fetchApiJson<{ credits?: TrackCredits | null }>(
+      `/api/credits/${encodeURIComponent(trackId)}${qs}`,
+      signal
+    );
+    return remote?.credits ?? null;
   }
 
   public async resolveAudioStream(

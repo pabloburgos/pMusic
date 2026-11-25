@@ -186,11 +186,34 @@ const BACKDROP_STYLE_OPTIONS: readonly {
 }[] = [
   { id: 'fluid', label: 'Fluido', desc: 'Portada viva y orbes' },
   { id: 'paint', label: 'Pintura', desc: 'Óleo vivo en expansión' },
-  { id: 'prism', label: 'Prisma', desc: 'Haces de cristal refractivo' },
-  { id: 'nebula', label: 'Nebulosa', desc: 'Polvo cósmico y estrellas' },
-  { id: 'pulse', label: 'Pulso', desc: 'Ondas sónicas al ritmo' },
+  { id: 'nebula', label: 'Nebulosa', desc: 'Viaje espacial al ritmo' },
+  { id: 'pulse', label: 'Pulso', desc: 'Caleidoscopio orgánico blur' },
+  { id: 'rhythm', label: 'Ritmo', desc: 'Ondas y golpes al compás' },
   { id: 'minimal', label: 'Minimal', desc: 'Estudio editorial oscuro' },
 ];
+
+const PLAYER_BAR_STYLE_OPTIONS = [
+  {
+    id: 'classic-center',
+    label: 'Clásica Central',
+    desc: 'Controles centrados y tiempos simétricos',
+  },
+  {
+    id: 'ambient-dock',
+    label: 'Ambiental Fluida',
+    desc: 'Color suave continuo del álbum',
+  },
+  {
+    id: 'floating-island',
+    label: 'Isla Flotante',
+    desc: 'Cápsula compacta con barra inferior',
+  },
+  {
+    id: 'minimal-wave',
+    label: 'Minimalista',
+    desc: 'Diseño puro de estudio',
+  },
+] as const;
 
 const decodedBackdropImgCache = new Map<string, HTMLImageElement>();
 
@@ -2012,11 +2035,12 @@ export const NowPlayingSheet: React.FC = () => {
         )}
 
         {(nowPlayingBackdropStyle === 'paint' ||
-          nowPlayingBackdropStyle === 'prism' ||
           nowPlayingBackdropStyle === 'nebula' ||
-          nowPlayingBackdropStyle === 'pulse') && (
+          nowPlayingBackdropStyle === 'pulse' ||
+          nowPlayingBackdropStyle === 'rhythm') && (
           <div className="pointer-events-none absolute inset-16" style={{ zIndex: 3 }}>
             <ExoticBackdropCanvas
+              key={nowPlayingBackdropStyle}
               style={nowPlayingBackdropStyle}
               isPlaying={isPlaying}
               ambientMotionEnabled={ambientMotionEnabled}
@@ -3514,6 +3538,7 @@ export const AudioStudioSheet: React.FC = () => {
     setDjPopoverOpen,
     nowPlayingOpen,
     playerBarStyle,
+    setPlayerBarStyle,
     userEq,
     safeCrossfade,
     djMode,
@@ -3566,7 +3591,7 @@ export const AudioStudioSheet: React.FC = () => {
       if (
         target instanceof Element &&
         target.closest(
-          '[data-testid="audio-studio-sheet"], [data-testid="eq-sheet"], [data-testid="dj-popover"], [data-testid="dock-eq-btn"], [data-testid="dock-dj-btn"], [data-testid="nowplaying-eq-btn"], [data-testid="nowplaying-dj-btn"], [data-testid="mobile-eq-btn"], [data-testid="mobile-dj-btn"], [data-testid="island-effects-btn"], [data-testid="island-effect-dj"], [data-testid="island-effect-eq"]'
+          '[data-testid="audio-studio-sheet"], [data-testid="eq-sheet"], [data-testid="dj-popover"], [data-testid="dock-eq-btn"], [data-testid="nowplaying-eq-btn"], [data-testid="nowplaying-dj-btn"], [data-testid="mobile-eq-btn"], [data-testid="mobile-dj-btn"], [data-testid="island-effects-btn"], [data-testid="island-effect-dj"], [data-testid="island-effect-eq"]'
         )
       ) {
         return;
@@ -3580,6 +3605,7 @@ export const AudioStudioSheet: React.FC = () => {
 
   if (!isOpen) return null;
 
+  const thirdTabLabel = nowPlayingOpen ? 'Pantalla' : 'Barra';
   const crossfadePct = Math.round((safeCrossfade.durationSec / 12) * 100);
   const ana = trackAnalyses[currentTrack.id];
   const countdownSec =
@@ -3600,7 +3626,15 @@ export const AudioStudioSheet: React.FC = () => {
       <div
         role="dialog"
         aria-modal="false"
-        aria-label={audioPanelTab === 'dj' ? 'Modo Sesión DJ y Efectos' : 'Ecualizador y Crossfade'}
+        aria-label={
+          audioPanelTab === 'dj'
+            ? 'Modo Sesión DJ y Efectos'
+            : audioPanelTab === 'display'
+              ? nowPlayingOpen
+                ? 'Ajustes de pantalla completa'
+                : 'Estilo de barra de reproducción'
+              : 'Ecualizador y Crossfade'
+        }
         data-testid={audioPanelTab === 'dj' ? 'dj-popover' : 'eq-sheet'}
         className={`pm-glass-frosted-neutral pm-hud-dark pm-popover-enter fixed inset-x-0 bottom-0 z-[65] max-h-[82dvh] overflow-y-auto rounded-t-[28px] px-5 pt-3 pb-[max(1.5rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] pm-no-scrollbar sm:inset-x-auto sm:mx-0 sm:w-[376px] sm:rounded-[24px] sm:p-4 ${
           nowPlayingOpen
@@ -3626,7 +3660,7 @@ export const AudioStudioSheet: React.FC = () => {
           </button>
         </div>
 
-        {/* Frosted Segmented Switcher: Sesión DJ | Audio y EQ | Pantalla */}
+        {/* Frosted Segmented Switcher: Sesión DJ | Audio y EQ | Barra / Pantalla */}
         <div
           data-testid="audio-studio-sheet"
           className="mb-4 flex items-center justify-between gap-1 rounded-full bg-white/[0.08] p-1"
@@ -3668,7 +3702,7 @@ export const AudioStudioSheet: React.FC = () => {
             }`}
           >
             <Palette className="h-3.5 w-3.5" />
-            <span>Pantalla</span>
+            <span>{thirdTabLabel}</span>
           </button>
         </div>
 
@@ -3821,7 +3855,7 @@ export const AudioStudioSheet: React.FC = () => {
               </div>
             )}
           </div>
-        ) : (
+        ) : audioPanelTab === 'eq' ? (
           <div>
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -3993,84 +4027,119 @@ export const AudioStudioSheet: React.FC = () => {
               </div>
             </div>
           </div>
-        )}
+        ) : !nowPlayingOpen ? (
+          <div data-testid="dock-style-panel">
+            <div>
+              <h2 className="text-[15px] font-bold leading-tight">Barra de reproducción</h2>
+              <p className="mt-0.5 text-[11.5px] opacity-70">
+                Elige el estilo del reproductor inferior
+              </p>
+            </div>
 
-        {audioPanelTab === 'display' && (
-          <div data-testid="nowplaying-display-panel" className="space-y-4">
-            {/* 1. Fullscreen Backdrop Selector (6 modes including exotic GPU canvases) */}
-            <section>
-              <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-white/60">
-                <Sparkles className="h-3 w-3" />
-                <span>Fondo en pantalla completa</span>
-              </div>
-              <div className="grid grid-cols-3 gap-1.5">
-                {BACKDROP_STYLE_OPTIONS.map((opt) => {
-                  const selected = nowPlayingBackdropStyle === opt.id;
-                  return (
-                    <button
-                      key={opt.id}
-                      type="button"
-                      data-testid={`backdrop-style-${opt.id}`}
-                      aria-pressed={selected}
-                      onClick={() => setNowPlayingBackdropStyle(opt.id)}
-                      className={`pm-pressable flex items-center gap-2 rounded-[14px] border px-2.5 py-2 text-left transition-all ${
-                        selected
-                          ? 'border-white/80 bg-white text-[#070709] shadow-md'
-                          : 'border-white/12 bg-white/[0.06] text-white/85 hover:border-white/28 hover:bg-white/[0.12]'
-                      }`}
-                    >
-                      <span
-                        aria-hidden="true"
-                        className="h-6 w-6 shrink-0 rounded-full ring-1 ring-white/20"
-                        style={
-                          opt.id === 'fluid'
-                            ? { background: 'linear-gradient(135deg, var(--pm-ambient-1), var(--pm-ambient-2))' }
-                            : opt.id === 'paint'
-                              ? { background: 'conic-gradient(from 20deg, #ff3d8b, var(--pm-ambient-1), #38bdf8, var(--pm-ambient-2), #ff3d8b)' }
-                              : opt.id === 'prism'
-                                ? { background: 'linear-gradient(135deg, rgba(255,255,255,0.65) 0%, var(--pm-ambient-1) 45%, #09090d 100%)' }
-                                : opt.id === 'nebula'
-                                  ? { background: 'radial-gradient(circle at 65% 35%, #e9d5ff 0%, var(--pm-ambient-2) 45%, #07070c 100%)' }
-                                  : opt.id === 'pulse'
-                                    ? { background: 'repeating-radial-gradient(circle, var(--pm-ambient-1) 0px, transparent 4px, var(--pm-ambient-2) 7px)' }
-                                    : { background: '#111116' }
-                        }
-                      />
-                      <span className="min-w-0">
-                        <span className="block truncate text-[11px] font-bold leading-tight">
-                          {opt.label}
-                        </span>
-                        <span
-                          className={`block truncate text-[9.5px] leading-tight ${
-                            selected ? 'text-[#070709]/65' : 'text-white/50'
-                          }`}
-                        >
-                          {opt.desc}
-                        </span>
+            <div className="mt-3.5 grid grid-cols-1 gap-2">
+              {PLAYER_BAR_STYLE_OPTIONS.map((opt) => {
+                const selected = playerBarStyle === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    data-testid={`studio-bar-style-${opt.id}`}
+                    aria-pressed={selected}
+                    onClick={() => setPlayerBarStyle(opt.id)}
+                    className={`flex items-center justify-between gap-3 rounded-[10px] px-3 py-2.5 text-left transition-all ${
+                      selected
+                        ? 'bg-white text-[#070709] shadow-sm'
+                        : 'bg-white/[0.08] opacity-85 hover:bg-white/[0.15] hover:opacity-100'
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold leading-tight">{opt.label}</div>
+                      <div
+                        className={`mt-0.5 truncate text-[10.5px] ${
+                          selected ? 'text-[#070709]/70' : 'opacity-65'
+                        }`}
+                      >
+                        {opt.desc}
+                      </div>
+                    </div>
+                    {selected && <Check className="h-4 w-4 shrink-0" />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div data-testid="nowplaying-display-panel" className="space-y-3.5">
+            <div>
+              <h2 className="text-[15px] font-bold leading-tight">Fondo en pantalla completa</h2>
+              <p className="mt-0.5 text-[11.5px] opacity-70">
+                Personaliza ambiente visual y letras al vuelo
+              </p>
+            </div>
+
+            <div className="grid grid-cols-3 gap-1.5">
+              {BACKDROP_STYLE_OPTIONS.map((opt) => {
+                const selected = nowPlayingBackdropStyle === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    data-testid={`backdrop-style-${opt.id}`}
+                    aria-pressed={selected}
+                    onClick={() => setNowPlayingBackdropStyle(opt.id)}
+                    className={`flex items-center gap-2 rounded-[10px] px-2 py-2 text-left transition-all ${
+                      selected
+                        ? 'bg-white text-[#070709] shadow-sm'
+                        : 'bg-white/[0.08] opacity-85 hover:bg-white/[0.15] hover:opacity-100'
+                    }`}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="h-5 w-5 shrink-0 rounded-full ring-1 ring-white/20"
+                      style={
+                        opt.id === 'fluid'
+                          ? { background: 'linear-gradient(135deg, var(--pm-ambient-1), var(--pm-ambient-2))' }
+                          : opt.id === 'paint'
+                            ? { background: 'conic-gradient(from 20deg, #ff3d8b, var(--pm-ambient-1), #38bdf8, var(--pm-ambient-2), #ff3d8b)' }
+                            : opt.id === 'nebula'
+                              ? { background: 'radial-gradient(circle at 60% 35%, #e9d5ff 0%, #6366f1 42%, #07070c 100%)' }
+                              : opt.id === 'pulse'
+                                ? { background: 'radial-gradient(circle, var(--pm-ambient-1) 0%, var(--pm-ambient-2) 55%, #160f24 100%)', filter: 'blur(0.5px)' }
+                                : opt.id === 'rhythm'
+                                  ? { background: 'linear-gradient(135deg, var(--pm-ambient-1) 0%, #c084fc 50%, var(--pm-ambient-2) 100%)' }
+                                  : { background: '#111116' }
+                      }
+                    />
+                    <span className="min-w-0">
+                      <span className="block truncate text-[11px] font-bold leading-tight">
+                        {opt.label}
                       </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
+                      <span
+                        className={`block truncate text-[9.5px] leading-tight ${
+                          selected ? 'text-[#070709]/65' : 'opacity-60'
+                        }`}
+                      >
+                        {opt.desc}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
 
-            {/* 2. Lyrics Typography & Size */}
-            <section>
-              <div className="mb-2 flex items-center justify-between">
-                <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-white/60">
-                  <Type className="h-3 w-3" />
-                  <span>Estilo de letras</span>
-                </span>
-                <div className="flex items-center gap-1 rounded-full bg-white/[0.08] p-0.5">
+            <div className="border-t border-white/10 pt-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="text-xs font-bold">Estilo de letras</span>
+                <div className="flex items-center gap-1 rounded-[10px] bg-white/[0.08] p-0.5">
                   {(['normal', 'large', 'xl'] as const).map((sz) => (
                     <button
                       key={sz}
                       type="button"
                       onClick={() => setLyricsSize(sz)}
-                      className={`rounded-full px-2 py-0.5 text-[10px] font-bold transition-colors ${
+                      className={`rounded-[8px] px-2 py-0.5 text-[10.5px] font-bold transition-colors ${
                         lyricsSize === sz
-                          ? 'bg-white text-[#070709]'
-                          : 'text-white/70 hover:text-white'
+                          ? 'bg-white text-[#070709] shadow-sm'
+                          : 'opacity-75 hover:opacity-100'
                       }`}
                     >
                       {sz === 'normal' ? 'N' : sz === 'large' ? 'G' : 'XL'}
@@ -4088,10 +4157,10 @@ export const AudioStudioSheet: React.FC = () => {
                       data-testid={`display-lyrics-style-${opt.id}`}
                       aria-pressed={selected}
                       onClick={() => setLyricsStyle(opt.id)}
-                      className={`pm-pressable flex flex-col items-center justify-center gap-0.5 rounded-[12px] border px-1.5 py-2 text-center transition-all ${
+                      className={`flex flex-col items-center justify-center gap-0.5 rounded-[10px] px-1.5 py-2 text-center transition-all ${
                         selected
-                          ? 'border-white/80 bg-white text-[#070709] shadow-sm'
-                          : 'border-white/10 bg-white/[0.05] text-white/85 hover:bg-white/[0.11]'
+                          ? 'bg-white text-[#070709] shadow-sm'
+                          : 'bg-white/[0.08] opacity-85 hover:bg-white/[0.15] hover:opacity-100'
                       }`}
                     >
                       <span className={`text-[15px] leading-none ${opt.previewClass}`}>Aa</span>
@@ -4102,143 +4171,75 @@ export const AudioStudioSheet: React.FC = () => {
                   );
                 })}
               </div>
-            </section>
+            </div>
 
-            {/* 3. Smart Playback & Display Toggles */}
-            <section className="space-y-2 border-t border-white/10 pt-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
-                    <Shuffle className="h-3.5 w-3.5 text-white/70" />
-                    <span>Aleatorio siempre activo</span>
+            <div className="space-y-2.5 border-t border-white/10 pt-3">
+              {[
+                {
+                  testId: 'pref-always-shuffle-switch',
+                  label: 'Aleatorio siempre activo',
+                  desc: 'Mantiene el modo aleatorio al abrir playlists',
+                  checked: alwaysShuffle,
+                  onToggle: () => setAlwaysShuffle(!alwaysShuffle),
+                },
+                {
+                  testId: 'pref-same-album-skip-switch',
+                  label: 'Omitir transición en mismo álbum',
+                  desc: 'Deja fija la portada si coincide',
+                  checked: skipSameAlbumCoverTransition,
+                  onToggle: () => setSkipSameAlbumCoverTransition(!skipSameAlbumCoverTransition),
+                },
+                {
+                  testId: 'pref-marquee-switch',
+                  label: 'Texto deslizante si no cabe',
+                  desc: 'Desplaza títulos largos y pausa en crossfade',
+                  checked: marqueeTextEnabled,
+                  onToggle: () => setMarqueeTextEnabled(!marqueeTextEnabled),
+                },
+                {
+                  testId: 'pref-ambient-motion-switch',
+                  label: 'Fondo animado vivo',
+                  desc: 'Movimiento fluido del color de la portada',
+                  checked: ambientMotionEnabled,
+                  onToggle: () => setAmbientMotionEnabled(!ambientMotionEnabled),
+                },
+                {
+                  testId: 'pref-lyrics-blur-switch',
+                  label: 'Desenfoque en otros versos',
+                  desc: 'Enfoca el verso activo en letras sincronizadas',
+                  checked: lyricsBlurEnabled,
+                  onToggle: () => setLyricsBlurEnabled(!lyricsBlurEnabled),
+                },
+                {
+                  testId: 'pref-remaining-time-switch',
+                  label: 'Mostrar tiempo restante',
+                  desc: 'Cuenta regresiva en lugar de duración total',
+                  checked: showRemainingTime,
+                  onToggle: () => setShowRemainingTime(!showRemainingTime),
+                },
+                {
+                  testId: 'pref-visualizer-switch',
+                  label: 'Pulso visual al ritmo',
+                  desc: 'Reacción sutil a graves en escritorio',
+                  checked: visualizerEnabled,
+                  onToggle: () => setVisualizerEnabled(!visualizerEnabled),
+                },
+              ].map((item) => (
+                <div key={item.testId} className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold leading-tight">{item.label}</div>
+                    <p className="text-[10.5px] opacity-60">{item.desc}</p>
                   </div>
-                  <p className="text-[10.5px] text-white/55">
-                    Mantiene el modo aleatorio al abrir playlists
-                  </p>
+                  <PMusicSwitch
+                    variant="hud"
+                    ariaLabel={item.label}
+                    testId={item.testId}
+                    checked={item.checked}
+                    onChange={item.onToggle}
+                  />
                 </div>
-                <PMusicSwitch
-                  variant="hud"
-                  ariaLabel="Aleatorio siempre activo"
-                  testId="pref-always-shuffle-switch"
-                  checked={alwaysShuffle}
-                  onChange={() => setAlwaysShuffle(!alwaysShuffle)}
-                />
-              </div>
-
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
-                    <Disc3 className="h-3.5 w-3.5 text-white/70" />
-                    <span>Omitir transición en mismo álbum</span>
-                  </div>
-                  <p className="text-[10.5px] text-white/55">
-                    Deja fija la portada si coincide en pantalla completa
-                  </p>
-                </div>
-                <PMusicSwitch
-                  variant="hud"
-                  ariaLabel="Omitir transición en mismo álbum"
-                  testId="pref-same-album-skip-switch"
-                  checked={skipSameAlbumCoverTransition}
-                  onChange={() => setSkipSameAlbumCoverTransition(!skipSameAlbumCoverTransition)}
-                />
-              </div>
-
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
-                    <Waves className="h-3.5 w-3.5 text-white/70" />
-                    <span>Texto deslizante si no cabe</span>
-                  </div>
-                  <p className="text-[10.5px] text-white/55">
-                    Desplaza títulos largos y se pausa en crossfade
-                  </p>
-                </div>
-                <PMusicSwitch
-                  variant="hud"
-                  ariaLabel="Texto deslizante"
-                  testId="pref-marquee-switch"
-                  checked={marqueeTextEnabled}
-                  onChange={() => setMarqueeTextEnabled(!marqueeTextEnabled)}
-                />
-              </div>
-
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
-                    <Sparkles className="h-3.5 w-3.5 text-white/70" />
-                    <span>Fondo animado vivo</span>
-                  </div>
-                  <p className="text-[10.5px] text-white/55">
-                    Movimiento fluido del color de la portada
-                  </p>
-                </div>
-                <PMusicSwitch
-                  variant="hud"
-                  ariaLabel="Fondo animado vivo"
-                  testId="pref-ambient-motion-switch"
-                  checked={ambientMotionEnabled}
-                  onChange={() => setAmbientMotionEnabled(!ambientMotionEnabled)}
-                />
-              </div>
-
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
-                    <Eye className="h-3.5 w-3.5 text-white/70" />
-                    <span>Desenfoque en otros versos</span>
-                  </div>
-                  <p className="text-[10.5px] text-white/55">
-                    Enfoca el verso activo en letras sincronizadas
-                  </p>
-                </div>
-                <PMusicSwitch
-                  variant="hud"
-                  ariaLabel="Desenfoque en versos"
-                  testId="pref-lyrics-blur-switch"
-                  checked={lyricsBlurEnabled}
-                  onChange={() => setLyricsBlurEnabled(!lyricsBlurEnabled)}
-                />
-              </div>
-
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
-                    <Clock className="h-3.5 w-3.5 text-white/70" />
-                    <span>Mostrar tiempo restante</span>
-                  </div>
-                  <p className="text-[10.5px] text-white/55">
-                    Cuenta regresiva en lugar de duración total
-                  </p>
-                </div>
-                <PMusicSwitch
-                  variant="hud"
-                  ariaLabel="Mostrar tiempo restante"
-                  testId="pref-remaining-time-switch"
-                  checked={showRemainingTime}
-                  onChange={() => setShowRemainingTime(!showRemainingTime)}
-                />
-              </div>
-
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
-                    <Sliders className="h-3.5 w-3.5 text-white/70" />
-                    <span>Pulso visual al ritmo</span>
-                  </div>
-                  <p className="text-[10.5px] text-white/55">
-                    Reacción sutil a graves en escritorio
-                  </p>
-                </div>
-                <PMusicSwitch
-                  variant="hud"
-                  ariaLabel="Pulso visual al ritmo"
-                  testId="pref-visualizer-switch"
-                  checked={visualizerEnabled}
-                  onChange={() => setVisualizerEnabled(!visualizerEnabled)}
-                />
-              </div>
-            </section>
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -4270,6 +4271,8 @@ export const DevicesConnectSheet: React.FC = () => {
     signUpSupabase,
     pairDemoCompanionDevice,
     setSettingsOpen,
+    nowPlayingOpen,
+    playerBarStyle,
   } = usePMusicStore();
 
   const [quickEmail, setQuickEmail] = useState('');
@@ -4290,6 +4293,24 @@ export const DevicesConnectSheet: React.FC = () => {
       setRemoteVol(Math.round(remoteDeviceSnapshot.volume * 100));
     }
   }, [remoteDeviceSnapshot]);
+
+  useEffect(() => {
+    if (!devicesSheetOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest(
+          '[data-testid="devices-sheet"], [data-testid="dock-connect-btn"], [data-testid="mobile-devices-btn"], [data-testid="island-effect-connect"], [data-testid="sidebar-devices-btn"]'
+        )
+      ) {
+        return;
+      }
+      setDevicesSheetOpen(false);
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, [devicesSheetOpen, setDevicesSheetOpen]);
 
   if (!devicesSheetOpen) return null;
 
@@ -4319,69 +4340,75 @@ export const DevicesConnectSheet: React.FC = () => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4">
+    <>
       <div
         aria-hidden="true"
         onClick={() => setDevicesSheetOpen(false)}
-        className="pm-spotlight-backdrop absolute inset-0 bg-black/65"
+        className="fixed inset-0 z-[64] bg-black/50 sm:hidden"
       />
       <div
         role="dialog"
-        aria-modal="true"
+        aria-modal="false"
         aria-label="Dispositivos conectados"
         data-testid="devices-sheet"
-        className="pm-glass-regular pm-modal-pop relative z-10 flex max-h-[88dvh] w-full max-w-xl flex-col overflow-y-auto rounded-t-[28px] p-5 pb-[max(1.5rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] pm-text-primary sm:rounded-[24px] sm:p-6"
+        className={`pm-glass-frosted-neutral pm-hud-dark pm-popover-enter fixed inset-x-0 bottom-0 z-[65] max-h-[82dvh] overflow-y-auto rounded-t-[28px] px-5 pt-3 pb-[max(1.5rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] pm-no-scrollbar sm:inset-x-auto sm:mx-0 sm:w-[376px] sm:rounded-[24px] sm:p-4 ${
+          nowPlayingOpen
+            ? 'sm:right-6 sm:bottom-[74px]'
+            : playerBarStyle === 'floating-island'
+              ? 'sm:right-[max(16px,calc(50%-440px))] sm:bottom-[94px]'
+              : 'sm:right-6 sm:bottom-[104px]'
+        }`}
       >
-        {/* Mobile grab handle */}
-        <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-current opacity-20 sm:hidden" />
+        <div className="mb-3 flex items-center justify-between gap-2 sm:hidden">
+          <div className="w-7" aria-hidden="true" />
+          <div className="h-1 w-10 rounded-full bg-white/25" />
+          <button
+            type="button"
+            aria-label="Cerrar dispositivos"
+            onClick={() => setDevicesSheetOpen(false)}
+            className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white/80 hover:bg-white/20 hover:text-white"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
 
-        <div className="flex items-center justify-between border-b pm-border pb-4">
-          <div className="flex items-center gap-3">
-            <span className="relative flex h-10 w-10 items-center justify-center rounded-2xl border border-white/15 bg-white/[0.06] text-white">
-              <Wifi className="h-5 w-5" />
-              <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-400 ring-2 ring-[#070709] animate-pulse" />
+        <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/15 bg-white/[0.08] text-white">
+              <Wifi className="h-4 w-4" />
+              <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-emerald-400 ring-2 ring-[#070709] animate-pulse" />
             </span>
-            <div>
-              <h2 className="text-base font-bold pm-text-primary sm:text-lg">
+            <div className="min-w-0">
+              <h2 className="truncate text-[15px] font-bold leading-tight">
                 pMusic Connect
               </h2>
-              <p className="text-xs pm-text-secondary">
-                {onlineDevices.length} {onlineDevices.length === 1 ? 'dispositivo activo' : 'dispositivos en vivo'} · control al milisegundo
+              <p className="mt-0.5 truncate text-[11px] opacity-70">
+                {onlineDevices.length} {onlineDevices.length === 1 ? 'dispositivo activo' : 'dispositivos en vivo'} · al milisegundo
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => {
-                setDevicesSheetOpen(false);
-                usePMusicStore.getState().setActiveTab('Social');
-              }}
-              className="pm-btn-primary rounded-full px-3 py-1.5 text-[11px] font-bold"
-            >
-              Jam QR
-            </button>
-            <button
-              type="button"
-              aria-label="Cerrar dispositivos"
-              onClick={() => setDevicesSheetOpen(false)}
-              className="pm-btn-secondary rounded-full px-3 py-1.5 text-xs font-semibold"
-            >
-              Cerrar
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setDevicesSheetOpen(false);
+              usePMusicStore.getState().setActiveTab('Social');
+            }}
+            className="shrink-0 rounded-full bg-white px-3 py-1 text-[11px] font-bold text-[#070709] shadow-sm transition-opacity hover:opacity-90"
+          >
+            Jam QR
+          </button>
         </div>
 
         {lastTransferBanner && (
-          <div className="mt-4 flex items-center justify-between gap-2 rounded-2xl border border-emerald-500/40 bg-emerald-500/12 px-4 py-2.5 text-xs font-semibold text-emerald-300">
-            <span>{lastTransferBanner}</span>
+          <div className="mt-3 flex items-center justify-between gap-2 rounded-[12px] border border-emerald-400/35 bg-emerald-500/15 px-3 py-2 text-[11.5px] font-semibold text-emerald-200">
+            <span className="truncate">{lastTransferBanner}</span>
             {remoteControlledDeviceId && (
               <button
                 type="button"
                 onClick={() => setRemoteControlledDevice(null)}
-                className="rounded-full bg-emerald-500/20 px-2.5 py-1 text-[11px] font-bold text-emerald-200 hover:bg-emerald-500/30"
+                className="shrink-0 rounded-full bg-emerald-500/25 px-2.5 py-0.5 text-[10.5px] font-bold text-emerald-100 hover:bg-emerald-500/35"
               >
-                Soltar control
+                Soltar
               </button>
             )}
           </div>
@@ -4389,25 +4416,24 @@ export const DevicesConnectSheet: React.FC = () => {
 
         {/* Inline Account Connect card when not signed in */}
         {!authState.connected && (
-          <div
-            data-surface="content"
-            className="pm-surface-card mt-4 space-y-3 rounded-[18px] p-4"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <div className="text-xs font-bold pm-text-primary">
-                  Conecta tu cuenta para sincronizar PC y móvil
+          <div className="mt-3 space-y-2.5 rounded-[14px] border border-white/10 bg-white/[0.06] p-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-xs font-bold leading-tight">
+                  Conecta tu cuenta en PC y móvil
                 </div>
-                <div className="text-[11px] pm-text-secondary">
-                  Inicia sesión con el mismo correo en ambos dispositivos
+                <div className="mt-0.5 text-[10.5px] opacity-70">
+                  Mismo correo para sincronizar en vivo
                 </div>
               </div>
-              <div className="flex rounded-full bg-black/15 p-0.5 text-[11px] font-bold">
+              <div className="flex shrink-0 rounded-full bg-white/[0.08] p-0.5 text-[10.5px] font-bold">
                 <button
                   type="button"
                   onClick={() => setQuickAuthMode('signin')}
-                  className={`rounded-full px-2.5 py-1 transition-colors ${
-                    quickAuthMode === 'signin' ? 'pm-btn-primary' : 'pm-text-secondary'
+                  className={`rounded-full px-2 py-0.5 transition-colors ${
+                    quickAuthMode === 'signin'
+                      ? 'bg-white text-[#070709]'
+                      : 'text-white/70 hover:text-white'
                   }`}
                 >
                   Entrar
@@ -4415,28 +4441,30 @@ export const DevicesConnectSheet: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setQuickAuthMode('signup')}
-                  className={`rounded-full px-2.5 py-1 transition-colors ${
-                    quickAuthMode === 'signup' ? 'pm-btn-primary' : 'pm-text-secondary'
+                  className={`rounded-full px-2 py-0.5 transition-colors ${
+                    quickAuthMode === 'signup'
+                      ? 'bg-white text-[#070709]'
+                      : 'text-white/70 hover:text-white'
                   }`}
                 >
                   Crear
                 </button>
               </div>
             </div>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-1.5">
               <input
                 type="email"
                 placeholder="tu@email.com"
                 value={quickEmail}
                 onChange={(e) => setQuickEmail(e.target.value)}
-                className="pm-input rounded-xl px-3.5 py-2 text-xs"
+                className="w-full rounded-[10px] border border-white/12 bg-white/[0.06] px-3 py-1.5 text-xs text-white placeholder:text-white/40 focus:border-white/35 focus:outline-none"
               />
               <input
                 type="password"
                 placeholder="Contraseña (mín. 6 caracteres)"
                 value={quickPassword}
                 onChange={(e) => setQuickPassword(e.target.value)}
-                className="pm-input rounded-xl px-3.5 py-2 text-xs"
+                className="w-full rounded-[10px] border border-white/12 bg-white/[0.06] px-3 py-1.5 text-xs text-white placeholder:text-white/40 focus:border-white/35 focus:outline-none"
               />
             </div>
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -4444,16 +4472,16 @@ export const DevicesConnectSheet: React.FC = () => {
                 type="button"
                 disabled={quickAuthBusy}
                 onClick={() => void handleQuickAuth()}
-                className="pm-btn-primary rounded-full px-4 py-2 text-xs font-bold disabled:opacity-60"
+                className="rounded-full bg-white px-3.5 py-1.5 text-[11px] font-bold text-[#070709] shadow-sm transition-opacity hover:opacity-90 disabled:opacity-60"
               >
                 {quickAuthBusy
                   ? 'Conectando…'
                   : quickAuthMode === 'signup'
-                    ? 'Crear cuenta pMusic'
+                    ? 'Crear cuenta'
                     : 'Iniciar sesión'}
               </button>
               {quickAuthMsg && (
-                <span className="text-[11px] font-medium pm-text-secondary">
+                <span className="text-[10.5px] font-medium opacity-80">
                   {quickAuthMsg}
                 </span>
               )}
@@ -4463,20 +4491,17 @@ export const DevicesConnectSheet: React.FC = () => {
 
         {/* Current Device Hero Card */}
         {selfDevice && (
-          <div className="mt-4 space-y-2">
-            <div className="px-1 text-[11px] font-bold uppercase tracking-wider pm-text-tertiary">
+          <div className="mt-3 space-y-1.5">
+            <div className="text-[10.5px] font-bold uppercase tracking-wider opacity-60">
               Este dispositivo
             </div>
-            <div
-              data-surface="content"
-              className="pm-surface-card flex flex-wrap items-center justify-between gap-3 rounded-[18px] border border-emerald-500/35 p-4"
-            >
-              <div className="flex min-w-0 flex-1 items-center gap-3">
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-400">
+            <div className="flex items-center justify-between gap-2.5 rounded-[14px] border border-emerald-400/30 bg-white/[0.06] p-3">
+              <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500/18 text-emerald-400">
                   {selfDevice.platform === 'android' ? (
-                    <Smartphone className="h-5 w-5" />
+                    <Smartphone className="h-4 w-4" />
                   ) : (
-                    <Laptop className="h-5 w-5" />
+                    <Laptop className="h-4 w-4" />
                   )}
                 </span>
                 <div className="min-w-0 flex-1">
@@ -4486,7 +4511,7 @@ export const DevicesConnectSheet: React.FC = () => {
                         type="text"
                         value={nameDraft}
                         onChange={(e) => setNameDraft(e.target.value)}
-                        className="pm-input w-44 rounded-lg px-2.5 py-1 text-xs"
+                        className="w-36 rounded-lg border border-white/15 bg-white/[0.08] px-2 py-1 text-xs text-white focus:outline-none"
                       />
                       <button
                         type="button"
@@ -4494,23 +4519,23 @@ export const DevicesConnectSheet: React.FC = () => {
                           void setDeviceName(nameDraft);
                           setEditingName(false);
                         }}
-                        className="pm-btn-primary rounded-full px-2.5 py-1 text-[11px] font-bold"
+                        className="rounded-full bg-white px-2.5 py-1 text-[10.5px] font-bold text-[#070709]"
                       >
                         Guardar
                       </button>
                     </div>
                   ) : (
-                    <div className="flex flex-wrap items-center gap-2 text-sm font-bold pm-text-primary">
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs font-bold">
                       <span className="truncate">{selfDevice.device_name}</span>
                       {!remoteControlledDeviceId && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-400">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">
                           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-                          Reproduciendo aquí
+                          Activo
                         </span>
                       )}
                     </div>
                   )}
-                  <div className="truncate text-xs pm-text-secondary">
+                  <div className="mt-0.5 truncate text-[11px] opacity-70">
                     {selfDevice.track_title}
                   </div>
                 </div>
@@ -4519,7 +4544,7 @@ export const DevicesConnectSheet: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setEditingName(true)}
-                  className="pm-btn-secondary rounded-full px-3 py-1 text-[11px] font-semibold"
+                  className="shrink-0 rounded-full bg-white/[0.08] px-2.5 py-1 text-[10.5px] font-semibold hover:bg-white/[0.15]"
                 >
                   Renombrar
                 </button>
@@ -4528,20 +4553,17 @@ export const DevicesConnectSheet: React.FC = () => {
           </div>
         )}
 
-        {/* Peer Devices (Spotify Connect List) */}
-        <div className="mt-4 space-y-2.5">
-          <div className="flex items-center justify-between px-1">
-            <span className="text-[11px] font-bold uppercase tracking-wider pm-text-tertiary">
+        {/* Peer Devices */}
+        <div className="mt-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10.5px] font-bold uppercase tracking-wider opacity-60">
               Otros dispositivos ({peerDevices.length})
             </span>
           </div>
 
           {peerDevices.length === 0 ? (
-            <div
-              data-surface="content"
-              className="pm-surface-card rounded-[16px] p-4 text-center text-xs pm-text-secondary"
-            >
-              Abre pMusic en tu PC o móvil con la misma cuenta para verlos aparecer aquí al instante.
+            <div className="rounded-[12px] border border-white/10 bg-white/[0.05] p-3 text-center text-[11px] opacity-75">
+              Abre pMusic en tu PC o móvil con la misma cuenta para verlos aparecer aquí.
             </div>
           ) : (
             peerDevices.map((dev) => {
@@ -4549,89 +4571,85 @@ export const DevicesConnectSheet: React.FC = () => {
               return (
                 <div
                   key={dev.device_id}
-                  data-surface="content"
-                  className={`pm-surface-card flex flex-col gap-3 rounded-[18px] p-4 transition-all ${
-                    isRemoteTarget ? 'ring-2 ring-emerald-500/60' : ''
+                  className={`flex flex-col gap-2.5 rounded-[14px] border p-3 transition-all ${
+                    isRemoteTarget
+                      ? 'border-emerald-400/60 bg-emerald-500/10'
+                      : 'border-white/10 bg-white/[0.06]'
                   }`}
                 >
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex min-w-0 flex-1 items-center gap-3">
-                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white/10">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white/10">
                         {dev.platform === 'android' ? (
-                          <Smartphone className="h-5 w-5 text-emerald-400" />
+                          <Smartphone className="h-4 w-4 text-emerald-400" />
                         ) : (
-                          <Laptop className="h-5 w-5 pm-text-primary" />
+                          <Laptop className="h-4 w-4 text-white" />
                         )}
                       </span>
                       <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2 text-sm font-bold pm-text-primary">
+                        <div className="flex items-center gap-1.5 text-xs font-bold">
                           <span className="truncate">{dev.device_name}</span>
                           {(dev.is_playing || isRemoteTarget) && (
-                            <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-400">
-                              Activo
+                            <span className="rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[9.5px] font-semibold text-emerald-300">
+                              En vivo
                             </span>
                           )}
                         </div>
-                        <div className="truncate text-xs pm-text-secondary">
+                        <div className="truncate text-[10.5px] opacity-70">
                           {dev.track_title}
                         </div>
                       </div>
                     </div>
+                  </div>
 
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => void transferPlaybackToDevice(dev.device_id)}
-                        className="pm-btn-primary rounded-full px-3.5 py-1.5 text-xs font-bold"
-                      >
-                        Transferir aquí
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void pullPlaybackFromDevice(dev.device_id)}
-                        className="pm-btn-secondary rounded-full px-3 py-1.5 text-xs font-semibold"
-                      >
-                        Traer aquí
-                      </button>
-                    </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => void transferPlaybackToDevice(dev.device_id)}
+                      className="rounded-[10px] bg-white py-1.5 text-[11px] font-bold text-[#070709] shadow-sm transition-opacity hover:opacity-90"
+                    >
+                      Transferir aquí
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void pullPlaybackFromDevice(dev.device_id)}
+                      className="rounded-[10px] bg-white/[0.08] py-1.5 text-[11px] font-semibold hover:bg-white/[0.15]"
+                    >
+                      Traer aquí
+                    </button>
                   </div>
 
                   {/* Interactive Remote Controls + Volume Slider */}
-                  <div className="space-y-2.5 border-t pm-border pt-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-[11px] font-semibold pm-text-tertiary">
-                        Control remoto en vivo
-                      </span>
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          aria-label={`Anterior en ${dev.device_name}`}
-                          onClick={() => void sendRemoteDeviceCommand(dev.device_id, 'prev')}
-                          className="pm-btn-secondary rounded-full px-3 py-1.5 text-xs font-semibold"
-                        >
-                          Anterior
-                        </button>
-                        <button
-                          type="button"
-                          aria-label={`Play/Pausa en ${dev.device_name}`}
-                          onClick={() => void sendRemoteDeviceCommand(dev.device_id, 'toggle')}
-                          className="pm-btn-primary rounded-full px-3.5 py-1.5 text-xs font-bold"
-                        >
-                          Play / Pausa
-                        </button>
-                        <button
-                          type="button"
-                          aria-label={`Siguiente en ${dev.device_name}`}
-                          onClick={() => void sendRemoteDeviceCommand(dev.device_id, 'next')}
-                          className="pm-btn-secondary rounded-full px-3 py-1.5 text-xs font-semibold"
-                        >
-                          Siguiente
-                        </button>
-                      </div>
+                  <div className="space-y-2 border-t border-white/10 pt-2">
+                    <div className="grid grid-cols-3 gap-1">
+                      <button
+                        type="button"
+                        aria-label={`Anterior en ${dev.device_name}`}
+                        onClick={() => void sendRemoteDeviceCommand(dev.device_id, 'prev')}
+                        className="rounded-[8px] bg-white/[0.08] py-1 text-[10.5px] font-semibold hover:bg-white/[0.15]"
+                      >
+                        Anterior
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Play/Pausa en ${dev.device_name}`}
+                        onClick={() => void sendRemoteDeviceCommand(dev.device_id, 'toggle')}
+                        className="rounded-[8px] bg-white py-1 text-[10.5px] font-bold text-[#070709]"
+                      >
+                        Play / Pausa
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Siguiente en ${dev.device_name}`}
+                        onClick={() => void sendRemoteDeviceCommand(dev.device_id, 'next')}
+                        className="rounded-[8px] bg-white/[0.08] py-1 text-[10.5px] font-semibold hover:bg-white/[0.15]"
+                      >
+                        Siguiente
+                      </button>
                     </div>
 
-                    <div className="flex items-center gap-2.5">
-                      <Volume2 className="h-3.5 w-3.5 shrink-0 pm-text-tertiary" />
+                    <div className="flex items-center gap-2">
+                      <Volume2 className="h-3.5 w-3.5 shrink-0 opacity-70" />
                       <input
                         type="range"
                         min={0}
@@ -4644,9 +4662,9 @@ export const DevicesConnectSheet: React.FC = () => {
                           void sendRemoteDeviceCommand(dev.device_id, 'toggle', v / 100);
                         }}
                         style={{ '--pm-fill': `${remoteVol}%` } as React.CSSProperties}
-                        className="flex-1"
+                        className="pm-range-pill flex-1 cursor-pointer"
                       />
-                      <span className="tabular-nums w-8 text-right text-[11px] font-semibold pm-text-secondary">
+                      <span className="tabular-nums w-8 text-right text-[10.5px] font-semibold opacity-80">
                         {remoteVol}%
                       </span>
                     </div>
@@ -4657,27 +4675,21 @@ export const DevicesConnectSheet: React.FC = () => {
           )}
         </div>
 
-        <div
-          data-surface="content"
-          className="pm-surface-card mt-5 flex flex-wrap items-center justify-between gap-3 rounded-[16px] p-4"
-        >
-          <div className="text-xs pm-text-secondary">
-            Estado:{' '}
-            <strong className="pm-text-primary">
-              {authState.connected && syncMode === 'supabase'
-                ? `Conectado (${authState.email})`
-                : syncMode === 'supabase'
-                  ? 'Supabase listo · Inicia sesión'
-                  : 'Sincronización Local Activa'}
-            </strong>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3">
+          <div className="min-w-0 flex-1 truncate text-[11px] opacity-75">
+            {authState.connected && syncMode === 'supabase'
+              ? authState.email
+              : syncMode === 'supabase'
+                ? 'Inicia sesión'
+                : 'Local activo'}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={() => pairDemoCompanionDevice()}
-              className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-semibold"
+              className="rounded-full bg-white/[0.08] px-2.5 py-1 text-[10.5px] font-semibold hover:bg-white/[0.15]"
             >
-              Probar dispositivo local
+              Demo local
             </button>
             <button
               type="button"
@@ -4685,14 +4697,14 @@ export const DevicesConnectSheet: React.FC = () => {
                 setDevicesSheetOpen(false);
                 setSettingsOpen(true);
               }}
-              className="pm-btn-primary rounded-full px-4 py-1.5 text-xs font-bold"
+              className="rounded-full bg-white px-2.5 py-1 text-[10.5px] font-bold text-[#070709]"
             >
-              Ajustes de cuenta
+              Cuenta
             </button>
           </div>
         </div>
       </div>
-    </div>
+    </>
   );
 };
 

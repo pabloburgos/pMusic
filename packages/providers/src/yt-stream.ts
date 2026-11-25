@@ -687,19 +687,48 @@ export class AudioStreamResolver {
 
     const hasClientRange = typeof req.headers.range === 'string' && req.headers.range.trim().length > 0;
     const range = hasClientRange ? req.headers.range!.trim() : 'bytes=0-';
-    let upstream = await fetch(resolved.url, { headers: { Range: range } }).catch(() => null);
+    const ac = new AbortController();
+    let clientClosed = false;
+    let resolveDrain: (() => void) | null = null;
+    const onClientClose = () => {
+      clientClosed = true;
+      try {
+        ac.abort();
+      } catch {
+        // ignore abort failure
+      }
+      if (resolveDrain) {
+        const fn = resolveDrain;
+        resolveDrain = null;
+        fn();
+      }
+    };
+    req.once('close', onClientClose);
+    res.once('close', onClientClose);
+
+    let upstream = await fetch(resolved.url, {
+      headers: { Range: range },
+      signal: ac.signal,
+    }).catch(() => null);
 
     // Retry once with fresh decipher if cached YouTube URL expired (403/410)
-    if (!upstream || (!upstream.ok && upstream.status !== 206)) {
+    if (!clientClosed && (!upstream || (!upstream.ok && upstream.status !== 206))) {
       this.cache.delete(cacheKey);
       resolved = await this.resolve(trackId, meta);
-      if (!resolved) {
+      if (!resolved || clientClosed) {
+        req.off('close', onClientClose);
+        res.off('close', onClientClose);
         return false;
       }
-      upstream = await fetch(resolved.url, { headers: { Range: range } }).catch(() => null);
+      upstream = await fetch(resolved.url, {
+        headers: { Range: range },
+        signal: ac.signal,
+      }).catch(() => null);
     }
 
-    if (!upstream || (!upstream.ok && upstream.status !== 206)) {
+    if (clientClosed || !upstream || (!upstream.ok && upstream.status !== 206)) {
+      req.off('close', onClientClose);
+      res.off('close', onClientClose);
       this.cache.delete(cacheKey);
       return false;
     }
@@ -721,24 +750,48 @@ export class AudioStreamResolver {
     }
 
     if (req.method === 'HEAD' || !upstream.body) {
-      res.end();
+      req.off('close', onClientClose);
+      res.off('close', onClientClose);
+      if (!res.writableEnded && !res.destroyed) res.end();
       return true;
     }
 
     const reader = upstream.body.getReader();
-    req.on('close', () => void reader.cancel().catch(() => {}));
     try {
       for (;;) {
+        if (clientClosed || res.destroyed || res.writableEnded) break;
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done || clientClosed || res.destroyed || res.writableEnded) break;
         if (!res.write(value)) {
-          await new Promise<void>((r) => res.once('drain', () => r()));
+          await new Promise<void>((r) => {
+            if (clientClosed || res.destroyed || res.writableEnded) {
+              r();
+              return;
+            }
+            resolveDrain = r;
+            const onDrain = () => {
+              if (resolveDrain === r) resolveDrain = null;
+              r();
+            };
+            res.once('drain', onDrain);
+          });
         }
       }
     } catch {
-      // client closed connection
+      // client closed connection or fetch aborted
+    } finally {
+      req.off('close', onClientClose);
+      res.off('close', onClientClose);
+      resolveDrain = null;
+      try {
+        reader.releaseLock();
+      } catch {
+        // ignore lock release failure
+      }
+      if (!res.writableEnded && !res.destroyed) {
+        res.end();
+      }
     }
-    res.end();
     return true;
   }
 }

@@ -142,6 +142,7 @@ const PMusicMainApp: React.FC = () => {
     importModalOpen,
     settingsOpen,
     spotlightOpen,
+    themeId,
     playerBarStyle,
     reducedMotionPref,
     marqueeTextEnabled,
@@ -997,13 +998,21 @@ const PMusicMainApp: React.FC = () => {
 
   return (
     <div
-      className={`pm-canvas relative flex w-full flex-col ${
-        isMobileViewport ? 'min-h-dvh' : 'h-dvh overflow-hidden'
+      className={`relative flex w-full flex-col ${
+        isMobileViewport
+          ? 'pm-canvas min-h-dvh'
+          : themeId === 'nordic-light'
+            ? 'pm-canvas h-dvh overflow-hidden'
+            : 'h-dvh overflow-hidden bg-[#000000] text-[var(--pm-text-primary)]'
       }`}
     >
       {/* Unified Desktop Header & Integrated Frameless Windows Drag Bar (borderless unified canvas) */}
       {!isMobileViewport && (
-        <header className="pm-canvas relative z-30 flex h-12 w-full shrink-0 items-center gap-2 px-3">
+        <header
+          className={`relative z-30 flex h-12 w-full shrink-0 items-center gap-2 px-3 ${
+            themeId === 'nordic-light' ? 'pm-canvas' : 'bg-[#000000]'
+          }`}
+        >
           <div className="pm-no-drag relative z-20 flex shrink-0 items-center gap-2">
             <button
               type="button"
@@ -1571,6 +1580,7 @@ const PMusicMainApp: React.FC = () => {
 
               <button
                 type="button"
+                data-testid="sidebar-devices-btn"
                 title="Dispositivos"
                 aria-label="Dispositivos"
                 onClick={() => setDevicesSheetOpen(true)}
@@ -1602,17 +1612,18 @@ const PMusicMainApp: React.FC = () => {
           </aside>
         )}
 
-        {/* Center Main Canvas (Solid #070709, Zero Blur, Zero Background Gradients) */}
+        {/* Center Main Canvas (Rounded Framed Container flush-aligned with side panels) */}
         <main
           data-surface="content"
+          data-testid="main-content-frame"
           className={
             isMobileViewport
               ? `min-w-0 flex-1 overflow-y-auto px-4 pb-48 ${
                   activeDetailView?.kind === 'artist' ? 'pt-0' : 'pt-3'
                 }`
-              : `h-full min-w-0 flex-1 overflow-y-auto px-7 pt-3 ${
-                  playerBarStyle === 'floating-island' ? 'pb-28' : 'pb-8'
-                }`
+              : `pm-canvas h-full min-w-0 flex-1 overflow-y-auto overflow-x-hidden rounded-[20px] border border-white/[0.06] px-7 ${
+                  activeDetailView?.kind === 'artist' ? 'pt-0' : 'pt-5'
+                } ${playerBarStyle === 'floating-island' ? 'pb-28' : 'pb-8'}`
           }
         >
           <div key={viewTransitionKey} className="pm-view-transition">
@@ -2881,32 +2892,13 @@ const PMusicMainApp: React.FC = () => {
             <div className="pm-dock-interactive pm-dock-cluster pointer-events-auto flex items-center gap-1 rounded-full px-2 py-1">
               <button
                 type="button"
-                data-testid="dock-dj-btn"
-                aria-label="Modo Sesión DJ"
-                aria-pressed={djMode.enabled || djPopoverOpen}
-                onClick={() => setDjPopoverOpen(!djPopoverOpen)}
-                className={`pm-pressable inline-flex h-8 items-center justify-center gap-1.5 rounded-full px-2.5 text-[11px] font-bold transition-colors ${
-                  djMode.enabled || djPopoverOpen
-                    ? 'bg-white/[0.16] pm-text-primary'
-                    : 'pm-text-secondary hover:bg-white/[0.10] hover:text-[var(--pm-text-primary)]'
-                }`}
-              >
-                <Disc3
-                  className={`h-3.5 w-3.5 ${
-                    djMode.enabled ? 'text-purple-400' : 'pm-text-secondary'
-                  }`}
-                />
-                <span className="hidden xl:inline">DJ</span>
-              </button>
-
-              <button
-                type="button"
                 data-testid="dock-eq-btn"
-                aria-label="Ecualizador"
-                aria-pressed={eqSheetOpen}
-                onClick={() => setEqSheetOpen(!eqSheetOpen)}
+                title="Estudio de audio, EQ y DJ"
+                aria-label="Estudio de audio y ecualizador"
+                aria-pressed={eqSheetOpen || djPopoverOpen}
+                onClick={() => setEqSheetOpen(!(eqSheetOpen || djPopoverOpen))}
                 className={`pm-pressable inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
-                  eqSheetOpen
+                  eqSheetOpen || djPopoverOpen
                     ? 'bg-white/[0.16] text-[var(--pm-text-primary)]'
                     : 'pm-text-secondary hover:bg-white/[0.10] hover:text-[var(--pm-text-primary)]'
                 }`}
@@ -2919,7 +2911,7 @@ const PMusicMainApp: React.FC = () => {
                 data-testid="dock-connect-btn"
                 aria-label="Dispositivos conectados (pMusic Connect)"
                 aria-pressed={devicesSheetOpen || Boolean(remoteControlledDeviceId)}
-                onClick={() => setDevicesSheetOpen(true)}
+                onClick={() => setDevicesSheetOpen(!devicesSheetOpen)}
                 className={`pm-pressable inline-flex h-8 items-center justify-center gap-1.5 rounded-full px-2 text-[11px] font-bold transition-colors ${
                   remoteControlledDeviceId
                     ? 'bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-400/40'

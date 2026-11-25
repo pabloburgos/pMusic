@@ -40,6 +40,7 @@ import {
   type TopResultMatch,
   type Track,
   type TrackAnalysis,
+  type TrackCredits,
   type UserEqBandsDb,
   type UserEqConfig,
   type UserEqPresetId,
@@ -378,18 +379,18 @@ export type LyricsVisualStyle =
 export type NowPlayingBackdropStyle =
   | 'fluid'
   | 'paint'
-  | 'prism'
   | 'nebula'
   | 'pulse'
+  | 'rhythm'
   | 'minimal';
 export type RepeatMode = 'off' | 'all' | 'one';
 
 const BACKDROP_STYLES: readonly NowPlayingBackdropStyle[] = [
   'fluid',
   'paint',
-  'prism',
   'nebula',
   'pulse',
+  'rhythm',
   'minimal',
 ];
 
@@ -400,6 +401,9 @@ function parseNowPlayingBackdropStyle(
   if (typeof value !== 'string') return fallback;
   if ((BACKDROP_STYLES as readonly string[]).includes(value)) {
     return value as NowPlayingBackdropStyle;
+  }
+  if (value === 'prism') {
+    return 'rhythm';
   }
   if (value === 'mesh' || value === 'vinyl' || value === 'waves') {
     return 'fluid';
@@ -814,6 +818,7 @@ export interface PMusicStoreState {
     hint?: { title?: string; artist?: string }
   ) => Promise<void>;
   openPlaylistDetail: (playlistId: string) => Promise<void>;
+  fetchTrackCredits: (track: Track) => Promise<TrackCredits | null>;
   openLocalPlaylistDetail: (playlistId: string) => void;
   closeDetailView: () => void;
   showToast: (message: string) => void;
@@ -2956,19 +2961,19 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     set({
       eqSheetOpen: open,
       djPopoverOpen: false,
-      ...(open ? { audioPanelTab: 'eq' as const } : {}),
+      ...(open ? { audioPanelTab: 'eq' as const, devicesSheetOpen: false } : {}),
     }),
   setDjPopoverOpen: (open) =>
     set({
       djPopoverOpen: open,
       eqSheetOpen: false,
-      ...(open ? { audioPanelTab: 'dj' as const } : {}),
+      ...(open ? { audioPanelTab: 'dj' as const, devicesSheetOpen: false } : {}),
     }),
   setAudioPanelTab: (tab) =>
     set((st) => ({
       audioPanelTab: tab,
       ...(st.eqSheetOpen || st.djPopoverOpen
-        ? { eqSheetOpen: tab !== 'dj', djPopoverOpen: tab === 'dj' }
+        ? { eqSheetOpen: tab !== 'dj', djPopoverOpen: tab === 'dj', devicesSheetOpen: false }
         : {}),
     })),
   setCarModeOpen: (open) => set({ carModeOpen: open }),
@@ -3011,7 +3016,30 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       get().showToast(`Sin resultados para "${clean}"`);
     }
   },
-  setDevicesSheetOpen: (open) => set({ devicesSheetOpen: open }),
+  setDevicesSheetOpen: (open) =>
+    set({
+      devicesSheetOpen: open,
+      ...(open ? { eqSheetOpen: false, djPopoverOpen: false } : {}),
+    }),
+  fetchTrackCredits: async (track) => {
+    try {
+      const fn = (musicProvider as {
+        getTrackCredits?: (
+          trackId: string,
+          hint?: { title?: string; artist?: string }
+        ) => Promise<TrackCredits | null>;
+      }).getTrackCredits;
+      if (typeof fn === 'function') {
+        return await fn.call(musicProvider, track.id, {
+          title: track.title,
+          artist: track.artists.map((a) => a.name).join(', '),
+        });
+      }
+    } catch {
+      // ignore fetch error and fall back in modal
+    }
+    return null;
+  },
   setImportModalOpen: (open) => set({ importModalOpen: open, importError: null }),
   setSettingsOpen: (open) => set({ settingsOpen: open }),
   setSpotlightOpen: (open) => set({ spotlightOpen: open }),
@@ -4895,6 +4923,13 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   signInSupabase: async (email, password) => {
     await syncEngine.signIn(email, password);
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem(HOME_SHELVES_CACHE_KEY);
+      }
+    } catch {
+      // ignore
+    }
     const profile = (await syncEngine.getProfile?.()) ?? null;
     try {
       const cloudPrefs = await syncEngine.loadAccountPreferences?.();
@@ -4923,6 +4958,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       onlineDevices: syncEngine.getOnlineDevices(),
       likedTracks: libraryStore.getLikedTracks(),
       playlists: libraryStore.getPlaylists(),
+      playHistory: libraryStore.getPlayHistory(),
     });
     void syncEngine.sendRemoteCommand({
       targetDeviceId: '*',
@@ -4950,6 +4986,9 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       authOnboardingOpen: false,
       needsProfileSetup: auth.connected && !profile,
       onlineDevices: syncEngine.getOnlineDevices(),
+      likedTracks: libraryStore.getLikedTracks(),
+      playlists: libraryStore.getPlaylists(),
+      playHistory: libraryStore.getPlayHistory(),
     });
     return res;
   },
@@ -4998,6 +5037,13 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     try {
       const auth = await syncEngine.completeOAuthCallback?.(callbackUrl);
       if (auth?.connected) {
+        try {
+          if (typeof localStorage !== 'undefined') {
+            localStorage.removeItem(HOME_SHELVES_CACHE_KEY);
+          }
+        } catch {
+          // ignore
+        }
         const profile = (await syncEngine.getProfile?.()) ?? null;
         try {
           const cloudPrefs = await syncEngine.loadAccountPreferences?.();
@@ -5030,6 +5076,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           onlineDevices: syncEngine.getOnlineDevices(),
           likedTracks: libraryStore.getLikedTracks(),
           playlists: libraryStore.getPlaylists(),
+          playHistory: libraryStore.getPlayHistory(),
         });
         get().showToast(
           profile
@@ -5052,14 +5099,36 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   signOutSupabase: async () => {
     await syncEngine.signOut();
-    set({
+    try {
+      await recommendationEngine.resetTastes();
+    } catch {
+      // ignore taste reset error
+    }
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem(HOME_SHELVES_CACHE_KEY);
+        localStorage.removeItem('pmusic.wrapped.events.v1');
+      }
+    } catch {
+      // ignore
+    }
+    set((prev) => ({
       authState: syncEngine.getAuthState(),
       userProfile: null,
       needsProfileSetup: false,
       onlineDevices: syncEngine.getOnlineDevices(),
       remoteControlledDeviceId: null,
       remoteDeviceSnapshot: null,
-    });
+      playlists: [],
+      likedTracks: [],
+      playHistory: [],
+      playlistPlayCounts: {},
+      seedArtists: recommendationEngine.getSeedArtists(),
+      affinityProfile: recommendationEngine.getAffinityProfile(),
+      activeDetailView:
+        prev.activeDetailView?.kind === 'local_playlist' ? null : prev.activeDetailView,
+    }));
+    void get().refreshHomeRecommendations(false);
   },
 
   setAuthOnboardingOpen: (open) => set({ authOnboardingOpen: open }),

@@ -44,15 +44,18 @@ describe('@pmusic/web UI', () => {
     const header = document.querySelector('header');
     expect(header?.querySelector('button[aria-label="Ajustes"]')).toBeNull();
 
-    fireEvent.click(screen.getByTestId('dock-dj-btn'));
+    expect(screen.queryByTestId('dock-dj-btn')).toBeNull();
+    fireEvent.click(screen.getByTestId('dock-eq-btn'));
+    expect(screen.getByTestId('eq-sheet')).toBeDefined();
+
+    fireEvent.click(screen.getByTestId('audio-panel-tab-dj'));
     expect(screen.getByTestId('dj-popover')).toBeDefined();
     expect(screen.getByTestId('dj-style-quick')).toBeDefined();
     expect(screen.getByTestId('dj-style-full')).toBeDefined();
 
     fireEvent.click(screen.getByTestId('dock-eq-btn'));
     expect(screen.queryByTestId('dj-popover')).toBeNull();
-    expect(screen.getByTestId('eq-sheet')).toBeDefined();
-    fireEvent.click(screen.getByTestId('dock-eq-btn'));
+    expect(screen.queryByTestId('eq-sheet')).toBeNull();
 
     const settingsBtn = screen.getAllByRole('button', { name: /Ajustes/i })[0]!;
     fireEvent.click(settingsBtn);
@@ -756,6 +759,9 @@ describe('@pmusic/web UI', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Sencillos y EP' }));
     expect(screen.getAllByText('TÓCATE SOLA').length).toBeGreaterThan(0);
 
+    // Artist profile omits "Artista verificado · pMusic" badge
+    expect(screen.queryByText(/Artista verificado · pMusic/i)).toBeNull();
+
     // Clicking hero shuffle activates true multi-album shuffle without repeats
     await act(async () => {
       fireEvent.click(screen.getByTestId('artist-shuffle-btn'));
@@ -790,5 +796,80 @@ describe('@pmusic/web UI', () => {
       (window as any).__pmusicSetCarMode?.(false);
     });
     expect(usePMusicStore.getState().carModeOpen).toBe(false);
+  });
+
+  it('supports v0.18.2 studio Barra/Pantalla separation, anchored Connect popover, rhythm backdrop, and song credits modal', async () => {
+    act(() => {
+      usePMusicStore.setState({
+        nowPlayingOpen: false,
+        eqSheetOpen: false,
+        djPopoverOpen: false,
+        devicesSheetOpen: false,
+        trackMenu: null,
+        trackInfoModalTrack: null,
+        activeDetailView: null,
+        activeTab: 'Inicio',
+        playerBarStyle: 'classic-center',
+      });
+    });
+
+    render(<App />);
+
+    // 1. Outside fullscreen, 3rd studio tab is "Barra" and hides EQ/Crossfade completely
+    fireEvent.click(screen.getByTestId('dock-eq-btn'));
+    const displayTabBtn = screen.getByTestId('audio-panel-tab-display');
+    expect(displayTabBtn.textContent).toContain('Barra');
+    fireEvent.click(displayTabBtn);
+    expect(screen.getByTestId('dock-style-panel')).toBeDefined();
+    expect(screen.queryByText('Ecualizador')).toBeNull();
+    expect(screen.queryByText('Crossfade')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('studio-bar-style-floating-island'));
+    expect(usePMusicStore.getState().playerBarStyle).toBe('floating-island');
+
+    // Inside fullscreen, 3rd studio tab becomes "Pantalla", swaps prism for rhythm, and hides EQ/Crossfade
+    act(() => {
+      usePMusicStore.setState({ nowPlayingOpen: true, eqSheetOpen: true, audioPanelTab: 'display' });
+    });
+    expect(screen.getByTestId('audio-panel-tab-display').textContent).toContain('Pantalla');
+    expect(screen.getByTestId('nowplaying-display-panel')).toBeDefined();
+    expect(screen.queryByText('Ecualizador')).toBeNull();
+    expect(screen.queryByTestId('backdrop-style-prism')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('backdrop-style-rhythm'));
+    expect(usePMusicStore.getState().nowPlayingBackdropStyle).toBe('rhythm');
+    expect(
+      screen.getByTestId('exotic-backdrop-canvas').getAttribute('data-exotic-style')
+    ).toBe('rhythm');
+
+    // Legacy saved 'prism' maps gracefully to 'rhythm'
+    act(() => {
+      usePMusicStore.getState().setNowPlayingBackdropStyle('prism' as any);
+    });
+    expect(usePMusicStore.getState().nowPlayingBackdropStyle).toBe('rhythm');
+
+    // 2. DevicesConnectSheet renders as an anchored dock popover matching Studio
+    act(() => {
+      usePMusicStore.setState({ nowPlayingOpen: false, playerBarStyle: 'classic-center' });
+    });
+    fireEvent.click(screen.getByTestId('dock-connect-btn'));
+    const devicesSheet = screen.getByTestId('devices-sheet');
+    expect(devicesSheet.getAttribute('aria-modal')).toBe('false');
+    expect(devicesSheet.className).toContain('sm:w-[376px]');
+    expect(screen.queryByTestId('eq-sheet')).toBeNull();
+
+    // 3. Track context menu uses "Ver créditos" and opens credits modal with ficha artística
+    const sampleTrack = usePMusicStore.getState().currentTrack;
+    act(() => {
+      usePMusicStore.setState({ devicesSheetOpen: false, nowPlayingOpen: false });
+      usePMusicStore.getState().openTrackMenu(sampleTrack, 100, 100);
+    });
+    const creditsMenuItem = screen.getByTestId('track-menu-credits');
+    expect(creditsMenuItem.textContent).toContain('Ver créditos');
+    await act(async () => {
+      fireEvent.click(creditsMenuItem);
+    });
+    expect(screen.getByTestId('track-info-modal')).toBeDefined();
+    expect(screen.getByTestId('track-credits-section')).toBeDefined();
   });
 });

@@ -3,6 +3,7 @@ import type {
   ArtistSummary,
   PlaylistSummary,
   Track,
+  TrackCredits,
 } from '../types/music.ts';
 import type { AudioStreamQuality } from '../types/platform.ts';
 
@@ -88,6 +89,11 @@ export interface IMusicProvider {
   getAlbum(albumId: string, signal?: AbortSignal): Promise<AlbumDetail>;
   getPlaylist(playlistId: string, maxItems?: number, signal?: AbortSignal): Promise<PlaylistDetail>;
   getPlainLyricsFallback(videoId: string, signal?: AbortSignal): Promise<string | null>;
+  getTrackCredits?(
+    trackId: string,
+    hint?: { title?: string; artist?: string },
+    signal?: AbortSignal
+  ): Promise<TrackCredits | null>;
   resolveAudioStream(
     videoId: string,
     quality?: AudioStreamQuality,

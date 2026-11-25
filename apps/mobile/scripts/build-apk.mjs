@@ -243,8 +243,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="37"
-    android:versionName="0.18.1">
+    android:versionCode="38"
+    android:versionName="0.18.2">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -498,7 +498,7 @@ public class PMusicPlaybackService extends Service {
             conn.setConnectTimeout(3500);
             conn.setReadTimeout(4500);
             conn.setInstanceFollowRedirects(true);
-            conn.setRequestProperty("User-Agent", "pMusic-Android/0.18.1");
+            conn.setRequestProperty("User-Agent", "pMusic-Android/0.18.2");
             if (conn.getResponseCode() >= 200 && conn.getResponseCode() < 300) {
                 InputStream in = conn.getInputStream();
                 ByteArrayOutputStream bos = new ByteArrayOutputStream();

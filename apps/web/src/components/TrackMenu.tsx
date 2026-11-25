@@ -338,6 +338,7 @@ export const TrackContextMenu: React.FC = () => {
       <button
         type="button"
         role="menuitem"
+        data-testid="track-menu-credits"
         onClick={() => {
           setTrackInfoModalTrack(track);
           closeTrackMenu();
@@ -345,7 +346,7 @@ export const TrackContextMenu: React.FC = () => {
         className="pm-hover pm-text-primary flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left text-xs font-medium"
       >
         <Info className="h-4 w-4 pm-text-secondary" />
-        <span>Información y créditos</span>
+        <span>Ver créditos</span>
       </button>
 
       <button

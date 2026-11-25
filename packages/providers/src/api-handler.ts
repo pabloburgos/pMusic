@@ -289,6 +289,15 @@ export function createPMusicApiHandler(options: PMusicApiHandlerOptions = {}) {
         return true;
       }
 
+      if (pathname.startsWith('/api/credits/')) {
+        const trackId = decodeURIComponent(pathname.slice('/api/credits/'.length));
+        const title = urlObj.searchParams.get('title') ?? undefined;
+        const artist = urlObj.searchParams.get('artist') ?? undefined;
+        const credits = await deezerCatalog.trackCredits(trackId, { title, artist });
+        sendJson(res, 200, { credits });
+        return true;
+      }
+
       if (pathname.startsWith('/api/album/')) {
         const albumId = decodeURIComponent(pathname.slice('/api/album/'.length));
         const title = urlObj.searchParams.get('title') ?? undefined;
