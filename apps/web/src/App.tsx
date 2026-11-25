@@ -55,6 +55,7 @@ import {
   toggleRealFullscreen,
 } from './platform/web-bridge.ts';
 import { PMusicLogo } from './components/PMusicLogo.tsx';
+import { MarqueeText } from './components/MarqueeText.tsx';
 import { useDelayedBuffering } from './hooks/useDelayedBuffering.ts';
 import { SpotlightSearchModal } from './components/SpotlightSearchModal.tsx';
 import { AppToast, TrackContextMenu } from './components/TrackMenu.tsx';
@@ -141,6 +142,7 @@ const PMusicMainApp: React.FC = () => {
     spotlightOpen,
     playerBarStyle,
     reducedMotionPref,
+    marqueeTextEnabled,
     sleepTimerMode,
     sleepTimerRemainingSec,
     authState,
@@ -2320,15 +2322,21 @@ const PMusicMainApp: React.FC = () => {
 
               <div className="min-w-0 max-w-[200px] xl:max-w-[240px]">
                 <div className="flex h-[17px] items-center">
-                  <button
-                    type="button"
-                    onClick={() => setNowPlayingOpen(true)}
-                    className="pm-text-btn block max-w-full truncate text-left text-[14px] font-semibold leading-[1.15] pm-text-primary hover:underline"
+                  <MarqueeText
+                    disabled={!marqueeTextEnabled || reducedMotionPref || crossfadePairActive}
+                    testId="dock-title-marquee"
+                    className="w-full"
                   >
-                    {currentTrack.title}
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => setNowPlayingOpen(true)}
+                      className="pm-text-btn block text-left text-[14px] font-semibold leading-[1.15] pm-text-primary hover:underline"
+                    >
+                      {currentTrack.title}
+                    </button>
+                  </MarqueeText>
                 </div>
-                <div className="mt-[2px] flex h-[15px] items-center gap-1.5 truncate">
+                <div className="mt-[2px] flex h-[15px] items-center gap-1.5">
                   {currentTrack.isExplicit && (
                     <span
                       aria-label="Explícita"
@@ -2337,13 +2345,17 @@ const PMusicMainApp: React.FC = () => {
                       E
                     </span>
                   )}
-                  <div className="flex min-w-0 items-center truncate text-[12px] leading-[1.2] pm-text-secondary">
+                  <MarqueeText
+                    disabled={!marqueeTextEnabled || reducedMotionPref || crossfadePairActive}
+                    testId="dock-artist-marquee"
+                    className="min-w-0 flex-1 text-[12px] leading-[1.2] pm-text-secondary"
+                  >
                     <ArtistLinks
                       artists={currentTrack.artists}
-                      className="flex !py-0 !leading-[1.2]"
+                      className="inline-flex whitespace-nowrap !py-0 !leading-[1.2]"
                       linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
                     />
-                  </div>
+                  </MarqueeText>
                 </div>
               </div>
 
@@ -3068,21 +3080,31 @@ const PMusicMainApp: React.FC = () => {
                     </button>
                     <div className="min-w-0 flex-1">
                       <div className="flex h-[17px] items-center">
-                        <button
-                          type="button"
-                          onClick={() => setNowPlayingOpen(true)}
-                          className="block max-w-full truncate text-left text-[14px] font-semibold leading-[1.15] pm-text-primary hover:underline"
+                        <MarqueeText
+                          disabled={!marqueeTextEnabled || reducedMotionPref || crossfadePairActive}
+                          testId="mini-title-marquee"
+                          className="w-full"
                         >
-                          {currentTrack.title}
-                        </button>
+                          <button
+                            type="button"
+                            onClick={() => setNowPlayingOpen(true)}
+                            className="block text-left text-[14px] font-semibold leading-[1.15] pm-text-primary hover:underline"
+                          >
+                            {currentTrack.title}
+                          </button>
+                        </MarqueeText>
                       </div>
-                      <div className="mt-[2px] flex h-[15px] items-center truncate text-xs leading-[1.2] pm-text-secondary">
+                      <MarqueeText
+                        disabled={!marqueeTextEnabled || reducedMotionPref || crossfadePairActive}
+                        testId="mini-artist-marquee"
+                        className="mt-[2px] h-[15px] w-full text-xs leading-[1.2] pm-text-secondary"
+                      >
                         <ArtistLinks
                           artists={currentTrack.artists}
-                          className="flex !py-0 !leading-[1.2]"
+                          className="inline-flex whitespace-nowrap !py-0 !leading-[1.2]"
                           linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
                         />
-                      </div>
+                      </MarqueeText>
                     </div>
                   </div>
                   <button

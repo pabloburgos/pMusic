@@ -373,7 +373,62 @@ export type LyricsVisualStyle =
   | 'poster'
   | 'focus'
   | 'editorial';
+export type NowPlayingBackdropStyle =
+  | 'fluid'
+  | 'mesh'
+  | 'vinyl'
+  | 'waves'
+  | 'minimal';
 export type RepeatMode = 'off' | 'all' | 'one';
+
+const BACKDROP_STYLES: readonly NowPlayingBackdropStyle[] = [
+  'fluid',
+  'mesh',
+  'vinyl',
+  'waves',
+  'minimal',
+];
+
+function parseNowPlayingBackdropStyle(
+  value: unknown,
+  fallback: NowPlayingBackdropStyle = 'fluid'
+): NowPlayingBackdropStyle {
+  return typeof value === 'string' &&
+    (BACKDROP_STYLES as readonly string[]).includes(value)
+    ? (value as NowPlayingBackdropStyle)
+    : fallback;
+}
+
+function fisherYatesShuffle<T>(items: readonly T[]): T[] {
+  const arr = [...items];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = arr[i]!;
+    arr[i] = arr[j]!;
+    arr[j] = tmp;
+  }
+  return arr;
+}
+
+const preloadedCoverUrls = new Set<string>();
+function preloadTrackCoverArt(track: Track | null | undefined): void {
+  if (!track || typeof Image === 'undefined') return;
+  for (const url of [track.thumbnailHighUrl, track.thumbnailUrl]) {
+    if (!url || preloadedCoverUrls.has(url)) continue;
+    preloadedCoverUrls.add(url);
+    if (preloadedCoverUrls.size > 40) {
+      const oldest = preloadedCoverUrls.values().next().value;
+      if (oldest) preloadedCoverUrls.delete(oldest);
+    }
+    try {
+      const img = new Image();
+      img.decoding = 'async';
+      img.src = url;
+    } catch {
+      // ignore image preload errors
+    }
+  }
+}
 export type TrackMenuState = {
   track: Track;
   x: number;
@@ -449,6 +504,11 @@ export interface PMusicStoreState {
   lyricsSize: 'normal' | 'large' | 'xl';
   lyricsBlurEnabled: boolean;
   lyricsStyle: LyricsVisualStyle;
+  nowPlayingBackdropStyle: NowPlayingBackdropStyle;
+  alwaysShuffle: boolean;
+  skipSameAlbumCoverTransition: boolean;
+  marqueeTextEnabled: boolean;
+  showRemainingTime: boolean;
   discordRpcEnabled: boolean;
   discordRpcConfig: DiscordRpcConfig;
   discordRpcStatus: DiscordRpcStatus;
@@ -617,6 +677,11 @@ export interface PMusicStoreState {
   startFullDjRadio: () => Promise<void>;
   setAutoplayEnabled: (enabled: boolean) => void;
   setAmbientMotionEnabled: (enabled: boolean) => void;
+  setNowPlayingBackdropStyle: (style: NowPlayingBackdropStyle) => void;
+  setAlwaysShuffle: (enabled: boolean) => void;
+  setSkipSameAlbumCoverTransition: (enabled: boolean) => void;
+  setMarqueeTextEnabled: (enabled: boolean) => void;
+  setShowRemainingTime: (enabled: boolean) => void;
 
   // DJ AutoMix & EQ Actions
   toggleDjMode: (enabled?: boolean) => Promise<void>;
@@ -945,6 +1010,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           const preloadKey = `${liveState.currentTrack.id}->${nextTrack.id}@${plan.cueInSec}`;
           if (djPreloadedKey !== preloadKey) {
             djPreloadedKey = preloadKey;
+            preloadTrackCoverArt(nextTrack);
             void analyzeTrackAudioInBackground(nextTrack);
             void audioEngine.preloadNextDeck(nextTrack, plan.cueInSec);
           }
@@ -976,6 +1042,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         const cfPreloadKey = `${liveState.currentTrack.id}->${nextTrack.id}@0`;
         if (djPreloadedKey !== cfPreloadKey) {
           djPreloadedKey = cfPreloadKey;
+          preloadTrackCoverArt(nextTrack);
           void audioEngine.preloadNextDeck(nextTrack, 0);
         }
         const triggerPos = safeDur - liveState.safeCrossfade.durationSec - 0.35;
@@ -1012,6 +1079,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         const normPreloadKey = `${liveState.currentTrack.id}->${nextTrack.id}@0`;
         if (djPreloadedKey !== normPreloadKey) {
           djPreloadedKey = normPreloadKey;
+          preloadTrackCoverArt(nextTrack);
           void audioEngine.preloadNextDeck(nextTrack, 0);
         }
       }
@@ -1802,6 +1870,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       lyricsSize: st.lyricsSize,
       lyricsBlurEnabled: st.lyricsBlurEnabled,
       lyricsStyle: st.lyricsStyle,
+      nowPlayingBackdropStyle: st.nowPlayingBackdropStyle,
+      alwaysShuffle: st.alwaysShuffle,
+      skipSameAlbumCoverTransition: st.skipSameAlbumCoverTransition,
+      marqueeTextEnabled: st.marqueeTextEnabled,
+      showRemainingTime: st.showRemainingTime,
       discordRpcEnabled: st.discordRpcEnabled,
       discordRpcConfig: st.discordRpcConfig,
       playbackRate: st.playbackRate,
@@ -1916,6 +1989,17 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         prefs.lyricsStyle === 'editorial'
           ? prefs.lyricsStyle
           : prev.lyricsStyle,
+      nowPlayingBackdropStyle: parseNowPlayingBackdropStyle(
+        prefs.nowPlayingBackdropStyle,
+        prev.nowPlayingBackdropStyle
+      ),
+      alwaysShuffle: Boolean(prefs.alwaysShuffle ?? prev.alwaysShuffle),
+      skipSameAlbumCoverTransition: Boolean(
+        prefs.skipSameAlbumCoverTransition ?? prev.skipSameAlbumCoverTransition
+      ),
+      marqueeTextEnabled: Boolean(prefs.marqueeTextEnabled ?? prev.marqueeTextEnabled),
+      showRemainingTime: Boolean(prefs.showRemainingTime ?? prev.showRemainingTime),
+      ...(Boolean(prefs.alwaysShuffle ?? prev.alwaysShuffle) ? { shuffleEnabled: true } : {}),
       discordRpcEnabled: Boolean(prefs.discordRpcEnabled ?? prev.discordRpcEnabled),
       discordRpcConfig: {
         ...prev.discordRpcConfig,
@@ -1973,6 +2057,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   lyricsSize: 'large',
   lyricsBlurEnabled: true,
   lyricsStyle: 'classic',
+  nowPlayingBackdropStyle: 'fluid',
+  alwaysShuffle: false,
+  skipSameAlbumCoverTransition: true,
+  marqueeTextEnabled: true,
+  showRemainingTime: true,
   discordRpcEnabled: true,
   discordRpcConfig: {
     clientId: '',
@@ -2401,6 +2490,23 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
               hydratedPrefs.lyricsStyle === 'editorial'
                 ? hydratedPrefs.lyricsStyle
                 : prev.lyricsStyle,
+            nowPlayingBackdropStyle: parseNowPlayingBackdropStyle(
+              hydratedPrefs.nowPlayingBackdropStyle,
+              prev.nowPlayingBackdropStyle
+            ),
+            alwaysShuffle: Boolean(hydratedPrefs.alwaysShuffle ?? prev.alwaysShuffle),
+            skipSameAlbumCoverTransition: Boolean(
+              hydratedPrefs.skipSameAlbumCoverTransition ?? prev.skipSameAlbumCoverTransition
+            ),
+            marqueeTextEnabled: Boolean(
+              hydratedPrefs.marqueeTextEnabled ?? prev.marqueeTextEnabled
+            ),
+            showRemainingTime: Boolean(
+              hydratedPrefs.showRemainingTime ?? prev.showRemainingTime
+            ),
+            ...(Boolean(hydratedPrefs.alwaysShuffle ?? prev.alwaysShuffle)
+              ? { shuffleEnabled: true }
+              : {}),
             discordRpcEnabled: Boolean(hydratedPrefs.discordRpcEnabled ?? prev.discordRpcEnabled),
             discordRpcConfig: {
               ...prev.discordRpcConfig,
@@ -2455,12 +2561,18 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     const firstReal = allRealTracks[0];
     if (firstReal && !get().isPlaying && !cloudTasteMerged) {
       const listenTracks = activeShelves.find((s) => s.kind === 'listen_again')?.tracks ?? [];
-      const realQueue = (listenTracks.length > 0 ? listenTracks : allRealTracks).slice(0, 10);
-      const qIds = new Set(realQueue.map((t) => t.id));
+      const baseQueue = (listenTracks.length > 0 ? listenTracks : allRealTracks).slice(0, 10);
+      const qIds = new Set(baseQueue.map((t) => t.id));
       const initialRec = allRealTracks.filter((t) => !qIds.has(t.id)).slice(0, 10);
+      const keepShuffle = get().alwaysShuffle || get().shuffleEnabled;
+      const realQueue =
+        keepShuffle && baseQueue.length > 1
+          ? [firstReal, ...fisherYatesShuffle(baseQueue.filter((t) => t.id !== firstReal.id))]
+          : baseQueue;
       set({
         currentTrack: firstReal,
         queue: realQueue,
+        ...(keepShuffle ? { unshuffledQueue: baseQueue, shuffleEnabled: true } : {}),
         recommendedQueue: initialRec,
         queueIndex: 0,
         durationSec: firstReal.durationSec,
@@ -2688,7 +2800,22 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           false
         );
       }
-      const queue = newQueue && newQueue.length > 0 ? [...newQueue] : st.queue;
+      const rawQueue = newQueue && newQueue.length > 0 ? [...newQueue] : st.queue;
+      const hasNewQueue = Boolean(newQueue && newQueue.length > 0);
+      let queue = [...rawQueue];
+      let unshuffledQueue = hasNewQueue ? [...rawQueue] : st.unshuffledQueue;
+      let nextShuffleEnabled = st.alwaysShuffle ? true : st.shuffleEnabled;
+
+      if (nextShuffleEnabled && queue.length > 1 && (hasNewQueue || (st.alwaysShuffle && !st.shuffleEnabled))) {
+        const others = queue.filter((t) => t.id !== track.id);
+        unshuffledQueue = hasNewQueue
+          ? [...rawQueue]
+          : st.unshuffledQueue.length > 0
+            ? st.unshuffledQueue
+            : [...queue];
+        queue = [track, ...fisherYatesShuffle(others)];
+      }
+
       let idx = queue.findIndex((t) => t.id === track.id);
       if (idx === -1) {
         queue.unshift(track);
@@ -2714,7 +2841,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         currentTrack: track,
         lastTrackDirection: direction,
         queue,
-        unshuffledQueue: newQueue && newQueue.length > 0 ? [...newQueue] : st.unshuffledQueue,
+        unshuffledQueue,
+        shuffleEnabled: nextShuffleEnabled,
         queueIndex: idx,
         positionSec: effectiveStartSec,
         durationSec: track.durationSec,
@@ -2764,6 +2892,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           st.djMode.enabled && st.djMode.style === 'quick'
             ? Math.max(1, Math.round(nextAna.primaryDropSec - 4))
             : 0;
+        preloadTrackCoverArt(nextCandidate);
         void analyzeTrackAudioInBackground(nextCandidate);
         void audioEngine.preloadNextDeck(nextCandidate, nextCueIn);
       }
@@ -4768,6 +4897,35 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   setLyricsStyle: (style) => {
     set({ lyricsStyle: style });
+    persistPrefsFromStore();
+  },
+
+  setNowPlayingBackdropStyle: (style) => {
+    const valid = parseNowPlayingBackdropStyle(style, get().nowPlayingBackdropStyle);
+    set({ nowPlayingBackdropStyle: valid });
+    persistPrefsFromStore();
+  },
+
+  setAlwaysShuffle: (enabled) => {
+    set({ alwaysShuffle: enabled });
+    if (enabled && !get().shuffleEnabled) {
+      get().toggleShuffle();
+    }
+    persistPrefsFromStore();
+  },
+
+  setSkipSameAlbumCoverTransition: (enabled) => {
+    set({ skipSameAlbumCoverTransition: enabled });
+    persistPrefsFromStore();
+  },
+
+  setMarqueeTextEnabled: (enabled) => {
+    set({ marqueeTextEnabled: enabled });
+    persistPrefsFromStore();
+  },
+
+  setShowRemainingTime: (enabled) => {
+    set({ showRemainingTime: enabled });
     persistPrefsFromStore();
   },
 

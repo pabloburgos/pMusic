@@ -18,6 +18,64 @@ import type {
  * El audio completo se resuelve aparte (YouTube) en el proxy de streaming.
  */
 const API = 'https://api.deezer.com';
+const YTM_WEB_REMIX_CLIENT = {
+  clientName: 'WEB_REMIX',
+  clientVersion: '1.20250310.01.00',
+  hl: 'es',
+  gl: 'ES',
+};
+
+function collectObjectsByKey(
+  root: unknown,
+  targetKey: string,
+  out: Array<Record<string, any>> = [],
+  depth = 0
+): Array<Record<string, any>> {
+  if (!root || typeof root !== 'object' || depth > 24 || out.length >= 60) return out;
+  if (Array.isArray(root)) {
+    for (const item of root) collectObjectsByKey(item, targetKey, out, depth + 1);
+    return out;
+  }
+  const rec = root as Record<string, any>;
+  for (const [k, v] of Object.entries(rec)) {
+    if (k === targetKey && v && typeof v === 'object') {
+      out.push(v as Record<string, any>);
+    }
+    if (v && typeof v === 'object') {
+      collectObjectsByKey(v, targetKey, out, depth + 1);
+    }
+  }
+  return out;
+}
+
+function readRunsText(node: any): string {
+  if (!node || !Array.isArray(node.runs)) return '';
+  return node.runs.map((r: any) => String(r?.text ?? '')).join('').trim();
+}
+
+function upscaleYtmImageUrl(url: string, targetW: number, targetH: number): string {
+  if (!url) return '';
+  if (/=w\d+-h\d+/.test(url)) {
+    return url.replace(/=w\d+-h\d+[^?#]*/, `=w${targetW}-h${targetH}-p-k-no-rj`);
+  }
+  return url;
+}
+
+function pickBestThumb(thumbs: unknown): { url: string; width: number; height: number } | null {
+  if (!Array.isArray(thumbs) || thumbs.length === 0) return null;
+  let best: { url: string; width: number; height: number } | null = null;
+  for (const t of thumbs) {
+    if (!t || typeof t !== 'object') continue;
+    const url = String((t as any).url ?? '').trim();
+    if (!url) continue;
+    const width = Number((t as any).width ?? 0);
+    const height = Number((t as any).height ?? 0);
+    if (!best || width > best.width) {
+      best = { url, width, height };
+    }
+  }
+  return best;
+}
 
 export const DZ_PREFIX = 'dz:';
 export const toTrackId = (dzId: number | string): string => `${DZ_PREFIX}${dzId}`;
@@ -814,14 +872,139 @@ export class DeezerCatalog {
     return this.artist(String(best.id), signal);
   }
 
+  private async fetchYtMusicArtistVisuals(
+    artistName: string,
+    signal?: AbortSignal
+  ): Promise<{
+    avatarUrl?: string;
+    bannerUrl?: string;
+    listenersText?: string;
+    bio?: string;
+  } | null> {
+    const cleanName = artistName.trim();
+    if (!cleanName) return null;
+
+    const ytmPost = async (ep: 'search' | 'browse', bodyObj: Record<string, unknown>) => {
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timer = controller ? setTimeout(() => controller.abort(), 3200) : null;
+      const onOuterAbort = () => controller?.abort();
+      signal?.addEventListener('abort', onOuterAbort, { once: true });
+      try {
+        const res = await this.fetchFn(`https://music.youtube.com/youtubei/v1/${ep}?prettyPrint=false`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ context: { client: YTM_WEB_REMIX_CLIENT }, ...bodyObj }),
+          signal: controller?.signal ?? signal,
+        });
+        if (!res.ok) return null;
+        return (await res.json()) as Json;
+      } catch {
+        return null;
+      } finally {
+        if (timer) clearTimeout(timer);
+        signal?.removeEventListener('abort', onOuterAbort);
+      }
+    };
+
+    try {
+      const searchJson = await ytmPost('search', {
+        query: cleanName,
+        params: 'EgWKAQIgAWoMEAMQBBAJEAoQBRAV',
+      });
+      if (!searchJson) return null;
+
+      const items = collectObjectsByKey(searchJson, 'musicResponsiveListItemRenderer');
+      const wantNorm = normalizeSearchStr(cleanName);
+      let chosen: Record<string, any> | null = null;
+      for (const item of items) {
+        const browseId = String(
+          item?.navigationEndpoint?.browseEndpoint?.browseId ?? ''
+        ).trim();
+        if (!browseId) continue;
+        const flex0 = readRunsText(item?.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text);
+        const normFlex = normalizeSearchStr(flex0);
+        if (normFlex === wantNorm) {
+          chosen = item;
+          break;
+        }
+        if (!chosen && (normFlex.includes(wantNorm) || wantNorm.includes(normFlex))) {
+          chosen = item;
+        }
+      }
+      if (!chosen) {
+        chosen = items.find((i) => i?.navigationEndpoint?.browseEndpoint?.browseId) ?? null;
+      }
+      if (!chosen) return null;
+
+      const searchThumbRaw = pickBestThumb(
+        chosen?.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails
+      );
+      const searchAvatarUrl = searchThumbRaw
+        ? upscaleYtmImageUrl(searchThumbRaw.url, 640, 640)
+        : undefined;
+      const browseId = String(chosen?.navigationEndpoint?.browseEndpoint?.browseId ?? '').trim();
+      if (!browseId) {
+        return searchAvatarUrl ? { avatarUrl: searchAvatarUrl } : null;
+      }
+
+      const browseJson = await ytmPost('browse', { browseId });
+      const header =
+        browseJson?.header?.musicImmersiveHeaderRenderer ??
+        browseJson?.header?.musicVisualHeaderRenderer ??
+        collectObjectsByKey(browseJson, 'musicImmersiveHeaderRenderer')[0] ??
+        collectObjectsByKey(browseJson, 'musicVisualHeaderRenderer')[0] ??
+        null;
+
+      const bannerBest = pickBestThumb(
+        header?.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails
+      );
+      const bannerUrl = bannerBest
+        ? bannerBest.width >= 1000
+          ? bannerBest.url
+          : upscaleYtmImageUrl(bannerBest.url, 2240, 933)
+        : searchAvatarUrl;
+
+      const listenersText =
+        readRunsText(header?.monthlyListenerCount) ||
+        readRunsText(header?.subscriptionButton?.subscribeButtonRenderer?.longSubscriberCountText) ||
+        readRunsText(header?.subscriptionButton?.subscribeButtonRenderer?.subscriberCountText) ||
+        undefined;
+      const bio = readRunsText(header?.description) || undefined;
+
+      return {
+        avatarUrl: searchAvatarUrl || bannerUrl,
+        bannerUrl,
+        listenersText,
+        bio,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   public async artist(id: string, signal?: AbortSignal): Promise<ArtistDetail> {
-    const [a, top, albums, related] = await Promise.all([
-      this.get(`/artist/${encodeURIComponent(id)}`, signal),
+    const artistPromise = this.get(`/artist/${encodeURIComponent(id)}`, signal);
+    const ytmVisualsPromise = artistPromise
+      .then((a) =>
+        a?.name ? this.fetchYtMusicArtistVisuals(String(a.name), signal) : null
+      )
+      .catch(() => null);
+
+    const [a, top, albumsRes, related, ytmVisuals] = await Promise.all([
+      artistPromise,
       this.get(`/artist/${encodeURIComponent(id)}/top?limit=20`, signal),
-      this.get(`/artist/${encodeURIComponent(id)}/albums?limit=12`, signal),
-      this.get(`/artist/${encodeURIComponent(id)}/related?limit=8`, signal),
+      this.get(`/artist/${encodeURIComponent(id)}/albums?limit=30`, signal),
+      this.get(`/artist/${encodeURIComponent(id)}/related?limit=10`, signal),
+      ytmVisualsPromise,
     ]);
-    const artist = this.mapArtist(a);
+
+    const baseArtist = this.mapArtist(a);
+    const artist: ArtistSummary = {
+      ...baseArtist,
+      thumbnailUrl: ytmVisuals?.avatarUrl || baseArtist.thumbnailUrl,
+      subscribersText: ytmVisuals?.listenersText || baseArtist.subscribersText,
+    };
+
     const rawTop = top.data ?? [];
     const topSongs = await this.enrichTracks(
       rawTop,
@@ -829,13 +1012,34 @@ export class DeezerCatalog {
       14,
       signal
     );
+
+    const rawReleases = Array.isArray(albumsRes?.data) ? (albumsRes.data as Json[]) : [];
+    const sortNewestFirst = (list: Json[]) =>
+      [...list].sort((x, y) => {
+        const dx = String(x.release_date ?? '');
+        const dy = String(y.release_date ?? '');
+        return dy.localeCompare(dx);
+      });
+
+    const albumsList = sortNewestFirst(
+      rawReleases.filter((al) => String(al.record_type ?? '').toLowerCase() !== 'single')
+    ).map((al) => this.mapAlbum(al, a));
+
+    const singlesList = sortNewestFirst(
+      rawReleases.filter((al) => String(al.record_type ?? '').toLowerCase() === 'single')
+    ).map((al) => this.mapAlbum(al, a));
+
     return {
       artist,
-      bannerUrl: a.picture_xl ?? artist.thumbnailUrl,
-      description: artist.subscribersText ?? '',
+      bannerUrl:
+        ytmVisuals?.bannerUrl ||
+        ytmVisuals?.avatarUrl ||
+        a.picture_xl ||
+        artist.thumbnailUrl,
+      description: ytmVisuals?.bio || artist.subscribersText || '',
       topSongs,
-      albums: (albums.data ?? []).map((al: Json) => this.mapAlbum(al, a)),
-      singles: [],
+      albums: albumsList,
+      singles: singlesList,
       relatedArtists: (related.data ?? []).map((r: Json) => this.mapArtist(r)),
     } as ArtistDetail;
   }

@@ -2,8 +2,10 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Check,
   ChevronDown,
+  Clock,
   Disc3,
   Download,
+  Eye,
   GripVertical,
   Heart,
   Image as ImageIcon,
@@ -15,6 +17,7 @@ import {
   Mic2,
   Minimize,
   MoreHorizontal,
+  Palette,
   Pause,
   Play,
   Plus,
@@ -29,8 +32,10 @@ import {
   Smartphone,
   Sparkles,
   Trash2,
+  Type,
   Volume2,
   VolumeX,
+  Waves,
   Wifi,
   X,
 } from 'lucide-react';
@@ -42,6 +47,7 @@ import {
   RoundedPlayIcon,
 } from './TransportIcons.tsx';
 import { InkBleedCoverTransition } from './InkBleedCoverTransition.tsx';
+import { MarqueeText } from './MarqueeText.tsx';
 import { useDelayedBuffering } from '../hooks/useDelayedBuffering.ts';
 import {
   USER_EQ_FREQUENCIES_HZ,
@@ -57,6 +63,7 @@ import {
   getLivePlaybackPosition,
   usePMusicStore,
   type LyricsVisualStyle,
+  type NowPlayingBackdropStyle,
 } from '../store/usePMusicStore.ts';
 import {
   getRealFullscreen,
@@ -142,6 +149,44 @@ const LYRICS_STYLE_OPTIONS: readonly {
   { id: 'editorial', label: 'Editorial', desc: 'Serif cálida estilo revista musical', previewClass: 'pm-editorial-font italic' },
 ];
 
+export function isSameAlbumOrCover(
+  a: Track | null | undefined,
+  b: Track | null | undefined
+): boolean {
+  if (!a || !b) return false;
+  if (a.album?.id && b.album?.id && a.album.id === b.album.id) return true;
+  const nameA = a.album?.name?.trim().toLowerCase();
+  const nameB = b.album?.name?.trim().toLowerCase();
+  const artistA = a.artists[0]?.name?.trim().toLowerCase();
+  const artistB = b.artists[0]?.name?.trim().toLowerCase();
+  if (
+    nameA &&
+    nameB &&
+    nameA === nameB &&
+    (!artistA || !artistB || artistA === artistB)
+  ) {
+    return true;
+  }
+  const urlA = (a.thumbnailHighUrl ?? a.thumbnailUrl ?? '').trim();
+  const urlB = (b.thumbnailHighUrl ?? b.thumbnailUrl ?? '').trim();
+  if (urlA && urlB && urlA === urlB) return true;
+  return false;
+}
+
+const BACKDROP_STYLE_OPTIONS: readonly {
+  id: NowPlayingBackdropStyle;
+  label: string;
+  desc: string;
+}[] = [
+  { id: 'fluid', label: 'Fluido', desc: 'Portada viva y orbes' },
+  { id: 'mesh', label: 'Aurora', desc: 'Mallas luminosas' },
+  { id: 'vinyl', label: 'Vinilo', desc: 'Reflejo giratorio' },
+  { id: 'waves', label: 'Ondas', desc: 'Ondas sónicas' },
+  { id: 'minimal', label: 'Minimal', desc: 'Estudio oscuro' },
+];
+
+const decodedBackdropImgCache = new Map<string, HTMLImageElement>();
+
 export const NowPlayingSheet: React.FC = () => {
   const {
     nowPlayingOpen,
@@ -159,10 +204,25 @@ export const NowPlayingSheet: React.FC = () => {
     themeId,
     reducedMotionPref,
     lyricsSize,
+    setLyricsSize,
     lyricsBlurEnabled,
+    setLyricsBlurEnabled,
     lyricsStyle,
     setLyricsStyle,
     ambientMotionEnabled,
+    setAmbientMotionEnabled,
+    visualizerEnabled,
+    setVisualizerEnabled,
+    nowPlayingBackdropStyle,
+    setNowPlayingBackdropStyle,
+    alwaysShuffle,
+    setAlwaysShuffle,
+    skipSameAlbumCoverTransition,
+    setSkipSameAlbumCoverTransition,
+    marqueeTextEnabled,
+    setMarqueeTextEnabled,
+    showRemainingTime,
+    setShowRemainingTime,
     lastTrackDirection,
     currentTrack,
     queue,
@@ -224,8 +284,9 @@ export const NowPlayingSheet: React.FC = () => {
   const sheetRewindGlowRef = useRef<HTMLSpanElement | null>(null);
   const progressTimeRef = useRef<HTMLSpanElement | null>(null);
   const progressRemainRef = useRef<HTMLSpanElement | null>(null);
-  const showRemainingTimeRef = useRef(true);
-  const [showRemainingTime, setShowRemainingTime] = useState(true);
+  const showRemainingTimeRef = useRef(showRemainingTime);
+  const displayPopoverRef = useRef<HTMLDivElement | null>(null);
+  const [displayPopoverOpen, setDisplayPopoverOpen] = useState(false);
   const coverSwipeStartRef = useRef<{ x: number; y: number } | null>(null);
   const sheetSwipeDownRef = useRef<{ y: number; x: number } | null>(null);
   const lastWholeSecRef = useRef<number>(Math.floor(positionSec));
@@ -293,20 +354,20 @@ export const NowPlayingSheet: React.FC = () => {
 
   const [backdropSlots, setBackdropSlots] = useState<{
     active: 0 | 1;
-    prev: 0 | 1 | null;
+    outgoing: 0 | 1 | null;
     urls: [string, string];
     fadeMs: number;
     linear: boolean;
-    fadeReady: boolean;
+    fadeStarted: boolean;
   }>(() => {
     const initUrl = currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl;
     return {
       active: 0,
-      prev: null,
+      outgoing: null,
       urls: [initUrl, initUrl],
       fadeMs: 1100,
       linear: false,
-      fadeReady: true,
+      fadeStarted: true,
     };
   });
   const backdropActiveRef = useRef<{ active: 0 | 1; urls: [string, string] }>({
@@ -317,9 +378,14 @@ export const NowPlayingSheet: React.FC = () => {
     ],
   });
   backdropActiveRef.current = { active: backdropSlots.active, urls: backdropSlots.urls };
-  const mobileBackdropCanvasRefs = useRef<[HTMLCanvasElement | null, HTMLCanvasElement | null]>([
-    null,
-    null,
+  const mobileBackdropCanvasRefs = useRef<
+    [
+      [HTMLCanvasElement | null, HTMLCanvasElement | null],
+      [HTMLCanvasElement | null, HTMLCanvasElement | null],
+    ]
+  >([
+    [null, null],
+    [null, null],
   ]);
   const [isMobileBackdrop, setIsMobileBackdrop] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
@@ -346,12 +412,12 @@ export const NowPlayingSheet: React.FC = () => {
     return undefined;
   }, []);
 
-  const paintMobileMipmapSlot = (
-    slotIdx: 0 | 1,
+  const paintSoftBakedCanvas = (
+    canvas: HTMLCanvasElement | null,
     img: HTMLImageElement | null,
-    fallbackUrl: string
+    fallbackUrl: string,
+    midSampleSize: number
   ) => {
-    const canvas = mobileBackdropCanvasRefs.current[slotIdx];
     if (!canvas) return;
     let ctx: CanvasRenderingContext2D | null = null;
     try {
@@ -365,23 +431,36 @@ export const NowPlayingSheet: React.FC = () => {
     ctx.clearRect(0, 0, cw, ch);
     if (img && img.complete && img.naturalWidth > 0 && typeof document !== 'undefined') {
       try {
-        // 2-step hardware mipmap downsample (96->32) avoids Android WebView Skia filter:blur flicker
+        // 3-step hardware mipmap downsample (natural -> 128 -> midSampleSize -> 64)
+        // creates smooth organic Gaussian blur without live CSS filter:blur flicker on Android WebView
         const iw = img.naturalWidth;
         const ih = img.naturalHeight;
         const side = Math.min(iw, ih);
         const sx = (iw - side) * 0.5;
         const sy = (ih - side) * 0.5;
-        const step = document.createElement('canvas');
-        step.width = 96;
-        step.height = 96;
-        const sctx = step.getContext('2d');
-        if (sctx) {
-          sctx.imageSmoothingEnabled = true;
-          if ('imageSmoothingQuality' in sctx) sctx.imageSmoothingQuality = 'high';
-          sctx.drawImage(img, sx, sy, side, side, 0, 0, 96, 96);
+
+        const step1 = document.createElement('canvas');
+        step1.width = 128;
+        step1.height = 128;
+        const c1 = step1.getContext('2d');
+
+        const step2 = document.createElement('canvas');
+        step2.width = midSampleSize;
+        step2.height = midSampleSize;
+        const c2 = step2.getContext('2d');
+
+        if (c1 && c2) {
+          c1.imageSmoothingEnabled = true;
+          if ('imageSmoothingQuality' in c1) c1.imageSmoothingQuality = 'high';
+          c1.drawImage(img, sx, sy, side, side, 0, 0, 128, 128);
+
+          c2.imageSmoothingEnabled = true;
+          if ('imageSmoothingQuality' in c2) c2.imageSmoothingQuality = 'high';
+          c2.drawImage(step1, 0, 0, midSampleSize, midSampleSize);
+
           ctx.imageSmoothingEnabled = true;
           if ('imageSmoothingQuality' in ctx) ctx.imageSmoothingQuality = 'high';
-          ctx.drawImage(step, 0, 0, cw, ch);
+          ctx.drawImage(step2, 0, 0, cw, ch);
           return;
         }
       } catch {
@@ -397,16 +476,32 @@ export const NowPlayingSheet: React.FC = () => {
     ctx.fillRect(0, 0, cw, ch);
   };
 
+  const paintMobileMipmapSlot = (
+    slotIdx: 0 | 1,
+    img: HTMLImageElement | null,
+    fallbackUrl: string
+  ) => {
+    const pair = mobileBackdropCanvasRefs.current[slotIdx];
+    paintSoftBakedCanvas(pair[0], img, fallbackUrl, 24);
+    paintSoftBakedCanvas(pair[1], img, fallbackUrl, 16);
+  };
+
   useEffect(() => {
     if (!nowPlayingOpen || !isMobileBackdrop || typeof Image === 'undefined') return;
     const slot = backdropActiveRef.current.active;
     const url = backdropActiveRef.current.urls[slot];
     if (!url) return;
+    const cached = decodedBackdropImgCache.get(url);
+    if (cached && cached.complete && cached.naturalWidth > 0) {
+      paintMobileMipmapSlot(slot, cached, url);
+      return;
+    }
     let cancelled = false;
     const img = new Image();
     img.decoding = 'async';
     const commit = (ok: boolean) => {
       if (cancelled) return;
+      if (ok) decodedBackdropImgCache.set(url, img);
       paintMobileMipmapSlot(slot, ok ? img : null, url);
     };
     img.onload = () => commit(true);
@@ -489,11 +584,11 @@ export const NowPlayingSheet: React.FC = () => {
 
       setBackdropSlots({
         active: nextSlot,
-        prev: liveState.active,
+        outgoing: canRafFade ? liveState.active : null,
         urls: nextUrls,
         fadeMs: cfActiveBackdrop ? Math.round(cfDurBackdropSec * 1000) : 950,
         linear: cfActiveBackdrop,
-        fadeReady: !canRafFade,
+        fadeStarted: !canRafFade,
       });
 
       if (canRafFade) {
@@ -501,13 +596,23 @@ export const NowPlayingSheet: React.FC = () => {
           rafB = requestAnimationFrame(() => {
             if (!cancelled) {
               setBackdropSlots((s) =>
-                s.active === nextSlot ? { ...s, fadeReady: true } : s
+                s.active === nextSlot ? { ...s, fadeStarted: true } : s
               );
             }
           });
         });
       }
     };
+
+    const cachedImg = targetBackdropUrl ? decodedBackdropImgCache.get(targetBackdropUrl) : undefined;
+    if (cachedImg && cachedImg.complete && cachedImg.naturalWidth > 0) {
+      commitSlotSwap(cachedImg);
+      return () => {
+        cancelled = true;
+        if (rafA && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafA);
+        if (rafB && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafB);
+      };
+    }
 
     if (typeof Image === 'undefined' || !targetBackdropUrl) {
       commitSlotSwap(null);
@@ -521,6 +626,13 @@ export const NowPlayingSheet: React.FC = () => {
       if (settled || cancelled) return;
       settled = true;
       clearTimeout(safetyTimer);
+      if (img && img.complete && img.naturalWidth > 0) {
+        decodedBackdropImgCache.set(targetBackdropUrl, img);
+        if (decodedBackdropImgCache.size > 32) {
+          const oldest = decodedBackdropImgCache.keys().next().value;
+          if (oldest) decodedBackdropImgCache.delete(oldest);
+        }
+      }
       commitSlotSwap(img);
     };
 
@@ -557,6 +669,7 @@ export const NowPlayingSheet: React.FC = () => {
       !nowPlayingOpen ||
       !isPlaying ||
       !ambientMotionEnabled ||
+      !visualizerEnabled ||
       reducedMotionPref ||
       isTouchOrSmall ||
       typeof requestAnimationFrame !== 'function'
@@ -596,7 +709,7 @@ export const NowPlayingSheet: React.FC = () => {
         backdropBeatRef.current.style.setProperty('--pm-beat-scale', '1');
       }
     };
-  }, [nowPlayingOpen, isPlaying, ambientMotionEnabled, reducedMotionPref]);
+  }, [nowPlayingOpen, isPlaying, ambientMotionEnabled, visualizerEnabled, reducedMotionPref]);
 
   useEffect(() => {
     if (
@@ -1068,6 +1181,25 @@ export const NowPlayingSheet: React.FC = () => {
     reducedMotionPref,
   ]);
 
+  useEffect(() => {
+    if (!displayPopoverOpen) return;
+    const handlePointerDown = (e: PointerEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (displayPopoverRef.current?.contains(target)) return;
+      if (target?.closest('[data-testid="nowplaying-display-settings-btn"]')) return;
+      setDisplayPopoverOpen(false);
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setDisplayPopoverOpen(false);
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [displayPopoverOpen]);
+
   if (!nowPlayingOpen) return null;
 
   const isLiked = likedTracks.some((l) => l.trackId === currentTrack.id);
@@ -1126,6 +1258,17 @@ export const NowPlayingSheet: React.FC = () => {
       : null;
 
   const isPostCrossfadeSameTrack = lastCrossfadedTrackIdRef.current === currentTrack.id;
+  const skipCoverForSameAlbum = Boolean(
+    skipSameAlbumCoverTransition &&
+      isSameAlbumOrCover(outgoingTransitionTrack, incomingTransitionTrack)
+  );
+  const showInkCoverTransition = Boolean(
+    cfActive &&
+      outgoingTransitionTrack &&
+      incomingTransitionTrack &&
+      !skipCoverForSameAlbum &&
+      !reducedMotionPref
+  );
 
   const PlayerDeckColumn = (compact = false) => (
     <div
@@ -1135,13 +1278,9 @@ export const NowPlayingSheet: React.FC = () => {
           : 'mx-auto flex h-full w-full max-w-[420px] justify-center gap-4 pb-4 md:h-auto md:justify-center md:gap-4 md:py-0'
       }`}
     >
-      {/* Large Borderless Centerpiece Artwork with pMusic Fractal Ink-Bleed Transition */}
+      {/* Large Borderless Centerpiece Artwork with pMusic Fractal Ink-Bleed Transition (Permanent Stage Key: Zero Cut at t=0) */}
       <div
-        key={
-          cfActive || isPostCrossfadeSameTrack
-            ? 'cf-cover-stage'
-            : currentTrack.id
-        }
+        key="np-cover-stage"
         onTouchStart={(e) => {
           const t = e.touches[0];
           if (t) coverSwipeStartRef.current = { x: t.clientX, y: t.clientY };
@@ -1169,15 +1308,13 @@ export const NowPlayingSheet: React.FC = () => {
             : lastTrackDirection === 'prev'
               ? 'pm-cover-slide-prev'
               : 'pm-cover-slide-next'
-        } relative aspect-square ${
-          cfActive ? 'overflow-visible bg-transparent' : 'overflow-hidden bg-[#111115] shadow-[0_26px_64px_rgba(0,0,0,0.58)]'
-        } rounded-[16px] transition-transform duration-300 ease-out ${
+        } relative aspect-square overflow-hidden rounded-[16px] bg-[#111115] shadow-[0_26px_64px_rgba(0,0,0,0.58)] transition-transform duration-300 ease-out ${
           compact
             ? 'w-[min(68vw,320px,36dvh)] xl:w-[min(68vw,346px,38dvh)]'
             : 'w-[min(86vw,356px,42dvh)] md:w-[min(74vw,340px,38dvh)] xl:w-[min(74vw,380px,42dvh)]'
         } ${isPlaying ? 'scale-100' : 'scale-[0.96]'}`}
       >
-        {cfActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
+        {showInkCoverTransition && outgoingTransitionTrack && incomingTransitionTrack ? (
           <InkBleedCoverTransition
             outgoingUrl={
               outgoingTransitionTrack.thumbnailHighUrl ?? outgoingTransitionTrack.thumbnailUrl
@@ -1194,27 +1331,23 @@ export const NowPlayingSheet: React.FC = () => {
           <img
             src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
             alt={currentTrack.title}
-            className="h-full w-full object-cover scale-100 opacity-100"
+            className="h-full w-full scale-100 object-cover opacity-100"
           />
         )}
       </div>
 
-      {/* Minimalist Title, Full Multi-Artist Line & Borderless Actions (Exact Height Parity in Transition & Resting) */}
+      {/* Minimalist Title, Full Multi-Artist Line & Borderless Actions (Permanent Stage Key: Zero Cut at t=0) */}
       <div
-        key={
-          cfActive || isPostCrossfadeSameTrack
-            ? 'cf-meta-stage'
-            : `meta-${incomingPreviewTrack?.id ?? currentTrack.id}`
-        }
+        key="np-meta-stage"
         className={`${cfActive || isPostCrossfadeSameTrack ? '' : 'pm-track-meta-in'} flex w-full flex-col gap-0`}
       >
         {cfActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
           <>
             <div className="flex h-[30px] w-full items-center justify-between gap-2">
-              <div className="relative h-[28px] min-w-0 flex-1 overflow-hidden">
+              <div className="relative h-[30px] min-w-0 flex-1 overflow-hidden">
                 <h1
                   aria-hidden="true"
-                  className="pointer-events-none absolute inset-0 truncate text-[21px] font-bold leading-[1.12] tracking-tight text-white md:text-[23px]"
+                  className="pointer-events-none absolute inset-0 flex h-[30px] items-center truncate text-[21px] font-bold leading-[1.12] tracking-tight text-white md:text-[23px]"
                   style={{
                     animation: `pmMetaBlurOut ${cfAnimDurationSec}s ease-in-out forwards`,
                   }}
@@ -1222,7 +1355,7 @@ export const NowPlayingSheet: React.FC = () => {
                   {outgoingTransitionTrack.title}
                 </h1>
                 <h1
-                  className="truncate text-[21px] font-bold leading-[1.12] tracking-tight text-white md:text-[23px]"
+                  className="flex h-[30px] items-center truncate text-[21px] font-bold leading-[1.12] tracking-tight text-white md:text-[23px]"
                   style={{
                     animation: `pmMetaBlurIn ${cfAnimDurationSec}s ease-in-out forwards`,
                   }}
@@ -1322,9 +1455,15 @@ export const NowPlayingSheet: React.FC = () => {
         ) : (
           <>
             <div className="flex h-[30px] w-full items-center justify-between gap-2">
-              <h1 className="min-w-0 flex-1 truncate text-[21px] font-bold leading-[1.12] tracking-tight text-white md:text-[23px]">
-                {currentTrack.title}
-              </h1>
+              <MarqueeText
+                disabled={!marqueeTextEnabled || reducedMotionPref || cfActive}
+                testId="np-title-marquee"
+                className="flex h-[30px] min-w-0 flex-1 items-center"
+              >
+                <h1 className="text-[21px] font-bold leading-[1.12] tracking-tight text-white md:text-[23px]">
+                  {currentTrack.title}
+                </h1>
+              </MarqueeText>
 
               <div className="flex shrink-0 items-center gap-0.5">
                 <button
@@ -1406,35 +1545,28 @@ export const NowPlayingSheet: React.FC = () => {
               </div>
             </div>
 
-            {/* Full-Width Artist · Album Line using span link so HIG button min-height never inflates row height */}
-            <div className="flex h-[20px] w-full items-center gap-x-1.5 overflow-hidden whitespace-nowrap text-[14px] leading-[1.2] text-white/70">
-              <ArtistLinks
-                artists={currentTrack.artists}
-                className="flex !py-0 !leading-[1.2]"
-                onBeforeNavigate={() => setNowPlayingOpen(false)}
-                linkClassName="hover:text-white hover:underline"
-              />
-              {currentTrack.album && currentTrack.artists.length <= 2 && (
-                <>
-                  <span aria-hidden="true" className="opacity-50">
-                    ·
-                  </span>
-                  <span
-                    role="link"
-                    tabIndex={0}
-                    onClick={() => {
-                      const album = currentTrack.album;
-                      setNowPlayingOpen(false);
-                      if (album?.id) {
-                        void openAlbumDetail(album.id, {
-                          title: album.name,
-                          artist: currentTrack.artists[0]?.name,
-                        });
-                      }
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
+            {/* Full-Width Artist · Album Line with Ping-Pong Marquee when overflowing */}
+            <MarqueeText
+              disabled={!marqueeTextEnabled || reducedMotionPref || cfActive}
+              testId="np-artist-marquee"
+              className="flex h-[20px] w-full items-center text-[14px] leading-[1.2] text-white/70"
+            >
+              <div className="inline-flex items-center gap-x-1.5 whitespace-nowrap">
+                <ArtistLinks
+                  artists={currentTrack.artists}
+                  className="inline-flex whitespace-nowrap !py-0 !leading-[1.2]"
+                  onBeforeNavigate={() => setNowPlayingOpen(false)}
+                  linkClassName="hover:text-white hover:underline"
+                />
+                {currentTrack.album && currentTrack.artists.length <= 2 && (
+                  <>
+                    <span aria-hidden="true" className="opacity-50">
+                      ·
+                    </span>
+                    <span
+                      role="link"
+                      tabIndex={0}
+                      onClick={() => {
                         const album = currentTrack.album;
                         setNowPlayingOpen(false);
                         if (album?.id) {
@@ -1443,15 +1575,28 @@ export const NowPlayingSheet: React.FC = () => {
                             artist: currentTrack.artists[0]?.name,
                           });
                         }
-                      }
-                    }}
-                    className="min-w-0 cursor-pointer truncate text-left text-white/55 hover:text-white hover:underline"
-                  >
-                    {currentTrack.album.name}
-                  </span>
-                </>
-              )}
-            </div>
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          const album = currentTrack.album;
+                          setNowPlayingOpen(false);
+                          if (album?.id) {
+                            void openAlbumDetail(album.id, {
+                              title: album.name,
+                              artist: currentTrack.artists[0]?.name,
+                            });
+                          }
+                        }
+                      }}
+                      className="cursor-pointer text-left text-white/55 hover:text-white hover:underline"
+                    >
+                      {currentTrack.album.name}
+                    </span>
+                  </>
+                )}
+              </div>
+            </MarqueeText>
           </>
         )}
       </div>
@@ -1552,7 +1697,7 @@ export const NowPlayingSheet: React.FC = () => {
           <button
             type="button"
             aria-label="Alternar tiempo restante y duración total"
-            onClick={() => setShowRemainingTime((v) => !v)}
+            onClick={() => setShowRemainingTime(!showRemainingTime)}
             className="tabular-nums text-right text-[11px] font-medium text-white/60 transition-colors hover:text-white"
           >
             <span ref={progressRemainRef}>
@@ -1739,41 +1884,57 @@ export const NowPlayingSheet: React.FC = () => {
       }}
       className="pm-sheet-spring-in pm-dark-sliders fixed inset-0 z-50 flex h-dvh w-screen flex-col overflow-hidden bg-[#070709] text-[#F5F5F7]"
     >
-      {/* Apple Music Style Living Fluid Cover Backdrop (Flicker-Free Canvas2D Mipmap on Mobile/Android) */}
+      {/* Dynamic Selectable Fullscreen Backdrop (Identical Fluid Look on Desktop & Mobile + 5 Styles, Zero Cuts) */}
       <div
         ref={backdropBeatRef}
         data-testid="live-backdrop-container"
+        data-backdrop-style={nowPlayingBackdropStyle}
         aria-hidden="true"
         className={`pointer-events-none fixed -inset-16 z-0 overflow-hidden ${
           !ambientMotionEnabled || reducedMotionPref ? 'pm-backdrop-static' : ''
         }`}
         style={{
           background:
-            'radial-gradient(circle at 20% 24%, var(--pm-ambient-1), transparent 58%), radial-gradient(circle at 80% 76%, var(--pm-ambient-2), transparent 60%), linear-gradient(180deg, var(--pm-ambient-3) 0%, #070709 100%)',
+            nowPlayingBackdropStyle === 'minimal'
+              ? 'radial-gradient(ellipse at 50% 24%, color-mix(in srgb, var(--pm-ambient-1) 30%, #070709) 0%, color-mix(in srgb, var(--pm-ambient-3) 38%, #070709) 55%, #070709 100%)'
+              : 'radial-gradient(circle at 20% 24%, var(--pm-ambient-1), transparent 58%), radial-gradient(circle at 80% 76%, var(--pm-ambient-2), transparent 60%), linear-gradient(180deg, var(--pm-ambient-3) 0%, #070709 100%)',
           transform: 'scale(var(--pm-beat-scale, 1))',
         }}
       >
-        {/* Persistent Double-Buffered Fluid Backdrop Slots (pre-decoded, stacked cleanly with zero mid-fade dip) */}
+        {/* Double-Buffered Artwork Slots (Active + Simultaneous Fading Outgoing, Zero Sticky Prev) */}
         {([0, 1] as const).map((slotIdx) => {
           const isSlotActive = backdropSlots.active === slotIdx;
-          const isSlotPrev = backdropSlots.prev === slotIdx;
+          const isSlotOutgoing = backdropSlots.outgoing === slotIdx;
           const slotOpacity = isSlotActive
-            ? backdropSlots.fadeReady
+            ? backdropSlots.fadeStarted
               ? 1
               : 0
-            : isSlotPrev
-              ? 1
+            : isSlotOutgoing
+              ? backdropSlots.fadeStarted
+                ? 0
+                : 1
               : 0;
+          const showCoverLayers =
+            nowPlayingBackdropStyle === 'fluid' ||
+            nowPlayingBackdropStyle === 'vinyl';
+          const slotTintOpacity =
+            nowPlayingBackdropStyle === 'fluid'
+              ? 1
+              : nowPlayingBackdropStyle === 'vinyl'
+                ? 0.62
+                : 0;
           return (
             <div
               key={`backdrop-slot-${slotIdx}`}
               data-testid={`backdrop-slot-${slotIdx}`}
               className="pointer-events-none absolute -inset-24 will-change-[opacity]"
               style={{
-                zIndex: isSlotActive ? 2 : isSlotPrev ? 1 : 0,
-                opacity: slotOpacity,
+                zIndex: isSlotActive ? 2 : isSlotOutgoing ? 1 : 0,
+                opacity: slotOpacity * slotTintOpacity,
+                visibility:
+                  !showCoverLayers && !isSlotActive ? 'hidden' : 'visible',
                 transition:
-                  reducedMotionPref || !isSlotActive
+                  reducedMotionPref || !backdropSlots.fadeStarted || (!isSlotActive && !isSlotOutgoing)
                     ? 'none'
                     : `opacity ${backdropSlots.fadeMs}ms ${
                         backdropSlots.linear ? 'linear' : 'cubic-bezier(0.37, 0, 0.63, 1)'
@@ -1781,16 +1942,29 @@ export const NowPlayingSheet: React.FC = () => {
               }}
             >
               {isMobileBackdrop ? (
-                <canvas
-                  ref={(el) => {
-                    mobileBackdropCanvasRefs.current[slotIdx] = el;
-                  }}
-                  width={32}
-                  height={32}
-                  data-testid={isSlotActive ? 'live-backdrop-img' : undefined}
-                  aria-hidden="true"
-                  className="pointer-events-none h-full w-full scale-110 select-none opacity-65"
-                />
+                <>
+                  <canvas
+                    ref={(el) => {
+                      mobileBackdropCanvasRefs.current[slotIdx][0] = el;
+                    }}
+                    width={64}
+                    height={64}
+                    data-testid={isSlotActive ? 'live-backdrop-img' : undefined}
+                    aria-hidden="true"
+                    className="pm-fluid-cover-a-baked pointer-events-none absolute inset-0 h-full w-full select-none opacity-55"
+                    style={slotIdx === 1 ? { animationDelay: '-6s' } : undefined}
+                  />
+                  <canvas
+                    ref={(el) => {
+                      mobileBackdropCanvasRefs.current[slotIdx][1] = el;
+                    }}
+                    width={64}
+                    height={64}
+                    aria-hidden="true"
+                    className="pm-fluid-cover-b-baked pointer-events-none absolute inset-0 h-full w-full -scale-x-100 select-none opacity-35"
+                    style={slotIdx === 1 ? { animationDelay: '-9s' } : undefined}
+                  />
+                </>
               ) : (
                 <>
                   <img
@@ -1814,20 +1988,43 @@ export const NowPlayingSheet: React.FC = () => {
           );
         })}
 
-        {isMobileBackdrop ? (
-          /* Mobile Android WebView GPU-Safe Radial Color Glows (Zero mix-blend, zero filter:blur) */
+        {nowPlayingBackdropStyle === 'fluid' &&
+          (isMobileBackdrop ? (
+            /* Mobile GPU-Safe Living Orbs matching Desktop layout & gradients without mix-blend flicker */
+            <div className="pointer-events-none absolute inset-0" style={{ zIndex: 3 }}>
+              <div className="pm-orb-1-mobile pointer-events-none absolute -left-[20vmax] -top-[16vmax] h-[78vmax] w-[78vmax] rounded-full" />
+              <div className="pm-orb-2-mobile pointer-events-none absolute -bottom-[18vmax] -right-[16vmax] h-[82vmax] w-[82vmax] rounded-full" />
+              <div className="pm-orb-3-mobile pointer-events-none absolute left-[10%] top-[22%] h-[68vmax] w-[68vmax] rounded-full" />
+              <div className="pm-orb-sheen-mobile pointer-events-none absolute inset-[-12%] rounded-full" />
+            </div>
+          ) : (
+            /* Desktop GPU-Composited Living Fluid Cover-Palette Orbs */
+            <div className="pointer-events-none absolute inset-0" style={{ zIndex: 3 }}>
+              <div className="pm-orb-1 pointer-events-none absolute -left-[20vmax] -top-[16vmax] h-[78vmax] w-[78vmax] rounded-full mix-blend-screen" />
+              <div className="pm-orb-2 pointer-events-none absolute -bottom-[18vmax] -right-[16vmax] h-[82vmax] w-[82vmax] rounded-full mix-blend-screen" />
+              <div className="pm-orb-3 pointer-events-none absolute left-[10%] top-[22%] h-[68vmax] w-[68vmax] rounded-full mix-blend-screen" />
+              <div className="pm-orb-sheen pointer-events-none absolute inset-[-12%] rounded-full mix-blend-overlay" />
+            </div>
+          ))}
+
+        {nowPlayingBackdropStyle === 'mesh' && (
           <div className="pointer-events-none absolute inset-0" style={{ zIndex: 3 }}>
-            <div className="pm-mobile-glow-1 pointer-events-none absolute -left-[18vmax] -top-[14vmax] h-[72vmax] w-[72vmax] rounded-full" />
-            <div className="pm-mobile-glow-2 pointer-events-none absolute -bottom-[16vmax] -right-[14vmax] h-[76vmax] w-[76vmax] rounded-full" />
-            <div className="pm-mobile-glow-3 pointer-events-none absolute left-[12%] top-[24%] h-[62vmax] w-[62vmax] rounded-full" />
+            <div className="pm-backdrop-mesh-a pointer-events-none absolute -inset-[10%]" />
+            <div className="pm-backdrop-mesh-b pointer-events-none absolute -inset-[12%]" />
           </div>
-        ) : (
-          /* Desktop GPU-Composited Living Fluid Cover-Palette Orbs */
+        )}
+
+        {nowPlayingBackdropStyle === 'vinyl' && (
           <div className="pointer-events-none absolute inset-0" style={{ zIndex: 3 }}>
-            <div className="pm-orb-1 pointer-events-none absolute -left-[20vmax] -top-[16vmax] h-[78vmax] w-[78vmax] rounded-full mix-blend-screen" />
-            <div className="pm-orb-2 pointer-events-none absolute -bottom-[18vmax] -right-[16vmax] h-[82vmax] w-[82vmax] rounded-full mix-blend-screen" />
-            <div className="pm-orb-3 pointer-events-none absolute left-[10%] top-[22%] h-[68vmax] w-[68vmax] rounded-full mix-blend-screen" />
-            <div className="pm-orb-sheen pointer-events-none absolute inset-[-12%] rounded-full mix-blend-overlay" />
+            <div className="pm-backdrop-vinyl-ring pointer-events-none absolute left-1/2 top-[44%] h-[92vmax] w-[92vmax] rounded-full opacity-80" />
+          </div>
+        )}
+
+        {nowPlayingBackdropStyle === 'waves' && (
+          <div className="pointer-events-none absolute inset-0" style={{ zIndex: 3 }}>
+            <div className="pm-backdrop-wave-1 pointer-events-none absolute inset-0" />
+            <div className="pm-backdrop-wave-2 pointer-events-none absolute inset-0" />
+            <div className="pm-backdrop-wave-3 pointer-events-none absolute inset-0" />
           </div>
         )}
       </div>
@@ -3203,7 +3400,296 @@ export const NowPlayingSheet: React.FC = () => {
             </span>
           </button>
         </div>
+
+        {/* Bottom-Right Display, Backdrop & Playback Preferences Trigger */}
+        <button
+          type="button"
+          data-testid="nowplaying-display-settings-btn"
+          aria-label="Preferencias de pantalla y reproducción"
+          aria-expanded={displayPopoverOpen}
+          onClick={() => {
+            setDjPopoverOpen(false);
+            setEqSheetOpen(false);
+            setDisplayPopoverOpen((v) => !v);
+          }}
+          className={`pm-pressable absolute right-3.5 inline-flex h-10 w-10 items-center justify-center gap-1.5 rounded-full transition-colors md:right-7 md:h-9 md:w-auto md:px-3.5 md:text-xs md:font-semibold ${
+            displayPopoverOpen
+              ? 'bg-white text-[#070709] shadow-sm'
+              : 'bg-white/[0.08] text-white/80 hover:bg-white/[0.16] hover:text-white'
+          }`}
+        >
+          <Palette className="h-4.5 w-4.5 md:h-3.5 md:w-3.5" />
+          <span className="hidden lg:inline">Pantalla</span>
+        </button>
       </nav>
+
+      {/* Bottom-Right Interactive Display & Playback Preferences Popover */}
+      {displayPopoverOpen && (
+        <div
+          ref={displayPopoverRef}
+          role="dialog"
+          aria-modal="false"
+          aria-label="Preferencias de pantalla y reproducción"
+          data-testid="nowplaying-display-popover"
+          className="pm-glass-frosted-neutral pm-hud-dark pm-modal-pop pm-no-scrollbar fixed right-3 bottom-[4.75rem] z-40 max-h-[72dvh] w-[min(372px,calc(100vw-24px))] overflow-y-auto rounded-[24px] p-4 shadow-2xl md:right-7 md:bottom-[4.85rem]"
+        >
+          <div className="mb-3 flex items-center justify-between border-b border-white/10 pb-2.5">
+            <div className="flex items-center gap-2">
+              <Palette className="h-4 w-4 text-white/85" />
+              <div>
+                <h3 className="text-[13px] font-bold leading-tight text-white">
+                  Pantalla y preferencias
+                </h3>
+                <p className="text-[10.5px] text-white/55">
+                  Personaliza el reproductor en vivo
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              aria-label="Cerrar preferencias de pantalla"
+              onClick={() => setDisplayPopoverOpen(false)}
+              className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white/75 hover:bg-white/20 hover:text-white"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            {/* 1. Fullscreen Backdrop Selector (5 modes) */}
+            <section>
+              <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-white/60">
+                <Sparkles className="h-3 w-3" />
+                <span>Fondo en pantalla completa</span>
+              </div>
+              <div className="grid grid-cols-5 gap-1.5">
+                {BACKDROP_STYLE_OPTIONS.map((opt) => {
+                  const selected = nowPlayingBackdropStyle === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      data-testid={`backdrop-style-${opt.id}`}
+                      aria-pressed={selected}
+                      onClick={() => setNowPlayingBackdropStyle(opt.id)}
+                      className={`pm-pressable flex flex-col items-center gap-1 rounded-[14px] border px-1.5 py-2 text-center transition-all ${
+                        selected
+                          ? 'border-white/80 bg-white text-[#070709] shadow-md'
+                          : 'border-white/12 bg-white/[0.06] text-white/85 hover:border-white/28 hover:bg-white/[0.12]'
+                      }`}
+                    >
+                      <span
+                        aria-hidden="true"
+                        className="flex h-6 w-6 items-center justify-center rounded-full"
+                        style={
+                          opt.id === 'fluid'
+                            ? { background: 'linear-gradient(135deg, var(--pm-ambient-1), var(--pm-ambient-2))' }
+                            : opt.id === 'mesh'
+                              ? { background: 'conic-gradient(from 45deg, var(--pm-ambient-1), var(--pm-ambient-2), var(--pm-ambient-3))' }
+                              : opt.id === 'vinyl'
+                                ? { background: 'radial-gradient(circle, var(--pm-ambient-1) 18%, #18181f 62%)' }
+                                : opt.id === 'waves'
+                                  ? { background: 'linear-gradient(180deg, var(--pm-ambient-3) 15%, var(--pm-ambient-1) 85%)' }
+                                  : { background: '#111116' }
+                        }
+                      />
+                      <span className="text-[10.5px] font-bold leading-none">
+                        {opt.label}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            {/* 2. Lyrics Typography, Size & Blur */}
+            <section>
+              <div className="mb-2 flex items-center justify-between">
+                <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-white/60">
+                  <Type className="h-3 w-3" />
+                  <span>Estilo de letras</span>
+                </span>
+                <div className="flex items-center gap-1 rounded-full bg-white/[0.08] p-0.5">
+                  {(['normal', 'large', 'xl'] as const).map((sz) => (
+                    <button
+                      key={sz}
+                      type="button"
+                      onClick={() => setLyricsSize(sz)}
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-bold transition-colors ${
+                        lyricsSize === sz
+                          ? 'bg-white text-[#070709]'
+                          : 'text-white/70 hover:text-white'
+                      }`}
+                    >
+                      {sz === 'normal' ? 'N' : sz === 'large' ? 'G' : 'XL'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="grid grid-cols-4 gap-1.5">
+                {LYRICS_STYLE_OPTIONS.map((opt) => {
+                  const selected = lyricsStyle === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      data-testid={`display-lyrics-style-${opt.id}`}
+                      aria-pressed={selected}
+                      onClick={() => setLyricsStyle(opt.id)}
+                      className={`pm-pressable flex flex-col items-center justify-center gap-0.5 rounded-[12px] border px-1.5 py-2 text-center transition-all ${
+                        selected
+                          ? 'border-white/80 bg-white text-[#070709] shadow-sm'
+                          : 'border-white/10 bg-white/[0.05] text-white/85 hover:bg-white/[0.11]'
+                      }`}
+                    >
+                      <span className={`text-[15px] leading-none ${opt.previewClass}`}>Aa</span>
+                      <span className="truncate max-w-full text-[10px] font-semibold">
+                        {opt.label}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            {/* 3. Smart Playback & Motion Switches */}
+            <section className="space-y-2 border-t border-white/10 pt-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
+                    <Shuffle className="h-3.5 w-3.5 text-white/70" />
+                    <span>Aleatorio siempre activo</span>
+                  </div>
+                  <p className="text-[10.5px] text-white/55">
+                    Mantiene el modo aleatorio al abrir playlists
+                  </p>
+                </div>
+                <PMusicSwitch
+                  variant="hud"
+                  ariaLabel="Aleatorio siempre activo"
+                  testId="pref-always-shuffle-switch"
+                  checked={alwaysShuffle}
+                  onChange={() => setAlwaysShuffle(!alwaysShuffle)}
+                />
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
+                    <Disc3 className="h-3.5 w-3.5 text-white/70" />
+                    <span>Omitir transición en mismo álbum</span>
+                  </div>
+                  <p className="text-[10.5px] text-white/55">
+                    Deja fija la portada si coincide en pantalla completa
+                  </p>
+                </div>
+                <PMusicSwitch
+                  variant="hud"
+                  ariaLabel="Omitir transición en mismo álbum"
+                  testId="pref-same-album-skip-switch"
+                  checked={skipSameAlbumCoverTransition}
+                  onChange={() => setSkipSameAlbumCoverTransition(!skipSameAlbumCoverTransition)}
+                />
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
+                    <Waves className="h-3.5 w-3.5 text-white/70" />
+                    <span>Texto deslizante si no cabe</span>
+                  </div>
+                  <p className="text-[10.5px] text-white/55">
+                    Desplaza títulos largos y se pausa en crossfade
+                  </p>
+                </div>
+                <PMusicSwitch
+                  variant="hud"
+                  ariaLabel="Texto deslizante"
+                  testId="pref-marquee-switch"
+                  checked={marqueeTextEnabled}
+                  onChange={() => setMarqueeTextEnabled(!marqueeTextEnabled)}
+                />
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
+                    <Sparkles className="h-3.5 w-3.5 text-white/70" />
+                    <span>Fondo animado vivo</span>
+                  </div>
+                  <p className="text-[10.5px] text-white/55">
+                    Movimiento fluido del color de la portada
+                  </p>
+                </div>
+                <PMusicSwitch
+                  variant="hud"
+                  ariaLabel="Fondo animado vivo"
+                  testId="pref-ambient-motion-switch"
+                  checked={ambientMotionEnabled}
+                  onChange={() => setAmbientMotionEnabled(!ambientMotionEnabled)}
+                />
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
+                    <Eye className="h-3.5 w-3.5 text-white/70" />
+                    <span>Desenfoque en otros versos</span>
+                  </div>
+                  <p className="text-[10.5px] text-white/55">
+                    Enfoca el verso activo en letras sincronizadas
+                  </p>
+                </div>
+                <PMusicSwitch
+                  variant="hud"
+                  ariaLabel="Desenfoque en versos"
+                  testId="pref-lyrics-blur-switch"
+                  checked={lyricsBlurEnabled}
+                  onChange={() => setLyricsBlurEnabled(!lyricsBlurEnabled)}
+                />
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
+                    <Clock className="h-3.5 w-3.5 text-white/70" />
+                    <span>Mostrar tiempo restante</span>
+                  </div>
+                  <p className="text-[10.5px] text-white/55">
+                    Cuenta regresiva en lugar de duración total
+                  </p>
+                </div>
+                <PMusicSwitch
+                  variant="hud"
+                  ariaLabel="Mostrar tiempo restante"
+                  testId="pref-remaining-time-switch"
+                  checked={showRemainingTime}
+                  onChange={() => setShowRemainingTime(!showRemainingTime)}
+                />
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
+                    <Sliders className="h-3.5 w-3.5 text-white/70" />
+                    <span>Pulso visual al ritmo</span>
+                  </div>
+                  <p className="text-[10.5px] text-white/55">
+                    Reacción sutil a graves en escritorio
+                  </p>
+                </div>
+                <PMusicSwitch
+                  variant="hud"
+                  ariaLabel="Pulso visual al ritmo"
+                  testId="pref-visualizer-switch"
+                  checked={visualizerEnabled}
+                  onChange={() => setVisualizerEnabled(!visualizerEnabled)}
+                />
+              </div>
+            </section>
+          </div>
+        </div>
+      )}
 
       {/* Full-Screen Frosted Modal for Switching Lyrics Visual Mode (viewport-wide blur & dim) */}
       {lyricsStyleModalOpen && (

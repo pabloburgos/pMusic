@@ -5,6 +5,7 @@ import { act, cleanup, render, screen, fireEvent } from '@testing-library/react'
 import { App } from '../App.tsx';
 import { ArtistLinks } from '../components/ArtistLinks.tsx';
 import { InkBleedCoverTransition } from '../components/InkBleedCoverTransition.tsx';
+import { isSameAlbumOrCover } from '../components/Overlays.tsx';
 import { PMusicSwitch } from '../components/PMusicSwitch.tsx';
 import { mergeAccountTasteProfiles } from '../lib/taste-sync.ts';
 import { usePMusicStore } from '../store/usePMusicStore.ts';
@@ -278,8 +279,18 @@ describe('@pmusic/web UI', () => {
   });
 
   it('hides MEZCLANDO · DJ and Entrando takeover during plain crossfade, renders ink-bleed cover and persistent dual backdrop slots, and deactivates DJ Mode synchronously', async () => {
-    const t1 = usePMusicStore.getState().homeShelves[0]!.tracks![0]!;
-    const t2 = usePMusicStore.getState().homeShelves[0]!.tracks![1]!;
+    const allPool = [
+      ...usePMusicStore.getState().homeShelves.flatMap((s) => s.tracks ?? []),
+      ...usePMusicStore.getState().queue,
+    ];
+    const t1 = allPool[0]!;
+    const t2 =
+      allPool.find(
+        (t) =>
+          t.id !== t1.id &&
+          t.thumbnailUrl !== t1.thumbnailUrl &&
+          (t.album?.name ?? '') !== (t1.album?.name ?? '')
+      ) ?? allPool[1]!;
 
     act(() => {
       usePMusicStore.setState({
@@ -582,5 +593,150 @@ describe('@pmusic/web UI', () => {
     });
     render(<App />);
     expect(screen.getByTestId('quick-playlist-tile-pl_freq_1')).toBeDefined();
+  });
+
+  it('supports v0.17.9 alwaysShuffle, display preferences HUD popover, 5 backdrops, same-album skip, and redesigned artist profile', async () => {
+    const albumTrackA = {
+      id: 'dz:9001',
+      title: 'Track Uno Del Álbum con Título Súper Largo',
+      artists: [{ id: 'ar1', name: 'La Pantera' }],
+      album: { id: 'alb-55', name: 'UNA SEMANA INCREÍBLE' },
+      durationSec: 195,
+      thumbnailUrl: 'https://example.com/same-cover.jpg',
+      thumbnailHighUrl: 'https://example.com/same-cover.jpg',
+      source: 'ytmusic' as const,
+    };
+    const albumTrackB = {
+      id: 'dz:9002',
+      title: 'Track Dos Del Mismo Álbum',
+      artists: [{ id: 'ar1', name: 'La Pantera' }],
+      album: { id: 'alb-55', name: 'UNA SEMANA INCREÍBLE' },
+      durationSec: 210,
+      thumbnailUrl: 'https://example.com/same-cover.jpg',
+      thumbnailHighUrl: 'https://example.com/same-cover.jpg',
+      source: 'ytmusic' as const,
+    };
+    const otherAlbumTrack = {
+      id: 'dz:9003',
+      title: 'Otro Álbum Distinto',
+      artists: [{ id: 'ar2', name: 'Quevedo' }],
+      album: { id: 'alb-99', name: 'DONDE QUIERO ESTAR' },
+      durationSec: 185,
+      thumbnailUrl: 'https://example.com/other-cover.jpg',
+      thumbnailHighUrl: 'https://example.com/other-cover.jpg',
+      source: 'ytmusic' as const,
+    };
+
+    // 1. Smart same-album / same-cover detection
+    expect(isSameAlbumOrCover(albumTrackA, albumTrackB)).toBe(true);
+    expect(isSameAlbumOrCover(albumTrackA, otherAlbumTrack)).toBe(false);
+
+    // 2. alwaysShuffle preference keeps shuffle active across new queues
+    act(() => {
+      usePMusicStore.getState().setAlwaysShuffle(true);
+    });
+    expect(usePMusicStore.getState().alwaysShuffle).toBe(true);
+    expect(usePMusicStore.getState().shuffleEnabled).toBe(true);
+
+    await act(async () => {
+      await usePMusicStore.getState().playTrack(albumTrackA, [albumTrackA, albumTrackB, otherAlbumTrack]);
+    });
+    expect(usePMusicStore.getState().shuffleEnabled).toBe(true);
+    expect(usePMusicStore.getState().queue[0]?.id).toBe(albumTrackA.id);
+
+    // 3. Fullscreen NowPlayingSheet: skips cover transition on same album & exposes Display Preferences popover
+    act(() => {
+      usePMusicStore.setState({
+        nowPlayingOpen: true,
+        nowPlayingTab: 'Portada',
+        isTransitioning: true,
+        outgoingTransitionTrack: albumTrackA,
+        incomingTransitionTrack: albumTrackB,
+        transitionDurationSec: 8,
+        skipSameAlbumCoverTransition: true,
+        reducedMotionPref: false,
+      });
+    });
+
+    const { rerender } = render(<App />);
+    expect(screen.queryByTestId('ink-bleed-cover')).toBeNull();
+
+    // Switching to another album during crossfade renders ink-bleed transition
+    act(() => {
+      usePMusicStore.setState({
+        incomingTransitionTrack: otherAlbumTrack,
+      });
+    });
+    rerender(<App />);
+    expect(screen.getByTestId('ink-bleed-cover')).toBeDefined();
+
+    // Open bottom-right Display & Preferences popover and switch backdrop style to Aurora ('mesh')
+    const displayBtn = screen.getByTestId('nowplaying-display-settings-btn');
+    fireEvent.click(displayBtn);
+    expect(screen.getByTestId('nowplaying-display-popover')).toBeDefined();
+    fireEvent.click(screen.getByTestId('backdrop-style-mesh'));
+    expect(usePMusicStore.getState().nowPlayingBackdropStyle).toBe('mesh');
+    expect(
+      screen.getByTestId('live-backdrop-container').getAttribute('data-backdrop-style')
+    ).toBe('mesh');
+
+    // Toggle Marquee & Remaining time switches inside HUD popover
+    fireEvent.click(screen.getByTestId('pref-marquee-switch'));
+    expect(usePMusicStore.getState().marqueeTextEnabled).toBe(false);
+    fireEvent.click(screen.getByTestId('pref-remaining-time-switch'));
+    expect(usePMusicStore.getState().showRemainingTime).toBe(false);
+
+    // 4. Redesigned Artist Profile renders hero banner & discography filter tabs
+    act(() => {
+      usePMusicStore.setState({
+        nowPlayingOpen: false,
+        isTransitioning: false,
+        outgoingTransitionTrack: null,
+        incomingTransitionTrack: null,
+        alwaysShuffle: false,
+        shuffleEnabled: false,
+        nowPlayingBackdropStyle: 'fluid',
+        marqueeTextEnabled: true,
+        showRemainingTime: true,
+        activeDetailView: {
+          kind: 'artist',
+          data: {
+            artist: {
+              id: '7524936',
+              name: 'La Pantera',
+              thumbnailUrl: 'https://example.com/pantera-avatar.jpg',
+              subscribersText: '5,8 M oyentes mensuales',
+            },
+            bannerUrl: 'https://example.com/pantera-banner-2880.jpg',
+            description: 'Referente de la escena urbana canaria.',
+            topSongs: [albumTrackA, albumTrackB],
+            albums: [
+              {
+                id: 'alb-55',
+                title: 'UNA SEMANA INCREÍBLE',
+                artists: [{ id: 'ar1', name: 'La Pantera' }],
+                year: 2024,
+                thumbnailUrl: 'https://example.com/same-cover.jpg',
+              },
+            ],
+            singles: [
+              {
+                id: 'sg-1',
+                title: 'TÓCATE SOLA',
+                artists: [{ id: 'ar1', name: 'La Pantera' }],
+                year: 2025,
+                thumbnailUrl: 'https://example.com/sg-cover.jpg',
+              },
+            ],
+            relatedArtists: [],
+          },
+        },
+      });
+    });
+    rerender(<App />);
+    expect(screen.getByTestId('artist-hero-banner')).toBeDefined();
+    expect(screen.getByText('Último lanzamiento')).toBeDefined();
+    fireEvent.click(screen.getByRole('tab', { name: 'Sencillos y EP' }));
+    expect(screen.getAllByText('TÓCATE SOLA').length).toBeGreaterThan(0);
   });
 });

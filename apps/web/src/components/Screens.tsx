@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Copy,
   Disc3,
   Download,
@@ -16,9 +18,11 @@ import {
   Pencil,
   Play,
   Plus,
+  Radio,
   RefreshCw,
   Search,
   Share2,
+  Shuffle,
   Sparkles,
   Trash2,
   X,
@@ -476,6 +480,7 @@ export const DetailViewPanel: React.FC = () => {
     searchResults,
     playTrack,
     toggleDjMode,
+    startTrackRadio,
     renamePlaylist,
     deletePlaylist,
     duplicatePlaylist,
@@ -505,6 +510,16 @@ export const DetailViewPanel: React.FC = () => {
   const [recPool, setRecPool] = useState<Track[]>([]);
   const [isLoadingRecs, setIsLoadingRecs] = useState(false);
   const [sessionSkippedIds, setSessionSkippedIds] = useState<string[]>([]);
+  const [artistDiscoTab, setArtistDiscoTab] = useState<'all' | 'albums' | 'singles'>('all');
+  const [showAllPopular, setShowAllPopular] = useState(false);
+
+  const activeArtistDetailId =
+    activeDetailView?.kind === 'artist' ? activeDetailView.data.artist.id : null;
+
+  useEffect(() => {
+    setArtistDiscoTab('all');
+    setShowAllPopular(false);
+  }, [activeArtistDetailId]);
 
   const activeLocalPlaylistId =
     activeDetailView?.kind === 'local_playlist' ? activeDetailView.playlistId : null;
@@ -529,89 +544,243 @@ export const DetailViewPanel: React.FC = () => {
   if (!activeDetailView) return null;
 
   if (activeDetailView.kind === 'artist') {
-    const { artist, description, topSongs, albums, relatedArtists } =
+    const { artist, bannerUrl, description, topSongs, albums, singles, relatedArtists } =
       activeDetailView.data;
     const popularSongs = topSongs.slice(0, 10);
+    const visiblePopularSongs = showAllPopular ? popularSongs : popularSongs.slice(0, 5);
+    const heroImage = bannerUrl || artist.thumbnailUrl;
+    const allReleases = [
+      ...albums.map((al) => ({ ...al, releaseKind: 'Álbum' as const })),
+      ...(singles ?? []).map((sg) => ({ ...sg, releaseKind: 'Sencillo' as const })),
+    ].sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
+    const latestRelease = allReleases[0] ?? null;
+    const filteredDiscography =
+      artistDiscoTab === 'albums'
+        ? albums.map((al) => ({ ...al, releaseKind: 'Álbum' as const }))
+        : artistDiscoTab === 'singles'
+          ? (singles ?? []).map((sg) => ({ ...sg, releaseKind: 'Sencillo' as const }))
+          : allReleases;
+    const trimmedDesc = (description ?? '').trim();
+    const hasBioText =
+      Boolean(trimmedDesc) &&
+      trimmedDesc.toLowerCase() !== (artist.subscribersText ?? '').trim().toLowerCase();
+
     return (
-      <div className="pm-page-enter space-y-8">
+      <div className="pm-page-enter space-y-7">
+        {/* Full-Bleed Atmospheric pMusic Artist Hero Banner */}
         <section
+          data-testid="artist-hero-banner"
           data-surface="content"
-          className="pm-surface-card flex flex-col gap-6 rounded-[18px] p-6 sm:flex-row sm:items-end"
+          className="pm-surface-card relative flex min-h-[260px] flex-col justify-end overflow-hidden rounded-[22px] p-5 shadow-[0_24px_64px_rgba(0,0,0,0.45)] sm:min-h-[340px] sm:p-8"
         >
-          <img
-            src={artist.thumbnailUrl}
-            alt={artist.name}
-            className="h-36 w-36 shrink-0 rounded-full object-cover shadow-[0_18px_48px_rgba(0,0,0,0.65)] sm:h-44 sm:w-44"
+          {heroImage && (
+            <img
+              src={heroImage}
+              alt={artist.name}
+              className="pointer-events-none absolute inset-0 h-full w-full scale-[1.02] object-cover object-center"
+            />
+          )}
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#09090c] via-[#09090c]/55 to-black/20"
           />
-          <div className="min-w-0 flex-1 space-y-2">
-            <span className="pm-elevated inline-block rounded-md border pm-border px-2.5 py-1 text-[11px] font-semibold tracking-wide pm-text-secondary">
-              ARTISTA
-            </span>
-            <h1 className="truncate text-3xl font-bold tracking-tight pm-text-primary md:text-5xl">
-              {artist.name}
-            </h1>
-            {(artist.subscribersText || description) && (
-              <p className="text-sm pm-text-secondary">
-                {artist.subscribersText ?? description}
-              </p>
-            )}
-            <div className="flex flex-wrap gap-2.5 pt-2">
-              <button
-                type="button"
-                onClick={() => {
-                  if (popularSongs[0]) void playTrack(popularSongs[0], popularSongs);
-                }}
-                className="pm-btn-primary inline-flex items-center gap-2 rounded-full px-6 py-2.5 text-xs font-bold"
-              >
-                <Play className="h-4 w-4 fill-current" />
-                <span>Reproducir</span>
-              </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  await toggleDjMode(true);
-                  if (popularSongs[0]) await playTrack(popularSongs[0], popularSongs);
-                }}
-                className="pm-btn-secondary inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-xs font-semibold"
-              >
-                <Disc3 className="h-4 w-4 text-purple-500" />
-                <span>Sesión DJ {artist.name}</span>
-              </button>
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#09090c]/80 via-transparent to-transparent"
+          />
+
+          <div className="relative z-10 flex flex-col gap-4 sm:flex-row sm:items-end sm:gap-6">
+            <img
+              src={artist.thumbnailUrl}
+              alt={artist.name}
+              className="h-20 w-20 shrink-0 rounded-full object-cover shadow-[0_14px_36px_rgba(0,0,0,0.65)] ring-2 ring-white/25 sm:h-28 sm:w-28"
+            />
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <div className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-[11px] font-bold tracking-wide text-white backdrop-blur-md">
+                <Sparkles className="h-3 w-3 text-purple-300" />
+                <span>Artista verificado · pMusic</span>
+              </div>
+              <h1 className="truncate text-3xl font-black tracking-tight text-white drop-shadow-[0_4px_18px_rgba(0,0,0,0.55)] sm:text-5xl md:text-6xl">
+                {artist.name}
+              </h1>
+              {(artist.subscribersText || description) && (
+                <p className="text-xs font-medium text-white/80 sm:text-sm">
+                  {artist.subscribersText ?? description}
+                </p>
+              )}
             </div>
           </div>
         </section>
 
-        <section className="space-y-2">
-          <h2 className="text-[20px] font-bold pm-text-primary">Populares</h2>
-          <div className="space-y-0.5">
-            {popularSongs.map((track, idx) => (
-              <TrackListRow
-                key={track.id}
-                track={track}
-                index={idx}
-                queueContext={popularSongs}
-              />
-            ))}
-          </div>
-        </section>
+        {/* Action Toolbar: Play, Shuffle, Radio, DJ Session */}
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => {
+              if (popularSongs[0]) void playTrack(popularSongs[0], popularSongs);
+            }}
+            className="pm-btn-primary pm-pressable inline-flex items-center gap-2 rounded-full px-6 py-2.5 text-xs font-bold shadow-lg"
+          >
+            <Play className="h-4 w-4 fill-current" />
+            <span>Reproducir</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (popularSongs.length === 0) return;
+              const shuffled = [...popularSongs].sort(() => Math.random() - 0.5);
+              if (shuffled[0]) void playTrack(shuffled[0], shuffled);
+            }}
+            className="pm-btn-secondary pm-pressable inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold"
+          >
+            <Shuffle className="h-3.5 w-3.5" />
+            <span>Aleatorio</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (popularSongs[0]) void startTrackRadio(popularSongs[0]);
+            }}
+            className="pm-btn-secondary pm-pressable inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold"
+          >
+            <Radio className="h-3.5 w-3.5" />
+            <span>Radio</span>
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              await toggleDjMode(true);
+              if (popularSongs[0]) await playTrack(popularSongs[0], popularSongs);
+            }}
+            className="pm-btn-secondary pm-pressable inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-xs font-semibold"
+          >
+            <Disc3 className="h-4 w-4 text-purple-400" />
+            <span>Sesión DJ {artist.name}</span>
+          </button>
+        </div>
 
-        {albums.length > 0 && (
-          <CarouselSection title="Discografía">
-            {albums.map((al) => (
-              <CoverCard
-                key={al.id}
-                image={al.thumbnailUrl}
-                title={al.title}
-                subtitle={String(al.year ?? '')}
-                onOpen={() =>
-                  void openAlbumDetail(al.id, {
-                    title: al.title,
-                    artist: al.artists?.[0]?.name,
+        {/* Popular Songs + Latest Release Feature Grid */}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+          <section className={`space-y-2 ${latestRelease ? 'lg:col-span-7' : 'lg:col-span-12'}`}>
+            <div className="flex items-center justify-between">
+              <h2 className="text-[20px] font-bold pm-text-primary">Populares</h2>
+              {popularSongs.length > 5 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllPopular((v) => !v)}
+                  className="pm-pressable inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold pm-text-secondary hover:bg-white/[0.08] hover:pm-text-primary"
+                >
+                  <span>{showAllPopular ? 'Ver menos' : 'Ver más'}</span>
+                  {showAllPopular ? (
+                    <ChevronUp className="h-3.5 w-3.5" />
+                  ) : (
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  )}
+                </button>
+              )}
+            </div>
+            <div className="space-y-0.5">
+              {visiblePopularSongs.map((track, idx) => (
+                <TrackListRow
+                  key={track.id}
+                  track={track}
+                  index={idx}
+                  queueContext={popularSongs}
+                />
+              ))}
+            </div>
+          </section>
+
+          {latestRelease && (
+            <section className="space-y-2 lg:col-span-5">
+              <h2 className="text-[20px] font-bold pm-text-primary">Último lanzamiento</h2>
+              <button
+                type="button"
+                onClick={() =>
+                  void openAlbumDetail(latestRelease.id, {
+                    title: latestRelease.title,
+                    artist: latestRelease.artists?.[0]?.name ?? artist.name,
                   })
                 }
-              />
-            ))}
-          </CarouselSection>
+                className="pm-surface-card pm-card-lift group flex w-full items-center gap-4 rounded-[18px] p-4 text-left"
+              >
+                <img
+                  src={latestRelease.thumbnailUrl}
+                  alt={latestRelease.title}
+                  className="h-24 w-24 shrink-0 rounded-[12px] object-cover shadow-lg transition-transform duration-300 group-hover:scale-[1.04]"
+                />
+                <div className="min-w-0 flex-1 space-y-1">
+                  <span className="inline-block rounded-full bg-white/[0.08] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider pm-text-secondary">
+                    {latestRelease.releaseKind}
+                    {latestRelease.year ? ` · ${latestRelease.year}` : ''}
+                  </span>
+                  <div className="line-clamp-2 text-base font-bold leading-snug pm-text-primary group-hover:underline">
+                    {latestRelease.title}
+                  </div>
+                  <div className="truncate text-xs pm-text-tertiary">
+                    {artist.name}
+                  </div>
+                </div>
+              </button>
+            </section>
+          )}
+        </div>
+
+        {/* Discography Section with Interactive All / Albums / Singles Filter Pills */}
+        {allReleases.length > 0 && (
+          <section className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-[20px] font-bold tracking-tight pm-text-primary md:text-[22px]">
+                Discografía
+              </h2>
+              <div className="flex items-center gap-1.5" role="tablist" aria-label="Filtrar discografía">
+                {(
+                  [
+                    { id: 'all', label: 'Todo', count: allReleases.length },
+                    { id: 'albums', label: 'Álbumes', count: albums.length },
+                    { id: 'singles', label: 'Sencillos y EP', count: (singles ?? []).length },
+                  ] as const
+                )
+                  .filter((tab) => tab.id === 'all' || tab.count > 0)
+                  .map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={artistDiscoTab === tab.id}
+                      onClick={() => setArtistDiscoTab(tab.id)}
+                      className={`pm-pressable rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+                        artistDiscoTab === tab.id
+                          ? 'pm-btn-primary'
+                          : 'pm-btn-secondary'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+              </div>
+            </div>
+
+            <div className="pm-no-scrollbar -mx-4 flex snap-x scroll-pl-4 gap-3.5 overflow-x-auto px-4 py-1.5 sm:mx-0 sm:scroll-pl-1 sm:gap-4 sm:px-1 sm:py-2">
+              {filteredDiscography.map((al) => (
+                <CoverCard
+                  key={`${al.releaseKind}-${al.id}`}
+                  image={al.thumbnailUrl}
+                  title={al.title}
+                  subtitle={
+                    al.year ? `${al.year} · ${al.releaseKind}` : al.releaseKind
+                  }
+                  badge={al.releaseKind}
+                  onOpen={() =>
+                    void openAlbumDetail(al.id, {
+                      title: al.title,
+                      artist: al.artists?.[0]?.name ?? artist.name,
+                    })
+                  }
+                />
+              ))}
+            </div>
+          </section>
         )}
 
         {relatedArtists && relatedArtists.length > 0 && (
@@ -627,6 +796,17 @@ export const DetailViewPanel: React.FC = () => {
               />
             ))}
           </CarouselSection>
+        )}
+
+        {hasBioText && (
+          <section className="space-y-2.5 pb-4">
+            <h2 className="text-[20px] font-bold pm-text-primary">Información</h2>
+            <div className="pm-surface-card relative overflow-hidden rounded-[20px] p-5 sm:p-6">
+              <p className="relative z-10 max-w-3xl text-sm leading-relaxed pm-text-secondary">
+                {description}
+              </p>
+            </div>
+          </section>
         )}
       </div>
     );

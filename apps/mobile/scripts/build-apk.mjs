@@ -157,8 +157,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="34"
-    android:versionName="0.17.8">
+    android:versionCode="35"
+    android:versionName="0.17.9">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -641,6 +641,29 @@ public class MainActivity extends Activity {
                         }
                         byte[] errBytes = "{\\"data\\":[]}".getBytes(StandardCharsets.UTF_8);
                         return new WebResourceResponse("application/json", "UTF-8", 200, "OK", corsHeaders, new ByteArrayInputStream(errBytes));
+                    }
+
+                    if ("/api/ytm-proxy".equals(path)) {
+                        String ep = uri.getQueryParameter("ep");
+                        String ytmBody = uri.getQueryParameter("body");
+                        if (("search".equals(ep) || "browse".equals(ep)) && ytmBody != null && !ytmBody.isEmpty()) {
+                            try {
+                                byte[] ytmBytes = postJsonBytes("https://music.youtube.com/youtubei/v1/" + ep + "?prettyPrint=false", YT_WEB_UA, "https://music.youtube.com", ytmBody);
+                                if (ytmBytes != null && ytmBytes.length > 2) {
+                                    return new WebResourceResponse(
+                                            "application/json",
+                                            "UTF-8",
+                                            200,
+                                            "OK",
+                                            corsHeaders,
+                                            new ByteArrayInputStream(ytmBytes)
+                                    );
+                                }
+                            } catch (Exception ignored) {
+                            }
+                        }
+                        byte[] emptyYtm = "{}".getBytes(StandardCharsets.UTF_8);
+                        return new WebResourceResponse("application/json", "UTF-8", 200, "OK", corsHeaders, new ByteArrayInputStream(emptyYtm));
                     }
 
                     if (path.startsWith("/api/stream/")) {

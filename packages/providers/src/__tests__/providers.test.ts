@@ -832,4 +832,143 @@ describe('@pmusic/providers', () => {
     expect(jointAlbum.album.artists.map((a) => a.name)).toEqual(['Lucho RK', 'La Pantera']);
     expect(jointAlbum.tracks[0]?.artists.map((a) => a.name)).toEqual(['Lucho RK', 'La Pantera']);
   });
+
+  it('enriches DeezerCatalog.artist with fresh YouTube Music portrait, widescreen banner, and newest-first albums/singles split', async () => {
+    const mockFetch = (async (input: RequestInfo | URL) => {
+      const u = String(input);
+      if (u.endsWith('/artist/7524936')) {
+        return new Response(
+          JSON.stringify({
+            id: 7524936,
+            name: 'La Pantera',
+            nb_fan: 500000,
+            picture_big: 'https://cdn-images.dzcdn.net/old-500.jpg',
+            picture_xl: 'https://cdn-images.dzcdn.net/old-1000.jpg',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('/artist/7524936/top')) {
+        return new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (u.includes('/artist/7524936/albums')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 1,
+                title: 'UNA SEMANA INCREÍBLE',
+                record_type: 'album',
+                release_date: '2024-09-01',
+                cover_big: 'https://example.com/alb1.jpg',
+              },
+              {
+                id: 2,
+                title: 'SINGLE ANTIGUO',
+                record_type: 'single',
+                release_date: '2022-03-10',
+                cover_big: 'https://example.com/sg0.jpg',
+              },
+              {
+                id: 3,
+                title: 'SINGLE NUEVO',
+                record_type: 'single',
+                release_date: '2025-11-15',
+                cover_big: 'https://example.com/sg1.jpg',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('/artist/7524936/related')) {
+        return new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (u.includes('music.youtube.com/youtubei/v1/search')) {
+        return new Response(
+          JSON.stringify({
+            contents: {
+              musicResponsiveListItemRenderer: {
+                flexColumns: [
+                  {
+                    musicResponsiveListItemFlexColumnRenderer: {
+                      text: { runs: [{ text: 'La Pantera' }] },
+                    },
+                  },
+                ],
+                thumbnail: {
+                  musicThumbnailRenderer: {
+                    thumbnail: {
+                      thumbnails: [
+                        {
+                          url: 'https://lh3.googleusercontent.com/artist_avatar=w120-h120-p-l90-rj',
+                          width: 120,
+                          height: 120,
+                        },
+                      ],
+                    },
+                  },
+                },
+                navigationEndpoint: {
+                  browseEndpoint: { browseId: 'UCtestPantera123' },
+                },
+              },
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('music.youtube.com/youtubei/v1/browse')) {
+        return new Response(
+          JSON.stringify({
+            header: {
+              musicImmersiveHeaderRenderer: {
+                thumbnail: {
+                  musicThumbnailRenderer: {
+                    thumbnail: {
+                      thumbnails: [
+                        {
+                          url: 'https://lh3.googleusercontent.com/artist_banner=w2880-h1200-p-l90-rj',
+                          width: 2880,
+                          height: 1200,
+                        },
+                      ],
+                    },
+                  },
+                },
+                monthlyListenerCount: {
+                  runs: [{ text: '5,8 M oyentes mensuales' }],
+                },
+                description: {
+                  runs: [{ text: 'Artista urbano de Gran Canaria.' }],
+                },
+              },
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }) as typeof fetch;
+
+    const catalog = new DeezerCatalog(mockFetch);
+    const detail = await catalog.artist('7524936');
+
+    expect(detail.artist.thumbnailUrl).toBe(
+      'https://lh3.googleusercontent.com/artist_avatar=w640-h640-p-k-no-rj'
+    );
+    expect(detail.bannerUrl).toBe(
+      'https://lh3.googleusercontent.com/artist_banner=w2880-h1200-p-l90-rj'
+    );
+    expect(detail.artist.subscribersText).toBe('5,8 M oyentes mensuales');
+    expect(detail.description).toBe('Artista urbano de Gran Canaria.');
+    expect(detail.albums.map((a) => a.title)).toEqual(['UNA SEMANA INCREÍBLE']);
+    expect(detail.singles.map((s) => s.title)).toEqual(['SINGLE NUEVO', 'SINGLE ANTIGUO']);
+  });
 });

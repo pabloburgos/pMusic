@@ -353,6 +353,17 @@ export class HttpProxyMusicProvider implements IMusicProvider {
               init
             );
           }
+          if (rawUrl.startsWith('https://music.youtube.com/youtubei/v1/')) {
+            const ep =
+              rawUrl
+                .slice('https://music.youtube.com/youtubei/v1/'.length)
+                .split('?')[0] ?? '';
+            const bodyStr = typeof init?.body === 'string' ? init.body : '';
+            return this.fetchFn(
+              `https://appassets.pmusic.local/api/ytm-proxy?ep=${encodeURIComponent(ep)}&body=${encodeURIComponent(bodyStr)}`,
+              { method: 'GET', signal: init?.signal }
+            );
+          }
           return this.fetchFn(input, init);
         }) as typeof fetch;
         this.mobileProxyCatalog = new YouTubeMusicProvider({
