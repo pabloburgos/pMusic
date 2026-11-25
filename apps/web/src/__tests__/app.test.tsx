@@ -518,7 +518,10 @@ describe('@pmusic/web UI', () => {
     );
     const inkImg = screen.getByAltText('Incoming') as HTMLImageElement;
     expect(inkImg.style.transform).toContain('scale(1.035');
-    expect(inkImg.style.opacity).toBe('1');
+    expect(inkImg.style.opacity).toBe('0');
+    const inkContainer = screen.getByTestId('ink-bleed-cover');
+    const fallbackImg = inkContainer.querySelector('img[aria-hidden="true"]') as HTMLImageElement | null;
+    expect(fallbackImg?.style.transform).toContain('scale(1.015');
     cleanup();
 
     // 3. mergeAccountTasteProfiles preserves desktop richness over cold mobile profile
@@ -839,21 +842,24 @@ describe('@pmusic/web UI', () => {
     expect(screen.queryByTestId('backdrop-style-nebula')).toBeNull();
     expect(screen.queryByTestId('backdrop-style-rhythm')).toBeNull();
 
-    fireEvent.click(screen.getByTestId('backdrop-style-pulse'));
-    expect(usePMusicStore.getState().nowPlayingBackdropStyle).toBe('pulse');
+    fireEvent.click(screen.getByTestId('backdrop-style-paint'));
+    expect(usePMusicStore.getState().nowPlayingBackdropStyle).toBe('paint');
     expect(
       screen.getByTestId('exotic-backdrop-canvas').getAttribute('data-exotic-style')
-    ).toBe('pulse');
+    ).toBe('paint');
 
-    // Legacy removed backdrop IDs migrate cleanly to 'fluid'
+    // Pulso is #1 in display panel and legacy removed backdrop IDs migrate cleanly to 'pulse'
+    const firstBackdropBtn = screen.getByTestId('nowplaying-display-panel').querySelector('[data-testid^="backdrop-style-"]');
+    expect(firstBackdropBtn?.getAttribute('data-testid')).toBe('backdrop-style-pulse');
+
     act(() => {
       usePMusicStore.getState().setNowPlayingBackdropStyle('nebula' as any);
     });
-    expect(usePMusicStore.getState().nowPlayingBackdropStyle).toBe('fluid');
+    expect(usePMusicStore.getState().nowPlayingBackdropStyle).toBe('pulse');
     act(() => {
       usePMusicStore.getState().setNowPlayingBackdropStyle('rhythm' as any);
     });
-    expect(usePMusicStore.getState().nowPlayingBackdropStyle).toBe('fluid');
+    expect(usePMusicStore.getState().nowPlayingBackdropStyle).toBe('pulse');
 
     // Desktop center frame keeps rounded shape without borders
     act(() => {

@@ -184,9 +184,9 @@ const BACKDROP_STYLE_OPTIONS: readonly {
   label: string;
   desc: string;
 }[] = [
+  { id: 'pulse', label: 'Pulso', desc: 'Caleidoscopio orgánico blur' },
   { id: 'fluid', label: 'Fluido', desc: 'Portada viva y orbes' },
   { id: 'paint', label: 'Pintura', desc: 'Óleo líquido en movimiento' },
-  { id: 'pulse', label: 'Pulso', desc: 'Caleidoscopio orgánico blur' },
   { id: 'minimal', label: 'Minimal', desc: 'Estudio editorial oscuro' },
 ];
 
@@ -2004,15 +2004,21 @@ export const NowPlayingSheet: React.FC = () => {
         )}
       </div>
 
-      {/* Apple HIG Bright Media Scrim (Top-balanced wash so header never looks pale while keeping fluid color) */}
+      {/* Apple HIG Bright Media Scrim (Lightened for Pulse/Paint so bright covers stay luminous) */}
       <div
         data-testid="bright-media-scrim"
         data-scrim="true"
-        data-scrim-alpha="0.34"
+        data-scrim-alpha={
+          nowPlayingBackdropStyle === 'pulse' || nowPlayingBackdropStyle === 'paint'
+            ? '0.18'
+            : '0.34'
+        }
         className="pointer-events-none fixed inset-0 z-0"
         style={{
           background:
-            'linear-gradient(180deg, rgba(8, 8, 12, 0.44) 0%, rgba(8, 8, 12, 0.31) 24%, rgba(8, 8, 12, 0.34) 100%)',
+            nowPlayingBackdropStyle === 'pulse' || nowPlayingBackdropStyle === 'paint'
+              ? 'linear-gradient(180deg, rgba(8, 8, 12, 0.20) 0%, rgba(8, 8, 12, 0.14) 28%, rgba(8, 8, 12, 0.18) 100%)'
+              : 'linear-gradient(180deg, rgba(8, 8, 12, 0.44) 0%, rgba(8, 8, 12, 0.31) 24%, rgba(8, 8, 12, 0.34) 100%)',
         }}
       />
 

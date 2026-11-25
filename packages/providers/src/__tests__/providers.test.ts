@@ -6,11 +6,13 @@ import {
   LrclibLyricsProvider,
   PlaylistImporter,
   YouTubeMusicProvider,
+  canonicalizeArtistIdentity,
   createPMusicApiHandler,
   isAuthenticLyricsText,
   parseFeaturedArtistsFromTitle,
   parseSpotifyEmbedHtml,
   parseYouTubeDescriptionCredits,
+  parseYtmAudienceCount,
   sanitizeArtistImageUrl,
   scoreAudioCandidate,
   splitSpotifySubtitleArtists,
@@ -963,10 +965,10 @@ describe('@pmusic/providers', () => {
     const detail = await catalog.artist('7524936');
 
     expect(detail.artist.thumbnailUrl).toBe(
-      'https://lh3.googleusercontent.com/artist_avatar=w640-h640-l90-rj'
+      'https://lh3.googleusercontent.com/artist_avatar=w640-h640-p-l90-rj'
     );
     expect(detail.bannerUrl).toBe(
-      'https://lh3.googleusercontent.com/artist_banner=w1440-h600-l90-rj'
+      'https://lh3.googleusercontent.com/artist_banner=w1440-h600-p-l90-rj'
     );
     expect(detail.artist.subscribersText).toBe('5,8 M oyentes mensuales');
     expect(detail.description).toBe('Artista urbano de Gran Canaria.');
@@ -1259,5 +1261,124 @@ describe('@pmusic/providers', () => {
     expect(ytMerged?.lyricists).toEqual(['Sergio Aimar Castellano Almeida']);
     expect(ytMerged?.label).toBe('Bdp Music');
     expect(ytMerged?.distributor).toBe('La Pantera');
+  });
+
+  it('canonicalizes Cruz Cafuné -> Cruzzi (ID 73148212), picks the 1.07M YTM channel over 1-subscriber homonyms, and extracts Spotify portraits', async () => {
+    expect(canonicalizeArtistIdentity('10125390', 'Cruz Cafuné')).toEqual({
+      id: '73148212',
+      name: 'Cruzzi',
+    });
+    expect(parseYtmAudienceCount('Artista • 1,07 M usuarios mensuales')).toBe(1_070_000);
+    expect(parseYtmAudienceCount('Artista • 1 suscriptor')).toBe(1);
+
+    const mockFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const u = String(input);
+      if (u.endsWith('/artist/73148212')) {
+        return new Response(
+          JSON.stringify({ id: 73148212, name: 'Cruzzi', nb_fan: 448, picture_xl: 'https://dz/cruzzi.jpg' }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('/artist/73148212/')) {
+        return new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (u.includes('music.youtube.com/youtubei/v1/search')) {
+        return new Response(
+          JSON.stringify({
+            contents: [
+              {
+                musicResponsiveListItemRenderer: {
+                  flexColumns: [
+                    { musicResponsiveListItemFlexColumnRenderer: { text: { runs: [{ text: 'Cruzzi' }] } } },
+                    { musicResponsiveListItemFlexColumnRenderer: { text: { runs: [{ text: 'Artista • 1 suscriptor' }] } } },
+                  ],
+                  navigationEndpoint: { browseEndpoint: { browseId: 'UCrandom1sub' } },
+                },
+              },
+              {
+                musicResponsiveListItemRenderer: {
+                  flexColumns: [
+                    { musicResponsiveListItemFlexColumnRenderer: { text: { runs: [{ text: 'Cruzzi' }] } } },
+                    { musicResponsiveListItemFlexColumnRenderer: { text: { runs: [{ text: 'Artista • 1,07 M usuarios mensuales' }] } } },
+                  ],
+                  navigationEndpoint: { browseEndpoint: { browseId: 'UCrealCruzzi' } },
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('music.youtube.com/youtubei/v1/browse')) {
+        const body = String(init?.body ?? '');
+        if (body.includes('UCrandom1sub')) {
+          return new Response(
+            JSON.stringify({
+              header: {
+                musicImmersiveHeaderRenderer: {
+                  subscriptionButton: {
+                    subscribeButtonRenderer: { longSubscriberCountText: { runs: [{ text: '1 suscriptor' }] } },
+                  },
+                },
+              },
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            header: {
+              musicImmersiveHeaderRenderer: {
+                thumbnail: {
+                  musicThumbnailRenderer: {
+                    thumbnail: {
+                      thumbnails: [{ url: 'https://yt3.googleusercontent.com/cruzzi_real=w1440-h600-l90-rj', width: 1440, height: 600 }],
+                    },
+                  },
+                },
+                monthlyListenerCount: { runs: [{ text: '1,07 M usuarios mensuales' }] },
+              },
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('musicbrainz.org/ws/2/artist?query=')) {
+        return new Response(JSON.stringify({ artists: [{ id: 'mb-cruzzi', name: 'Cruzzi' }] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (u.includes('musicbrainz.org/ws/2/artist/mb-cruzzi')) {
+        return new Response(
+          JSON.stringify({
+            relations: [{ url: { resource: 'https://open.spotify.com/artist/0jeYkqwckGJoHQhhXwgzk3' } }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('open.spotify.com/artist/0jeYkqwckGJoHQhhXwgzk3')) {
+        return new Response(
+          '<html><head><meta property="og:image" content="https://i.scdn.co/image/ab6761610000e5eb9f52199eefb0ccb6f69afe2c"></head></html>',
+          { status: 200, headers: { 'content-type': 'text/html' } }
+        );
+      }
+      return new Response(JSON.stringify({ data: [] }), { status: 404 });
+    }) as typeof fetch;
+
+    const catalog = new DeezerCatalog(mockFetch);
+    const detail = await catalog.artist('10125390');
+    expect(detail.artist.id).toBe('73148212');
+    expect(detail.artist.name).toBe('Cruzzi');
+    expect(detail.artist.subscribersText).toBe('1,07 M usuarios mensuales');
+    expect(detail.artist.thumbnailUrl).toBe(
+      'https://i.scdn.co/image/ab6761610000e5eb9f52199eefb0ccb6f69afe2c'
+    );
+    expect(detail.bannerUrl).toBe(
+      'https://yt3.googleusercontent.com/cruzzi_real=w1440-h600-p-l90-rj'
+    );
   });
 });

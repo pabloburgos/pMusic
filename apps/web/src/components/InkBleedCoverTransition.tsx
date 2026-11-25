@@ -165,10 +165,11 @@ export const InkBleedCoverTransition: React.FC<InkBleedCoverTransitionProps> = (
       const p = 0.5 - 0.5 * Math.cos(Math.PI * pRaw);
 
       if (incomingImgRef.current) {
-        // Keep incoming cover strictly >= 1.0 scale and opaque so outer rounded edges never flash dark
+        // Keep incoming hidden during initial subpixel frames, then ramp opacity cleanly so edges never bleed white
+        const inAlpha = pRaw < 0.06 ? Math.max(0, pRaw / 0.06) : 1;
         const scale = 1.035 - 0.035 * p;
         incomingImgRef.current.style.transform = `translate3d(0, 0, 0) scale(${scale.toFixed(4)})`;
-        incomingImgRef.current.style.opacity = '1';
+        incomingImgRef.current.style.opacity = inAlpha.toFixed(3);
       }
 
       const canPaintCanvas = Boolean(
@@ -186,7 +187,7 @@ export const InkBleedCoverTransition: React.FC<InkBleedCoverTransitionProps> = (
       );
 
       if (canPaintCanvas && displayCtx && maskCtx && maskCanvas && maskImg && mask32 && rimCtx && rimCanvas && rimImg && rim32 && outgoingImg) {
-        const thr = -0.15 + 1.3 * p;
+        const thr = -0.03 + 1.18 * p;
         const invSoft = 1 / 0.145;
         const rimPeak = Math.sin(Math.PI * pRaw) * 0.42;
 
@@ -229,7 +230,7 @@ export const InkBleedCoverTransition: React.FC<InkBleedCoverTransitionProps> = (
         displayCtx.drawImage(maskCanvas, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
         if (canvas) {
-          const outScale = 1 + 0.02 * p;
+          const outScale = 1.015 + 0.02 * p;
           const outOpacity = pRaw > 0.94 ? Math.max(0, (1 - pRaw) / 0.06) : 1;
           canvas.style.transform = `translate3d(0, 0, 0) scale(${outScale.toFixed(4)})`;
           canvas.style.opacity = outOpacity.toFixed(3);
@@ -240,7 +241,7 @@ export const InkBleedCoverTransition: React.FC<InkBleedCoverTransitionProps> = (
           fallbackOutgoingRef.current.style.opacity = '0';
         }
       } else if (fallbackOutgoingRef.current) {
-        const outScale = 1 + 0.02 * p;
+        const outScale = 1.015 + 0.02 * p;
         const outOpacity = Math.max(0, 1 - p);
         fallbackOutgoingRef.current.style.transform = `translate3d(0, 0, 0) scale(${outScale.toFixed(4)})`;
         fallbackOutgoingRef.current.style.opacity = outOpacity.toFixed(3);
@@ -274,7 +275,7 @@ export const InkBleedCoverTransition: React.FC<InkBleedCoverTransitionProps> = (
       data-testid="ink-bleed-cover"
       className="relative h-full w-full overflow-hidden rounded-[16px] shadow-[0_26px_64px_rgba(0,0,0,0.58)]"
     >
-      {/* Back Layer: Incoming track emerging cleanly edge-to-edge (scale >= 1.0 prevents black borders) */}
+      {/* Back Layer: Incoming track emerging smoothly once dissolve starts */}
       <img
         ref={incomingImgRef}
         src={incomingUrl}
@@ -283,28 +284,29 @@ export const InkBleedCoverTransition: React.FC<InkBleedCoverTransitionProps> = (
         className="h-full w-full select-none object-cover will-change-transform"
         style={{
           transform: 'translate3d(0, 0, 0) scale(1.035)',
-          opacity: 1,
+          opacity: 0,
         }}
       />
 
-      {/* First-frame fallback image (hidden as soon as Canvas2D paints frame 1) */}
+      {/* First-frame fallback image (overscanned 3px to guarantee zero subpixel edge fringe) */}
       <img
         ref={fallbackOutgoingRef}
         src={outgoingUrl}
         alt={outgoingTitle}
         aria-hidden="true"
         draggable={false}
-        className="pointer-events-none absolute inset-0 h-full w-full select-none object-cover will-change-transform"
+        className="pointer-events-none absolute -inset-[3px] h-[calc(100%+6px)] w-[calc(100%+6px)] max-w-none select-none object-cover will-change-transform"
+        style={{ transform: 'translate3d(0, 0, 0) scale(1.015)' }}
       />
 
-      {/* Front Layer: 60/120fps Canvas2D Domain-Warped fBM Ink-Bleed Compositor */}
+      {/* Front Layer: Overscanned 60/120fps Canvas2D Domain-Warped fBM Ink-Bleed Compositor */}
       <canvas
         ref={canvasRef}
         width={CANVAS_SIZE}
         height={CANVAS_SIZE}
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 h-full w-full will-change-transform"
-        style={{ transform: 'translate3d(0, 0, 0) scale(1)' }}
+        className="pointer-events-none absolute -inset-[3px] h-[calc(100%+6px)] w-[calc(100%+6px)] max-w-none will-change-transform"
+        style={{ transform: 'translate3d(0, 0, 0) scale(1.015)' }}
       />
     </div>
   );

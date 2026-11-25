@@ -18,7 +18,7 @@ export const FALLBACK_TRACKS: readonly Track[] = [
   {
     id: 'cc_me_muevo_01',
     title: 'Me Muevo Con Dios',
-    artists: [{ id: '73148212', name: 'Cruz Cafuné' }],
+    artists: [{ id: '73148212', name: 'Cruzzi' }],
     album: { id: '442746907', name: 'Me Muevo Con Dios' },
     durationSec: 388,
     thumbnailUrl: 'https://cdn-images.dzcdn.net/images/cover/31ce02d03c38ec93ed9d3cc45cb0b89f/250x250-000000-80-0-0.jpg',
@@ -31,7 +31,7 @@ export const FALLBACK_TRACKS: readonly Track[] = [
   {
     id: 'cc_cangrinaje_02',
     title: 'Cangrinaje',
-    artists: [{ id: '73148212', name: 'Cruz Cafuné' }],
+    artists: [{ id: '73148212', name: 'Cruzzi' }],
     album: { id: '442746907', name: 'Me Muevo Con Dios' },
     durationSec: 212,
     thumbnailUrl: 'https://cdn-images.dzcdn.net/images/cover/31ce02d03c38ec93ed9d3cc45cb0b89f/250x250-000000-80-0-0.jpg',
@@ -45,7 +45,7 @@ export const FALLBACK_TRACKS: readonly Track[] = [
     id: 'cc_dios_1_03',
     title: 'Dios #1',
     artists: [
-      { id: '73148212', name: 'Cruz Cafuné' },
+      { id: '73148212', name: 'Cruzzi' },
       { id: '10177296', name: 'Miky Woodz' },
     ],
     album: { id: '442746907', name: 'Me Muevo Con Dios' },
@@ -181,10 +181,10 @@ export const FALLBACK_TRACKS: readonly Track[] = [
 
 export const FALLBACK_ARTISTS: readonly ArtistSummary[] = [
   {
-    id: '10125390',
-    name: 'Cruz Cafuné',
-    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/artist/2a79c7195ad3c56be005eb631f313468/500x500-000000-80-0-0.jpg',
-    subscribersText: '1,2 M de suscriptores',
+    id: '73148212',
+    name: 'Cruzzi',
+    thumbnailUrl: 'https://i.scdn.co/image/ab6761610000e5eb9f52199eefb0ccb6f69afe2c',
+    subscribersText: '1,07 M usuarios mensuales',
   },
   {
     id: '7524936',
@@ -240,7 +240,7 @@ export const FALLBACK_ALBUMS: readonly AlbumSummary[] = [
   {
     id: 'MPR_MMCD_2023',
     title: 'Me Muevo Con Dios',
-    artists: [{ id: '10125390', name: 'Cruz Cafuné' }],
+    artists: [{ id: '73148212', name: 'Cruzzi' }],
     year: 2023,
     thumbnailUrl: 'https://cdn-images.dzcdn.net/images/cover/31ce02d03c38ec93ed9d3cc45cb0b89f/500x500-000000-80-0-0.jpg',
   },

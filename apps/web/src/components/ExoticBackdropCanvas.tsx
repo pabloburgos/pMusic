@@ -1,5 +1,9 @@
 import React, { useEffect, useRef } from 'react';
-import { getLiveAmbientRgb, type RgbTriple } from '../utils/cover-color.ts';
+import {
+  getLiveAmbientLuminance,
+  getLiveAmbientRgb,
+  type RgbTriple,
+} from '../utils/cover-color.ts';
 
 export type ExoticBackdropStyle = 'paint' | 'pulse';
 
@@ -27,6 +31,7 @@ uniform vec2 u_res;
 uniform vec3 u_c1;
 uniform vec3 u_c2;
 uniform vec3 u_c3;
+uniform float u_luma;
 
 float hash(vec2 p) {
   return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
@@ -55,9 +60,10 @@ float fbm(vec2 p) {
   return v;
 }
 
-vec3 boostVivid(vec3 c) {
-  float luma = dot(c, vec3(0.299, 0.587, 0.114));
-  return clamp(mix(vec3(luma), c, 1.5) * 1.16, 0.0, 1.0);
+vec3 boostVivid(vec3 c, float luma) {
+  float l = dot(c, vec3(0.299, 0.587, 0.114));
+  float lift = 1.18 + luma * 0.24;
+  return clamp(mix(vec3(l), c, 1.45) * lift, 0.0, 1.0);
 }
 
 void main() {
@@ -73,21 +79,21 @@ void main() {
   );
   float f = fbm(uv + 2.1 * r);
 
-  vec3 c1 = boostVivid(u_c1);
-  vec3 c2 = boostVivid(u_c2);
-  vec3 c3 = u_c3 * 0.72;
-  vec3 comp = mix(c3, c1, smoothstep(0.18, 0.72, f));
-  comp = mix(comp, c2, smoothstep(0.32, 0.88, length(q) * 0.72));
-  float ridge = smoothstep(0.62, 0.88, abs(q.x - q.y) + 0.32 * f);
-  comp += ridge * mix(c1, c2, 0.5) * 0.32;
+  vec3 c1 = boostVivid(u_c1, u_luma);
+  vec3 c2 = boostVivid(u_c2, u_luma);
+  vec3 c3 = clamp(mix(u_c3, c1, 0.32) * (1.08 + u_luma * 0.26), 0.0, 1.0);
+  vec3 comp = mix(c3, c1, smoothstep(0.14, 0.68, f));
+  comp = mix(comp, c2, smoothstep(0.26, 0.84, length(q) * 0.72));
+  float ridge = smoothstep(0.56, 0.86, abs(q.x - q.y) + 0.32 * f);
+  comp += ridge * mix(c1, c2, 0.5) * (0.28 + u_luma * 0.12);
 
-  float vig = 1.0 - smoothstep(0.35, 1.18, length(v_uv - 0.5) * 1.18);
-  comp *= mix(0.42, 1.0, vig);
+  float vig = 1.0 - smoothstep(0.38, 1.24, length(v_uv - 0.5) * 1.12);
+  comp *= mix(0.76, 1.02, vig);
   gl_FragColor = vec4(clamp(comp, 0.0, 1.0), 1.0);
 }
 `;
 
-// Softly blurred irregular organic tie-dye kaleidoscope with continuous fluid motion (no sound reactivity)
+// Softly blurred irregular organic tie-dye kaleidoscope with continuous fluid motion (luminous, never overly dark)
 const PULSE_FRAGMENT_SRC = `
 precision mediump float;
 varying vec2 v_uv;
@@ -96,6 +102,7 @@ uniform vec2 u_res;
 uniform vec3 u_c1;
 uniform vec3 u_c2;
 uniform vec3 u_c3;
+uniform float u_luma;
 
 float hash(vec2 p) {
   return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
@@ -124,9 +131,10 @@ float fbm(vec2 p) {
   return v;
 }
 
-vec3 boostVivid(vec3 c) {
-  float luma = dot(c, vec3(0.299, 0.587, 0.114));
-  return clamp(mix(vec3(luma), c, 1.62) * 1.18, 0.0, 1.0);
+vec3 boostVivid(vec3 c, float luma) {
+  float l = dot(c, vec3(0.299, 0.587, 0.114));
+  float lift = 1.2 + luma * 0.24;
+  return clamp(mix(vec3(l), c, 1.54) * lift, 0.0, 1.0);
 }
 
 void main() {
@@ -149,18 +157,18 @@ void main() {
   float swirlB = fbm(kPos * 1.35 - vec2(t * 0.38, swirlA * 1.1) + vec2(4.1, 1.9));
   float ringWave = 0.5 + 0.5 * sin(breathR * 6.2 - t * 2.0 - swirlA * 2.6);
 
-  vec3 c1 = boostVivid(u_c1);
-  vec3 c2 = boostVivid(u_c2);
-  vec3 cGlow = mix(c1, vec3(1.0, 0.88, 0.95) * 0.85, 0.28);
-  vec3 cDeep = u_c3 * 0.42;
+  vec3 c1 = boostVivid(u_c1, u_luma);
+  vec3 c2 = boostVivid(u_c2, u_luma);
+  vec3 cGlow = mix(c1, vec3(1.0, 0.94, 0.98) * 0.92, 0.32);
+  vec3 cDeep = clamp(mix(u_c3, c2, 0.38) * (1.02 + u_luma * 0.3), 0.0, 1.0);
 
-  vec3 col = mix(cDeep, c1, smoothstep(0.18, 0.78, swirlA));
-  col = mix(col, c2, smoothstep(0.28, 0.84, swirlB));
-  col += cGlow * pow(ringWave, 2.2) * 0.22;
+  vec3 col = mix(cDeep, c1, smoothstep(0.14, 0.74, swirlA));
+  col = mix(col, c2, smoothstep(0.24, 0.82, swirlB));
+  col += cGlow * pow(ringWave, 1.8) * (0.26 + u_luma * 0.1);
 
-  float coreSoft = 1.0 - smoothstep(0.15, 1.12, rawR);
-  col *= mix(0.34, 0.95, coreSoft);
-  gl_FragColor = vec4(clamp(col * 0.88, 0.0, 1.0), 1.0);
+  float coreSoft = 1.0 - smoothstep(0.18, 1.18, rawR);
+  col *= mix(0.72, 1.04, coreSoft);
+  gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }
 `;
 
@@ -210,6 +218,7 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = ({
     let uC1: WebGLUniformLocation | null = null;
     let uC2: WebGLUniformLocation | null = null;
     let uC3: WebGLUniformLocation | null = null;
+    let uLuma: WebGLUniformLocation | null = null;
 
     try {
       gl =
@@ -248,6 +257,7 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = ({
               uC1 = gl.getUniformLocation(prog, 'u_c1');
               uC2 = gl.getUniformLocation(prog, 'u_c2');
               uC3 = gl.getUniformLocation(prog, 'u_c3');
+              uLuma = gl.getUniformLocation(prog, 'u_luma');
             } else {
               gl = null;
             }
@@ -321,6 +331,7 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = ({
       }
 
       const [c1Raw, c2Raw, c3Raw] = getLiveAmbientRgb();
+      const coverLuma = getLiveAmbientLuminance();
       const t = accumTimeSec;
 
       if (gl && glProg) {
@@ -331,16 +342,18 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = ({
         gl.uniform3f(uC1, c1Raw[0] / 255, c1Raw[1] / 255, c1Raw[2] / 255);
         gl.uniform3f(uC2, c2Raw[0] / 255, c2Raw[1] / 255, c2Raw[2] / 255);
         gl.uniform3f(uC3, c3Raw[0] / 255, c3Raw[1] / 255, c3Raw[2] / 255);
+        if (uLuma) gl.uniform1f(uLuma, coverLuma);
         gl.drawArrays(gl.TRIANGLES, 0, 6);
       } else if (ctx2d) {
         const w = canvas.width;
         const h = canvas.height;
-        const vivid1 = boostRgb(c1Raw, 1.5, 1.22);
-        const vivid2 = boostRgb(c2Raw, 1.46, 1.18);
+        const vivid1 = boostRgb(c1Raw, 1.5, 1.24 + coverLuma * 0.18);
+        const vivid2 = boostRgb(c2Raw, 1.46, 1.2 + coverLuma * 0.18);
+        const baseRgb = boostRgb(c3Raw, 1.15, 1.25 + coverLuma * 0.25);
         const curStyle = styleRef.current;
 
         ctx2d.globalCompositeOperation = 'source-over';
-        ctx2d.fillStyle = rgbStr(c3Raw, 1);
+        ctx2d.fillStyle = rgbStr(baseRgb, 1);
         ctx2d.fillRect(0, 0, w, h);
 
         if (curStyle === 'paint') {

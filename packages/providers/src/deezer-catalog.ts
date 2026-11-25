@@ -59,9 +59,60 @@ function readRunsText(node: any): string {
 function upscaleYtmImageUrl(url: string, targetW: number, targetH: number): string {
   if (!url) return '';
   if (/=w\d+-h\d+/.test(url)) {
-    return url.replace(/=w\d+-h\d+[^?#]*/, `=w${targetW}-h${targetH}-l90-rj`);
+    return url.replace(/=w\d+-h\d+[^?#]*/, `=w${targetW}-h${targetH}-p-l90-rj`);
   }
   return url;
+}
+
+const CANONICAL_ARTIST_ALIASES: Record<
+  string,
+  { canonicalName: string; canonicalDeezerId: string }
+> = {
+  'cruz cafune': { canonicalName: 'Cruzzi', canonicalDeezerId: '73148212' },
+  cruzzi: { canonicalName: 'Cruzzi', canonicalDeezerId: '73148212' },
+};
+
+const CANONICAL_ARTIST_ID_REDIRECTS: Record<string, string> = {
+  '10125390': '73148212',
+};
+
+export function canonicalizeArtistIdentity(
+  id?: string,
+  name?: string
+): { id?: string; name: string } {
+  const rawName = (name ?? '').trim();
+  const rawId = id ? String(id).trim() : undefined;
+  const norm = rawName ? normalizeSearchStr(rawName) : '';
+  const alias = norm ? CANONICAL_ARTIST_ALIASES[norm] : undefined;
+  if (alias) {
+    const nextId =
+      !rawId || rawId === '10125390' || /^\d+$/.test(rawId)
+        ? alias.canonicalDeezerId
+        : rawId;
+    return { id: nextId, name: alias.canonicalName };
+  }
+  if (rawId && CANONICAL_ARTIST_ID_REDIRECTS[rawId]) {
+    return { id: CANONICAL_ARTIST_ID_REDIRECTS[rawId], name: rawName || 'Cruzzi' };
+  }
+  return rawId ? { id: rawId, name: rawName } : { name: rawName };
+}
+
+/**
+ * Parses YouTube Music artist subtitle audience counts such as
+ * "Artista • 1,07 M usuarios mensuales", "236 K suscriptores", or "1 suscriptor".
+ */
+export function parseYtmAudienceCount(text: string): number {
+  if (!text) return 0;
+  const m = text.match(/([\d.,]+)\s*([kmb])?\s*(?:usuarios mensuales|oyentes mensuales|monthly listeners|suscriptor(?:es)?|subscriber(?:s)?)/i);
+  if (!m || !m[1]) return 0;
+  const numStr = m[1].replace(/\./g, '').replace(',', '.');
+  const val = Number.parseFloat(numStr);
+  if (!Number.isFinite(val)) return 0;
+  const unit = (m[2] ?? '').toLowerCase();
+  if (unit === 'k') return Math.round(val * 1_000);
+  if (unit === 'm') return Math.round(val * 1_000_000);
+  if (unit === 'b') return Math.round(val * 1_000_000_000);
+  return Math.round(val);
 }
 
 function pickPreferredThumb(
@@ -434,7 +485,14 @@ export function scoreArtistForQuery(artist: ArtistSummary, query: string): numbe
   if (!normQuery || queryTokens.length === 0) return 0;
   const normName = normalizeSearchStr(artist.name);
   const collapsedName = collapseSearchStr(artist.name);
-  if (normName === normQuery || (collapsedQuery.length >= 4 && collapsedName === collapsedQuery)) {
+  const queryAlias = CANONICAL_ARTIST_ALIASES[normQuery]?.canonicalName;
+  const artistAlias = CANONICAL_ARTIST_ALIASES[normName]?.canonicalName;
+  if (
+    normName === normQuery ||
+    (queryAlias && normalizeSearchStr(queryAlias) === normName) ||
+    (queryAlias && artistAlias && queryAlias === artistAlias) ||
+    (collapsedQuery.length >= 4 && collapsedName === collapsedQuery)
+  ) {
     return 640;
   }
   const nameWords = new Set(tokenizeSearchStr(artist.name));
@@ -492,6 +550,7 @@ export class DeezerCatalog {
   private readonly albumDetailCache = new Map<string, { at: number; detail: AlbumDetail }>();
   private readonly inFlightAlbum = new Map<string, Promise<AlbumDetail>>();
   private readonly creditsCache = new Map<string, { at: number; credits: TrackCredits }>();
+  private readonly spotifyAvatarCache = new Map<string, { at: number; url: string | null }>();
 
   public constructor(fetchFn?: typeof fetch) {
     this.fetchFn = fetchFn ?? globalThis.fetch.bind(globalThis);
@@ -530,12 +589,15 @@ export class DeezerCatalog {
     const seenNames = new Set<string>();
 
     const pushArtist = (idVal: unknown, nameVal: unknown) => {
-      const name = typeof nameVal === 'string' ? nameVal.trim() : '';
-      if (!name) return;
-      const id =
+      const rawName = typeof nameVal === 'string' ? nameVal.trim() : '';
+      if (!rawName) return;
+      const rawId =
         idVal !== undefined && idVal !== null && String(idVal).trim()
           ? String(idVal).trim()
           : undefined;
+      const canon = canonicalizeArtistIdentity(rawId, rawName);
+      const name = canon.name;
+      const id = canon.id;
       const lower = name
         .toLowerCase()
         .normalize('NFD')
@@ -636,9 +698,10 @@ export class DeezerCatalog {
   }
 
   private mapArtist(a: Json): ArtistSummary {
+    const canon = canonicalizeArtistIdentity(String(a.id), String(a.name));
     return {
-      id: String(a.id),
-      name: String(a.name),
+      id: canon.id ?? String(a.id),
+      name: canon.name || String(a.name),
       thumbnailUrl: sanitizeArtistImageUrl(a.picture_big ?? a.picture_medium ?? a.picture ?? ''),
       subscribersText: a.nb_fan ? `${Number(a.nb_fan).toLocaleString('es-ES')} fans` : undefined,
     };
@@ -648,16 +711,17 @@ export class DeezerCatalog {
     const artistList: Array<{ id?: string; name: string }> = [];
     const seen = new Set<string>();
     const pushAr = (rawAr: Json | undefined) => {
-      const name = typeof rawAr?.name === 'string' ? rawAr.name.trim() : '';
-      if (!name) return;
-      const norm = normalizeSearchStr(name);
-      if (!norm || seen.has(norm)) return;
-      seen.add(norm);
-      const idStr =
+      const rawName = typeof rawAr?.name === 'string' ? rawAr.name.trim() : '';
+      if (!rawName) return;
+      const rawId =
         rawAr?.id !== undefined && rawAr?.id !== null && String(rawAr.id).trim()
           ? String(rawAr.id).trim()
           : undefined;
-      artistList.push(idStr ? { id: idStr, name } : { name });
+      const canon = canonicalizeArtistIdentity(rawId, rawName);
+      const norm = normalizeSearchStr(canon.name);
+      if (!norm || seen.has(norm)) return;
+      seen.add(norm);
+      artistList.push(canon.id ? { id: canon.id, name: canon.name } : { name: canon.name });
     };
     if (a.artist) pushAr(a.artist);
     if (Array.isArray(a.contributors)) {
@@ -1050,16 +1114,97 @@ export class DeezerCatalog {
     } as HomeFeedResult;
   }
 
+  public async fetchSpotifyArtistAvatar(
+    artistName: string,
+    signal?: AbortSignal
+  ): Promise<string | null> {
+    const cleanName = artistName.trim();
+    if (!cleanName) return null;
+    const normKey = normalizeSearchStr(cleanName);
+    const cached = this.spotifyAvatarCache.get(normKey);
+    if (cached && Date.now() - cached.at < 24 * 3600_000) {
+      return cached.url;
+    }
+
+    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), 1400) : null;
+    const onOuter = () => ctrl?.abort();
+    signal?.addEventListener('abort', onOuter, { once: true });
+
+    try {
+      const mbHeaders = {
+        Accept: 'application/json',
+        'User-Agent': 'pMusic/0.18.6 (https://pmusic.app)',
+      };
+      const searchRes = await this.fetchFn(
+        `https://musicbrainz.org/ws/2/artist?query=artist:${encodeURIComponent(`"${cleanName}"`)}&fmt=json&limit=3`,
+        { headers: mbHeaders, signal: ctrl?.signal ?? signal }
+      );
+      if (!searchRes.ok) return null;
+      const mbJson = (await searchRes.json()) as {
+        artists?: Array<{ id?: string; name?: string; score?: number }>;
+      };
+      const wantNorm = normalizeSearchStr(cleanName);
+      const artistsList = Array.isArray(mbJson?.artists) ? mbJson.artists : [];
+      const bestMb =
+        artistsList.find((ar) => normalizeSearchStr(String(ar.name ?? '')) === wantNorm) ??
+        artistsList[0];
+      const mbId = bestMb?.id;
+      if (!mbId) return null;
+
+      const relRes = await this.fetchFn(
+        `https://musicbrainz.org/ws/2/artist/${encodeURIComponent(mbId)}?inc=url-rels&fmt=json`,
+        { headers: mbHeaders, signal: ctrl?.signal ?? signal }
+      );
+      if (!relRes.ok) return null;
+      const relJson = (await relRes.json()) as {
+        relations?: Array<{ url?: { resource?: string } }>;
+      };
+      const spUrl = (relJson?.relations ?? [])
+        .map((r) => String(r?.url?.resource ?? '').trim())
+        .find((u) => /https?:\/\/open\.spotify\.com\/artist\/[a-zA-Z0-9]+/i.test(u));
+      if (!spUrl) return null;
+
+      const spHtmlRes = await this.fetchFn(spUrl, {
+        headers: { 'User-Agent': 'facebookexternalhit/1.1' },
+        signal: ctrl?.signal ?? signal,
+      });
+      if (!spHtmlRes.ok) return null;
+      const html = await spHtmlRes.text();
+      const ogImg =
+        html.match(/property=["']og:image["']\s+content=["'](https:\/\/i\.scdn\.co\/image\/[^"']+)["']/i)?.[1] ??
+        html.match(/content=["'](https:\/\/i\.scdn\.co\/image\/[^"']+)["']\s+property=["']og:image["']/i)?.[1] ??
+        null;
+
+      this.spotifyAvatarCache.set(normKey, { at: Date.now(), url: ogImg });
+      if (this.spotifyAvatarCache.size > 120) {
+        const oldest = this.spotifyAvatarCache.keys().next().value;
+        if (oldest) this.spotifyAvatarCache.delete(oldest);
+      }
+      return ogImg;
+    } catch {
+      return null;
+    } finally {
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener('abort', onOuter);
+    }
+  }
+
   public async artistByName(name: string, signal?: AbortSignal): Promise<ArtistDetail> {
-    const cleaned = name.trim();
+    const canon = canonicalizeArtistIdentity(undefined, name);
+    const cleaned = (canon.name || name).trim();
     const res = await this.get(`/search/artist?q=${encodeURIComponent(cleaned)}&limit=15`, signal);
     const list = (res.data ?? []) as Json[];
     if (list.length === 0) {
+      if (canon.id) return this.artist(canon.id, signal, canon.name);
       throw new Error(`Artista no encontrado: ${name}`);
     }
     const normTarget = normalizeSearchStr(cleaned);
     const exactMatches = list
-      .filter((a) => normalizeSearchStr(String(a.name ?? '')) === normTarget)
+      .filter((a) => {
+        const mappedName = canonicalizeArtistIdentity(String(a.id), String(a.name ?? '')).name;
+        return normalizeSearchStr(mappedName) === normTarget;
+      })
       .sort((a, b) => (Number(b.nb_fan) || 0) - (Number(a.nb_fan) || 0));
 
     const best =
@@ -1073,7 +1218,7 @@ export class DeezerCatalog {
           Math.log10(Math.max(1, Number(b.nb_fan) || 0) + 1) * 18;
         return sB - sA;
       })[0]!;
-    return this.artist(String(best.id), signal);
+    return this.artist(canon.id ?? String(best.id), signal, canon.name);
   }
 
   private async fetchYtMusicArtistVisuals(
@@ -1132,24 +1277,46 @@ export class DeezerCatalog {
 
       const items = collectObjectsByKey(searchJson, 'musicResponsiveListItemRenderer');
       const wantNorm = normalizeSearchStr(cleanName);
+      const aliasNorm = CANONICAL_ARTIST_ALIASES[wantNorm]
+        ? normalizeSearchStr(CANONICAL_ARTIST_ALIASES[wantNorm]!.canonicalName)
+        : '';
       let chosen: Record<string, any> | null = null;
+      let chosenScore = -Infinity;
       for (const item of items) {
         const browseId = String(
           item?.navigationEndpoint?.browseEndpoint?.browseId ?? ''
         ).trim();
         if (!browseId) continue;
-        const flex0 = readRunsText(item?.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text);
+        const flex0 = readRunsText(
+          item?.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text
+        );
+        const flex1 = readRunsText(
+          item?.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text
+        );
         const normFlex = normalizeSearchStr(flex0);
-        if (normFlex === wantNorm) {
-          chosen = item;
-          break;
+        const normSub = normalizeSearchStr(flex1);
+
+        let score = 0;
+        if (normFlex === wantNorm || (aliasNorm && normFlex === aliasNorm)) {
+          score += 320;
+        } else if (normFlex.includes(wantNorm) || wantNorm.includes(normFlex)) {
+          score += 140;
         }
-        if (!chosen && (normFlex.includes(wantNorm) || wantNorm.includes(normFlex))) {
+        if (/\b(?:artista|artist)\b/.test(normSub)) score += 90;
+        if (/\b(?:usuarios mensuales|oyentes mensuales|monthly listeners)\b/.test(normSub)) {
+          score += 110;
+        }
+        if (/\bperfil\b/.test(normSub) || /-\s*tema$/.test(normFlex)) {
+          score -= 160;
+        }
+        const audience = parseYtmAudienceCount(flex1);
+        if (audience > 0) {
+          score += Math.log10(audience + 1) * 35;
+        }
+        if (score > chosenScore) {
+          chosenScore = score;
           chosen = item;
         }
-      }
-      if (!chosen) {
-        chosen = items.find((i) => i?.navigationEndpoint?.browseEndpoint?.browseId) ?? null;
       }
       if (!chosen) return null;
 
@@ -1261,27 +1428,51 @@ export class DeezerCatalog {
   }
 
   public async artist(id: string, signal?: AbortSignal, hintName?: string): Promise<ArtistDetail> {
-    const cachedDetail = this.artistDetailCache.get(id);
+    const resolvedId = CANONICAL_ARTIST_ID_REDIRECTS[id] ?? id;
+    const cachedDetail = this.artistDetailCache.get(resolvedId);
     if (cachedDetail && Date.now() - cachedDetail.at < 15 * 60_000) {
       return cachedDetail.detail;
     }
 
     if (!signal) {
-      const pending = this.inFlightArtist.get(id);
+      const pending = this.inFlightArtist.get(resolvedId);
       if (pending) return pending;
     }
 
     const exec = (async (): Promise<ArtistDetail> => {
-      const artistPromise = this.get(`/artist/${encodeURIComponent(id)}`, signal);
-      const ytmVisualsPromise = hintName?.trim()
-        ? this.fetchYtMusicArtistVisuals(hintName.trim(), signal).catch(() => null)
+      const artistPromise = this.get(`/artist/${encodeURIComponent(resolvedId)}`, signal);
+      const canonHint = hintName?.trim()
+        ? canonicalizeArtistIdentity(resolvedId, hintName.trim()).name
+        : resolvedId === '73148212'
+          ? 'Cruzzi'
+          : '';
+      const ytmVisualsPromise = canonHint
+        ? this.fetchYtMusicArtistVisuals(canonHint, signal).catch(() => null)
         : artistPromise
             .then((a) =>
-              a?.name ? this.fetchYtMusicArtistVisuals(String(a.name), signal) : null
+              a?.name
+                ? this.fetchYtMusicArtistVisuals(
+                    canonicalizeArtistIdentity(resolvedId, String(a.name)).name,
+                    signal
+                  )
+                : null
             )
             .catch(() => null);
 
-      const topTracksPromise = this.get(`/artist/${encodeURIComponent(id)}/top?limit=50`, signal)
+      const spotifyAvatarPromise = canonHint
+        ? this.fetchSpotifyArtistAvatar(canonHint, signal).catch(() => null)
+        : artistPromise
+            .then((a) =>
+              a?.name
+                ? this.fetchSpotifyArtistAvatar(
+                    canonicalizeArtistIdentity(resolvedId, String(a.name)).name,
+                    signal
+                  )
+                : null
+            )
+            .catch(() => null);
+
+      const topTracksPromise = this.get(`/artist/${encodeURIComponent(resolvedId)}/top?limit=50`, signal)
         .then(async (top) => {
           const rawTop = top.data ?? [];
           return this.enrichTracks(
@@ -1293,18 +1484,22 @@ export class DeezerCatalog {
           );
         });
 
-      const [a, topSongs, albumsRes, related, ytmVisuals] = await Promise.all([
+      const [a, topSongs, albumsRes, related, ytmVisuals, spotifyAvatar] = await Promise.all([
         artistPromise,
         topTracksPromise,
-        this.get(`/artist/${encodeURIComponent(id)}/albums?limit=60`, signal),
-        this.get(`/artist/${encodeURIComponent(id)}/related?limit=10`, signal),
+        this.get(`/artist/${encodeURIComponent(resolvedId)}/albums?limit=60`, signal),
+        this.get(`/artist/${encodeURIComponent(resolvedId)}/related?limit=10`, signal),
         ytmVisualsPromise,
+        spotifyAvatarPromise,
       ]);
 
       const baseArtist = this.mapArtist(a);
       const artist: ArtistSummary = {
         ...baseArtist,
-        thumbnailUrl: sanitizeArtistImageUrl(ytmVisuals?.avatarUrl) || baseArtist.thumbnailUrl,
+        thumbnailUrl:
+          sanitizeArtistImageUrl(spotifyAvatar) ||
+          sanitizeArtistImageUrl(ytmVisuals?.avatarUrl) ||
+          baseArtist.thumbnailUrl,
         subscribersText: ytmVisuals?.listenersText || baseArtist.subscribersText,
       };
 
@@ -1402,7 +1597,7 @@ export class DeezerCatalog {
         singles: singlesList,
         relatedArtists: (related.data ?? []).map((r: Json) => this.mapArtist(r)),
       } as ArtistDetail;
-      this.artistDetailCache.set(id, { at: Date.now(), detail });
+      this.artistDetailCache.set(resolvedId, { at: Date.now(), detail });
       if (this.artistDetailCache.size > 24) {
         const oldest = this.artistDetailCache.keys().next().value;
         if (oldest) this.artistDetailCache.delete(oldest);
@@ -1411,12 +1606,12 @@ export class DeezerCatalog {
     })();
 
     if (!signal) {
-      this.inFlightArtist.set(id, exec);
+      this.inFlightArtist.set(resolvedId, exec);
     }
     try {
       return await exec;
     } finally {
-      this.inFlightArtist.delete(id);
+      this.inFlightArtist.delete(resolvedId);
     }
   }
 

@@ -152,10 +152,19 @@ function tokenJaccardSimilarity(a: string, b: string): number {
   return union > 0 ? intersection / union : 0;
 }
 
+function canonicalizeImporterArtistList(artists: string[]): string {
+  return artists
+    .map((name) => {
+      const norm = normalizeSearchText(name);
+      return norm === 'cruz cafune' ? 'Cruzzi' : name;
+    })
+    .join(' ');
+}
+
 export function scoreTrackCandidateMatch(source: ImportedSourceTrack, candidate: Track): number {
   const titleSim = tokenJaccardSimilarity(source.title, candidate.title);
-  const srcArtist = source.artists.join(' ');
-  const candArtist = candidate.artists.map((a) => a.name).join(' ');
+  const srcArtist = canonicalizeImporterArtistList(source.artists);
+  const candArtist = canonicalizeImporterArtistList(candidate.artists.map((a) => a.name));
   const artistSim = tokenJaccardSimilarity(srcArtist, candArtist);
 
   let durationScore = 0.85;

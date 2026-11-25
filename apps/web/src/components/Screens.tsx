@@ -371,7 +371,7 @@ const CoverCard: React.FC<{
             alt={title}
             loading="lazy"
             className={`pm-elevated aspect-square w-full object-cover shadow-[0_10px_24px_rgba(0,0,0,0.42)] ring-1 ring-white/[0.08] transition-transform duration-300 ease-out group-hover:scale-[1.04] ${
-              round ? 'rounded-full' : 'rounded-[12px] sm:rounded-[8px]'
+              round ? 'rounded-full object-[50%_20%]' : 'rounded-[12px] sm:rounded-[8px]'
             }`}
           />
         </button>
@@ -756,7 +756,7 @@ export const DetailViewPanel: React.FC = () => {
                 decoding="async"
                 fetchPriority="high"
                 onError={() => setHeroCandidateIdx((i) => i + 1)}
-                className="pointer-events-none absolute inset-0 h-full w-full scale-[1.02] object-cover object-center"
+                className="pointer-events-none absolute inset-0 h-full w-full scale-[1.02] object-cover object-[50%_22%]"
               />
               <div
                 aria-hidden="true"

@@ -411,15 +411,15 @@ export type NowPlayingBackdropStyle =
 export type RepeatMode = 'off' | 'all' | 'one';
 
 const BACKDROP_STYLES: readonly NowPlayingBackdropStyle[] = [
+  'pulse',
   'fluid',
   'paint',
-  'pulse',
   'minimal',
 ];
 
 function parseNowPlayingBackdropStyle(
   value: unknown,
-  fallback: NowPlayingBackdropStyle = 'fluid'
+  fallback: NowPlayingBackdropStyle = 'pulse'
 ): NowPlayingBackdropStyle {
   if (typeof value !== 'string') return fallback;
   if ((BACKDROP_STYLES as readonly string[]).includes(value)) {
@@ -433,9 +433,31 @@ function parseNowPlayingBackdropStyle(
     value === 'vinyl' ||
     value === 'waves'
   ) {
-    return 'fluid';
+    return 'pulse';
   }
   return fallback;
+}
+
+function canonicalizeArtistRefName(id: string | undefined, name: string): { id?: string; name: string } {
+  const norm = name
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+  if (norm === 'cruz cafune' || norm === 'cruzzi' || id === '10125390') {
+    return { id: '73148212', name: 'Cruzzi' };
+  }
+  return id ? { id, name } : { name };
+}
+
+function canonicalizeTrackArtists(track: Track): Track {
+  let changed = false;
+  const nextArtists = track.artists.map((ar) => {
+    const canon = canonicalizeArtistRefName(ar.id, ar.name);
+    if (canon.name !== ar.name || canon.id !== ar.id) changed = true;
+    return canon;
+  });
+  return changed ? { ...track, artists: nextArtists } : track;
 }
 
 const HOME_SHELVES_CACHE_KEY = 'pmusic_home_shelves_cache_v1';
@@ -638,6 +660,7 @@ export type TrackMenuState = {
 
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
 let cloudPrefsSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingCloudPrefsPayload: Record<string, unknown> | null = null;
 let cloudLibrarySyncTimer: ReturnType<typeof setTimeout> | null = null;
 
 function scheduleLibraryCloudSync(): void {
@@ -1020,12 +1043,13 @@ export interface PMusicStoreState {
   refreshExploreDiscovery: (force?: boolean) => Promise<void>;
 }
 
-const initialTrack = FALLBACK_TRACKS[0]!;
+const canonicalFallbackQueue = FALLBACK_TRACKS.map(canonicalizeTrackArtists);
+const initialTrack = canonicalFallbackQueue[0]!;
 const initialBundle = {
   query: '',
   topResult: { kind: 'artist' as const, item: FALLBACK_ARTISTS[0]! },
-  songs: [...FALLBACK_TRACKS],
-  videos: FALLBACK_TRACKS.slice(0, 4),
+  songs: [...canonicalFallbackQueue],
+  videos: canonicalFallbackQueue.slice(0, 4),
   artists: [...FALLBACK_ARTISTS],
   albums: [...FALLBACK_ALBUMS],
   playlists: [...FALLBACK_PLAYLISTS],
@@ -2108,7 +2132,18 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }
   }
 
-  function persistPrefsFromStore(): void {
+  function flushCloudPrefsNow(): void {
+    if (!pendingCloudPrefsPayload || !get().authState.connected) return;
+    if (cloudPrefsSaveTimer) {
+      clearTimeout(cloudPrefsSaveTimer);
+      cloudPrefsSaveTimer = null;
+    }
+    const payload = pendingCloudPrefsPayload;
+    pendingCloudPrefsPayload = null;
+    void syncEngine.saveAccountPreferences?.(payload);
+  }
+
+  function persistPrefsFromStore(immediate = false): void {
     const st = get();
     const tasteProfile = buildCompactAccountTasteProfile({
       affinities: recommendationEngine.getAffinityProfile(),
@@ -2117,6 +2152,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       playlistPlayCounts: st.playlistPlayCounts,
     });
     const payload = {
+      ownerUserId: st.authState.userId ?? null,
       themeId: st.themeId,
       playerBarStyle: st.playerBarStyle,
       accentPreset: st.accentPreset,
@@ -2134,6 +2170,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       skipSameAlbumCoverTransition: st.skipSameAlbumCoverTransition,
       marqueeTextEnabled: st.marqueeTextEnabled,
       showRemainingTime: st.showRemainingTime,
+      repeatMode: st.repeatMode,
+      volume: st.volume,
+      sidebarCollapsed: st.sidebarCollapsed,
+      rightPanelOpen: st.rightPanelOpen,
       discordRpcEnabled: st.discordRpcEnabled,
       discordRpcConfig: st.discordRpcConfig,
       playbackRate: st.playbackRate,
@@ -2156,13 +2196,18 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       .catch(() => {});
 
     if (st.authState.connected) {
-      if (cloudPrefsSaveTimer) clearTimeout(cloudPrefsSaveTimer);
-      cloudPrefsSaveTimer = setTimeout(() => {
+      pendingCloudPrefsPayload = payload;
+      if (cloudPrefsSaveTimer) {
+        clearTimeout(cloudPrefsSaveTimer);
         cloudPrefsSaveTimer = null;
-        if (get().authState.connected) {
-          void syncEngine.saveAccountPreferences?.(payload);
-        }
-      }, 1200);
+      }
+      if (immediate) {
+        flushCloudPrefsNow();
+      } else {
+        cloudPrefsSaveTimer = setTimeout(() => {
+          flushCloudPrefsNow();
+        }, 450);
+      }
     }
   }
 
@@ -2258,6 +2303,21 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       ),
       marqueeTextEnabled: Boolean(prefs.marqueeTextEnabled ?? prev.marqueeTextEnabled),
       showRemainingTime: Boolean(prefs.showRemainingTime ?? prev.showRemainingTime),
+      repeatMode:
+        prefs.repeatMode === 'off' ||
+        prefs.repeatMode === 'all' ||
+        prefs.repeatMode === 'one'
+          ? prefs.repeatMode
+          : prev.repeatMode,
+      ...(typeof prefs.volume === 'number' && !isMobileHardwareVolumeRuntime()
+        ? { volume: Math.max(0, Math.min(1, prefs.volume)) }
+        : {}),
+      ...(typeof prefs.sidebarCollapsed === 'boolean'
+        ? { sidebarCollapsed: prefs.sidebarCollapsed }
+        : {}),
+      ...(typeof prefs.rightPanelOpen === 'boolean'
+        ? { rightPanelOpen: prefs.rightPanelOpen }
+        : {}),
       ...(Boolean(prefs.alwaysShuffle ?? prev.alwaysShuffle) ? { shuffleEnabled: true } : {}),
       discordRpcEnabled: Boolean(prefs.discordRpcEnabled ?? prev.discordRpcEnabled),
       discordRpcConfig: {
@@ -2369,7 +2429,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   lyricsSize: 'large',
   lyricsBlurEnabled: true,
   lyricsStyle: 'classic',
-  nowPlayingBackdropStyle: 'fluid',
+  nowPlayingBackdropStyle: 'pulse',
   alwaysShuffle: false,
   skipSameAlbumCoverTransition: true,
   marqueeTextEnabled: true,
@@ -2401,7 +2461,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   toastMessage: null,
 
   currentTrack: initialTrack,
-  queue: [...FALLBACK_TRACKS],
+  queue: canonicalFallbackQueue,
   recommendedQueue: [],
   sessionPrevStack: [],
   isLoadingRecommendedQueue: false,
@@ -2455,7 +2515,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       kind: 'listen_again',
       title: 'Escuchar de nuevo',
       subtitle: 'Tus temas recientes y favoritos al instante',
-      tracks: FALLBACK_TRACKS.slice(0, 8),
+      tracks: canonicalFallbackQueue.slice(0, 8),
     },
     {
       id: 'shelf_mixes_for_you',
@@ -2465,45 +2525,45 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       mixes: [
         {
           id: 'mix_cruz_urbano_es',
-          title: 'Mix Cruz Cafuné',
-          subtitle: 'Cruz Cafuné, La Pantera, Quevedo y escena urbana ES',
-          coverUrl: FALLBACK_TRACKS[0]!.thumbnailUrl,
+          title: 'Mix Cruzzi',
+          subtitle: 'Cruzzi, La Pantera, Quevedo y escena urbana ES',
+          coverUrl: canonicalFallbackQueue[0]!.thumbnailUrl,
           accentColor: '#BF5AF2',
-          tracks: FALLBACK_TRACKS.slice(0, 8),
+          tracks: canonicalFallbackQueue.slice(0, 8),
         },
         {
           id: 'mix_trap_canarias',
           title: 'Mix La Pantera & Canarias',
-          subtitle: 'La Pantera, Cruz Cafuné, Juseph y trap isleño',
-          coverUrl: FALLBACK_TRACKS[3]!.thumbnailUrl,
+          subtitle: 'La Pantera, Cruzzi, Juseph y trap isleño',
+          coverUrl: canonicalFallbackQueue[3]!.thumbnailUrl,
           accentColor: '#0A84FF',
-          tracks: [...FALLBACK_TRACKS.slice(2), ...FALLBACK_TRACKS.slice(0, 2)],
+          tracks: [...canonicalFallbackQueue.slice(2), ...canonicalFallbackQueue.slice(0, 2)],
         },
         {
           id: 'mix_sesion_dj_club',
           title: 'Sesión DJ: Bad Bunny & Urbano',
           subtitle: 'Bad Bunny, Saiko, Morad y himnos de club',
-          coverUrl: FALLBACK_TRACKS[5]!.thumbnailUrl,
+          coverUrl: canonicalFallbackQueue[5]!.thumbnailUrl,
           accentColor: '#30D158',
-          tracks: [...FALLBACK_TRACKS].reverse(),
+          tracks: [...canonicalFallbackQueue].reverse(),
         },
       ],
     },
     {
       id: 'shelf_because_you_listened',
       kind: 'because_you_listened',
-      title: 'Porque escuchaste a Cruz Cafuné',
+      title: 'Porque escuchaste a Cruzzi',
       subtitle: 'Recomendaciones adaptadas a tu perfil urbano',
-      anchorArtist: 'Cruz Cafuné',
-      tracks: FALLBACK_TRACKS.slice(0, 8),
+      anchorArtist: 'Cruzzi',
+      tracks: canonicalFallbackQueue.slice(0, 8),
     },
     {
       id: 'shelf_favorite_new_releases',
       kind: 'favorite_new_releases',
       title: 'Novedades de tus artistas favoritos',
-      subtitle: 'Lanzamientos destacados de Bad Bunny, La Pantera y Cruz Cafuné',
+      subtitle: 'Lanzamientos destacados de Bad Bunny, La Pantera y Cruzzi',
       albums: [...FALLBACK_ALBUMS],
-      tracks: FALLBACK_TRACKS.slice(0, 6),
+      tracks: canonicalFallbackQueue.slice(0, 6),
     },
   ],
   searchQuery: '',
@@ -2512,7 +2572,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   searchResults: initialBundle,
   bestResult: initialBundle.topResult,
   autocompleteSuggestions: recommendationEngine.rankAutocomplete('', []),
-  recentSearches: ['Cruz Cafuné', 'La Pantera', 'Bad Bunny'],
+  recentSearches: ['Cruzzi', 'La Pantera', 'Bad Bunny'],
   recentSearchItems: buildDefaultRecentSearchItems(),
   seedArtists: [...DEFAULT_SPANISH_URBAN_SEEDS],
   affinityProfile: recommendationEngine.getAffinityProfile(),
@@ -2691,6 +2751,19 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       hydratedPrefs = null;
     }
 
+    const restoredAuth = await syncEngine.restoreSession();
+    const restoredProfile = restoredAuth.connected
+      ? ((await syncEngine.getProfile?.()) ?? null)
+      : null;
+
+    if (
+      restoredAuth.connected &&
+      hydratedPrefs?.ownerUserId &&
+      hydratedPrefs.ownerUserId !== restoredAuth.userId
+    ) {
+      hydratedPrefs = null;
+    }
+
     const resolvedSurfaceStyle: PMusicSurfaceStyle =
       hydratedPrefs &&
       (hydratedPrefs.surfaceStyle === 'liquid-glass' ||
@@ -2747,6 +2820,9 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       if (typeof hydratedPrefs.monoAudio === 'boolean') {
         audioEngine.setMonoAudio(hydratedPrefs.monoAudio);
       }
+      if (typeof hydratedPrefs.volume === 'number' && !isMobileHardwareVolumeRuntime()) {
+        audioEngine.setVolume(Math.max(0, Math.min(1, hydratedPrefs.volume)));
+      }
     }
 
     if (isMobileHardwareVolumeRuntime()) {
@@ -2754,26 +2830,51 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }
 
     const rpcStatus = await defaultPlatformBridge.getDiscordRpcStatus?.();
-    const restoredAuth = await syncEngine.restoreSession();
-    const restoredProfile = restoredAuth.connected
-      ? ((await syncEngine.getProfile?.()) ?? null)
-      : null;
+
+    const canonicalPlaylists = libraryStore.getPlaylists().map((pl) => ({
+      ...pl,
+      tracks: pl.tracks.map(canonicalizeTrackArtists),
+    }));
+    const canonicalLiked = libraryStore.getLikedTracks().map((l) => ({
+      ...l,
+      track: canonicalizeTrackArtists(l.track),
+    }));
+    const canonicalHistory = libraryStore.getPlayHistory().map((h) => ({
+      ...h,
+      track: canonicalizeTrackArtists(h.track),
+    }));
+    const canonicalShelves = shelves.map((sh) => ({
+      ...sh,
+      anchorArtist:
+        sh.anchorArtist && /cruz\s*cafun[eé]/i.test(sh.anchorArtist)
+          ? 'Cruzzi'
+          : sh.anchorArtist,
+      tracks: sh.tracks?.map(canonicalizeTrackArtists),
+      albums: sh.albums?.map((al) => ({
+        ...al,
+        artists: al.artists.map((ar) => canonicalizeArtistRefName(ar.id, ar.name)),
+      })),
+    }));
 
     set((prev) => ({
-      ...(isMobileHardwareVolumeRuntime() ? { volume: 1.0 } : {}),
+      ...(isMobileHardwareVolumeRuntime()
+        ? { volume: 1.0 }
+        : typeof hydratedPrefs?.volume === 'number'
+          ? { volume: Math.max(0, Math.min(1, hydratedPrefs.volume)) }
+          : {}),
       authState: restoredAuth,
       userProfile: restoredProfile,
       needsProfileSetup: restoredAuth.connected && !restoredProfile,
-      playlists: libraryStore.getPlaylists(),
-      likedTracks: libraryStore.getLikedTracks(),
-      playHistory: libraryStore.getPlayHistory(),
+      playlists: canonicalPlaylists,
+      likedTracks: canonicalLiked,
+      playHistory: canonicalHistory,
       seedArtists: recommendationEngine.getSeedArtists(),
       affinityProfile: recommendationEngine.getAffinityProfile(),
       recentSearchItems: hydratedRecentItems,
       offlineEntries,
       offlineDownloads,
       trackAnalyses: analyses,
-      homeShelves: shelves,
+      homeShelves: canonicalShelves,
       onlineDevices: syncEngine.getOnlineDevices(),
       ...(rpcStatus ? { discordRpcStatus: rpcStatus } : {}),
       ...(hydratedPrefs
@@ -2821,6 +2922,18 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
             showRemainingTime: Boolean(
               hydratedPrefs.showRemainingTime ?? prev.showRemainingTime
             ),
+            repeatMode:
+              hydratedPrefs.repeatMode === 'off' ||
+              hydratedPrefs.repeatMode === 'all' ||
+              hydratedPrefs.repeatMode === 'one'
+                ? hydratedPrefs.repeatMode
+                : prev.repeatMode,
+            ...(typeof hydratedPrefs.sidebarCollapsed === 'boolean'
+              ? { sidebarCollapsed: hydratedPrefs.sidebarCollapsed }
+              : {}),
+            ...(typeof hydratedPrefs.rightPanelOpen === 'boolean'
+              ? { rightPanelOpen: hydratedPrefs.rightPanelOpen }
+              : {}),
             ...(Boolean(hydratedPrefs.alwaysShuffle ?? prev.alwaysShuffle)
               ? { shuffleEnabled: true }
               : {}),
@@ -2868,7 +2981,17 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       }
       if (!cloudTasteMerged) {
         await hydrateAndMergeCloudTaste(null);
+        persistPrefsFromStore(true);
       }
+    }
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('pagehide', () => flushCloudPrefsNow());
+    }
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) flushCloudPrefsNow();
+      });
     }
 
     const activeShelves = cloudTasteMerged ? get().homeShelves : shelves;
@@ -3023,8 +3146,14 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       void get().refreshExploreDiscovery();
     }
   },
-  setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
-  setRightPanelOpen: (open) => set({ rightPanelOpen: open }),
+  setSidebarCollapsed: (collapsed) => {
+    set({ sidebarCollapsed: collapsed });
+    persistPrefsFromStore();
+  },
+  setRightPanelOpen: (open) => {
+    set({ rightPanelOpen: open });
+    persistPrefsFromStore();
+  },
   setNowPlayingOpen: (open) => set({ nowPlayingOpen: open }),
   setNowPlayingTab: (tab) => set({ nowPlayingTab: tab }),
   setEqSheetOpen: (open) =>
@@ -3644,6 +3773,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     const next: RepeatMode = cur === 'off' ? 'all' : cur === 'all' ? 'one' : 'off';
     set({ repeatMode: next });
     void recomputeActiveDjPlan();
+    persistPrefsFromStore();
   },
 
   seekTo: (positionSec) => {
@@ -3736,6 +3866,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     if (clamped > 0) previousVolumeBeforeMute = clamped;
     audioEngine.setVolume(clamped);
     set({ volume: clamped });
+    persistPrefsFromStore();
   },
 
   toggleMute: () => {
@@ -5291,11 +5422,21 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   },
 
   signOutSupabase: async () => {
+    if (cloudPrefsSaveTimer) {
+      clearTimeout(cloudPrefsSaveTimer);
+      cloudPrefsSaveTimer = null;
+    }
+    pendingCloudPrefsPayload = null;
     await syncEngine.signOut();
     try {
       await recommendationEngine.resetTastes();
     } catch {
       // ignore taste reset error
+    }
+    try {
+      await defaultPlatformBridge.preferencesStorage.removeItem(USER_PREFS_STORAGE_KEY);
+    } catch {
+      // ignore storage cleanup error
     }
     try {
       if (typeof localStorage !== 'undefined') {
@@ -5316,6 +5457,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       likedTracks: [],
       playHistory: [],
       playlistPlayCounts: {},
+      nowPlayingBackdropStyle: 'pulse',
+      alwaysShuffle: false,
+      shuffleEnabled: false,
+      repeatMode: 'off',
       seedArtists: recommendationEngine.getSeedArtists(),
       affinityProfile: recommendationEngine.getAffinityProfile(),
       activeDetailView:

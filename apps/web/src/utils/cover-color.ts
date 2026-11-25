@@ -38,6 +38,7 @@ let liveRgb: PaletteTriplet = [
   [38, 38, 44],
   [16, 16, 20],
 ];
+let liveLuminance = 0.45;
 let paletteAnimRafId = 0;
 let activeExtractToken = 0;
 let activePaletteTrackKey = '';
@@ -120,21 +121,32 @@ function fallbackPaletteForTrack(track: Track | null): PaletteTriplet {
   return FALLBACK_PALETTES_RGB[idx] ?? FALLBACK_PALETTES_RGB[0]!;
 }
 
-function transitionToPalette(target: PaletteTriplet, durationMs: number): void {
+function transitionToPalette(
+  target: PaletteTriplet,
+  durationMs: number,
+  targetLuma?: number
+): void {
   if (paletteAnimRafId && typeof cancelAnimationFrame === 'function') {
     cancelAnimationFrame(paletteAnimRafId);
     paletteAnimRafId = 0;
   }
+
+  const nextLuma =
+    typeof targetLuma === 'number' && Number.isFinite(targetLuma)
+      ? Math.max(0.15, Math.min(1, targetLuma))
+      : liveLuminance;
 
   const reduced =
     typeof document !== 'undefined' &&
     document.documentElement.classList.contains('pm-reduced-motion');
 
   if (durationMs <= 0 || reduced || typeof requestAnimationFrame !== 'function') {
+    liveLuminance = nextLuma;
     applyRgbTripletToRoot(target);
     return;
   }
 
+  const fromLuma = liveLuminance;
   const from: PaletteTriplet = [
     [liveRgb[0][0], liveRgb[0][1], liveRgb[0][2]],
     [liveRgb[1][0], liveRgb[1][1], liveRgb[1][2]],
@@ -148,6 +160,7 @@ function transitionToPalette(target: PaletteTriplet, durationMs: number): void {
     if (now - lastPaintMs >= 33 || rawT >= 1) {
       lastPaintMs = now;
       const lerp = (a: number, b: number) => a + (b - a) * rawT;
+      liveLuminance = lerp(fromLuma, nextLuma);
       applyRgbTripletToRoot([
         [lerp(from[0][0], target[0][0]), lerp(from[0][1], target[0][1]), lerp(from[0][2], target[0][2])],
         [lerp(from[1][0], target[1][0]), lerp(from[1][1], target[1][1]), lerp(from[1][2], target[1][2])],
@@ -174,6 +187,10 @@ export function getLiveAmbientRgb(): PaletteTriplet {
     [liveRgb[1][0], liveRgb[1][1], liveRgb[1][2]],
     [liveRgb[2][0], liveRgb[2][1], liveRgb[2][2]],
   ];
+}
+
+export function getLiveAmbientLuminance(): number {
+  return liveLuminance;
 }
 
 const prebakedBackdropCache = new Map<string, [HTMLCanvasElement, HTMLCanvasElement]>();
@@ -397,8 +414,8 @@ export function animateAmbientPaletteFromCover(track: Track | null, durationMs =
           count++;
 
           const [h, s, l] = rgbToHsl(r, g, b);
-          if (l < 0.1 || l > 0.88) continue;
-          const vibrance = s * (1 - Math.abs(l - 0.5) * 1.35);
+          if (l < 0.08 || l > 0.96) continue;
+          const vibrance = s * (1 - Math.abs(l - 0.54) * 1.1);
           if (vibrance > bestScore) {
             if (Math.abs(h - bestH) > 28) secondH = bestH;
             bestScore = vibrance;
@@ -408,23 +425,31 @@ export function animateAmbientPaletteFromCover(track: Track | null, durationMs =
         }
 
         if (count > 0) {
-          const [avgH, avgS] = rgbToHsl(sumR / count, sumG / count, sumB / count);
+          const [avgH, avgS, avgL] = rgbToHsl(sumR / count, sumG / count, sumB / count);
+          const clampPct = (v: number, lo: number, hi: number) =>
+            Math.max(lo, Math.min(hi, Math.round(v)));
           let extracted: PaletteTriplet;
           if (bestScore > 0.14) {
-            const sat1 = Math.min(68, Math.max(24, Math.round(bestS * 100)));
-            const sat2 = Math.min(62, Math.max(20, Math.round(sat1 * 0.9)));
+            const sat1 = Math.min(72, Math.max(26, Math.round(bestS * 100)));
+            const sat2 = Math.min(66, Math.max(22, Math.round(sat1 * 0.9)));
             const secondary = Math.abs(secondH - bestH) > 25 ? secondH : avgH + 30;
+            const l1 = clampPct(44 + avgL * 32, 46, 72);
+            const l2 = clampPct(32 + avgL * 28, 34, 60);
+            const l3 = clampPct(16 + avgL * 22, 16, 36);
             extracted = [
-              hslToRgb(bestH, sat1, 40),
-              hslToRgb(secondary, sat2, 30),
-              hslToRgb(bestH, Math.min(44, Math.round(sat1 * 0.65)), 11),
+              hslToRgb(bestH, sat1, l1),
+              hslToRgb(secondary, sat2, l2),
+              hslToRgb(bestH, Math.min(48, Math.round(sat1 * 0.65)), l3),
             ];
           } else {
-            const mutedSat = Math.min(18, Math.round(avgS * 100));
+            const mutedSat = Math.min(20, Math.round(avgS * 100));
+            const l1 = clampPct(38 + avgL * 38, 40, 76);
+            const l2 = clampPct(28 + avgL * 34, 30, 64);
+            const l3 = clampPct(15 + avgL * 26, 15, 40);
             extracted = [
-              hslToRgb(avgH, mutedSat, 34),
-              hslToRgb(avgH, Math.max(4, Math.round(mutedSat * 0.75)), 22),
-              hslToRgb(avgH, Math.max(3, Math.round(mutedSat * 0.5)), 10),
+              hslToRgb(avgH, mutedSat, l1),
+              hslToRgb(avgH, Math.max(4, Math.round(mutedSat * 0.75)), l2),
+              hslToRgb(avgH, Math.max(3, Math.round(mutedSat * 0.5)), l3),
             ];
           }
           paletteCache.set(imgUrl, extracted);
@@ -432,7 +457,7 @@ export function animateAmbientPaletteFromCover(track: Track | null, durationMs =
             const oldest = paletteCache.keys().next().value;
             if (oldest) paletteCache.delete(oldest);
           }
-          transitionToPalette(extracted, remainingMs);
+          transitionToPalette(extracted, remainingMs, avgL);
         }
       } catch {
         transitionToPalette(fallback, remainingMs);
