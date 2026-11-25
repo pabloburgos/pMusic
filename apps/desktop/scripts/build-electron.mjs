@@ -141,6 +141,9 @@ if (existsSync(canonicalLogoSvg)) {
 if (existsSync(canonicalWordmarkSvg)) {
   cpSync(canonicalWordmarkSvg, resolve(desktopDist, 'wordmark.svg'));
 }
+if (existsSync(resolve(buildDir, 'icon.ico'))) {
+  cpSync(resolve(buildDir, 'icon.ico'), resolve(desktopDist, 'icon.ico'));
+}
 if (existsSync(canonicalLogoPng)) {
   cpSync(canonicalLogoPng, resolve(buildDir, 'icon.png'));
   cpSync(canonicalLogoPng, resolve(desktopDist, 'icon.png'));
@@ -567,10 +570,14 @@ ipcMain.handle(
 async function createMainWindow(): Promise<void> {
   const port = await startLoopbackServer();
   const iconCandidates = [
+    join(__dirname, '../dist/icon.ico'),
+    join(__dirname, '../build/icon.ico'),
     join(__dirname, '../dist/icon.png'),
     join(__dirname, '../build/icon.png'),
   ];
-  const windowIcon = iconCandidates.find((p) => existsSync(p));
+  const windowIconPath = iconCandidates.find((p) => existsSync(p));
+  const resolvedWindowIcon = windowIconPath ? nativeImage.createFromPath(windowIconPath) : null;
+  const windowIcon = resolvedWindowIcon && !resolvedWindowIcon.isEmpty() ? resolvedWindowIcon : windowIconPath;
   lastThumbarPlaying = null;
   lastWindowTitle = '';
 
@@ -645,6 +652,10 @@ async function createMainWindow(): Promise<void> {
   mainWindow.on('leave-full-screen', () => {
     mainWindow?.webContents.send('pmusic:fullscreen-changed', false);
   });
+}
+
+if (process.platform === 'win32') {
+  app.setAppUserModelId('es.pmusic.desktop');
 }
 
 void app.whenReady().then(async () => {

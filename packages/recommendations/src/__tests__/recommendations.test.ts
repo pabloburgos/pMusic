@@ -3,7 +3,9 @@ import type { Track } from '@pmusic/core';
 import {
   RecommendationEngine,
   getDailyMixDateKey,
+  getMondayWeekWindow,
   getThursdayNoonCycleKey,
+  isReleaseDateInWindow,
 } from '../index.ts';
 
 const TRACK_CRUZ: Track = {
@@ -241,7 +243,7 @@ describe('@pmusic/recommendations', () => {
     expect(titles.some((t) => /Sesión DJ/i.test(t))).toBe(false);
   });
 
-  it('never runs empty search("", all), blocks unrelated chart pop, builds 3x50 disjoint Daily Mixes, and titles discovery shelf "Recomendado para ti"', async () => {
+  it('enforces Monday-to-Monday Descubre lo Nuevo, builds a single 100-song Daily Mix + 100-song unheard Daily Discover, and blocks unrelated chart pop', async () => {
     const searchCalls: string[] = [];
     const unrelatedPop: Track = {
       id: 'pop_ariana',
@@ -251,22 +253,36 @@ describe('@pmusic/recommendations', () => {
       thumbnailUrl: 'https://example.com/ariana.jpg',
       source: 'ytmusic',
       releaseYear: 2024,
+      releaseDate: '2024-01-12',
     };
 
-    // Build 180 distinct scene/related tracks across 6 artists (enough for 3 x 50 disjoint Daily Mixes + Descubre lo Nuevo)
-    const sceneArtists = ['Cruzzi', 'La Pantera', 'Quevedo', 'Rels B', 'D.Valentino', 'Mvrk'];
+    const now = new Date();
+    const weekWin = getMondayWeekWindow(now);
+    const thuNov26 = new Date(2026, 10, 26, 0, 23, 0);
+    const thuWin = getMondayWeekWindow(thuNov26);
+    expect(thuWin.startIso).toBe('2026-11-23');
+    expect(thuWin.endIso).toBe('2026-11-30');
+    expect(isReleaseDateInWindow('2026-11-23', thuWin.startIso, thuWin.endIso)).toBe(true);
+    expect(isReleaseDateInWindow('2026-11-26', thuWin.startIso, thuWin.endIso)).toBe(true);
+    expect(isReleaseDateInWindow('2026-11-30', thuWin.startIso, thuWin.endIso)).toBe(false);
+    expect(isReleaseDateInWindow('2026-11-06', thuWin.startIso, thuWin.endIso)).toBe(false);
+
+    // Build 260 distinct scene/related + 2nd-degree emerging tracks
+    const sceneArtists = ['Cruzzi', 'La Pantera', 'Quevedo', 'Rels B', 'D.Valentino', 'Mvrk', 'Judeline', 'Rusowsky'];
     const poolTracks: Track[] = [];
-    for (let i = 0; i < 180; i++) {
+    for (let i = 0; i < 260; i++) {
       const art = sceneArtists[i % sceneArtists.length]!;
+      const isThisWeek = i >= 15 && i < 27;
       poolTracks.push({
         id: `scene_${i}`,
         title: `Tema Escena ${i}`,
         artists: [{ id: `art_${i % sceneArtists.length}`, name: art }],
-        album: { id: `alb_${i % 12}`, name: `Álbum ${i % 12}` },
+        album: { id: `alb_${i % 16}`, name: `Álbum ${i % 16}` },
         durationSec: 185,
         thumbnailUrl: `https://example.com/${i}.jpg`,
         source: 'ytmusic',
-        releaseYear: i % 5 === 0 ? 2026 : 2022 + (i % 4),
+        releaseYear: isThisWeek ? Number(weekWin.startIso.slice(0, 4)) : 2023,
+        releaseDate: isThisWeek ? weekWin.startIso : '2023-05-12',
       });
     }
 
@@ -288,7 +304,7 @@ describe('@pmusic/recommendations', () => {
       getHomeFeed: async () => ({ shelves: [], moods: [] }),
       getUpNext: async () => [],
       getRelated: async () => ({
-        tracks: poolTracks.slice(0, 90),
+        tracks: poolTracks.slice(0, 140),
         artists: sceneArtists.map((n, i) => ({
           id: `art_${i}`,
           name: n,
@@ -308,10 +324,19 @@ describe('@pmusic/recommendations', () => {
           albums: [
             {
               id: `alb_rel_${artistName}`,
-              title: `Disco Reciente ${artistName}`,
+              title: `Disco Semanal ${artistName}`,
               artists: [{ name: artistName }],
               thumbnailUrl: 'https://example.com/al.jpg',
+              year: Number(weekWin.startIso.slice(0, 4)),
+              releaseDate: weekWin.startIso,
+            },
+            {
+              id: `alb_old_${artistName}`,
+              title: `Disco Viejo ${artistName}`,
+              artists: [{ name: artistName }],
+              thumbnailUrl: 'https://example.com/al_old.jpg',
               year: 2026,
+              releaseDate: weekWin.prevStartIso,
             },
           ],
           singles: [],
@@ -322,24 +347,47 @@ describe('@pmusic/recommendations', () => {
           })),
         };
       },
-      getAlbum: async (albumId: string) => ({
-        album: {
-          id: albumId,
-          title: 'Disco Reciente',
-          artists: [{ name: 'Cruzzi' }],
-          thumbnailUrl: 'https://example.com/al.jpg',
-          year: 2026,
-        },
-        tracks: poolTracks.filter((t) => t.releaseYear === 2026).slice(0, 12),
-      }),
+      getAlbum: async (albumId: string) => {
+        const isOld = albumId.startsWith('alb_old_');
+        return {
+          album: {
+            id: albumId,
+            title: isOld ? 'Disco Viejo' : 'Disco Semanal',
+            artists: [{ name: 'Cruzzi' }],
+            thumbnailUrl: 'https://example.com/al.jpg',
+            year: Number(weekWin.startIso.slice(0, 4)),
+            releaseDate: isOld ? weekWin.prevStartIso : weekWin.startIso,
+          },
+          tracks: isOld
+            ? [
+                {
+                  id: `old_track_${albumId}`,
+                  title: 'Canción Semana Pasada',
+                  artists: [{ id: 'art_0', name: 'Cruzzi' }],
+                  album: { id: albumId, name: 'Disco Viejo' },
+                  durationSec: 190,
+                  thumbnailUrl: 'https://example.com/old.jpg',
+                  source: 'ytmusic' as const,
+                  releaseYear: Number(weekWin.prevStartIso.slice(0, 4)),
+                  releaseDate: weekWin.prevStartIso,
+                },
+              ]
+            : poolTracks.filter((t) => t.releaseDate === weekWin.startIso),
+        };
+      },
     };
+
+    const librarySlice = poolTracks.slice(0, 15);
+    const likedList = [poolTracks[0]!, poolTracks[1]!];
+    const ownedIds = new Set([...librarySlice, ...likedList].map((t) => t.id));
 
     const engine = new RecommendationEngine({ musicProvider: mockProvider });
     engine.setFavoriteArtists([{ artistId: 'art_0', artistName: 'Cruzzi', likedAt: '2026-11-25T10:00:00Z' }]);
     engine.setUserLibraryContext({
-      libraryTracks: poolTracks.slice(0, 15),
-      likedTracks: [poolTracks[0]!, poolTracks[1]!],
+      libraryTracks: librarySlice,
+      likedTracks: likedList,
     });
+    await engine.recordSignal(poolTracks[12]!, 'complete_listen', { completionRatio: 0.95 });
 
     const shelves = await engine.buildHomeShelves();
 
@@ -355,20 +403,34 @@ describe('@pmusic/recommendations', () => {
     expect(discoverShelf?.title).toBe('Recomendado para ti');
 
     const mixesShelf = shelves.find((s) => s.kind === 'mixes_for_you');
-    const dailyMixes = (mixesShelf?.mixes ?? []).filter((m) => m.id.startsWith('mix_daily_'));
-    expect(dailyMixes.length).toBe(3);
-    for (const dm of dailyMixes) {
-      expect(dm.tracks.length).toBe(50);
-    }
+    const mixesList = mixesShelf?.mixes ?? [];
+    expect(mixesList.map((m) => m.id)).toEqual([
+      'mix_descubre_lo_nuevo',
+      'mix_daily_mix',
+      'mix_daily_discover',
+    ]);
 
-    // Verify 0 duplicate tracks across Daily Mix 1, 2 & 3
-    const seenAcrossDailies = new Set<string>();
-    for (const dm of dailyMixes) {
-      for (const t of dm.tracks) {
-        expect(seenAcrossDailies.has(t.id)).toBe(false);
-        seenAcrossDailies.add(t.id);
-      }
+    const weeklyMix = mixesList[0]!;
+    expect(weeklyMix.tracks.length).toBeGreaterThan(0);
+    for (const t of weeklyMix.tracks) {
+      expect(isReleaseDateInWindow(t.releaseDate, weekWin.startIso, weekWin.endIso)).toBe(true);
     }
-    expect(seenAcrossDailies.size).toBe(150);
+    expect(weeklyMix.tracks.some((t) => t.id.startsWith('old_track_'))).toBe(false);
+
+    const dailyMix = mixesList[1]!;
+    const dailyDiscover = mixesList[2]!;
+    expect(dailyMix.tracks.length).toBe(100);
+    expect(dailyDiscover.tracks.length).toBe(100);
+
+    // Daily Mix must include user's familiar tracks alongside recommendations
+    expect(dailyMix.tracks.some((t) => ownedIds.has(t.id))).toBe(true);
+
+    // Daily Discover must NEVER contain owned playlists/likes, listened history, or Daily Mix tracks
+    const dailyMixIds = new Set(dailyMix.tracks.map((t) => t.id));
+    for (const t of dailyDiscover.tracks) {
+      expect(ownedIds.has(t.id)).toBe(false);
+      expect(t.id).not.toBe(poolTracks[12]!.id);
+      expect(dailyMixIds.has(t.id)).toBe(false);
+    }
   });
 });

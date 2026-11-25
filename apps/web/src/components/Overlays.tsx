@@ -190,7 +190,7 @@ const BACKDROP_STYLE_OPTIONS: readonly {
   label: string;
   desc: string;
 }[] = [
-  { id: 'pulse', label: 'Pulso', desc: 'Caleidoscopio orgánico blur' },
+  { id: 'pulse', label: 'Pulso', desc: 'Ondas luminosas y respiración viva' },
   { id: 'fluid', label: 'Fluido', desc: 'Portada viva y orbes' },
   { id: 'paint', label: 'Pintura', desc: 'Óleo líquido en movimiento' },
   { id: 'minimal', label: 'Minimal', desc: 'Estudio editorial oscuro' },
@@ -1981,14 +1981,14 @@ export const NowPlayingSheet: React.FC = () => {
                   src={backdropSlots.urls[slotIdx]}
                   alt=""
                   draggable={false}
-                  className="pm-fluid-cover-a absolute inset-0 h-full w-full select-none object-cover opacity-55"
+                  className="pm-fluid-cover-a absolute inset-0 h-full w-full select-none object-cover opacity-[0.62]"
                   style={slotIdx === 1 ? { animationDelay: '-5s' } : undefined}
                 />
                 <img
                   src={backdropSlots.urls[slotIdx]}
                   alt=""
                   draggable={false}
-                  className="pm-fluid-cover-b absolute inset-0 h-full w-full -scale-x-100 select-none object-cover opacity-35"
+                  className="pm-fluid-cover-b absolute inset-0 h-full w-full -scale-x-100 select-none object-cover opacity-[0.42]"
                   style={slotIdx === 1 ? { animationDelay: '-8s' } : undefined}
                 />
               </div>

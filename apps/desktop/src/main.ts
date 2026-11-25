@@ -472,10 +472,14 @@ async function createMainWindow(): Promise<void> {
   await startLoopbackProxyServer();
 
   const iconCandidates = [
+    join(__dirname, '../dist/icon.ico'),
+    join(__dirname, '../build/icon.ico'),
     join(__dirname, '../dist/icon.png'),
     join(__dirname, '../build/icon.png'),
   ];
-  const windowIcon = iconCandidates.find((p) => existsSync(p));
+  const windowIconPath = iconCandidates.find((p) => existsSync(p));
+  const resolvedWindowIcon = windowIconPath ? nativeImage.createFromPath(windowIconPath) : null;
+  const windowIcon = resolvedWindowIcon && !resolvedWindowIcon.isEmpty() ? resolvedWindowIcon : windowIconPath;
 
   mainWindow = new BrowserWindow({
     width: 1380,
@@ -721,6 +725,10 @@ ipcMain.handle('pmusic:get-fullscreen', () => {
   if (!mainWindow || mainWindow.isDestroyed()) return false;
   return mainWindow.isFullScreen();
 });
+
+if (process.platform === 'win32') {
+  app.setAppUserModelId('es.pmusic.desktop');
+}
 
 void app.whenReady().then(async () => {
   try {

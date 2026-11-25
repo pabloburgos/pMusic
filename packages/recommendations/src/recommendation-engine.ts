@@ -126,6 +126,74 @@ export function getThursdayNoonCycleKey(now: Date = new Date()): string {
   return `${getDailyMixDateKey(cursor)}-T12`;
 }
 
+const SPANISH_SHORT_MONTHS = [
+  'ene',
+  'feb',
+  'mar',
+  'abr',
+  'may',
+  'jun',
+  'jul',
+  'ago',
+  'sep',
+  'oct',
+  'nov',
+  'dic',
+] as const;
+
+export interface MondayWeekWindow {
+  startIso: string;
+  endIso: string;
+  prevStartIso: string;
+  prevEndIso: string;
+  weekKey: string;
+  rangeLabel: string;
+}
+
+/**
+ * Computes the current Monday-to-Monday release window [startIso, endIso) in local time.
+ */
+export function getMondayWeekWindow(now: Date = new Date()): MondayWeekWindow {
+  const daysSinceMonday = (now.getDay() + 6) % 7; // Mon=0, Tue=1 ... Sun=6
+  const start = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() - daysSinceMonday,
+    0,
+    0,
+    0,
+    0
+  );
+  const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7, 0, 0, 0, 0);
+  const prevStart = new Date(start.getFullYear(), start.getMonth(), start.getDate() - 7, 0, 0, 0, 0);
+  const startIso = getDailyMixDateKey(start);
+  const endIso = getDailyMixDateKey(end);
+  const prevStartIso = getDailyMixDateKey(prevStart);
+  const rangeLabel = `${start.getDate()} ${SPANISH_SHORT_MONTHS[start.getMonth()]} – ${end.getDate()} ${SPANISH_SHORT_MONTHS[end.getMonth()]}`;
+  return {
+    startIso,
+    endIso,
+    prevStartIso,
+    prevEndIso: startIso,
+    weekKey: startIso,
+    rangeLabel,
+  };
+}
+
+/**
+ * Strict check that a YYYY-MM-DD releaseDate lies inside [startIso, endIso).
+ */
+export function isReleaseDateInWindow(
+  releaseDate: string | undefined,
+  startIso: string,
+  endIso: string
+): boolean {
+  if (!releaseDate || typeof releaseDate !== 'string') return false;
+  const iso = releaseDate.trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
+  return iso >= startIso && iso < endIso;
+}
+
 function isSameArtistAlias(normA: string, normB: string): boolean {
   if (!normA || !normB) return false;
   if (normA === normB) return true;
@@ -942,7 +1010,7 @@ export class RecommendationEngine implements IRecommendationEngine {
   public async buildHomeShelves(signal?: AbortSignal): Promise<HomeEditorialShelf[]> {
     const now = new Date();
     const dailyKey = getDailyMixDateKey(now);
-    const thursdayKey = getThursdayNoonCycleKey(now);
+    const weekWin = getMondayWeekWindow(now);
     const currentYear = now.getFullYear();
 
     const makeTrackKey = (t: Track): string =>
@@ -1102,7 +1170,7 @@ export class RecommendationEngine implements IRecommendationEngine {
     };
 
     if (this.musicProvider) {
-      const coreBatch = userCoreArtists.slice(0, 6);
+      const coreBatch = userCoreArtists.slice(0, 8);
       const seedTrackCandidates = seededShuffle(userOwnedTracks, `seeds:${dailyKey}`).slice(0, 6);
 
       // Wave 1: Query real discographies/top songs/related artists for user's top artists + track radios across ALL user music
@@ -1140,7 +1208,10 @@ export class RecommendationEngine implements IRecommendationEngine {
           const combinedRels = [...(val.singles ?? []), ...(val.albums ?? [])];
           for (const al of combinedRels) {
             pushAlbum(al, true);
-            if ((al.year ?? 0) >= currentYear - 1) {
+            if (
+              (al.year ?? 0) >= currentYear - 1 ||
+              isReleaseDateInWindow(al.releaseDate, weekWin.prevStartIso, weekWin.endIso)
+            ) {
               recentAlbumCandidates.push(al);
             }
           }
@@ -1168,20 +1239,34 @@ export class RecommendationEngine implements IRecommendationEngine {
         }
       }
 
-      // Wave 2: Fetch genuine recent releases (from newest albums/singles sorted descending)
-      // AND fetch deep tracks from emerging / related artists so 3x50 Daily Mixes stay rich and varied
-      const newestReleaseTargets = [...recentAlbumCandidates, ...collectedAlbums]
-        .sort((a, b) => (b.year ?? 0) - (a.year ?? 0))
-        .filter((a, idx, arr) => arr.findIndex((x) => x.id === a.id) === idx)
-        .slice(0, 6);
+      // Wave 2: Prioritize Monday-to-Monday weekly releases (then newest albums) + emerging/related artists
+      const allCandidateAlbums = [...recentAlbumCandidates, ...collectedAlbums].filter(
+        (a, idx, arr) => arr.findIndex((x) => x.id === a.id) === idx
+      );
+      const weeklyAlbumTargets = allCandidateAlbums.filter(
+        (al) =>
+          isReleaseDateInWindow(al.releaseDate, weekWin.startIso, weekWin.endIso) ||
+          (now.getDay() === 1 &&
+            isReleaseDateInWindow(al.releaseDate, weekWin.prevStartIso, weekWin.prevEndIso))
+      );
+      const nonWeeklyNewest = allCandidateAlbums
+        .filter((al) => !weeklyAlbumTargets.some((w) => w.id === al.id))
+        .sort((a, b) => {
+          const da = a.releaseDate ?? `${a.year ?? 0}-01-01`;
+          const db = b.releaseDate ?? `${b.year ?? 0}-01-01`;
+          return db.localeCompare(da);
+        })
+        .slice(0, weeklyAlbumTargets.length < 4 ? 6 : 3);
+      const newestReleaseTargets = [...weeklyAlbumTargets.slice(0, 14), ...nonWeeklyNewest].slice(0, 18);
+      const fetchedAlbumIds = new Set(newestReleaseTargets.map((al) => al.id));
 
       const emergingTargets = seededShuffle(
         Array.from(emergingArtistsPool.values())
           .filter((a) => !seenCoreKeys.has(normalizeArtistKey(a.name)))
           .sort((a, b) => b.score - a.score)
-          .slice(0, 14),
+          .slice(0, 20),
         `emg:${dailyKey}`
-      ).slice(0, 8);
+      ).slice(0, 12);
 
       const extraTargets =
         emergingTargets.length > 0
@@ -1203,22 +1288,34 @@ export class RecommendationEngine implements IRecommendationEngine {
         ),
       ]);
 
-      for (let i = 0; i < albumDetailRes.length; i++) {
-        const res = albumDetailRes[i]!;
-        if (res.status !== 'fulfilled' || !res.value?.tracks) continue;
-        const relMeta = newestReleaseTargets[i];
-        const fallbackYear = relMeta?.year;
-        for (const t of res.value.tracks as Track[]) {
-          const enrichedTrack: Track =
-            !t.releaseYear && fallbackYear ? { ...t, releaseYear: fallbackYear } : t;
+      const stampAlbumTracks = (resVal: any, fallbackMeta?: AlbumSummary) => {
+        if (!resVal?.tracks) return;
+        const fallbackYear = resVal.album?.year ?? fallbackMeta?.year;
+        const fallbackDate = resVal.album?.releaseDate ?? fallbackMeta?.releaseDate;
+        for (const t of resVal.tracks as Track[]) {
+          const enrichedTrack: Track = {
+            ...t,
+            ...(t.releaseYear ? {} : fallbackYear ? { releaseYear: fallbackYear } : {}),
+            ...(t.releaseDate ? {} : fallbackDate ? { releaseDate: fallbackDate } : {}),
+          };
           if (!recentReleasesMap.has(enrichedTrack.id)) {
             recentReleasesMap.set(enrichedTrack.id, enrichedTrack);
           }
           pushTrack(enrichedTrack, true);
         }
+      };
+
+      for (let i = 0; i < albumDetailRes.length; i++) {
+        const res = albumDetailRes[i]!;
+        if (res.status !== 'fulfilled' || !res.value) continue;
+        stampAlbumTracks(res.value, newestReleaseTargets[i]);
       }
 
       const secondWaveSeeds: Track[] = [];
+      const emergingWeeklyAlbums: AlbumSummary[] = [];
+      const secondDegreeEmerging = new Map<string, { id?: string; name: string }>();
+      const seenEmergingKeys = new Set(extraTargets.map((e) => normalizeArtistKey(e.name)));
+
       for (const r of emergingRes) {
         if (r.status !== 'fulfilled' || !r.value) continue;
         const val = r.value as any;
@@ -1229,26 +1326,86 @@ export class RecommendationEngine implements IRecommendationEngine {
             : [];
         for (const t of songs) {
           pushTrack(t, true);
-          if (secondWaveSeeds.length < 4 && !userOwnedTracksMap.has(t.id)) {
+          if (secondWaveSeeds.length < 10 && !userOwnedTracksMap.has(t.id)) {
             secondWaveSeeds.push(t);
           }
         }
-        for (const al of [...(val.albums ?? []), ...(val.singles ?? [])]) {
+        for (const al of [...(val.singles ?? []), ...(val.albums ?? [])] as AlbumSummary[]) {
           pushAlbum(al, true);
+          if (
+            !fetchedAlbumIds.has(al.id) &&
+            (isReleaseDateInWindow(al.releaseDate, weekWin.startIso, weekWin.endIso) ||
+              (now.getDay() === 1 &&
+                isReleaseDateInWindow(al.releaseDate, weekWin.prevStartIso, weekWin.prevEndIso)))
+          ) {
+            fetchedAlbumIds.add(al.id);
+            emergingWeeklyAlbums.push(al);
+          }
         }
         for (const rel of val.relatedArtists ?? []) {
           addAllowedArtist(rel.name);
+          const rk = normalizeArtistKey(rel.name);
+          if (
+            rk &&
+            !seenCoreKeys.has(rk) &&
+            !seenEmergingKeys.has(rk) &&
+            !secondDegreeEmerging.has(rk)
+          ) {
+            secondDegreeEmerging.set(rk, { id: rel.id, name: rel.name });
+          }
         }
       }
 
-      // Wave 3 (expansion when pool < 165 unique tracks so 3 x 50 Daily Mixes never overlap)
-      if (collectedTrackMap.size < 165 && secondWaveSeeds.length > 0) {
-        const wave3 = await Promise.allSettled(
-          secondWaveSeeds.map((t) => this.musicProvider!.getRelated(t.id, signal))
-        );
-        for (const r of wave3) {
+      // Wave 3: Fetch emerging artists' Monday-to-Monday releases + deep discovery graph for 100-song Daily Mix & Daily Discover
+      const wave3AlbumBatch =
+        typeof this.musicProvider.getAlbum === 'function' ? emergingWeeklyAlbums.slice(0, 8) : [];
+      const wave3RelatedSeeds = collectedTrackMap.size < 250 ? secondWaveSeeds.slice(0, 10) : [];
+      const wave3SecondDegArtists =
+        collectedTrackMap.size < 230
+          ? seededShuffle(Array.from(secondDegreeEmerging.values()), `deg2:${dailyKey}`).slice(0, 8)
+          : [];
+
+      if (wave3AlbumBatch.length > 0 || wave3RelatedSeeds.length > 0 || wave3SecondDegArtists.length > 0) {
+        const [emgAlbumRes, relSeedRes, deg2Res] = await Promise.all([
+          wave3AlbumBatch.length > 0
+            ? Promise.allSettled(wave3AlbumBatch.map((al) => this.musicProvider!.getAlbum!(al.id, signal)))
+            : Promise.resolve([] as PromiseSettledResult<any>[]),
+          wave3RelatedSeeds.length > 0
+            ? Promise.allSettled(wave3RelatedSeeds.map((t) => this.musicProvider!.getRelated(t.id, signal)))
+            : Promise.resolve([] as PromiseSettledResult<any>[]),
+          wave3SecondDegArtists.length > 0
+            ? Promise.allSettled(
+                wave3SecondDegArtists.map((a) =>
+                  typeof this.musicProvider!.getArtist === 'function'
+                    ? this.musicProvider!.getArtist!(a.id || a.name, signal, { name: a.name })
+                    : this.musicProvider!.search(a.name, 'song', signal)
+                )
+              )
+            : Promise.resolve([] as PromiseSettledResult<any>[]),
+        ]);
+
+        for (let i = 0; i < emgAlbumRes.length; i++) {
+          const r = emgAlbumRes[i]!;
+          if (r.status === 'fulfilled' && r.value) {
+            stampAlbumTracks(r.value, wave3AlbumBatch[i]);
+          }
+        }
+        for (const r of relSeedRes) {
           if (r.status !== 'fulfilled' || !r.value) continue;
           for (const t of r.value.tracks ?? []) {
+            for (const a of t.artists ?? []) addAllowedArtist(a.name);
+            pushTrack(t, true);
+          }
+        }
+        for (const r of deg2Res) {
+          if (r.status !== 'fulfilled' || !r.value) continue;
+          const val = r.value as any;
+          const songs: Track[] = Array.isArray(val.topSongs)
+            ? val.topSongs
+            : Array.isArray(val.songs)
+              ? val.songs
+              : [];
+          for (const t of songs) {
             for (const a of t.artists ?? []) addAllowedArtist(a.name);
             pushTrack(t, true);
           }
@@ -1279,10 +1436,14 @@ export class RecommendationEngine implements IRecommendationEngine {
 
     const catalogSongs = this.rerankTracks(Array.from(collectedTrackMap.values()), {
       maxPerArtistInWindow: 3,
-      limit: 320,
+      limit: 460,
     });
     const catalogAlbums = collectedAlbums
-      .sort((a, b) => (b.year ?? 0) - (a.year ?? 0))
+      .sort((a, b) => {
+        const da = a.releaseDate ?? `${a.year ?? 0}-01-01`;
+        const db = b.releaseDate ?? `${b.year ?? 0}-01-01`;
+        return db.localeCompare(da);
+      })
       .slice(0, 14);
 
     const heardIds = new Set(this.history.map((h) => h.trackId));
@@ -1366,86 +1527,113 @@ export class RecommendationEngine implements IRecommendationEngine {
       return out;
     };
 
-    // 1. Descubre lo Nuevo (Weekly Thursday 12:00 refresh using REAL recent releases!)
-    const recentFirst = Array.from(recentReleasesMap.values()).sort(
-      (a, b) => (b.releaseYear ?? 0) - (a.releaseYear ?? 0)
+    // 1. Descubre lo Nuevo (STRICT Monday-to-Monday weekly releases using real releaseDate!)
+    const allDatedPool = Array.from(
+      new Map<string, Track>(
+        [...Array.from(recentReleasesMap.values()), ...catalogSongs].map((t) => [t.id, t])
+      ).values()
     );
-    const recentYearCatalog = catalogSongs.filter((t) => (t.releaseYear ?? 0) >= currentYear - 1);
-    const radarPool = [
-      ...recentFirst.filter(isUnheard),
-      ...recentFirst,
-      ...recentYearCatalog.filter(isUnheard),
-      ...recentYearCatalog,
-    ];
-    const radarTracks = pickDistinctMixTracks(
-      radarPool.length >= 6 ? radarPool : catalogSongs.filter(isUnheard),
-      catalogSongs,
-      `radar:${thursdayKey}`,
-      24,
-      undefined,
-      undefined,
-      3
-    );
+    const currentWeekTracks = allDatedPool
+      .filter((t) => isReleaseDateInWindow(t.releaseDate, weekWin.startIso, weekWin.endIso))
+      .sort((a, b) => (b.releaseDate ?? '').localeCompare(a.releaseDate ?? ''));
+    const strictWeeklyTracks =
+      currentWeekTracks.length > 0 || now.getDay() !== 1
+        ? currentWeekTracks
+        : allDatedPool
+            .filter((t) =>
+              isReleaseDateInWindow(t.releaseDate, weekWin.prevStartIso, weekWin.prevEndIso)
+            )
+            .sort((a, b) => (b.releaseDate ?? '').localeCompare(a.releaseDate ?? ''));
 
-    // 2. Daily Mixes 1, 2 & 3 — Target 50 tracks each, ZERO overlap between Daily Mixes,
-    // mixing user library/favorites (~16) with fresh recommendations & emerging artists (~34)
-    const DAILY_MIX_TARGET = 50;
-    const usedDailyIds = new Set<string>();
-    const usedDailyKeys = new Set<string>();
+    const orderedWeekly = [...strictWeeklyTracks.filter(isUnheard), ...strictWeeklyTracks];
+    const seenWeeklyIds = new Set<string>();
+    const seenWeeklyKeys = new Set<string>();
+    const weeklyArtistCounts = new Map<string, number>();
+    const radarTracks: Track[] = [];
+    for (const t of orderedWeekly) {
+      if (!t?.id || seenWeeklyIds.has(t.id)) continue;
+      const tk = makeTrackKey(t);
+      if (tk !== '::' && seenWeeklyKeys.has(tk)) continue;
+      const pArtist = normalizeArtistKey(t.artists[0]?.name ?? '');
+      if (pArtist && (weeklyArtistCounts.get(pArtist) ?? 0) >= 4) continue;
+      seenWeeklyIds.add(t.id);
+      if (tk !== '::') seenWeeklyKeys.add(tk);
+      if (pArtist) weeklyArtistCounts.set(pArtist, (weeklyArtistCounts.get(pArtist) ?? 0) + 1);
+      radarTracks.push(t);
+      if (radarTracks.length >= 40) break;
+    }
+
+    // 2. Daily Mix (100 songs: ~40 from user's playlists/likes/history + ~60 personalized recommendations)
+    const DAILY_TARGET = 100;
+    const usedDailyMixIds = new Set<string>();
+    const usedDailyMixKeys = new Set<string>();
 
     const freshDiscoveries = catalogSongs.filter((t) => !isInUserLibrary(t));
     const familiarPool = catalogSongs.filter((t) => isInUserLibrary(t));
 
-    const buildDailyMix = (
-      clusterArtists: readonly string[],
-      familiarQuota: number,
-      seedTag: string,
-      preferDiscoveryFirst = false
-    ): Track[] => {
-      const clusterTracks = catalogSongs.filter((t) => matchArtistInList(t, clusterArtists));
-      const familiarCandidates = [
-        ...clusterTracks.filter(isInUserLibrary),
-        ...seededShuffle(familiarPool, `${seedTag}:fam`),
-      ];
-      const discoveryCandidates = [
-        ...freshDiscoveries.filter((t) => !matchArtistInList(t, [topArtist1])),
-        ...freshDiscoveries,
-        ...clusterTracks.filter((t) => !isInUserLibrary(t)),
-      ];
-      const familiarSlice = pickDistinctMixTracks(
-        familiarCandidates,
-        clusterTracks,
-        `${seedTag}:f`,
-        familiarQuota,
-        usedDailyIds,
-        usedDailyKeys,
-        3
-      );
-      const discoverySlice = pickDistinctMixTracks(
-        discoveryCandidates,
-        catalogSongs,
-        `${seedTag}:d`,
-        DAILY_MIX_TARGET - familiarSlice.length,
-        usedDailyIds,
-        usedDailyKeys,
-        4
-      );
-      const merged = preferDiscoveryFirst
-        ? [...discoverySlice.slice(0, 6), ...familiarSlice, ...discoverySlice.slice(6)]
-        : [...familiarSlice.slice(0, 4), ...discoverySlice.slice(0, 8), ...familiarSlice.slice(4), ...discoverySlice.slice(8)];
-      return merged.slice(0, DAILY_MIX_TARGET);
-    };
+    const familiarQuota = Math.min(40, familiarPool.length);
+    const familiarSlice = pickDistinctMixTracks(
+      familiarPool,
+      userOwnedTracks,
+      `dailymix:fam:${dailyKey}`,
+      familiarQuota,
+      usedDailyMixIds,
+      usedDailyMixKeys,
+      5
+    );
+    const freshSlice = pickDistinctMixTracks(
+      freshDiscoveries,
+      catalogSongs,
+      `dailymix:fresh:${dailyKey}`,
+      DAILY_TARGET - familiarSlice.length,
+      usedDailyMixIds,
+      usedDailyMixKeys,
+      4
+    );
 
-    const mix1Tracks = buildDailyMix([topArtist1, topArtist3], 18, `daily1:${dailyKey}`);
-    const mix2Tracks = buildDailyMix([topArtist2, topArtist4], 15, `daily2:${dailyKey}`);
-    const mix3Tracks = buildDailyMix([topArtist4, topArtist5], 12, `daily3:${dailyKey}`, true);
+    const dailyMixTracks: Track[] = [];
+    let fIdx = 0;
+    let nIdx = 0;
+    while (dailyMixTracks.length < DAILY_TARGET && (fIdx < familiarSlice.length || nIdx < freshSlice.length)) {
+      for (let k = 0; k < 2 && fIdx < familiarSlice.length && dailyMixTracks.length < DAILY_TARGET; k++) {
+        dailyMixTracks.push(familiarSlice[fIdx++]!);
+      }
+      for (let k = 0; k < 3 && nIdx < freshSlice.length && dailyMixTracks.length < DAILY_TARGET; k++) {
+        dailyMixTracks.push(freshSlice[nIdx++]!);
+      }
+    }
+
+    // 3. Daily Discover (100 songs: STRICTLY NOT in user's playlists/likes AND NOT previously listened,
+    // prioritizing emerging & adventurous adjacent styles aligned with user taste!)
+    const strictlyUnheardPool = catalogSongs.filter(
+      (t) => !isInUserLibrary(t) && isUnheard(t) && !usedDailyMixIds.has(t.id) && !usedDailyMixKeys.has(makeTrackKey(t))
+    );
+    const adventurousEmerging = strictlyUnheardPool.filter(
+      (t) => !seenCoreKeys.has(normalizeArtistKey(t.artists[0]?.name ?? ''))
+    );
+    const coreUnheardFallback = strictlyUnheardPool.filter((t) =>
+      seenCoreKeys.has(normalizeArtistKey(t.artists[0]?.name ?? ''))
+    );
+
+    const dailyDiscoverTracks = pickDistinctMixTracks(
+      adventurousEmerging,
+      coreUnheardFallback,
+      `discover100:${dailyKey}`,
+      DAILY_TARGET,
+      usedDailyMixIds,
+      usedDailyMixKeys,
+      3
+    );
 
     const mixes: HomeEditorialMix[] = [
       {
         id: 'mix_descubre_lo_nuevo',
         title: 'Descubre lo Nuevo',
-        subtitle: `Lanzamientos recientes de ${topArtist1}, ${topArtist2} y tu escena · Jueves 12:00`,
-        badge: 'JUEVES 12:00',
+        subtitle:
+          radarTracks.length > 0
+            ? `Lanzamientos de esta semana (${weekWin.rangeLabel}) · Lunes a lunes`
+            : `Novedades de ${weekWin.rangeLabel} (lunes a lunes · sin estrenos esta semana)`,
+        badge: 'LUNES A LUNES',
         coverUrl:
           radarTracks[0]?.thumbnailHighUrl ??
           radarTracks[0]?.thumbnailUrl ??
@@ -1455,47 +1643,34 @@ export class RecommendationEngine implements IRecommendationEngine {
         tracks: radarTracks,
       },
       {
-        id: 'mix_daily_1',
-        title: 'Daily Mix 1',
-        subtitle: `${topArtist1}, ${topArtist3} y recomendaciones nuevas`,
+        id: 'mix_daily_mix',
+        title: 'Daily Mix',
+        subtitle: `${topArtist1}, ${topArtist2}, ${topArtist3} y recomendaciones para ti · ${dailyMixTracks.length} temas`,
         badge: 'DAILY MIX',
         coverUrl:
-          mix1Tracks[0]?.thumbnailHighUrl ??
-          mix1Tracks[0]?.thumbnailUrl ??
+          dailyMixTracks[0]?.thumbnailHighUrl ??
+          dailyMixTracks[0]?.thumbnailUrl ??
           catalogSongs[0]?.thumbnailUrl ??
           '',
         accentColor: MIX_PALETTES[0]!,
-        tracks: mix1Tracks,
+        tracks: dailyMixTracks,
       },
       {
-        id: 'mix_daily_2',
-        title: 'Daily Mix 2',
-        subtitle: `${topArtist2}, ${topArtist4} y artistas emergentes`,
-        badge: 'DAILY MIX',
+        id: 'mix_daily_discover',
+        title: 'Daily Discover',
+        subtitle: `${dailyDiscoverTracks.length} descubrimientos inéditos, emergentes y nuevos sonidos para ti`,
+        badge: 'DAILY DISCOVER',
         coverUrl:
-          mix2Tracks[0]?.thumbnailHighUrl ??
-          mix2Tracks[0]?.thumbnailUrl ??
+          dailyDiscoverTracks[0]?.thumbnailHighUrl ??
+          dailyDiscoverTracks[0]?.thumbnailUrl ??
           catalogSongs[1]?.thumbnailUrl ??
           '',
         accentColor: MIX_PALETTES[1]!,
-        tracks: mix2Tracks,
-      },
-      {
-        id: 'mix_daily_3',
-        title: 'Daily Mix 3',
-        subtitle: `Descubrimientos para tu rollo · ${topArtist5} y escena`,
-        badge: 'DAILY MIX',
-        coverUrl:
-          mix3Tracks[0]?.thumbnailHighUrl ??
-          mix3Tracks[0]?.thumbnailUrl ??
-          catalogSongs[2]?.thumbnailUrl ??
-          '',
-        accentColor: MIX_PALETTES[2]!,
-        tracks: mix3Tracks,
+        tracks: dailyDiscoverTracks,
       },
     ];
 
-    // 3. Bold general personalized discovery across ALL user music + emerging artists
+    // 4. Bold general personalized discovery across ALL user music + emerging artists
     // (replaces single-artist "Porque escuchaste a SAIKO")
     const boldPool = catalogSongs.filter((t) => !isInUserLibrary(t) && isUnheard(t));
     const boldDiscoverTracks = pickDistinctMixTracks(
@@ -1520,7 +1695,7 @@ export class RecommendationEngine implements IRecommendationEngine {
         id: 'shelf_mixes_for_you',
         kind: 'mixes_for_you',
         title: 'Mixes para ti',
-        subtitle: '50 temas únicos por mix con descubrimientos diarios',
+        subtitle: 'Novedades de lunes a lunes, tu Daily Mix y Daily Discover de 100 temas',
         mixes,
       },
       {
@@ -1536,7 +1711,7 @@ export class RecommendationEngine implements IRecommendationEngine {
         title: 'Álbumes para ti',
         subtitle: `Discos esenciales de ${topArtist1}, ${topArtist2} y tu escena`,
         albums: catalogAlbums,
-        tracks: radarTracks.slice(0, 8),
+        tracks: (radarTracks.length > 0 ? radarTracks : freshDiscoveries).slice(0, 8),
       },
     ];
 

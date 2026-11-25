@@ -644,6 +644,11 @@ export class DeezerCatalog {
       rawTitle.length > shortTitle.length &&
       /\b(?:remix|version|versión|live|en vivo|acústico|acoustic|edit|vip)\b/i.test(rawTitle);
 
+    const rawReleaseDate = [t?.release_date, album?.release_date]
+      .map((val) => (typeof val === 'string' ? val.trim() : ''))
+      .find((val) => /^\d{4}-\d{2}-\d{2}/.test(val))
+      ?.slice(0, 10);
+
     return {
       id: toTrackId(t.id),
       title: hasRemixOrVersionInFullTitle ? rawTitle : shortTitle,
@@ -654,7 +659,12 @@ export class DeezerCatalog {
       thumbnailHighUrl: album?.cover_xl ?? album?.cover_big ?? album?.cover_medium,
       isExplicit: Boolean(t.explicit_lyrics),
       source: 'ytmusic',
-      releaseYear: album?.release_date ? Number(String(album.release_date).slice(0, 4)) : undefined,
+      releaseYear: rawReleaseDate
+        ? Number(rawReleaseDate.slice(0, 4))
+        : album?.release_date
+          ? Number(String(album.release_date).slice(0, 4))
+          : undefined,
+      ...(rawReleaseDate ? { releaseDate: rawReleaseDate } : {}),
     };
   }
 
@@ -698,7 +708,16 @@ export class DeezerCatalog {
                 have.add(orig.name.toLowerCase());
               }
             }
-            out[idx] = { ...existing, artists: merged };
+            out[idx] = {
+              ...existing,
+              artists: merged,
+              ...(fullMapped.releaseDate && !existing.releaseDate
+                ? {
+                    releaseDate: fullMapped.releaseDate,
+                    releaseYear: fullMapped.releaseYear ?? existing.releaseYear,
+                  }
+                : {}),
+            };
           }
         } catch {
           // Ignore timeout / network error per track and keep original mapped artists
@@ -742,11 +761,20 @@ export class DeezerCatalog {
       for (const c of a.contributors) pushAr(c);
     }
     if (artist) pushAr(artist);
+    const rawReleaseDate =
+      typeof a?.release_date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(a.release_date.trim())
+        ? a.release_date.trim().slice(0, 10)
+        : undefined;
     return {
       id: String(a.id),
       title: String(a.title),
       artists: artistList,
-      year: a.release_date ? Number(String(a.release_date).slice(0, 4)) : undefined,
+      year: rawReleaseDate
+        ? Number(rawReleaseDate.slice(0, 4))
+        : a.release_date
+          ? Number(String(a.release_date).slice(0, 4))
+          : undefined,
+      ...(rawReleaseDate ? { releaseDate: rawReleaseDate } : {}),
       thumbnailUrl: a.cover_big ?? a.cover_medium ?? a.cover ?? '',
     };
   }

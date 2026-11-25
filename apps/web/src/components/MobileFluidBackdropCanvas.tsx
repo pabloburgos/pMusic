@@ -147,11 +147,11 @@ export const MobileFluidBackdropCanvas: React.FC<MobileFluidBackdropCanvasProps>
       const [layerA, layerB] = pair;
       if (layerA) {
         ctx.save();
-        ctx.globalAlpha = 0.56 * alpha;
-        const dx = Math.sin(t * 0.52) * w * 0.09;
-        const dy = Math.cos(t * 0.38) * h * 0.08;
-        const sc = 1.42 + Math.sin(t * 0.31) * 0.06;
-        const rot = Math.sin(t * 0.22) * 0.09;
+        ctx.globalAlpha = 0.64 * alpha;
+        const dx = Math.sin(t * 0.72) * w * 0.14;
+        const dy = Math.cos(t * 0.54) * h * 0.12;
+        const sc = 1.46 + Math.sin(t * 0.42) * 0.08;
+        const rot = Math.sin(t * 0.34) * 0.18;
         ctx.translate(w * 0.5 + dx, h * 0.5 + dy);
         ctx.rotate(rot);
         ctx.scale(sc, sc);
@@ -160,11 +160,11 @@ export const MobileFluidBackdropCanvas: React.FC<MobileFluidBackdropCanvasProps>
       }
       if (layerB) {
         ctx.save();
-        ctx.globalAlpha = 0.36 * alpha;
-        const dx2 = Math.cos(t * 0.44) * w * 0.11;
-        const dy2 = Math.sin(t * 0.47) * h * 0.09;
-        const sc2 = 1.46 + Math.cos(t * 0.27) * 0.06;
-        const rot2 = -Math.cos(t * 0.19) * 0.11;
+        ctx.globalAlpha = 0.42 * alpha;
+        const dx2 = Math.cos(t * 0.62) * w * 0.16;
+        const dy2 = Math.sin(t * 0.66) * h * 0.13;
+        const sc2 = 1.5 + Math.cos(t * 0.38) * 0.08;
+        const rot2 = -Math.cos(t * 0.31) * 0.2;
         ctx.translate(w * 0.5 + dx2, h * 0.5 + dy2);
         ctx.rotate(rot2);
         ctx.scale(-sc2, sc2);

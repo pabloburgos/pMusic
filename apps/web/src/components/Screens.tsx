@@ -2697,11 +2697,11 @@ export const HomeScreen: React.FC = () => {
         </section>
       )}
 
-      {/* Mixes para ti (Daily Mixes + Descubre lo Nuevo cada jueves 12:00, sin DJ) */}
+      {/* Mixes para ti (Novedades de lunes a lunes, Daily Mix 100 y Daily Discover 100, sin DJ) */}
       {show('Mixes') && mixes?.mixes && (
         <CarouselSection
           title="Mixes para ti"
-          subtitle={mixes.subtitle ?? 'Recomendados según tu estilo · Actualizados cada día'}
+          subtitle={mixes.subtitle ?? 'Novedades de lunes a lunes, tu Daily Mix y Daily Discover de 100 temas'}
         >
           {mixes.mixes.map((mix) => (
             <CoverCard

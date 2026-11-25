@@ -1,6 +1,6 @@
 {
   "name": "@pmusic/desktop",
-  "version": "0.20.0",
+  "version": "0.20.1",
   "private": true,
   "type": "module",
   "description": "pMusic Desktop — Reproductor de música con Liquid Glass, Sesión DJ AutoMix y sincronización con móvil",
@@ -9,7 +9,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "node scripts/build-electron.mjs",
-    "dist:win:unpacked": "electron-builder --win --dir -c.win.signAndEditExecutable=false",
+    "dist:win:unpacked": "electron-builder --win --dir -c.win.signExecutable=false",
     "build:installer": "node scripts/build-custom-installer.mjs release",
     "dist:win": "npm run dist:win:unpacked && npm run build:installer"
   },

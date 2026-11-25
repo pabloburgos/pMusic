@@ -34,6 +34,7 @@ export interface Track {
   isExplicit?: boolean;
   source: TrackSource;
   releaseYear?: number;
+  releaseDate?: string;
   /** Optional metadata for DJ / Recommendation engines */
   genres?: string[];
   /** Present when track belongs to a collaborative/shared playlist */
@@ -54,6 +55,7 @@ export interface AlbumSummary {
   title: string;
   artists: ArtistRef[];
   year?: number;
+  releaseDate?: string;
   thumbnailUrl: string;
 }
 

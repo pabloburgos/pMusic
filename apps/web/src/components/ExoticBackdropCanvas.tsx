@@ -86,40 +86,46 @@ vec3 sampleCover(vec2 uv) {
 }
 
 void main() {
-  vec2 uv = (v_uv - 0.5) * vec2(u_res.x / max(1.0, u_res.y), 1.0) * 1.38;
-  float t = u_time * 0.22;
+  vec2 uv = (v_uv - 0.5) * vec2(u_res.x / max(1.0, u_res.y), 1.0) * 2.15;
+  float t = u_time * 0.28;
 
   vec2 q = vec2(
-    fbm(uv + vec2(t * 0.62, -t * 0.4)),
-    fbm(uv + vec2(-t * 0.46, t * 0.68) + vec2(5.2, 1.3))
+    fbm(uv + vec2(t * 0.68, -t * 0.44)),
+    fbm(uv + vec2(-t * 0.52, t * 0.74) + vec2(5.2, 1.3))
   );
   vec2 r = vec2(
-    fbm(uv + 1.95 * q + vec2(1.7, 9.2) + 0.34 * t),
-    fbm(uv + 1.95 * q + vec2(8.3, 2.8) - 0.31 * t)
+    fbm(uv + 2.35 * q + vec2(1.7, 9.2) + 0.42 * t),
+    fbm(uv + 2.35 * q + vec2(8.3, 2.8) - 0.38 * t)
   );
-  float f = fbm(uv + 1.8 * r);
+  vec2 w = vec2(
+    fbm(uv * 1.45 + 2.15 * r + vec2(3.1, 6.7) - 0.28 * t),
+    fbm(uv * 1.45 + 2.15 * r + vec2(7.4, 2.1) + 0.31 * t)
+  );
+  float f = fbm(uv + 2.25 * w);
 
-  vec2 coverUv1 = v_uv * 0.86 + 0.07 + (q - 0.5) * 0.42 + (r - 0.5) * 0.34;
-  vec2 coverUv2 = vec2(1.0 - v_uv.x, v_uv.y) * 0.84 + 0.08 + (r - 0.5) * 0.46;
-  vec2 coverUv3 = rot2(v_uv - 0.5, t * 0.14) * 0.78 + 0.5 + (q.yx - 0.5) * 0.36;
+  vec2 swirled = rot2(v_uv - 0.5, (f - 0.45) * 4.2 + sin(t * 0.32 + f * 3.1) * 0.85);
+  vec2 coverUv1 = swirled * 0.82 + 0.5 + (q - 0.5) * 0.94 + (r - 0.5) * 0.98 + (w - 0.5) * 0.58;
+  vec2 coverUv2 = rot2(vec2(0.5 - v_uv.x, v_uv.y - 0.5), -w.x * 3.1 - t * 0.18) * 0.78 + 0.5 + (r.yx - 0.5) * 1.04;
+  vec2 coverUv3 = rot2(v_uv.yx - 0.5, q.y * 3.8 + t * 0.24) * 0.72 + 0.5 + (w - 0.5) * 0.96;
 
   vec3 s1 = sampleCover(coverUv1);
   vec3 s2 = sampleCover(coverUv2);
   vec3 s3 = sampleCover(coverUv3);
 
-  vec3 col = mix(s1, s2, smoothstep(0.2, 0.8, f));
-  col = mix(col, s3, smoothstep(0.28, 0.86, length(q) * 0.76) * 0.68);
+  vec3 col = mix(s1, s2, smoothstep(0.18, 0.82, f));
+  col = mix(col, s3, smoothstep(0.24, 0.86, length(w) * 0.78) * 0.72);
+  col *= 0.94 + 0.12 * smoothstep(0.32, 0.84, f);
 
   float l = dot(col, vec3(0.299, 0.587, 0.114));
-  col = mix(vec3(l), col, 1.08);
+  col = mix(vec3(l), col, 1.14);
 
-  float vig = 1.0 - smoothstep(0.42, 1.24, length(v_uv - 0.5) * 1.12);
-  col *= mix(0.76, 1.02, vig);
+  float vig = 1.0 - smoothstep(0.45, 1.26, length(v_uv - 0.5) * 1.1);
+  col *= mix(0.78, 1.02, vig);
   gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }
 `;
 
-// Softly blurred irregular organic kaleidoscope of the REAL album cover photo
+// Smooth organic breathing pulse waves radiating through the soft album cover aura
 const PULSE_FRAGMENT_SRC = `
 precision mediump float;
 varying vec2 v_uv;
@@ -175,33 +181,35 @@ vec3 sampleCover(vec2 uv) {
 void main() {
   float aspect = u_res.x / max(1.0, u_res.y);
   vec2 p = (v_uv - 0.5) * vec2(aspect, 1.0);
-  float t = u_time * 0.26;
+  float t = u_time * 0.28;
 
-  float rawR = length(p);
-  float rawAng = atan(p.y, p.x);
-  float wobble = fbm(p * 1.6 + vec2(t * 0.44, -t * 0.34));
-  float symAng = rawAng + sin(rawR * 3.1 - t * 0.85) * 0.46 + (wobble - 0.5) * 1.12;
-  float sector = 3.14159265 / 3.0;
-  float folded = abs(mod(symAng + sector * 0.5, sector * 2.0) - sector);
+  float r = length(p);
+  vec2 dir = r > 0.0001 ? p / r : vec2(0.0, 1.0);
+  float n1 = fbm(p * 1.55 + vec2(t * 0.34, -t * 0.26));
+  float n2 = fbm(p * 2.2 - vec2(t * 0.24, n1 * 0.85) + vec2(3.7, 8.1));
 
-  float breathR = rawR * (1.12 + 0.06 * sin(t * 0.75)) + (wobble - 0.5) * 0.26;
-  vec2 kPos = vec2(cos(folded), sin(folded)) * breathR;
+  float breath = 1.0 + 0.075 * sin(t * 1.25);
+  float pulsePhase = r * 4.5 - t * 1.8 + (n1 - 0.5) * 1.55;
+  float wave = 0.5 + 0.5 * sin(pulsePhase);
+  float ringGlow = pow(wave, 2.1);
 
-  float swirlB = fbm(kPos * 1.45 - vec2(t * 0.36, wobble * 1.05) + vec2(4.1, 1.9));
-  float ringWave = 0.5 + 0.5 * sin(breathR * 6.0 - t * 1.9 - swirlB * 2.4);
+  float spinA = t * 0.16;
+  vec2 spinP = vec2(p.x * cos(spinA) - p.y * sin(spinA), p.x * sin(spinA) + p.y * cos(spinA));
+  vec2 radialDrift = dir * (0.08 * sin(pulsePhase) + (n1 - 0.5) * 0.18);
 
-  vec2 uvA = kPos * 0.62 + 0.5 + vec2(sin(t * 0.25), cos(t * 0.21)) * 0.12;
-  vec2 uvB = vec2(kPos.y, -kPos.x) * 0.54 + 0.5 + (wobble - 0.5) * 0.22;
+  vec2 uvA = p * (0.58 * breath) + 0.5 + radialDrift;
+  vec2 uvB = spinP * 0.52 + 0.5 + vec2(n2 - 0.5, n1 - 0.5) * 0.28;
 
   vec3 sA = sampleCover(uvA);
   vec3 sB = sampleCover(uvB);
-  vec3 col = mix(sA, sB, smoothstep(0.2, 0.8, swirlB));
+  vec3 col = mix(sA, sB, smoothstep(0.22, 0.78, n2));
 
   float l = dot(col, vec3(0.299, 0.587, 0.114));
-  col = mix(vec3(l), col, 1.06);
-  col *= 0.94 + 0.12 * ringWave;
+  col = mix(vec3(l), col, 1.08);
+  float halo = exp(-r * r * 1.35) * (0.14 + 0.10 * sin(t * 1.25));
+  col = col * (0.86 + 0.24 * ringGlow) + halo * mix(u_c1, u_c2, wave) * 0.45;
 
-  float coreSoft = 1.0 - smoothstep(0.2, 1.2, rawR);
+  float coreSoft = 1.0 - smoothstep(0.22, 1.22, r);
   col *= mix(0.74, 1.02, coreSoft);
   gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }
@@ -220,7 +228,10 @@ function rgbStr([r, g, b]: RgbTriple, a = 1): string {
   return `rgba(${r}, ${g}, ${b}, ${a.toFixed(3)})`;
 }
 
-function buildSoftCoverCanvas(img: HTMLImageElement): HTMLCanvasElement | null {
+function buildSoftCoverCanvas(
+  img: HTMLImageElement,
+  style: ExoticBackdropStyle = 'paint'
+): HTMLCanvasElement | null {
   if (typeof document === 'undefined' || !img.complete || img.naturalWidth <= 0) return null;
   try {
     const iw = img.naturalWidth;
@@ -229,14 +240,16 @@ function buildSoftCoverCanvas(img: HTMLImageElement): HTMLCanvasElement | null {
     const sx = (iw - side) * 0.5;
     const sy = (ih - side) * 0.5;
 
+    const pass2Dim = style === 'paint' ? 30 : 18;
+
     const pass1 = document.createElement('canvas');
     pass1.width = 96;
     pass1.height = 96;
     const c1 = pass1.getContext('2d');
 
     const pass2 = document.createElement('canvas');
-    pass2.width = 20;
-    pass2.height = 20;
+    pass2.width = pass2Dim;
+    pass2.height = pass2Dim;
     const c2 = pass2.getContext('2d');
 
     const out = document.createElement('canvas');
@@ -251,7 +264,7 @@ function buildSoftCoverCanvas(img: HTMLImageElement): HTMLCanvasElement | null {
 
     c2.imageSmoothingEnabled = true;
     if ('imageSmoothingQuality' in c2) c2.imageSmoothingQuality = 'high';
-    c2.drawImage(pass1, 0, 0, 20, 20);
+    c2.drawImage(pass1, 0, 0, pass2Dim, pass2Dim);
 
     cOut.imageSmoothingEnabled = true;
     if ('imageSmoothingQuality' in cOut) cOut.imageSmoothingQuality = 'high';
@@ -551,28 +564,53 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = ({
             ctx2d!.globalCompositeOperation = 'source-over';
             ctx2d!.globalAlpha = alpha;
             if (curStyle === 'paint') {
-              ctx2d!.drawImage(source, -w * 0.08, -h * 0.08, w * 1.16, h * 1.16);
-              ctx2d!.globalAlpha = alpha * 0.45;
-              const cx = w * (0.5 + 0.08 * Math.cos(t * 0.3));
-              const cy = h * (0.5 + 0.08 * Math.sin(t * 0.26));
-              ctx2d!.translate(cx, cy);
-              ctx2d!.rotate(t * 0.14);
-              ctx2d!.scale(-1, 1);
-              ctx2d!.drawImage(source, -w * 0.65, -h * 0.65, w * 1.3, h * 1.3);
+              ctx2d!.save();
+              ctx2d!.translate(w * 0.5, h * 0.5);
+              ctx2d!.rotate(0.75 + Math.sin(t * 0.24) * 0.35);
+              ctx2d!.scale(1.65, -1.65);
+              ctx2d!.drawImage(source, -w * 0.5, -h * 0.5, w, h);
+              ctx2d!.restore();
+
+              ctx2d!.save();
+              ctx2d!.globalAlpha = alpha * 0.58;
+              ctx2d!.translate(w * (0.5 + 0.14 * Math.cos(t * 0.36)), h * (0.5 + 0.14 * Math.sin(t * 0.32)));
+              ctx2d!.rotate(-1.1 + t * 0.22);
+              ctx2d!.scale(-1.5, 1.5);
+              ctx2d!.drawImage(source, -w * 0.5, -h * 0.5, w, h);
+              ctx2d!.restore();
+
+              ctx2d!.save();
+              ctx2d!.globalAlpha = alpha * 0.42;
+              ctx2d!.translate(w * (0.5 - 0.12 * Math.sin(t * 0.29)), h * (0.5 + 0.12 * Math.cos(t * 0.34)));
+              ctx2d!.rotate(2.2 - t * 0.18);
+              ctx2d!.scale(1.72, 1.72);
+              ctx2d!.drawImage(source, -w * 0.5, -h * 0.5, w, h);
+              ctx2d!.restore();
             } else {
               const cx = w * 0.5;
               const cy = h * 0.5;
-              ctx2d!.drawImage(source, -w * 0.06, -h * 0.06, w * 1.12, h * 1.12);
-              const petals = 6;
-              for (let k = 0; k < petals; k++) {
-                ctx2d!.save();
-                ctx2d!.globalAlpha = alpha * 0.24;
-                ctx2d!.translate(cx, cy);
-                ctx2d!.rotate((k / petals) * Math.PI * 2 + t * 0.16);
-                if (k % 2 === 1) ctx2d!.scale(-1, 1);
-                ctx2d!.drawImage(source, -w * 0.58, -h * 0.58, w * 1.16, h * 1.16);
-                ctx2d!.restore();
-              }
+              const breathScale = 1.25 + 0.08 * Math.sin(t * 1.15);
+              ctx2d!.save();
+              ctx2d!.translate(cx, cy);
+              ctx2d!.rotate(t * 0.12);
+              ctx2d!.scale(breathScale, breathScale);
+              ctx2d!.drawImage(source, -w * 0.5, -h * 0.5, w, h);
+              ctx2d!.restore();
+
+              const ringWave = 0.5 + 0.5 * Math.sin(t * 1.8);
+              const pulseGrad = ctx2d!.createRadialGradient(
+                cx,
+                cy,
+                Math.min(w, h) * 0.08,
+                cx,
+                cy,
+                Math.max(w, h) * (0.52 + 0.14 * ringWave)
+              );
+              pulseGrad.addColorStop(0, rgbStr(c1Raw, 0.22 * alpha));
+              pulseGrad.addColorStop(0.5, rgbStr(c2Raw, 0.16 * alpha));
+              pulseGrad.addColorStop(1, 'rgba(0,0,0,0)');
+              ctx2d!.fillStyle = pulseGrad;
+              ctx2d!.fillRect(0, 0, w, h);
             }
             ctx2d!.restore();
           };
@@ -697,7 +735,7 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = ({
 
     const commitSoftImage = (img: HTMLImageElement, tryUploadGl: boolean) => {
       if (cancelled) return;
-      const soft = buildSoftCoverCanvas(img);
+      const soft = buildSoftCoverCanvas(img, styleRef.current);
       if (!soft) return;
       const media = coverMediaRef.current;
 
