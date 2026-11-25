@@ -168,6 +168,130 @@ export function getActiveAmbientTrackKey(): string {
   return activePaletteTrackKey;
 }
 
+export function getLiveAmbientRgb(): PaletteTriplet {
+  return [
+    [liveRgb[0][0], liveRgb[0][1], liveRgb[0][2]],
+    [liveRgb[1][0], liveRgb[1][1], liveRgb[1][2]],
+    [liveRgb[2][0], liveRgb[2][1], liveRgb[2][2]],
+  ];
+}
+
+const prebakedBackdropCache = new Map<string, [HTMLCanvasElement, HTMLCanvasElement]>();
+const prebakedBackdropInFlight = new Set<string>();
+let prebakeScratch: HTMLCanvasElement | null = null;
+let prebakeMidA: HTMLCanvasElement | null = null;
+let prebakeMidB: HTMLCanvasElement | null = null;
+
+function buildBakedCanvasPair(img: HTMLImageElement): [HTMLCanvasElement, HTMLCanvasElement] | null {
+  if (typeof document === 'undefined' || !img.complete || img.naturalWidth <= 0) return null;
+  try {
+    if (!prebakeScratch) {
+      prebakeScratch = document.createElement('canvas');
+      prebakeScratch.width = 96;
+      prebakeScratch.height = 96;
+    }
+    if (!prebakeMidA) {
+      prebakeMidA = document.createElement('canvas');
+      prebakeMidA.width = 24;
+      prebakeMidA.height = 24;
+    }
+    if (!prebakeMidB) {
+      prebakeMidB = document.createElement('canvas');
+      prebakeMidB.width = 16;
+      prebakeMidB.height = 16;
+    }
+    const iw = img.naturalWidth;
+    const ih = img.naturalHeight;
+    const side = Math.min(iw, ih);
+    const sx = (iw - side) * 0.5;
+    const sy = (ih - side) * 0.5;
+
+    const sctx = prebakeScratch.getContext('2d');
+    const ctxMidA = prebakeMidA.getContext('2d');
+    const ctxMidB = prebakeMidB.getContext('2d');
+    if (!sctx || !ctxMidA || !ctxMidB) return null;
+
+    sctx.clearRect(0, 0, 96, 96);
+    sctx.imageSmoothingEnabled = true;
+    if ('imageSmoothingQuality' in sctx) sctx.imageSmoothingQuality = 'high';
+    sctx.drawImage(img, sx, sy, side, side, 0, 0, 96, 96);
+
+    ctxMidA.clearRect(0, 0, 24, 24);
+    ctxMidA.imageSmoothingEnabled = true;
+    if ('imageSmoothingQuality' in ctxMidA) ctxMidA.imageSmoothingQuality = 'high';
+    ctxMidA.drawImage(prebakeScratch, 0, 0, 24, 24);
+
+    ctxMidB.clearRect(0, 0, 16, 16);
+    ctxMidB.imageSmoothingEnabled = true;
+    if ('imageSmoothingQuality' in ctxMidB) ctxMidB.imageSmoothingQuality = 'high';
+    ctxMidB.drawImage(prebakeScratch, 0, 0, 16, 16);
+
+    const outFront = document.createElement('canvas');
+    outFront.width = 48;
+    outFront.height = 48;
+    const cf = outFront.getContext('2d');
+
+    const outBack = document.createElement('canvas');
+    outBack.width = 48;
+    outBack.height = 48;
+    const cb = outBack.getContext('2d');
+
+    if (!cf || !cb) return null;
+    cf.imageSmoothingEnabled = true;
+    if ('imageSmoothingQuality' in cf) cf.imageSmoothingQuality = 'high';
+    cf.drawImage(prebakeMidA, 0, 0, 48, 48);
+
+    cb.imageSmoothingEnabled = true;
+    if ('imageSmoothingQuality' in cb) cb.imageSmoothingQuality = 'high';
+    cb.drawImage(prebakeMidB, 0, 0, 48, 48);
+
+    return [outFront, outBack];
+  } catch {
+    return null;
+  }
+}
+
+export function getPrebakedMobileBackdrop(
+  url?: string | null
+): [HTMLCanvasElement, HTMLCanvasElement] | null {
+  if (!url) return null;
+  return prebakedBackdropCache.get(url) ?? null;
+}
+
+export function prebakeMobileBackdrop(url?: string | null, loadedImg?: HTMLImageElement | null): void {
+  if (!url || typeof document === 'undefined') return;
+  if (prebakedBackdropCache.has(url)) return;
+  const commitImg = (img: HTMLImageElement) => {
+    const pair = buildBakedCanvasPair(img);
+    if (!pair) return;
+    prebakedBackdropCache.set(url, pair);
+    if (prebakedBackdropCache.size > 24) {
+      const oldest = prebakedBackdropCache.keys().next().value;
+      if (oldest) prebakedBackdropCache.delete(oldest);
+    }
+  };
+  if (loadedImg && loadedImg.complete && loadedImg.naturalWidth > 0) {
+    commitImg(loadedImg);
+    return;
+  }
+  if (typeof Image === 'undefined' || prebakedBackdropInFlight.has(url)) return;
+  prebakedBackdropInFlight.add(url);
+  const img = new Image();
+  img.decoding = 'async';
+  img.onload = () => {
+    prebakedBackdropInFlight.delete(url);
+    commitImg(img);
+  };
+  img.onerror = () => {
+    prebakedBackdropInFlight.delete(url);
+  };
+  img.src = url;
+  if (img.complete && img.naturalWidth > 0) {
+    prebakedBackdropInFlight.delete(url);
+    commitImg(img);
+  }
+}
+
 export function getCachedPaletteCss(coverUrl?: string | null): [string, string, string] {
   const cached = coverUrl ? paletteCache.get(coverUrl) : undefined;
   const p = cached ?? liveRgb;

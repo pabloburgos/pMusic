@@ -567,48 +567,47 @@ export const DetailViewPanel: React.FC = () => {
 
     return (
       <div className="pm-page-enter space-y-7">
-        {/* Full-Bleed Atmospheric pMusic Artist Hero Banner */}
+        {/* Full-Bleed Atmospheric Banner-Only pMusic Artist Hero (edge-to-edge on mobile top with soft bottom fade) */}
         <section
           data-testid="artist-hero-banner"
           data-surface="content"
-          className="pm-surface-card relative flex min-h-[260px] flex-col justify-end overflow-hidden rounded-[22px] p-5 shadow-[0_24px_64px_rgba(0,0,0,0.45)] sm:min-h-[340px] sm:p-8"
+          className="relative -mx-4 -mt-[calc(4.6rem+var(--pm-safe-top,env(safe-area-inset-top)))] flex min-h-[340px] flex-col justify-end overflow-hidden bg-[#0e0e13] px-5 pt-[calc(5.2rem+var(--pm-safe-top,env(safe-area-inset-top)))] pb-6 sm:mx-0 sm:mt-0 sm:min-h-[350px] sm:rounded-[22px] sm:p-8 sm:shadow-[0_24px_64px_rgba(0,0,0,0.45)]"
         >
           {heroImage && (
             <img
               src={heroImage}
               alt={artist.name}
+              decoding="async"
+              fetchPriority="high"
               className="pointer-events-none absolute inset-0 h-full w-full scale-[1.02] object-cover object-center"
             />
           )}
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#09090c] via-[#09090c]/55 to-black/20"
+            className="pointer-events-none absolute inset-0"
+            style={{
+              background:
+                'linear-gradient(180deg, rgba(7,7,9,0.34) 0%, rgba(7,7,9,0.12) 38%, rgba(7,7,9,0.72) 76%, #070709 100%)',
+            }}
           />
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#09090c]/80 via-transparent to-transparent"
+            className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#070709]/65 via-transparent to-transparent"
           />
 
-          <div className="relative z-10 flex flex-col gap-4 sm:flex-row sm:items-end sm:gap-6">
-            <img
-              src={artist.thumbnailUrl}
-              alt={artist.name}
-              className="h-20 w-20 shrink-0 rounded-full object-cover shadow-[0_14px_36px_rgba(0,0,0,0.65)] ring-2 ring-white/25 sm:h-28 sm:w-28"
-            />
-            <div className="min-w-0 flex-1 space-y-1.5">
-              <div className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-[11px] font-bold tracking-wide text-white backdrop-blur-md">
-                <Sparkles className="h-3 w-3 text-purple-300" />
-                <span>Artista verificado · pMusic</span>
-              </div>
-              <h1 className="truncate text-3xl font-black tracking-tight text-white drop-shadow-[0_4px_18px_rgba(0,0,0,0.55)] sm:text-5xl md:text-6xl">
-                {artist.name}
-              </h1>
-              {(artist.subscribersText || description) && (
-                <p className="text-xs font-medium text-white/80 sm:text-sm">
-                  {artist.subscribersText ?? description}
-                </p>
-              )}
+          <div className="relative z-10 min-w-0 space-y-1.5">
+            <div className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-[11px] font-bold tracking-wide text-white backdrop-blur-md">
+              <Sparkles className="h-3 w-3 text-purple-300" />
+              <span>Artista verificado · pMusic</span>
             </div>
+            <h1 className="truncate text-4xl font-black tracking-tight text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.65)] sm:text-5xl md:text-6xl">
+              {artist.name}
+            </h1>
+            {(artist.subscribersText || description) && (
+              <p className="text-xs font-semibold text-white/85 drop-shadow sm:text-sm">
+                {artist.subscribersText ?? description}
+              </p>
+            )}
           </div>
         </section>
 

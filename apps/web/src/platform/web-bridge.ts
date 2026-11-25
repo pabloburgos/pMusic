@@ -27,6 +27,7 @@ interface ElectronDesktopWindowBridge {
   runtime?: 'electron';
   getApiBaseUrl?: () => Promise<string>;
   getAuthHeaders?: () => Promise<Record<string, string>>;
+  updateMediaSession?: (state: NativeMediaSessionState) => Promise<void>;
   updateDiscordPresence?: (state: DiscordPresenceState) => Promise<void>;
   configureDiscordRpc?: (clientId: string) => Promise<DiscordRpcStatus>;
   reconnectDiscordRpc?: () => Promise<DiscordRpcStatus>;
@@ -377,14 +378,60 @@ export function createPlatformBridge(): IPlatformBridge {
         clientId: '',
       };
     },
-    async updateNativeMediaSession(_state: NativeMediaSessionState): Promise<void> {
-      // Handled via MediaSession API + Android native bridge when attached
+    async updateNativeMediaSession(state: NativeMediaSessionState): Promise<void> {
+      if (desktopBridge?.updateMediaSession) {
+        await desktopBridge.updateMediaSession(state);
+      }
+      if (typeof window !== 'undefined') {
+        const androidNative = (window as unknown as {
+          PMusicNative?: { updateMediaSession?: (json: string) => void };
+        }).PMusicNative;
+        if (androidNative?.updateMediaSession) {
+          try {
+            androidNative.updateMediaSession(
+              JSON.stringify({
+                trackId: state.track?.id ?? '',
+                title: state.track?.title ?? 'pMusic',
+                artist: state.track?.artists.map((a) => a.name).join(', ') ?? '',
+                album: state.track?.album?.name ?? 'pMusic',
+                artworkUrl: state.track?.thumbnailHighUrl ?? state.track?.thumbnailUrl ?? '',
+                isPlaying: state.isPlaying,
+                positionMs: Math.round(state.positionSec * 1000),
+                durationMs: Math.round(Math.max(1, state.durationSec) * 1000),
+              })
+            );
+          } catch {
+            // ignore Android native media session bridge errors
+          }
+        }
+      }
     },
     onNativeMediaAction(cb: (action: NativeMediaAction) => void): Unsubscribe {
-      if (desktopBridge?.onMediaShortcut) {
-        return desktopBridge.onMediaShortcut(cb);
+      const desktopUnsub = desktopBridge?.onMediaShortcut ? desktopBridge.onMediaShortcut(cb) : null;
+      if (typeof window === 'undefined') {
+        return desktopUnsub ?? (() => {});
       }
-      return () => {};
+      const win = window as unknown as {
+        __pmusicMediaActionListeners?: Set<(action: NativeMediaAction) => void>;
+        __pmusicNativeMediaAction?: (type: string, seekTimeSec?: number) => void;
+      };
+      if (!win.__pmusicMediaActionListeners) {
+        win.__pmusicMediaActionListeners = new Set();
+      }
+      win.__pmusicMediaActionListeners.add(cb);
+      win.__pmusicNativeMediaAction = (type: string, seekTimeSec?: number) => {
+        const action: NativeMediaAction = {
+          type: (type as NativeMediaAction['type']) || 'toggle',
+          ...(typeof seekTimeSec === 'number' && seekTimeSec >= 0 ? { seekTimeSec } : {}),
+        };
+        for (const listener of win.__pmusicMediaActionListeners ?? []) {
+          listener(action);
+        }
+      };
+      return () => {
+        desktopUnsub?.();
+        win.__pmusicMediaActionListeners?.delete(cb);
+      };
     },
   };
 }

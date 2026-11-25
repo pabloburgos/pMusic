@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  Car,
   Check,
   Database,
   Disc3,
@@ -117,6 +118,7 @@ export const SettingsModal: React.FC = () => {
     deviceName,
     offlineEntries,
     setDevicesSheetOpen,
+    setCarModeOpen,
     setDeviceName,
     signInWithGoogle,
     openWrappedModal,
@@ -256,6 +258,18 @@ export const SettingsModal: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              data-testid="settings-car-mode-btn"
+              onClick={() => {
+                setSettingsOpen(false);
+                setCarModeOpen(true);
+              }}
+              className="pm-btn-secondary inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold"
+            >
+              <Car className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Modo Coche</span>
+            </button>
             <button
               type="button"
               onClick={() => {

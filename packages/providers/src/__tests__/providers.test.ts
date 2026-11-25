@@ -961,10 +961,10 @@ describe('@pmusic/providers', () => {
     const detail = await catalog.artist('7524936');
 
     expect(detail.artist.thumbnailUrl).toBe(
-      'https://lh3.googleusercontent.com/artist_avatar=w640-h640-p-k-no-rj'
+      'https://lh3.googleusercontent.com/artist_avatar=w640-h640-l90-rj'
     );
     expect(detail.bannerUrl).toBe(
-      'https://lh3.googleusercontent.com/artist_banner=w2880-h1200-p-l90-rj'
+      'https://lh3.googleusercontent.com/artist_banner=w1440-h600-l90-rj'
     );
     expect(detail.artist.subscribersText).toBe('5,8 M oyentes mensuales');
     expect(detail.description).toBe('Artista urbano de Gran Canaria.');

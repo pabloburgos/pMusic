@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
+  Car,
   Check,
   Compass,
   Disc3,
@@ -61,6 +62,7 @@ import { SpotlightSearchModal } from './components/SpotlightSearchModal.tsx';
 import { AppToast, TrackContextMenu } from './components/TrackMenu.tsx';
 import { ArtistLinks } from './components/ArtistLinks.tsx';
 import { SettingsModal } from './components/SettingsModal.tsx';
+import { CarModeView } from './components/CarModeView.tsx';
 import { TrackInfoModal } from './components/TrackInfoModal.tsx';
 import { AuthOnboardingModal } from './components/AuthOnboardingModal.tsx';
 import { WrappedStoriesModal } from './components/WrappedStoriesModal.tsx';
@@ -102,6 +104,7 @@ export const App: React.FC = () => {
 const PMusicMainApp: React.FC = () => {
   const {
     initApp,
+    appReady,
     activeTab,
     sidebarCollapsed,
     rightPanelOpen,
@@ -158,7 +161,9 @@ const PMusicMainApp: React.FC = () => {
     setDevicesSheetOpen,
     setImportModalOpen,
     setSettingsOpen,
+    setCarModeOpen,
     setSpotlightOpen,
+    playFromVoiceQuery,
     setLibraryCategory,
     openLocalPlaylistDetail,
     closeDetailView,
@@ -635,11 +640,50 @@ const PMusicMainApp: React.FC = () => {
     void initApp();
   }, [initApp]);
 
+  const bootMountMsRef = useRef<number>(
+    typeof performance !== 'undefined' ? performance.now() : Date.now()
+  );
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const isTestEnv =
+      Boolean((import.meta as any).vitest) || (import.meta as any).env?.MODE === 'test';
+    const dismissSplash = () => {
+      const el = document.getElementById('pm-boot-splash');
+      if (!el || el.classList.contains('pm-splash-hide')) return;
+      el.classList.add('pm-splash-hide');
+      setTimeout(() => el.remove(), 420);
+    };
+    const safetyTimer = setTimeout(dismissSplash, 2200);
+    if (!appReady) {
+      return () => clearTimeout(safetyTimer);
+    }
+    const elapsed =
+      (typeof performance !== 'undefined' ? performance.now() : Date.now()) -
+      bootMountMsRef.current;
+    const remainingMinMs = isTestEnv ? 0 : Math.max(0, 480 - elapsed);
+    const hideTimer = setTimeout(dismissSplash, remainingMinMs);
+    return () => {
+      clearTimeout(safetyTimer);
+      clearTimeout(hideTimer);
+    };
+  }, [appReady]);
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const win = window as Window & { __pmusicHandleAndroidBack?: () => boolean };
+    const win = window as Window & {
+      __pmusicHandleAndroidBack?: () => boolean;
+      __pmusicVoiceSearchResult?: (text: string) => void;
+    };
+    win.__pmusicVoiceSearchResult = (text: string) => {
+      if (text?.trim()) void playFromVoiceQuery(text.trim());
+    };
     win.__pmusicHandleAndroidBack = () => {
       const st = usePMusicStore.getState();
+      if (st.carModeOpen) {
+        st.setCarModeOpen(false);
+        return true;
+      }
       if (st.trackMenu) {
         st.closeTrackMenu();
         return true;
@@ -688,8 +732,9 @@ const PMusicMainApp: React.FC = () => {
     };
     return () => {
       delete win.__pmusicHandleAndroidBack;
+      delete win.__pmusicVoiceSearchResult;
     };
-  }, []);
+  }, [playFromVoiceQuery]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1479,9 +1524,15 @@ const PMusicMainApp: React.FC = () => {
                 }`
           }
         >
-          {/* Mobile Top Command Bar (Liquid Glass, clean wordmark + Devices & Settings only) */}
+          {/* Mobile Top Command Bar (Liquid Glass normally, transparent overlay over artist banner) */}
           {isMobileViewport && (
-            <div className="pm-mobile-glass-header sticky top-0 z-20 -mx-4 mb-4 flex items-center justify-between gap-3 px-4 pt-[max(0.8rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3">
+            <div
+              className={`sticky top-0 z-20 -mx-4 mb-4 flex items-center justify-between gap-3 px-4 pt-[max(0.8rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3 ${
+                activeDetailView?.kind === 'artist'
+                  ? 'bg-transparent border-none shadow-none'
+                  : 'pm-mobile-glass-header'
+              }`}
+            >
               <div className="flex items-center gap-2.5">
                 {activeDetailView ? (
                   <button
@@ -1539,6 +1590,16 @@ const PMusicMainApp: React.FC = () => {
                     Entrar
                   </button>
                 )}
+
+                <button
+                  type="button"
+                  data-testid="open-car-mode-btn"
+                  aria-label="Modo Coche"
+                  onClick={() => setCarModeOpen(true)}
+                  className="pm-glass-chip pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-secondary"
+                >
+                  <Car className="h-4 w-4" />
+                </button>
 
                 <button
                   type="button"
@@ -3217,6 +3278,7 @@ const PMusicMainApp: React.FC = () => {
       <EqAndCrossfadeSheet />
       <DjPopover />
       <DevicesConnectSheet />
+      <CarModeView />
       <ImportPlaylistModal />
       <SettingsModal />
       <AuthOnboardingModal />

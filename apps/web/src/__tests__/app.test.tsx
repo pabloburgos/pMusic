@@ -595,7 +595,7 @@ describe('@pmusic/web UI', () => {
     expect(screen.getByTestId('quick-playlist-tile-pl_freq_1')).toBeDefined();
   });
 
-  it('supports v0.17.9 alwaysShuffle, display preferences HUD popover, 5 backdrops, same-album skip, and redesigned artist profile', async () => {
+  it('supports v0.18.0 alwaysShuffle, AudioStudio Pantalla tab, 6 backdrops, same-album skip, banner-only artist profile, and Car Mode', async () => {
     const albumTrackA = {
       id: 'dz:9001',
       title: 'Track Uno Del Álbum con Título Súper Largo',
@@ -644,11 +644,14 @@ describe('@pmusic/web UI', () => {
     expect(usePMusicStore.getState().shuffleEnabled).toBe(true);
     expect(usePMusicStore.getState().queue[0]?.id).toBe(albumTrackA.id);
 
-    // 3. Fullscreen NowPlayingSheet: skips cover transition on same album & exposes Display Preferences popover
+    // 3. Fullscreen NowPlayingSheet: skips cover transition on same album & exposes Display Preferences inside AudioStudio
     act(() => {
       usePMusicStore.setState({
         nowPlayingOpen: true,
         nowPlayingTab: 'Portada',
+        eqSheetOpen: false,
+        djPopoverOpen: false,
+        audioPanelTab: 'dj',
         isTransitioning: true,
         outgoingTransitionTrack: albumTrackA,
         incomingTransitionTrack: albumTrackB,
@@ -670,26 +673,32 @@ describe('@pmusic/web UI', () => {
     rerender(<App />);
     expect(screen.getByTestId('ink-bleed-cover')).toBeDefined();
 
-    // Open bottom-right Display & Preferences popover and switch backdrop style to Aurora ('mesh')
-    const displayBtn = screen.getByTestId('nowplaying-display-settings-btn');
-    fireEvent.click(displayBtn);
-    expect(screen.getByTestId('nowplaying-display-popover')).toBeDefined();
-    fireEvent.click(screen.getByTestId('backdrop-style-mesh'));
-    expect(usePMusicStore.getState().nowPlayingBackdropStyle).toBe('mesh');
+    // Open Studio sheet (Audio y DJ) -> Pantalla tab and switch backdrop style to Pintura Viva ('paint')
+    const djBtn = screen.getByTestId('nowplaying-dj-btn');
+    fireEvent.click(djBtn);
+    fireEvent.click(screen.getByTestId('audio-panel-tab-display'));
+    expect(screen.getByTestId('nowplaying-display-panel')).toBeDefined();
+    fireEvent.click(screen.getByTestId('backdrop-style-paint'));
+    expect(usePMusicStore.getState().nowPlayingBackdropStyle).toBe('paint');
     expect(
       screen.getByTestId('live-backdrop-container').getAttribute('data-backdrop-style')
-    ).toBe('mesh');
+    ).toBe('paint');
+    expect(
+      screen.getByTestId('exotic-backdrop-canvas').getAttribute('data-exotic-style')
+    ).toBe('paint');
 
-    // Toggle Marquee & Remaining time switches inside HUD popover
+    // Toggle Marquee & Remaining time switches inside Pantalla tab
     fireEvent.click(screen.getByTestId('pref-marquee-switch'));
     expect(usePMusicStore.getState().marqueeTextEnabled).toBe(false);
     fireEvent.click(screen.getByTestId('pref-remaining-time-switch'));
     expect(usePMusicStore.getState().showRemainingTime).toBe(false);
 
-    // 4. Redesigned Artist Profile renders hero banner & discography filter tabs
+    // 4. Redesigned Artist Profile renders banner-only hero (no circular avatar) & discography filter tabs
     act(() => {
       usePMusicStore.setState({
         nowPlayingOpen: false,
+        eqSheetOpen: false,
+        djPopoverOpen: false,
         isTransitioning: false,
         outgoingTransitionTrack: null,
         incomingTransitionTrack: null,
@@ -707,7 +716,7 @@ describe('@pmusic/web UI', () => {
               thumbnailUrl: 'https://example.com/pantera-avatar.jpg',
               subscribersText: '5,8 M oyentes mensuales',
             },
-            bannerUrl: 'https://example.com/pantera-banner-2880.jpg',
+            bannerUrl: 'https://example.com/pantera-banner-1440.jpg',
             description: 'Referente de la escena urbana canaria.',
             topSongs: [albumTrackA, albumTrackB],
             albums: [
@@ -734,9 +743,23 @@ describe('@pmusic/web UI', () => {
       });
     });
     rerender(<App />);
-    expect(screen.getByTestId('artist-hero-banner')).toBeDefined();
+    const heroBanner = screen.getByTestId('artist-hero-banner');
+    expect(heroBanner).toBeDefined();
+    expect(heroBanner.querySelectorAll('img').length).toBe(1);
     expect(screen.getByText('Último lanzamiento')).toBeDefined();
     fireEvent.click(screen.getByRole('tab', { name: 'Sencillos y EP' }));
     expect(screen.getAllByText('TÓCATE SOLA').length).toBeGreaterThan(0);
+
+    // 5. Car Mode opens with voice search & 3 one-tap tabs and closes cleanly
+    act(() => {
+      usePMusicStore.getState().setCarModeOpen(true);
+    });
+    rerender(<App />);
+    expect(screen.getByTestId('car-mode-view')).toBeDefined();
+    expect(screen.getByTestId('car-voice-search-btn')).toBeDefined();
+    expect(screen.getByTestId('car-play-pause-btn')).toBeDefined();
+    fireEvent.click(screen.getByRole('tab', { name: 'Playlists' }));
+    fireEvent.click(screen.getByTestId('car-mode-close-btn'));
+    expect(usePMusicStore.getState().carModeOpen).toBe(false);
   });
 });

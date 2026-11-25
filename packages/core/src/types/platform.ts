@@ -43,6 +43,7 @@ export interface DiscordRpcStatus {
 export type NativeMediaActionType =
   | 'play'
   | 'pause'
+  | 'toggle'
   | 'nexttrack'
   | 'previoustrack'
   | 'seekto'

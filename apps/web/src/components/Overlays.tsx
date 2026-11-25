@@ -47,6 +47,7 @@ import {
   RoundedPlayIcon,
 } from './TransportIcons.tsx';
 import { InkBleedCoverTransition } from './InkBleedCoverTransition.tsx';
+import { ExoticBackdropCanvas } from './ExoticBackdropCanvas.tsx';
 import { MarqueeText } from './MarqueeText.tsx';
 import { useDelayedBuffering } from '../hooks/useDelayedBuffering.ts';
 import {
@@ -73,7 +74,11 @@ import {
   toggleRealFullscreen,
 } from '../platform/web-bridge.ts';
 import { getThemeDefinition } from '../utils/themes.ts';
-import { getCachedPaletteCss } from '../utils/cover-color.ts';
+import {
+  getCachedPaletteCss,
+  getPrebakedMobileBackdrop,
+  prebakeMobileBackdrop,
+} from '../utils/cover-color.ts';
 import { ArtistLinks } from './ArtistLinks.tsx';
 import { PMusicSwitch } from './PMusicSwitch.tsx';
 import { clearDraggedTrack, setDraggedTrack } from '../utils/track-dnd.ts';
@@ -179,10 +184,11 @@ const BACKDROP_STYLE_OPTIONS: readonly {
   desc: string;
 }[] = [
   { id: 'fluid', label: 'Fluido', desc: 'Portada viva y orbes' },
-  { id: 'mesh', label: 'Aurora', desc: 'Mallas luminosas' },
-  { id: 'vinyl', label: 'Vinilo', desc: 'Reflejo giratorio' },
-  { id: 'waves', label: 'Ondas', desc: 'Ondas sónicas' },
-  { id: 'minimal', label: 'Minimal', desc: 'Estudio oscuro' },
+  { id: 'paint', label: 'Pintura', desc: 'Óleo vivo en expansión' },
+  { id: 'prism', label: 'Prisma', desc: 'Haces de cristal refractivo' },
+  { id: 'nebula', label: 'Nebulosa', desc: 'Polvo cósmico y estrellas' },
+  { id: 'pulse', label: 'Pulso', desc: 'Ondas sónicas al ritmo' },
+  { id: 'minimal', label: 'Minimal', desc: 'Estudio editorial oscuro' },
 ];
 
 const decodedBackdropImgCache = new Map<string, HTMLImageElement>();
@@ -204,23 +210,14 @@ export const NowPlayingSheet: React.FC = () => {
     themeId,
     reducedMotionPref,
     lyricsSize,
-    setLyricsSize,
     lyricsBlurEnabled,
-    setLyricsBlurEnabled,
     lyricsStyle,
     setLyricsStyle,
     ambientMotionEnabled,
-    setAmbientMotionEnabled,
     visualizerEnabled,
-    setVisualizerEnabled,
     nowPlayingBackdropStyle,
-    setNowPlayingBackdropStyle,
-    alwaysShuffle,
-    setAlwaysShuffle,
     skipSameAlbumCoverTransition,
-    setSkipSameAlbumCoverTransition,
     marqueeTextEnabled,
-    setMarqueeTextEnabled,
     showRemainingTime,
     setShowRemainingTime,
     lastTrackDirection,
@@ -285,8 +282,6 @@ export const NowPlayingSheet: React.FC = () => {
   const progressTimeRef = useRef<HTMLSpanElement | null>(null);
   const progressRemainRef = useRef<HTMLSpanElement | null>(null);
   const showRemainingTimeRef = useRef(showRemainingTime);
-  const displayPopoverRef = useRef<HTMLDivElement | null>(null);
-  const [displayPopoverOpen, setDisplayPopoverOpen] = useState(false);
   const coverSwipeStartRef = useRef<{ x: number; y: number } | null>(null);
   const sheetSwipeDownRef = useRef<{ y: number; x: number } | null>(null);
   const lastWholeSecRef = useRef<number>(Math.floor(positionSec));
@@ -482,6 +477,43 @@ export const NowPlayingSheet: React.FC = () => {
     fallbackUrl: string
   ) => {
     const pair = mobileBackdropCanvasRefs.current[slotIdx];
+    const cachedPair = getPrebakedMobileBackdrop(fallbackUrl);
+    if (cachedPair) {
+      for (let i = 0; i < 2; i++) {
+        const dest = pair[i];
+        const src = cachedPair[i];
+        if (!dest || !src) continue;
+        try {
+          const ctx = dest.getContext('2d');
+          if (!ctx) continue;
+          ctx.clearRect(0, 0, dest.width, dest.height);
+          ctx.drawImage(src, 0, 0, dest.width, dest.height);
+        } catch {
+          // ignore canvas draw error
+        }
+      }
+      return;
+    }
+    if (img && img.complete && img.naturalWidth > 0) {
+      prebakeMobileBackdrop(fallbackUrl, img);
+      const freshlyBaked = getPrebakedMobileBackdrop(fallbackUrl);
+      if (freshlyBaked) {
+        for (let i = 0; i < 2; i++) {
+          const dest = pair[i];
+          const src = freshlyBaked[i];
+          if (!dest || !src) continue;
+          try {
+            const ctx = dest.getContext('2d');
+            if (!ctx) continue;
+            ctx.clearRect(0, 0, dest.width, dest.height);
+            ctx.drawImage(src, 0, 0, dest.width, dest.height);
+          } catch {
+            // ignore
+          }
+        }
+        return;
+      }
+    }
     paintSoftBakedCanvas(pair[0], img, fallbackUrl, 24);
     paintSoftBakedCanvas(pair[1], img, fallbackUrl, 16);
   };
@@ -491,8 +523,13 @@ export const NowPlayingSheet: React.FC = () => {
     const slot = backdropActiveRef.current.active;
     const url = backdropActiveRef.current.urls[slot];
     if (!url) return;
+    if (getPrebakedMobileBackdrop(url)) {
+      paintMobileMipmapSlot(slot, null, url);
+      return;
+    }
     const cached = decodedBackdropImgCache.get(url);
     if (cached && cached.complete && cached.naturalWidth > 0) {
+      prebakeMobileBackdrop(url, cached);
       paintMobileMipmapSlot(slot, cached, url);
       return;
     }
@@ -501,7 +538,10 @@ export const NowPlayingSheet: React.FC = () => {
     img.decoding = 'async';
     const commit = (ok: boolean) => {
       if (cancelled) return;
-      if (ok) decodedBackdropImgCache.set(url, img);
+      if (ok) {
+        decodedBackdropImgCache.set(url, img);
+        prebakeMobileBackdrop(url, img);
+      }
       paintMobileMipmapSlot(slot, ok ? img : null, url);
     };
     img.onload = () => commit(true);
@@ -604,8 +644,19 @@ export const NowPlayingSheet: React.FC = () => {
       }
     };
 
+    const hasBaked = isMobileBackdrop && Boolean(getPrebakedMobileBackdrop(targetBackdropUrl));
+    if (hasBaked) {
+      commitSlotSwap(null);
+      return () => {
+        cancelled = true;
+        if (rafA && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafA);
+        if (rafB && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafB);
+      };
+    }
+
     const cachedImg = targetBackdropUrl ? decodedBackdropImgCache.get(targetBackdropUrl) : undefined;
     if (cachedImg && cachedImg.complete && cachedImg.naturalWidth > 0) {
+      if (isMobileBackdrop) prebakeMobileBackdrop(targetBackdropUrl, cachedImg);
       commitSlotSwap(cachedImg);
       return () => {
         cancelled = true;
@@ -628,6 +679,7 @@ export const NowPlayingSheet: React.FC = () => {
       clearTimeout(safetyTimer);
       if (img && img.complete && img.naturalWidth > 0) {
         decodedBackdropImgCache.set(targetBackdropUrl, img);
+        if (isMobileBackdrop) prebakeMobileBackdrop(targetBackdropUrl, img);
         if (decodedBackdropImgCache.size > 32) {
           const oldest = decodedBackdropImgCache.keys().next().value;
           if (oldest) decodedBackdropImgCache.delete(oldest);
@@ -638,7 +690,7 @@ export const NowPlayingSheet: React.FC = () => {
 
     const img = new Image();
     img.decoding = 'async';
-    const safetyTimer = setTimeout(() => finish(null), 420);
+    const safetyTimer = setTimeout(() => finish(null), 900);
     img.onload = () => {
       if (typeof img.decode === 'function') {
         void img.decode().catch(() => {}).finally(() => finish(img));
@@ -1180,25 +1232,6 @@ export const NowPlayingSheet: React.FC = () => {
     lyricsUserScrolled,
     reducedMotionPref,
   ]);
-
-  useEffect(() => {
-    if (!displayPopoverOpen) return;
-    const handlePointerDown = (e: PointerEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (displayPopoverRef.current?.contains(target)) return;
-      if (target?.closest('[data-testid="nowplaying-display-settings-btn"]')) return;
-      setDisplayPopoverOpen(false);
-    };
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setDisplayPopoverOpen(false);
-    };
-    document.addEventListener('pointerdown', handlePointerDown);
-    document.addEventListener('keydown', handleKey);
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown);
-      document.removeEventListener('keydown', handleKey);
-    };
-  }, [displayPopoverOpen]);
 
   if (!nowPlayingOpen) return null;
 
@@ -1914,15 +1947,8 @@ export const NowPlayingSheet: React.FC = () => {
                 ? 0
                 : 1
               : 0;
-          const showCoverLayers =
-            nowPlayingBackdropStyle === 'fluid' ||
-            nowPlayingBackdropStyle === 'vinyl';
-          const slotTintOpacity =
-            nowPlayingBackdropStyle === 'fluid'
-              ? 1
-              : nowPlayingBackdropStyle === 'vinyl'
-                ? 0.62
-                : 0;
+          const showCoverLayers = nowPlayingBackdropStyle === 'fluid';
+          const slotTintOpacity = showCoverLayers ? 1 : 0;
           return (
             <div
               key={`backdrop-slot-${slotIdx}`}
@@ -1947,22 +1973,22 @@ export const NowPlayingSheet: React.FC = () => {
                     ref={(el) => {
                       mobileBackdropCanvasRefs.current[slotIdx][0] = el;
                     }}
-                    width={64}
-                    height={64}
+                    width={48}
+                    height={48}
                     data-testid={isSlotActive ? 'live-backdrop-img' : undefined}
                     aria-hidden="true"
                     className="pm-fluid-cover-a-baked pointer-events-none absolute inset-0 h-full w-full select-none opacity-55"
-                    style={slotIdx === 1 ? { animationDelay: '-6s' } : undefined}
+                    style={slotIdx === 1 ? { animationDelay: '-5s' } : undefined}
                   />
                   <canvas
                     ref={(el) => {
                       mobileBackdropCanvasRefs.current[slotIdx][1] = el;
                     }}
-                    width={64}
-                    height={64}
+                    width={48}
+                    height={48}
                     aria-hidden="true"
                     className="pm-fluid-cover-b-baked pointer-events-none absolute inset-0 h-full w-full -scale-x-100 select-none opacity-35"
-                    style={slotIdx === 1 ? { animationDelay: '-9s' } : undefined}
+                    style={slotIdx === 1 ? { animationDelay: '-8s' } : undefined}
                   />
                 </>
               ) : (
@@ -1973,14 +1999,14 @@ export const NowPlayingSheet: React.FC = () => {
                     alt=""
                     draggable={false}
                     className="pm-fluid-cover-a absolute inset-0 h-full w-full select-none object-cover opacity-55"
-                    style={slotIdx === 1 ? { animationDelay: '-6s' } : undefined}
+                    style={slotIdx === 1 ? { animationDelay: '-5s' } : undefined}
                   />
                   <img
                     src={backdropSlots.urls[slotIdx]}
                     alt=""
                     draggable={false}
                     className="pm-fluid-cover-b absolute inset-0 h-full w-full -scale-x-100 select-none object-cover opacity-35"
-                    style={slotIdx === 1 ? { animationDelay: '-9s' } : undefined}
+                    style={slotIdx === 1 ? { animationDelay: '-8s' } : undefined}
                   />
                 </>
               )}
@@ -1992,50 +2018,44 @@ export const NowPlayingSheet: React.FC = () => {
           (isMobileBackdrop ? (
             /* Mobile GPU-Safe Living Orbs matching Desktop layout & gradients without mix-blend flicker */
             <div className="pointer-events-none absolute inset-0" style={{ zIndex: 3 }}>
-              <div className="pm-orb-1-mobile pointer-events-none absolute -left-[20vmax] -top-[16vmax] h-[78vmax] w-[78vmax] rounded-full" />
+              <div className="pm-orb-1-mobile pointer-events-none absolute -left-[16vmax] -top-[6vmax] h-[72vmax] w-[72vmax] rounded-full" />
               <div className="pm-orb-2-mobile pointer-events-none absolute -bottom-[18vmax] -right-[16vmax] h-[82vmax] w-[82vmax] rounded-full" />
-              <div className="pm-orb-3-mobile pointer-events-none absolute left-[10%] top-[22%] h-[68vmax] w-[68vmax] rounded-full" />
-              <div className="pm-orb-sheen-mobile pointer-events-none absolute inset-[-12%] rounded-full" />
+              <div className="pm-orb-3-mobile pointer-events-none absolute left-[10%] top-[24%] h-[68vmax] w-[68vmax] rounded-full" />
             </div>
           ) : (
-            /* Desktop GPU-Composited Living Fluid Cover-Palette Orbs */
+            /* Desktop GPU-Composited Living Fluid Cover-Palette Orbs (Balanced top luminosity) */
             <div className="pointer-events-none absolute inset-0" style={{ zIndex: 3 }}>
-              <div className="pm-orb-1 pointer-events-none absolute -left-[20vmax] -top-[16vmax] h-[78vmax] w-[78vmax] rounded-full mix-blend-screen" />
+              <div className="pm-orb-1 pointer-events-none absolute -left-[16vmax] -top-[6vmax] h-[72vmax] w-[72vmax] rounded-full mix-blend-screen" />
               <div className="pm-orb-2 pointer-events-none absolute -bottom-[18vmax] -right-[16vmax] h-[82vmax] w-[82vmax] rounded-full mix-blend-screen" />
-              <div className="pm-orb-3 pointer-events-none absolute left-[10%] top-[22%] h-[68vmax] w-[68vmax] rounded-full mix-blend-screen" />
-              <div className="pm-orb-sheen pointer-events-none absolute inset-[-12%] rounded-full mix-blend-overlay" />
+              <div className="pm-orb-3 pointer-events-none absolute left-[10%] top-[24%] h-[68vmax] w-[68vmax] rounded-full mix-blend-screen" />
             </div>
           ))}
 
-        {nowPlayingBackdropStyle === 'mesh' && (
-          <div className="pointer-events-none absolute inset-0" style={{ zIndex: 3 }}>
-            <div className="pm-backdrop-mesh-a pointer-events-none absolute -inset-[10%]" />
-            <div className="pm-backdrop-mesh-b pointer-events-none absolute -inset-[12%]" />
-          </div>
-        )}
-
-        {nowPlayingBackdropStyle === 'vinyl' && (
-          <div className="pointer-events-none absolute inset-0" style={{ zIndex: 3 }}>
-            <div className="pm-backdrop-vinyl-ring pointer-events-none absolute left-1/2 top-[44%] h-[92vmax] w-[92vmax] rounded-full opacity-80" />
-          </div>
-        )}
-
-        {nowPlayingBackdropStyle === 'waves' && (
-          <div className="pointer-events-none absolute inset-0" style={{ zIndex: 3 }}>
-            <div className="pm-backdrop-wave-1 pointer-events-none absolute inset-0" />
-            <div className="pm-backdrop-wave-2 pointer-events-none absolute inset-0" />
-            <div className="pm-backdrop-wave-3 pointer-events-none absolute inset-0" />
+        {(nowPlayingBackdropStyle === 'paint' ||
+          nowPlayingBackdropStyle === 'prism' ||
+          nowPlayingBackdropStyle === 'nebula' ||
+          nowPlayingBackdropStyle === 'pulse') && (
+          <div className="pointer-events-none absolute inset-16" style={{ zIndex: 3 }}>
+            <ExoticBackdropCanvas
+              style={nowPlayingBackdropStyle}
+              isPlaying={isPlaying}
+              ambientMotionEnabled={ambientMotionEnabled}
+              reducedMotionPref={reducedMotionPref}
+            />
           </div>
         )}
       </div>
 
-      {/* Apple HIG Bright Media Scrim (34% dark wash for vivid fluid colors with legible text) */}
+      {/* Apple HIG Bright Media Scrim (Top-balanced wash so header never looks pale while keeping fluid color) */}
       <div
         data-testid="bright-media-scrim"
         data-scrim="true"
         data-scrim-alpha="0.34"
         className="pointer-events-none fixed inset-0 z-0"
-        style={{ backgroundColor: 'rgba(8, 8, 12, 0.34)' }}
+        style={{
+          background:
+            'linear-gradient(180deg, rgba(8, 8, 12, 0.44) 0%, rgba(8, 8, 12, 0.31) 24%, rgba(8, 8, 12, 0.34) 100%)',
+        }}
       />
 
       {/* Minimalist Top Area: Grabber Pill on Mobile Portada, Sleek Mini Track Bar on Letras/Cola, Subtle Cerrar on Desktop */}
@@ -3337,7 +3357,11 @@ export const NowPlayingSheet: React.FC = () => {
             aria-pressed={nowPlayingTab === 'Letras'}
             onClick={() => {
               if (nowPlayingTab === 'Letras') {
-                setLyricsStyleModalOpen((v) => !v);
+                if (isMobileBackdrop) {
+                  setNowPlayingTab('Portada');
+                } else {
+                  setLyricsStyleModalOpen((v) => !v);
+                }
               } else {
                 setNowPlayingTab('Letras');
               }
@@ -3378,6 +3402,9 @@ export const NowPlayingSheet: React.FC = () => {
               if (djPopoverOpen || eqSheetOpen) {
                 setDjPopoverOpen(false);
                 setEqSheetOpen(false);
+              } else if (audioPanelTab === 'display') {
+                setEqSheetOpen(true);
+                setAudioPanelTab('display');
               } else if (audioPanelTab === 'eq') {
                 setEqSheetOpen(true);
               } else {
@@ -3400,296 +3427,7 @@ export const NowPlayingSheet: React.FC = () => {
             </span>
           </button>
         </div>
-
-        {/* Bottom-Right Display, Backdrop & Playback Preferences Trigger */}
-        <button
-          type="button"
-          data-testid="nowplaying-display-settings-btn"
-          aria-label="Preferencias de pantalla y reproducción"
-          aria-expanded={displayPopoverOpen}
-          onClick={() => {
-            setDjPopoverOpen(false);
-            setEqSheetOpen(false);
-            setDisplayPopoverOpen((v) => !v);
-          }}
-          className={`pm-pressable absolute right-3.5 inline-flex h-10 w-10 items-center justify-center gap-1.5 rounded-full transition-colors md:right-7 md:h-9 md:w-auto md:px-3.5 md:text-xs md:font-semibold ${
-            displayPopoverOpen
-              ? 'bg-white text-[#070709] shadow-sm'
-              : 'bg-white/[0.08] text-white/80 hover:bg-white/[0.16] hover:text-white'
-          }`}
-        >
-          <Palette className="h-4.5 w-4.5 md:h-3.5 md:w-3.5" />
-          <span className="hidden lg:inline">Pantalla</span>
-        </button>
       </nav>
-
-      {/* Bottom-Right Interactive Display & Playback Preferences Popover */}
-      {displayPopoverOpen && (
-        <div
-          ref={displayPopoverRef}
-          role="dialog"
-          aria-modal="false"
-          aria-label="Preferencias de pantalla y reproducción"
-          data-testid="nowplaying-display-popover"
-          className="pm-glass-frosted-neutral pm-hud-dark pm-modal-pop pm-no-scrollbar fixed right-3 bottom-[4.75rem] z-40 max-h-[72dvh] w-[min(372px,calc(100vw-24px))] overflow-y-auto rounded-[24px] p-4 shadow-2xl md:right-7 md:bottom-[4.85rem]"
-        >
-          <div className="mb-3 flex items-center justify-between border-b border-white/10 pb-2.5">
-            <div className="flex items-center gap-2">
-              <Palette className="h-4 w-4 text-white/85" />
-              <div>
-                <h3 className="text-[13px] font-bold leading-tight text-white">
-                  Pantalla y preferencias
-                </h3>
-                <p className="text-[10.5px] text-white/55">
-                  Personaliza el reproductor en vivo
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              aria-label="Cerrar preferencias de pantalla"
-              onClick={() => setDisplayPopoverOpen(false)}
-              className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white/75 hover:bg-white/20 hover:text-white"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </div>
-
-          <div className="space-y-4">
-            {/* 1. Fullscreen Backdrop Selector (5 modes) */}
-            <section>
-              <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-white/60">
-                <Sparkles className="h-3 w-3" />
-                <span>Fondo en pantalla completa</span>
-              </div>
-              <div className="grid grid-cols-5 gap-1.5">
-                {BACKDROP_STYLE_OPTIONS.map((opt) => {
-                  const selected = nowPlayingBackdropStyle === opt.id;
-                  return (
-                    <button
-                      key={opt.id}
-                      type="button"
-                      data-testid={`backdrop-style-${opt.id}`}
-                      aria-pressed={selected}
-                      onClick={() => setNowPlayingBackdropStyle(opt.id)}
-                      className={`pm-pressable flex flex-col items-center gap-1 rounded-[14px] border px-1.5 py-2 text-center transition-all ${
-                        selected
-                          ? 'border-white/80 bg-white text-[#070709] shadow-md'
-                          : 'border-white/12 bg-white/[0.06] text-white/85 hover:border-white/28 hover:bg-white/[0.12]'
-                      }`}
-                    >
-                      <span
-                        aria-hidden="true"
-                        className="flex h-6 w-6 items-center justify-center rounded-full"
-                        style={
-                          opt.id === 'fluid'
-                            ? { background: 'linear-gradient(135deg, var(--pm-ambient-1), var(--pm-ambient-2))' }
-                            : opt.id === 'mesh'
-                              ? { background: 'conic-gradient(from 45deg, var(--pm-ambient-1), var(--pm-ambient-2), var(--pm-ambient-3))' }
-                              : opt.id === 'vinyl'
-                                ? { background: 'radial-gradient(circle, var(--pm-ambient-1) 18%, #18181f 62%)' }
-                                : opt.id === 'waves'
-                                  ? { background: 'linear-gradient(180deg, var(--pm-ambient-3) 15%, var(--pm-ambient-1) 85%)' }
-                                  : { background: '#111116' }
-                        }
-                      />
-                      <span className="text-[10.5px] font-bold leading-none">
-                        {opt.label}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-
-            {/* 2. Lyrics Typography, Size & Blur */}
-            <section>
-              <div className="mb-2 flex items-center justify-between">
-                <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-white/60">
-                  <Type className="h-3 w-3" />
-                  <span>Estilo de letras</span>
-                </span>
-                <div className="flex items-center gap-1 rounded-full bg-white/[0.08] p-0.5">
-                  {(['normal', 'large', 'xl'] as const).map((sz) => (
-                    <button
-                      key={sz}
-                      type="button"
-                      onClick={() => setLyricsSize(sz)}
-                      className={`rounded-full px-2 py-0.5 text-[10px] font-bold transition-colors ${
-                        lyricsSize === sz
-                          ? 'bg-white text-[#070709]'
-                          : 'text-white/70 hover:text-white'
-                      }`}
-                    >
-                      {sz === 'normal' ? 'N' : sz === 'large' ? 'G' : 'XL'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="grid grid-cols-4 gap-1.5">
-                {LYRICS_STYLE_OPTIONS.map((opt) => {
-                  const selected = lyricsStyle === opt.id;
-                  return (
-                    <button
-                      key={opt.id}
-                      type="button"
-                      data-testid={`display-lyrics-style-${opt.id}`}
-                      aria-pressed={selected}
-                      onClick={() => setLyricsStyle(opt.id)}
-                      className={`pm-pressable flex flex-col items-center justify-center gap-0.5 rounded-[12px] border px-1.5 py-2 text-center transition-all ${
-                        selected
-                          ? 'border-white/80 bg-white text-[#070709] shadow-sm'
-                          : 'border-white/10 bg-white/[0.05] text-white/85 hover:bg-white/[0.11]'
-                      }`}
-                    >
-                      <span className={`text-[15px] leading-none ${opt.previewClass}`}>Aa</span>
-                      <span className="truncate max-w-full text-[10px] font-semibold">
-                        {opt.label}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-
-            {/* 3. Smart Playback & Motion Switches */}
-            <section className="space-y-2 border-t border-white/10 pt-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
-                    <Shuffle className="h-3.5 w-3.5 text-white/70" />
-                    <span>Aleatorio siempre activo</span>
-                  </div>
-                  <p className="text-[10.5px] text-white/55">
-                    Mantiene el modo aleatorio al abrir playlists
-                  </p>
-                </div>
-                <PMusicSwitch
-                  variant="hud"
-                  ariaLabel="Aleatorio siempre activo"
-                  testId="pref-always-shuffle-switch"
-                  checked={alwaysShuffle}
-                  onChange={() => setAlwaysShuffle(!alwaysShuffle)}
-                />
-              </div>
-
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
-                    <Disc3 className="h-3.5 w-3.5 text-white/70" />
-                    <span>Omitir transición en mismo álbum</span>
-                  </div>
-                  <p className="text-[10.5px] text-white/55">
-                    Deja fija la portada si coincide en pantalla completa
-                  </p>
-                </div>
-                <PMusicSwitch
-                  variant="hud"
-                  ariaLabel="Omitir transición en mismo álbum"
-                  testId="pref-same-album-skip-switch"
-                  checked={skipSameAlbumCoverTransition}
-                  onChange={() => setSkipSameAlbumCoverTransition(!skipSameAlbumCoverTransition)}
-                />
-              </div>
-
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
-                    <Waves className="h-3.5 w-3.5 text-white/70" />
-                    <span>Texto deslizante si no cabe</span>
-                  </div>
-                  <p className="text-[10.5px] text-white/55">
-                    Desplaza títulos largos y se pausa en crossfade
-                  </p>
-                </div>
-                <PMusicSwitch
-                  variant="hud"
-                  ariaLabel="Texto deslizante"
-                  testId="pref-marquee-switch"
-                  checked={marqueeTextEnabled}
-                  onChange={() => setMarqueeTextEnabled(!marqueeTextEnabled)}
-                />
-              </div>
-
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
-                    <Sparkles className="h-3.5 w-3.5 text-white/70" />
-                    <span>Fondo animado vivo</span>
-                  </div>
-                  <p className="text-[10.5px] text-white/55">
-                    Movimiento fluido del color de la portada
-                  </p>
-                </div>
-                <PMusicSwitch
-                  variant="hud"
-                  ariaLabel="Fondo animado vivo"
-                  testId="pref-ambient-motion-switch"
-                  checked={ambientMotionEnabled}
-                  onChange={() => setAmbientMotionEnabled(!ambientMotionEnabled)}
-                />
-              </div>
-
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
-                    <Eye className="h-3.5 w-3.5 text-white/70" />
-                    <span>Desenfoque en otros versos</span>
-                  </div>
-                  <p className="text-[10.5px] text-white/55">
-                    Enfoca el verso activo en letras sincronizadas
-                  </p>
-                </div>
-                <PMusicSwitch
-                  variant="hud"
-                  ariaLabel="Desenfoque en versos"
-                  testId="pref-lyrics-blur-switch"
-                  checked={lyricsBlurEnabled}
-                  onChange={() => setLyricsBlurEnabled(!lyricsBlurEnabled)}
-                />
-              </div>
-
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
-                    <Clock className="h-3.5 w-3.5 text-white/70" />
-                    <span>Mostrar tiempo restante</span>
-                  </div>
-                  <p className="text-[10.5px] text-white/55">
-                    Cuenta regresiva en lugar de duración total
-                  </p>
-                </div>
-                <PMusicSwitch
-                  variant="hud"
-                  ariaLabel="Mostrar tiempo restante"
-                  testId="pref-remaining-time-switch"
-                  checked={showRemainingTime}
-                  onChange={() => setShowRemainingTime(!showRemainingTime)}
-                />
-              </div>
-
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
-                    <Sliders className="h-3.5 w-3.5 text-white/70" />
-                    <span>Pulso visual al ritmo</span>
-                  </div>
-                  <p className="text-[10.5px] text-white/55">
-                    Reacción sutil a graves en escritorio
-                  </p>
-                </div>
-                <PMusicSwitch
-                  variant="hud"
-                  ariaLabel="Pulso visual al ritmo"
-                  testId="pref-visualizer-switch"
-                  checked={visualizerEnabled}
-                  onChange={() => setVisualizerEnabled(!visualizerEnabled)}
-                />
-              </div>
-            </section>
-          </div>
-        </div>
-      )}
 
       {/* Full-Screen Frosted Modal for Switching Lyrics Visual Mode (viewport-wide blur & dim) */}
       {lyricsStyleModalOpen && (
@@ -3817,6 +3555,26 @@ export const AudioStudioSheet: React.FC = () => {
     setStreamQuality,
     audioNormalization,
     setAudioNormalization,
+    nowPlayingBackdropStyle,
+    setNowPlayingBackdropStyle,
+    lyricsStyle,
+    setLyricsStyle,
+    lyricsSize,
+    setLyricsSize,
+    lyricsBlurEnabled,
+    setLyricsBlurEnabled,
+    alwaysShuffle,
+    setAlwaysShuffle,
+    skipSameAlbumCoverTransition,
+    setSkipSameAlbumCoverTransition,
+    marqueeTextEnabled,
+    setMarqueeTextEnabled,
+    ambientMotionEnabled,
+    setAmbientMotionEnabled,
+    showRemainingTime,
+    setShowRemainingTime,
+    visualizerEnabled,
+    setVisualizerEnabled,
   } = usePMusicStore();
 
   const isOpen = eqSheetOpen || djPopoverOpen;
@@ -3888,15 +3646,16 @@ export const AudioStudioSheet: React.FC = () => {
           </button>
         </div>
 
-        {/* Frosted Segmented Switcher: Sesión DJ | Ecualizador */}
+        {/* Frosted Segmented Switcher: Sesión DJ | Audio y EQ | Pantalla */}
         <div
           data-testid="audio-studio-sheet"
-          className="mb-4 flex items-center justify-between gap-2 rounded-full bg-white/[0.08] p-1"
+          className="mb-4 flex items-center justify-between gap-1 rounded-full bg-white/[0.08] p-1"
         >
           <button
             type="button"
+            data-testid="audio-panel-tab-dj"
             onClick={() => setAudioPanelTab('dj')}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-full py-1.5 text-xs font-bold transition-colors ${
+            className={`flex flex-1 items-center justify-center gap-1 rounded-full py-1.5 text-[11.5px] font-bold transition-colors ${
               audioPanelTab === 'dj'
                 ? 'bg-white text-[#070709] shadow-sm'
                 : 'text-white/75 hover:text-white'
@@ -3907,8 +3666,9 @@ export const AudioStudioSheet: React.FC = () => {
           </button>
           <button
             type="button"
+            data-testid="audio-panel-tab-eq"
             onClick={() => setAudioPanelTab('eq')}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-full py-1.5 text-xs font-bold transition-colors ${
+            className={`flex flex-1 items-center justify-center gap-1 rounded-full py-1.5 text-[11.5px] font-bold transition-colors ${
               audioPanelTab === 'eq'
                 ? 'bg-white text-[#070709] shadow-sm'
                 : 'text-white/75 hover:text-white'
@@ -3916,6 +3676,19 @@ export const AudioStudioSheet: React.FC = () => {
           >
             <Sliders className="h-3.5 w-3.5" />
             <span>Audio y EQ</span>
+          </button>
+          <button
+            type="button"
+            data-testid="audio-panel-tab-display"
+            onClick={() => setAudioPanelTab('display')}
+            className={`flex flex-1 items-center justify-center gap-1 rounded-full py-1.5 text-[11.5px] font-bold transition-colors ${
+              audioPanelTab === 'display'
+                ? 'bg-white text-[#070709] shadow-sm'
+                : 'text-white/75 hover:text-white'
+            }`}
+          >
+            <Palette className="h-3.5 w-3.5" />
+            <span>Pantalla</span>
           </button>
         </div>
 
@@ -4239,6 +4012,253 @@ export const AudioStudioSheet: React.FC = () => {
                 />
               </div>
             </div>
+          </div>
+        )}
+
+        {audioPanelTab === 'display' && (
+          <div data-testid="nowplaying-display-panel" className="space-y-4">
+            {/* 1. Fullscreen Backdrop Selector (6 modes including exotic GPU canvases) */}
+            <section>
+              <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-white/60">
+                <Sparkles className="h-3 w-3" />
+                <span>Fondo en pantalla completa</span>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
+                {BACKDROP_STYLE_OPTIONS.map((opt) => {
+                  const selected = nowPlayingBackdropStyle === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      data-testid={`backdrop-style-${opt.id}`}
+                      aria-pressed={selected}
+                      onClick={() => setNowPlayingBackdropStyle(opt.id)}
+                      className={`pm-pressable flex items-center gap-2 rounded-[14px] border px-2.5 py-2 text-left transition-all ${
+                        selected
+                          ? 'border-white/80 bg-white text-[#070709] shadow-md'
+                          : 'border-white/12 bg-white/[0.06] text-white/85 hover:border-white/28 hover:bg-white/[0.12]'
+                      }`}
+                    >
+                      <span
+                        aria-hidden="true"
+                        className="h-6 w-6 shrink-0 rounded-full ring-1 ring-white/20"
+                        style={
+                          opt.id === 'fluid'
+                            ? { background: 'linear-gradient(135deg, var(--pm-ambient-1), var(--pm-ambient-2))' }
+                            : opt.id === 'paint'
+                              ? { background: 'conic-gradient(from 20deg, #ff3d8b, var(--pm-ambient-1), #38bdf8, var(--pm-ambient-2), #ff3d8b)' }
+                              : opt.id === 'prism'
+                                ? { background: 'linear-gradient(135deg, rgba(255,255,255,0.65) 0%, var(--pm-ambient-1) 45%, #09090d 100%)' }
+                                : opt.id === 'nebula'
+                                  ? { background: 'radial-gradient(circle at 65% 35%, #e9d5ff 0%, var(--pm-ambient-2) 45%, #07070c 100%)' }
+                                  : opt.id === 'pulse'
+                                    ? { background: 'repeating-radial-gradient(circle, var(--pm-ambient-1) 0px, transparent 4px, var(--pm-ambient-2) 7px)' }
+                                    : { background: '#111116' }
+                        }
+                      />
+                      <span className="min-w-0">
+                        <span className="block truncate text-[11px] font-bold leading-tight">
+                          {opt.label}
+                        </span>
+                        <span
+                          className={`block truncate text-[9.5px] leading-tight ${
+                            selected ? 'text-[#070709]/65' : 'text-white/50'
+                          }`}
+                        >
+                          {opt.desc}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            {/* 2. Lyrics Typography & Size */}
+            <section>
+              <div className="mb-2 flex items-center justify-between">
+                <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-white/60">
+                  <Type className="h-3 w-3" />
+                  <span>Estilo de letras</span>
+                </span>
+                <div className="flex items-center gap-1 rounded-full bg-white/[0.08] p-0.5">
+                  {(['normal', 'large', 'xl'] as const).map((sz) => (
+                    <button
+                      key={sz}
+                      type="button"
+                      onClick={() => setLyricsSize(sz)}
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-bold transition-colors ${
+                        lyricsSize === sz
+                          ? 'bg-white text-[#070709]'
+                          : 'text-white/70 hover:text-white'
+                      }`}
+                    >
+                      {sz === 'normal' ? 'N' : sz === 'large' ? 'G' : 'XL'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="grid grid-cols-4 gap-1.5">
+                {LYRICS_STYLE_OPTIONS.map((opt) => {
+                  const selected = lyricsStyle === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      data-testid={`display-lyrics-style-${opt.id}`}
+                      aria-pressed={selected}
+                      onClick={() => setLyricsStyle(opt.id)}
+                      className={`pm-pressable flex flex-col items-center justify-center gap-0.5 rounded-[12px] border px-1.5 py-2 text-center transition-all ${
+                        selected
+                          ? 'border-white/80 bg-white text-[#070709] shadow-sm'
+                          : 'border-white/10 bg-white/[0.05] text-white/85 hover:bg-white/[0.11]'
+                      }`}
+                    >
+                      <span className={`text-[15px] leading-none ${opt.previewClass}`}>Aa</span>
+                      <span className="max-w-full truncate text-[10px] font-semibold">
+                        {opt.label}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            {/* 3. Smart Playback & Display Toggles */}
+            <section className="space-y-2 border-t border-white/10 pt-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
+                    <Shuffle className="h-3.5 w-3.5 text-white/70" />
+                    <span>Aleatorio siempre activo</span>
+                  </div>
+                  <p className="text-[10.5px] text-white/55">
+                    Mantiene el modo aleatorio al abrir playlists
+                  </p>
+                </div>
+                <PMusicSwitch
+                  variant="hud"
+                  ariaLabel="Aleatorio siempre activo"
+                  testId="pref-always-shuffle-switch"
+                  checked={alwaysShuffle}
+                  onChange={() => setAlwaysShuffle(!alwaysShuffle)}
+                />
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
+                    <Disc3 className="h-3.5 w-3.5 text-white/70" />
+                    <span>Omitir transición en mismo álbum</span>
+                  </div>
+                  <p className="text-[10.5px] text-white/55">
+                    Deja fija la portada si coincide en pantalla completa
+                  </p>
+                </div>
+                <PMusicSwitch
+                  variant="hud"
+                  ariaLabel="Omitir transición en mismo álbum"
+                  testId="pref-same-album-skip-switch"
+                  checked={skipSameAlbumCoverTransition}
+                  onChange={() => setSkipSameAlbumCoverTransition(!skipSameAlbumCoverTransition)}
+                />
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
+                    <Waves className="h-3.5 w-3.5 text-white/70" />
+                    <span>Texto deslizante si no cabe</span>
+                  </div>
+                  <p className="text-[10.5px] text-white/55">
+                    Desplaza títulos largos y se pausa en crossfade
+                  </p>
+                </div>
+                <PMusicSwitch
+                  variant="hud"
+                  ariaLabel="Texto deslizante"
+                  testId="pref-marquee-switch"
+                  checked={marqueeTextEnabled}
+                  onChange={() => setMarqueeTextEnabled(!marqueeTextEnabled)}
+                />
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
+                    <Sparkles className="h-3.5 w-3.5 text-white/70" />
+                    <span>Fondo animado vivo</span>
+                  </div>
+                  <p className="text-[10.5px] text-white/55">
+                    Movimiento fluido del color de la portada
+                  </p>
+                </div>
+                <PMusicSwitch
+                  variant="hud"
+                  ariaLabel="Fondo animado vivo"
+                  testId="pref-ambient-motion-switch"
+                  checked={ambientMotionEnabled}
+                  onChange={() => setAmbientMotionEnabled(!ambientMotionEnabled)}
+                />
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
+                    <Eye className="h-3.5 w-3.5 text-white/70" />
+                    <span>Desenfoque en otros versos</span>
+                  </div>
+                  <p className="text-[10.5px] text-white/55">
+                    Enfoca el verso activo en letras sincronizadas
+                  </p>
+                </div>
+                <PMusicSwitch
+                  variant="hud"
+                  ariaLabel="Desenfoque en versos"
+                  testId="pref-lyrics-blur-switch"
+                  checked={lyricsBlurEnabled}
+                  onChange={() => setLyricsBlurEnabled(!lyricsBlurEnabled)}
+                />
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
+                    <Clock className="h-3.5 w-3.5 text-white/70" />
+                    <span>Mostrar tiempo restante</span>
+                  </div>
+                  <p className="text-[10.5px] text-white/55">
+                    Cuenta regresiva en lugar de duración total
+                  </p>
+                </div>
+                <PMusicSwitch
+                  variant="hud"
+                  ariaLabel="Mostrar tiempo restante"
+                  testId="pref-remaining-time-switch"
+                  checked={showRemainingTime}
+                  onChange={() => setShowRemainingTime(!showRemainingTime)}
+                />
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
+                    <Sliders className="h-3.5 w-3.5 text-white/70" />
+                    <span>Pulso visual al ritmo</span>
+                  </div>
+                  <p className="text-[10.5px] text-white/55">
+                    Reacción sutil a graves en escritorio
+                  </p>
+                </div>
+                <PMusicSwitch
+                  variant="hud"
+                  ariaLabel="Pulso visual al ritmo"
+                  testId="pref-visualizer-switch"
+                  checked={visualizerEnabled}
+                  onChange={() => setVisualizerEnabled(!visualizerEnabled)}
+                />
+              </div>
+            </section>
           </div>
         )}
       </div>

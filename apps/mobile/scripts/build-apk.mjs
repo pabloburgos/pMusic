@@ -56,6 +56,7 @@ mkdirSync(apkOutputDir, { recursive: true });
 const resDir = resolve(workDir, 'res');
 const valuesDir = resolve(resDir, 'values');
 const drawableDir = resolve(resDir, 'drawable');
+const xmlDir = resolve(resDir, 'xml');
 const assetsPublicDir = resolve(workDir, 'assets/public');
 const javaSrcDir = resolve(workDir, 'java/es/pmusic/app');
 const classesDir = resolve(workDir, 'classes');
@@ -63,6 +64,7 @@ const dexDir = resolve(workDir, 'dex');
 
 mkdirSync(valuesDir, { recursive: true });
 mkdirSync(drawableDir, { recursive: true });
+mkdirSync(xmlDir, { recursive: true });
 mkdirSync(assetsPublicDir, { recursive: true });
 mkdirSync(javaSrcDir, { recursive: true });
 mkdirSync(classesDir, { recursive: true });
@@ -150,15 +152,25 @@ writeFileSync(
   'utf-8'
 );
 
-// 4. Write AndroidManifest.xml (compiled into binary AXML by aapt2)
+// 4. Write AndroidManifest.xml & Android Auto descriptor (compiled into binary AXML by aapt2)
+writeFileSync(
+  resolve(xmlDir, 'automotive_app_desc.xml'),
+  `<?xml version="1.0" encoding="utf-8"?>
+<automotiveApp>
+    <uses name="media" />
+</automotiveApp>
+`,
+  'utf-8'
+);
+
 const manifestPath = resolve(workDir, 'AndroidManifest.xml');
 writeFileSync(
   manifestPath,
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="35"
-    android:versionName="0.17.9">
+    android:versionCode="36"
+    android:versionName="0.18.0">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -166,6 +178,7 @@ writeFileSync(
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="true"
@@ -174,6 +187,13 @@ writeFileSync(
         android:usesCleartextTraffic="true"
         android:hardwareAccelerated="true"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
+        <meta-data
+            android:name="com.google.android.gms.car.notification.SmallIcon"
+            android:resource="@drawable/ic_launcher" />
 
         <activity
             android:name="es.pmusic.app.MainActivity"
@@ -197,13 +217,23 @@ writeFileSync(
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <service
+            android:name="es.pmusic.app.PMusicMediaBrowserService"
+            android:enabled="true"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="android.media.browse.MediaBrowserService" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>
 `,
   'utf-8'
 );
 
-// 5. Write Java sources (MainActivity with embedded WebView + WebResourceResponse asset/stream server & PMusicPlaybackService)
+// 5. Write Java sources (PMusicPlaybackService with MediaSession+Notification.MediaStyle, PMusicMediaBrowserService for Android Auto, MainActivity)
 writeFileSync(
   resolve(javaSrcDir, 'PMusicPlaybackService.java'),
   `package es.pmusic.app;
@@ -213,18 +243,282 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
+import android.media.AudioManager;
+import android.media.MediaMetadata;
+import android.media.session.MediaSession;
+import android.media.session.PlaybackState;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.IBinder;
 import android.os.PowerManager;
+
+import org.json.JSONObject;
+
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class PMusicPlaybackService extends Service {
     private static final String CHANNEL_ID = "pmusic_playback_channel";
     private static final int NOTIFICATION_ID = 1001;
-    private PowerManager.WakeLock wakeLock;
+    public static final String ACTION_PREV = "es.pmusic.app.ACTION_PREV";
+    public static final String ACTION_TOGGLE = "es.pmusic.app.ACTION_TOGGLE";
+    public static final String ACTION_NEXT = "es.pmusic.app.ACTION_NEXT";
+    public static final String ACTION_STOP = "es.pmusic.app.ACTION_STOP";
 
-    private void ensureForegroundNotification() {
+    private static volatile MediaSession sMediaSession;
+    private static volatile PMusicPlaybackService sServiceInstance;
+    private static final ExecutorService ART_EXECUTOR = Executors.newSingleThreadExecutor();
+    private static final Map<String, Bitmap> ART_CACHE = new LinkedHashMap<String, Bitmap>(16, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, Bitmap> eldest) {
+            return size() > 12;
+        }
+    };
+
+    private static volatile String sTitle = "pMusic";
+    private static volatile String sArtist = "Listo para reproducir";
+    private static volatile String sAlbum = "pMusic";
+    private static volatile String sArtworkUrl = "";
+    private static volatile boolean sIsPlaying = false;
+    private static volatile long sPositionMs = 0L;
+    private static volatile long sDurationMs = 200000L;
+
+    private PowerManager.WakeLock wakeLock;
+    private AudioManager audioManager;
+    private Object audioFocusRequestObj;
+    private final AudioManager.OnAudioFocusChangeListener focusListener = new AudioManager.OnAudioFocusChangeListener() {
+        @Override
+        public void onAudioFocusChange(int focusChange) {
+            if (focusChange == AudioManager.AUDIOFOCUS_LOSS || focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+                MainActivity.dispatchMediaAction(PMusicPlaybackService.this, "pause", -1);
+            }
+        }
+    };
+
+    public static synchronized MediaSession.Token getOrCreateSessionToken(Context ctx) {
+        ensureMediaSessionStatic(ctx.getApplicationContext());
+        return sMediaSession.getSessionToken();
+    }
+
+    private static synchronized void ensureMediaSessionStatic(final Context appCtx) {
+        if (sMediaSession != null) return;
+        MediaSession session = new MediaSession(appCtx, "pMusicMediaSession");
+        session.setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS | MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS);
+        session.setCallback(new MediaSession.Callback() {
+            @Override
+            public void onPlay() {
+                MainActivity.dispatchMediaAction(appCtx, "play", -1);
+            }
+
+            @Override
+            public void onPause() {
+                MainActivity.dispatchMediaAction(appCtx, "pause", -1);
+            }
+
+            @Override
+            public void onSkipToNext() {
+                MainActivity.dispatchMediaAction(appCtx, "nexttrack", -1);
+            }
+
+            @Override
+            public void onSkipToPrevious() {
+                MainActivity.dispatchMediaAction(appCtx, "previoustrack", -1);
+            }
+
+            @Override
+            public void onStop() {
+                MainActivity.dispatchMediaAction(appCtx, "pause", -1);
+            }
+
+            @Override
+            public void onSeekTo(long posMs) {
+                MainActivity.dispatchMediaAction(appCtx, "seekto", posMs / 1000.0);
+            }
+
+            @Override
+            public void onPlayFromSearch(String query, Bundle extras) {
+                MainActivity.dispatchCarPlayFromSearch(appCtx, query != null ? query : "");
+            }
+
+            @Override
+            public void onPlayFromMediaId(String mediaId, Bundle extras) {
+                MainActivity.dispatchCarPlayFromMediaId(appCtx, mediaId != null ? mediaId : "");
+            }
+        });
+        session.setActive(true);
+        sMediaSession = session;
+    }
+
+    public static void updateFromJson(final Context ctx, final String jsonStr) {
         try {
+            JSONObject obj = new JSONObject(jsonStr);
+            sTitle = obj.optString("title", "pMusic");
+            sArtist = obj.optString("artist", "");
+            sAlbum = obj.optString("album", "pMusic");
+            String nextArt = obj.optString("artworkUrl", "");
+            boolean artChanged = !nextArt.equals(sArtworkUrl);
+            sArtworkUrl = nextArt;
+            sIsPlaying = obj.optBoolean("isPlaying", false);
+            sPositionMs = Math.max(0L, obj.optLong("positionMs", 0L));
+            sDurationMs = Math.max(1000L, obj.optLong("durationMs", 200000L));
+
+            Intent svc = new Intent(ctx, PMusicPlaybackService.class);
+            try {
+                if (Build.VERSION.SDK_INT >= 26) {
+                    ctx.startForegroundService(svc);
+                } else {
+                    ctx.startService(svc);
+                }
+            } catch (Throwable ignored) {
+            }
+
+            if (sServiceInstance != null) {
+                sServiceInstance.syncMediaSessionAndNotification();
+            }
+            if (artChanged && !nextArt.isEmpty()) {
+                Bitmap cached = getCachedBitmap(nextArt);
+                if (cached == null) {
+                    final String targetUrl = nextArt;
+                    ART_EXECUTOR.execute(new Runnable() {
+                        @Override
+                        public void run() {
+                            Bitmap bmp = fetchArtworkBitmap(targetUrl);
+                            if (bmp != null) {
+                                putCachedBitmap(targetUrl, bmp);
+                                if (targetUrl.equals(sArtworkUrl) && sServiceInstance != null) {
+                                    sServiceInstance.syncMediaSessionAndNotification();
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static synchronized Bitmap getCachedBitmap(String url) {
+        return ART_CACHE.get(url);
+    }
+
+    private static synchronized void putCachedBitmap(String url, Bitmap bmp) {
+        ART_CACHE.put(url, bmp);
+    }
+
+    private static Bitmap fetchArtworkBitmap(String urlStr) {
+        HttpURLConnection conn = null;
+        try {
+            URL url = new URL(urlStr);
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(3500);
+            conn.setReadTimeout(4500);
+            conn.setInstanceFollowRedirects(true);
+            conn.setRequestProperty("User-Agent", "pMusic-Android/0.18.0");
+            if (conn.getResponseCode() >= 200 && conn.getResponseCode() < 300) {
+                InputStream in = conn.getInputStream();
+                ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                int r;
+                while ((r = in.read(buf)) != -1) {
+                    bos.write(buf, 0, r);
+                }
+                in.close();
+                byte[] raw = bos.toByteArray();
+                Bitmap rawBmp = BitmapFactory.decodeByteArray(raw, 0, raw.length);
+                if (rawBmp != null && (rawBmp.getWidth() > 512 || rawBmp.getHeight() > 512)) {
+                    Bitmap scaled = Bitmap.createScaledBitmap(rawBmp, 512, 512, true);
+                    if (scaled != rawBmp) rawBmp.recycle();
+                    return scaled;
+                }
+                return rawBmp;
+            }
+        } catch (Throwable ignored) {
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+        return null;
+    }
+
+    private PendingIntent makeServiceActionIntent(String action, int reqCode) {
+        Intent i = new Intent(this, PMusicPlaybackService.class);
+        i.setAction(action);
+        int flags = Build.VERSION.SDK_INT >= 23
+                ? PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                : PendingIntent.FLAG_UPDATE_CURRENT;
+        return PendingIntent.getService(this, reqCode, i, flags);
+    }
+
+    private void requestPlaybackAudioFocus() {
+        try {
+            if (audioManager == null) {
+                audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
+            }
+            if (audioManager == null) return;
+            if (Build.VERSION.SDK_INT >= 26) {
+                if (audioFocusRequestObj == null) {
+                    AudioAttributes attrs = new AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                            .build();
+                    audioFocusRequestObj = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                            .setAudioAttributes(attrs)
+                            .setAcceptsDelayedFocusGain(true)
+                            .setOnAudioFocusChangeListener(focusListener)
+                            .build();
+                }
+                audioManager.requestAudioFocus((AudioFocusRequest) audioFocusRequestObj);
+            } else {
+                audioManager.requestAudioFocus(focusListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    public void syncMediaSessionAndNotification() {
+        try {
+            ensureMediaSessionStatic(getApplicationContext());
+            if (sIsPlaying) {
+                requestPlaybackAudioFocus();
+            }
+
+            Bitmap artBmp = !sArtworkUrl.isEmpty() ? getCachedBitmap(sArtworkUrl) : null;
+            MediaMetadata.Builder meta = new MediaMetadata.Builder()
+                    .putString(MediaMetadata.METADATA_KEY_TITLE, sTitle != null && !sTitle.isEmpty() ? sTitle : "pMusic")
+                    .putString(MediaMetadata.METADATA_KEY_ARTIST, sArtist != null ? sArtist : "")
+                    .putString(MediaMetadata.METADATA_KEY_ALBUM, sAlbum != null && !sAlbum.isEmpty() ? sAlbum : "pMusic")
+                    .putLong(MediaMetadata.METADATA_KEY_DURATION, sDurationMs);
+            if (artBmp != null) {
+                meta.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, artBmp);
+                meta.putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, artBmp);
+            }
+            sMediaSession.setMetadata(meta.build());
+
+            long actions = PlaybackState.ACTION_PLAY
+                    | PlaybackState.ACTION_PAUSE
+                    | PlaybackState.ACTION_PLAY_PAUSE
+                    | PlaybackState.ACTION_SKIP_TO_NEXT
+                    | PlaybackState.ACTION_SKIP_TO_PREVIOUS
+                    | PlaybackState.ACTION_SEEK_TO
+                    | PlaybackState.ACTION_STOP;
+            int pbState = sIsPlaying ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED;
+            PlaybackState state = new PlaybackState.Builder()
+                    .setActions(actions)
+                    .setState(pbState, sPositionMs, sIsPlaying ? 1.0f : 0.0f)
+                    .build();
+            sMediaSession.setPlaybackState(state);
+
             NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
             if (Build.VERSION.SDK_INT >= 26 && nm != null) {
                 NotificationChannel ch = new NotificationChannel(
@@ -235,6 +529,7 @@ public class PMusicPlaybackService extends Service {
                 ch.setSound(null, null);
                 ch.setShowBadge(false);
                 ch.enableVibration(false);
+                ch.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
                 nm.createNotificationChannel(ch);
             }
 
@@ -243,19 +538,41 @@ public class PMusicPlaybackService extends Service {
             int piFlags = Build.VERSION.SDK_INT >= 23
                     ? PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
                     : PendingIntent.FLAG_UPDATE_CURRENT;
-            PendingIntent pi = PendingIntent.getActivity(this, 0, launchIntent, piFlags);
+            PendingIntent contentPi = PendingIntent.getActivity(this, 0, launchIntent, piFlags);
 
             Notification.Builder builder = Build.VERSION.SDK_INT >= 26
                     ? new Notification.Builder(this, CHANNEL_ID)
                     : new Notification.Builder(this);
-            Notification notif = builder
-                    .setContentTitle("pMusic")
-                    .setContentText("Reproducci\\u00f3n de audio activa")
-                    .setSmallIcon(android.R.drawable.ic_media_play)
-                    .setContentIntent(pi)
-                    .setOngoing(true)
-                    .build();
+
+            Notification.MediaStyle mediaStyle = new Notification.MediaStyle()
+                    .setMediaSession(sMediaSession.getSessionToken())
+                    .setShowActionsInCompactView(0, 1, 2);
+
+            builder.setContentTitle(sTitle != null && !sTitle.isEmpty() ? sTitle : "pMusic")
+                    .setContentText(sArtist != null && !sArtist.isEmpty() ? sArtist : "pMusic Audio")
+                    .setSubText("pMusic")
+                    .setSmallIcon(R.drawable.ic_launcher)
+                    .setContentIntent(contentPi)
+                    .setOngoing(sIsPlaying)
+                    .setOnlyAlertOnce(true)
+                    .setVisibility(Notification.VISIBILITY_PUBLIC)
+                    .addAction(android.R.drawable.ic_media_previous, "Anterior", makeServiceActionIntent(ACTION_PREV, 10))
+                    .addAction(
+                            sIsPlaying ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play,
+                            sIsPlaying ? "Pausar" : "Reproducir",
+                            makeServiceActionIntent(ACTION_TOGGLE, 11)
+                    )
+                    .addAction(android.R.drawable.ic_media_next, "Siguiente", makeServiceActionIntent(ACTION_NEXT, 12))
+                    .setStyle(mediaStyle);
+
+            if (artBmp != null) {
+                builder.setLargeIcon(artBmp);
+            }
+            Notification notif = builder.build();
             startForeground(NOTIFICATION_ID, notif);
+            if (nm != null) {
+                nm.notify(NOTIFICATION_ID, notif);
+            }
         } catch (Throwable ignored) {
         }
     }
@@ -263,25 +580,40 @@ public class PMusicPlaybackService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        sServiceInstance = this;
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
         if (pm != null) {
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "pMusic::PlaybackWakeLock");
             wakeLock.setReferenceCounted(false);
         }
-        ensureForegroundNotification();
+        syncMediaSessionAndNotification();
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        ensureForegroundNotification();
+        sServiceInstance = this;
         if (wakeLock != null && !wakeLock.isHeld()) {
-            wakeLock.acquire(4 * 60 * 60 * 1000L);
+            wakeLock.acquire(6 * 60 * 60 * 1000L);
         }
+        String action = intent != null ? intent.getAction() : null;
+        if (ACTION_PREV.equals(action)) {
+            MainActivity.dispatchMediaAction(this, "previoustrack", -1);
+        } else if (ACTION_TOGGLE.equals(action)) {
+            MainActivity.dispatchMediaAction(this, "toggle", -1);
+        } else if (ACTION_NEXT.equals(action)) {
+            MainActivity.dispatchMediaAction(this, "nexttrack", -1);
+        } else if (ACTION_STOP.equals(action)) {
+            MainActivity.dispatchMediaAction(this, "pause", -1);
+        }
+        syncMediaSessionAndNotification();
         return START_STICKY;
     }
 
     @Override
     public void onDestroy() {
+        if (sServiceInstance == this) {
+            sServiceInstance = null;
+        }
         try {
             stopForeground(true);
         } catch (Throwable ignored) {
@@ -302,15 +634,159 @@ public class PMusicPlaybackService extends Service {
 );
 
 writeFileSync(
+  resolve(javaSrcDir, 'PMusicMediaBrowserService.java'),
+  `package es.pmusic.app;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.media.MediaDescription;
+import android.media.browse.MediaBrowser;
+import android.net.Uri;
+import android.os.Bundle;
+import android.service.media.MediaBrowserService;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class PMusicMediaBrowserService extends MediaBrowserService {
+    private static final String ROOT_ID = "pmusic_root";
+    private static final String NODE_RECENTS = "folder_recents";
+    private static final String NODE_PLAYLISTS = "folder_playlists";
+    private static final String NODE_LIKED = "folder_liked";
+    private static volatile PMusicMediaBrowserService sBrowserInstance;
+
+    public static void notifyDataChanged() {
+        PMusicMediaBrowserService inst = sBrowserInstance;
+        if (inst != null) {
+            try {
+                inst.notifyChildrenChanged(ROOT_ID);
+                inst.notifyChildrenChanged(NODE_RECENTS);
+                inst.notifyChildrenChanged(NODE_PLAYLISTS);
+                inst.notifyChildrenChanged(NODE_LIKED);
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        sBrowserInstance = this;
+        setSessionToken(PMusicPlaybackService.getOrCreateSessionToken(this));
+    }
+
+    @Override
+    public void onDestroy() {
+        if (sBrowserInstance == this) {
+            sBrowserInstance = null;
+        }
+        super.onDestroy();
+    }
+
+    @Override
+    public BrowserRoot onGetRoot(String clientPackageName, int clientUid, Bundle rootHints) {
+        Bundle extras = new Bundle();
+        extras.putBoolean("android.media.browse.CONTENT_STYLE_SUPPORTED", true);
+        extras.putInt("android.media.browse.CONTENT_STYLE_BROWSABLE_HINT", 1);
+        extras.putInt("android.media.browse.CONTENT_STYLE_PLAYABLE_HINT", 1);
+        return new BrowserRoot(ROOT_ID, extras);
+    }
+
+    @Override
+    public void onLoadChildren(String parentId, Result<List<MediaBrowser.MediaItem>> result) {
+        List<MediaBrowser.MediaItem> items = new ArrayList<MediaBrowser.MediaItem>();
+        if (ROOT_ID.equals(parentId)) {
+            items.add(makeFolder(NODE_RECENTS, "Para ti y recientes", "Reproducci\\u00f3n r\\u00e1pida"));
+            items.add(makeFolder(NODE_PLAYLISTS, "Tus playlists", "Toca para reproducir"));
+            items.add(makeFolder(NODE_LIKED, "Me gusta", "Tus canciones favoritas"));
+            result.sendResult(items);
+            return;
+        }
+
+        SharedPreferences sp = getSharedPreferences("pmusic_car_lib", Context.MODE_PRIVATE);
+        String raw = sp.getString("json", "{}");
+        try {
+            JSONObject root = new JSONObject(raw);
+            if (NODE_RECENTS.equals(parentId)) {
+                appendTracks(items, root.optJSONArray("recents"));
+            } else if (NODE_LIKED.equals(parentId)) {
+                appendTracks(items, root.optJSONArray("liked"));
+            } else if (NODE_PLAYLISTS.equals(parentId)) {
+                JSONArray pls = root.optJSONArray("playlists");
+                if (pls != null) {
+                    for (int i = 0; i < pls.length(); i++) {
+                        JSONObject p = pls.optJSONObject(i);
+                        if (p == null) continue;
+                        String id = "playlist:" + p.optString("id", "");
+                        String title = p.optString("name", "Playlist");
+                        int count = p.optInt("count", 0);
+                        String art = p.optString("art", "");
+                        MediaDescription.Builder db = new MediaDescription.Builder()
+                                .setMediaId(id)
+                                .setTitle(title)
+                                .setSubtitle(count + " canciones");
+                        if (!art.isEmpty()) {
+                            db.setIconUri(Uri.parse(art));
+                        }
+                        items.add(new MediaBrowser.MediaItem(db.build(), MediaBrowser.MediaItem.FLAG_PLAYABLE));
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        result.sendResult(items);
+    }
+
+    private void appendTracks(List<MediaBrowser.MediaItem> out, JSONArray arr) {
+        if (arr == null) return;
+        for (int i = 0; i < arr.length(); i++) {
+            JSONObject t = arr.optJSONObject(i);
+            if (t == null) continue;
+            String id = "track:" + t.optString("id", "");
+            String title = t.optString("title", "Canci\\u00f3n");
+            String artist = t.optString("artist", "pMusic");
+            String art = t.optString("art", "");
+            MediaDescription.Builder db = new MediaDescription.Builder()
+                    .setMediaId(id)
+                    .setTitle(title)
+                    .setSubtitle(artist);
+            if (!art.isEmpty()) {
+                db.setIconUri(Uri.parse(art));
+            }
+            out.add(new MediaBrowser.MediaItem(db.build(), MediaBrowser.MediaItem.FLAG_PLAYABLE));
+        }
+    }
+
+    private MediaBrowser.MediaItem makeFolder(String id, String title, String subtitle) {
+        MediaDescription desc = new MediaDescription.Builder()
+                .setMediaId(id)
+                .setTitle(title)
+                .setSubtitle(subtitle)
+                .build();
+        return new MediaBrowser.MediaItem(desc, MediaBrowser.MediaItem.FLAG_BROWSABLE);
+    }
+}
+`,
+  'utf-8'
+);
+
+writeFileSync(
   resolve(javaSrcDir, 'MainActivity.java'),
   `package es.pmusic.app;
 
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.speech.RecognizerIntent;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowInsets;
@@ -359,6 +835,13 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class MainActivity extends Activity {
+    private static final int REQ_VOICE_SEARCH = 4102;
+    private static volatile MainActivity sInstance;
+    private static volatile String sPendingMediaAction = null;
+    private static volatile double sPendingMediaSeek = -1;
+    private static volatile String sPendingCarSearch = null;
+    private static volatile String sPendingCarMediaId = null;
+
     private static final String YT_IOS_UA = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)";
     private static final String YT_WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
     private static final long STREAM_CACHE_TTL_MS = 35L * 60L * 1000L;
@@ -460,6 +943,15 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        sInstance = this;
+        if (Build.VERSION.SDK_INT >= 33) {
+            try {
+                if (checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 4101);
+                }
+            } catch (Exception ignored) {
+            }
+        }
 
         Window window = getWindow();
         if (window != null && Build.VERSION.SDK_INT >= 21) {
@@ -493,6 +985,12 @@ public class MainActivity extends Activity {
         webView = new WebView(this);
         webView.setBackgroundColor(Color.parseColor("#070709"));
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+        if (Build.VERSION.SDK_INT >= 26) {
+            try {
+                webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false);
+            } catch (Exception ignored) {
+            }
+        }
         webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
         if (Build.VERSION.SDK_INT >= 20) {
             webView.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
@@ -565,6 +1063,46 @@ public class MainActivity extends Activity {
             }
 
             @android.webkit.JavascriptInterface
+            public void updateMediaSession(final String json) {
+                try {
+                    PMusicPlaybackService.updateFromJson(MainActivity.this, json);
+                } catch (Exception ignored) {
+                }
+            }
+
+            @android.webkit.JavascriptInterface
+            public void syncCarLibrary(final String json) {
+                try {
+                    SharedPreferences prefs = getSharedPreferences("pmusic_car_lib", Context.MODE_PRIVATE);
+                    prefs.edit().putString("json", json != null ? json : "{}").apply();
+                    PMusicMediaBrowserService.notifyDataChanged();
+                } catch (Exception ignored) {
+                }
+            }
+
+            @android.webkit.JavascriptInterface
+            public boolean startVoiceSearch() {
+                try {
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            try {
+                                Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+                                intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+                                intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-ES");
+                                intent.putExtra(RecognizerIntent.EXTRA_PROMPT, "Di una canción o artista en pMusic");
+                                startActivityForResult(intent, REQ_VOICE_SEARCH);
+                            } catch (Exception ignored) {
+                            }
+                        }
+                    });
+                    return true;
+                } catch (Exception ignored) {
+                    return false;
+                }
+            }
+
+            @android.webkit.JavascriptInterface
             public void setImmersiveFullscreen(final boolean enabled) {
                 runOnUiThread(new Runnable() {
                     @Override
@@ -604,6 +1142,23 @@ public class MainActivity extends Activity {
                 if (pendingAuthCallbackUrl != null) {
                     dispatchAuthCallbackToJs(pendingAuthCallbackUrl);
                     pendingAuthCallbackUrl = null;
+                }
+                if (sPendingMediaAction != null) {
+                    String act = sPendingMediaAction;
+                    double seek = sPendingMediaSeek;
+                    sPendingMediaAction = null;
+                    sPendingMediaSeek = -1;
+                    dispatchMediaActionToJs(act, seek);
+                }
+                if (sPendingCarSearch != null) {
+                    String q = sPendingCarSearch;
+                    sPendingCarSearch = null;
+                    dispatchCarPlaySearchToJs(q);
+                }
+                if (sPendingCarMediaId != null) {
+                    String mid = sPendingCarMediaId;
+                    sPendingCarMediaId = null;
+                    dispatchCarPlayMediaIdToJs(mid);
                 }
             }
 
@@ -743,7 +1298,94 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_VOICE_SEARCH && resultCode == RESULT_OK && data != null) {
+            try {
+                ArrayList<String> matches = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
+                if (matches != null && !matches.isEmpty()) {
+                    final String query = matches.get(0);
+                    if (query != null && !query.trim().isEmpty() && webView != null && Build.VERSION.SDK_INT >= 19) {
+                        final String js = "window.__pmusicVoiceSearchResult && window.__pmusicVoiceSearchResult(" + JSONObject.quote(query.trim()) + ");";
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (webView != null) webView.evaluateJavascript(js, null);
+                            }
+                        });
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    public static void dispatchMediaAction(Context ctx, final String action, final double seekSec) {
+        MainActivity inst = sInstance;
+        if (inst == null || inst.webView == null) {
+            sPendingMediaAction = action;
+            sPendingMediaSeek = seekSec;
+            return;
+        }
+        inst.dispatchMediaActionToJs(action, seekSec);
+    }
+
+    private void dispatchMediaActionToJs(final String action, final double seekSec) {
+        if (webView == null || Build.VERSION.SDK_INT < 19 || action == null) return;
+        final String js = "window.__pmusicNativeMediaAction && window.__pmusicNativeMediaAction(" + JSONObject.quote(action) + "," + seekSec + ");";
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (webView != null) webView.evaluateJavascript(js, null);
+            }
+        });
+    }
+
+    public static void dispatchCarPlayFromSearch(Context ctx, final String query) {
+        MainActivity inst = sInstance;
+        if (inst == null || inst.webView == null) {
+            sPendingCarSearch = query;
+            return;
+        }
+        inst.dispatchCarPlaySearchToJs(query);
+    }
+
+    private void dispatchCarPlaySearchToJs(final String query) {
+        if (webView == null || Build.VERSION.SDK_INT < 19 || query == null) return;
+        final String js = "window.__pmusicPlayFromSearch && window.__pmusicPlayFromSearch(" + JSONObject.quote(query) + ");";
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (webView != null) webView.evaluateJavascript(js, null);
+            }
+        });
+    }
+
+    public static void dispatchCarPlayFromMediaId(Context ctx, final String mediaId) {
+        MainActivity inst = sInstance;
+        if (inst == null || inst.webView == null) {
+            sPendingCarMediaId = mediaId;
+            return;
+        }
+        inst.dispatchCarPlayMediaIdToJs(mediaId);
+    }
+
+    private void dispatchCarPlayMediaIdToJs(final String mediaId) {
+        if (webView == null || Build.VERSION.SDK_INT < 19 || mediaId == null) return;
+        final String js = "window.__pmusicPlayFromMediaId && window.__pmusicPlayFromMediaId(" + JSONObject.quote(mediaId) + ");";
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (webView != null) webView.evaluateJavascript(js, null);
+            }
+        });
+    }
+
+    @Override
     protected void onDestroy() {
+        if (sInstance == this) {
+            sInstance = null;
+        }
         streamServerRunning = false;
         try {
             if (localStreamServer != null) localStreamServer.close();
@@ -1993,6 +2635,7 @@ execFileSync(
     classesDir,
     resolve(rJavaDir, 'es/pmusic/app/R.java'),
     resolve(javaSrcDir, 'PMusicPlaybackService.java'),
+    resolve(javaSrcDir, 'PMusicMediaBrowserService.java'),
     resolve(javaSrcDir, 'MainActivity.java'),
   ],
   { stdio: 'inherit' }

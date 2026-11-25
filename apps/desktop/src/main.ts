@@ -2,12 +2,14 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu, shell } from 'electron';
+import { deflateSync } from 'node:zlib';
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, shell } from 'electron';
 import { createPMusicApiHandler } from '@pmusic/providers';
 import type {
   DiscordPresenceState,
   DiscordRpcStatus,
   NativeMediaAction,
+  NativeMediaSessionState,
 } from '@pmusic/core';
 
 let mainWindow: BrowserWindow | null = null;
@@ -328,6 +330,111 @@ function sendMediaAction(action: NativeMediaAction): void {
   }
 }
 
+function pngCrc32(buf: Buffer): number {
+  let c = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) {
+    c ^= buf[i]!;
+    for (let k = 0; k < 8; k++) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+  }
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type: string, data: Buffer): Buffer {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length, 0);
+  const t = Buffer.from(type, 'ascii');
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(pngCrc32(Buffer.concat([t, data])), 0);
+  return Buffer.concat([len, t, data, crc]);
+}
+
+function makeThumbarIcon(kind: 'prev' | 'play' | 'pause' | 'next'): Electron.NativeImage {
+  const size = 24;
+  const raw = Buffer.alloc(size * (1 + size * 4));
+  const setPx = (x: number, y: number, alpha = 255) => {
+    if (x < 0 || x >= size || y < 0 || y >= size) return;
+    const idx = y * (1 + size * 4) + 1 + x * 4;
+    raw[idx] = 245;
+    raw[idx + 1] = 245;
+    raw[idx + 2] = 247;
+    raw[idx + 3] = alpha;
+  };
+
+  if (kind === 'play') {
+    for (let y = 5; y <= 18; y++) {
+      const span = Math.round(((11.5 - Math.abs(y - 11.5)) / 6.5) * 10);
+      for (let x = 7; x < 7 + span; x++) setPx(x, y);
+    }
+  } else if (kind === 'pause') {
+    for (let y = 5; y <= 18; y++) {
+      for (let x = 6; x <= 9; x++) setPx(x, y);
+      for (let x = 14; x <= 17; x++) setPx(x, y);
+    }
+  } else if (kind === 'next') {
+    for (let y = 6; y <= 17; y++) {
+      const span = Math.round(((5.5 - Math.abs(y - 11.5)) / 5.5) * 8);
+      for (let x = 5; x <= 5 + span; x++) setPx(x, y);
+      for (let x = 16; x <= 18; x++) setPx(x, y);
+    }
+  } else {
+    for (let y = 6; y <= 17; y++) {
+      const span = Math.round(((5.5 - Math.abs(y - 11.5)) / 5.5) * 8);
+      for (let x = 18 - span; x <= 18; x++) setPx(x, y);
+      for (let x = 5; x <= 7; x++) setPx(x, y);
+    }
+  }
+
+  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(size, 0);
+  ihdr.writeUInt32BE(size, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  const png = Buffer.concat([
+    sig,
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', deflateSync(raw)),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+  return nativeImage.createFromBuffer(png);
+}
+
+let cachedThumbarIcons: Record<'prev' | 'play' | 'pause' | 'next', Electron.NativeImage> | null = null;
+function updateTaskbarThumbar(isPlaying: boolean): void {
+  if (process.platform !== 'win32' || !mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    if (!cachedThumbarIcons) {
+      cachedThumbarIcons = {
+        prev: makeThumbarIcon('prev'),
+        play: makeThumbarIcon('play'),
+        pause: makeThumbarIcon('pause'),
+        next: makeThumbarIcon('next'),
+      };
+    }
+    mainWindow.setThumbarButtons([
+      {
+        tooltip: 'Anterior',
+        icon: cachedThumbarIcons.prev,
+        click: () => sendMediaAction({ type: 'previoustrack' }),
+      },
+      {
+        tooltip: isPlaying ? 'Pausar' : 'Reproducir',
+        icon: isPlaying ? cachedThumbarIcons.pause : cachedThumbarIcons.play,
+        click: () => sendMediaAction({ type: 'toggle' }),
+      },
+      {
+        tooltip: 'Siguiente',
+        icon: cachedThumbarIcons.next,
+        click: () => sendMediaAction({ type: 'nexttrack' }),
+      },
+    ]);
+  } catch {
+    // ignore on platforms/windows without taskbar thumbar support
+  }
+}
+
 async function createMainWindow(): Promise<void> {
   await startLoopbackProxyServer();
 
@@ -367,7 +474,7 @@ async function createMainWindow(): Promise<void> {
         {
           label: 'Reproducir / Pausar',
           accelerator: 'MediaPlayPause',
-          click: () => sendMediaAction({ type: 'play' }),
+          click: () => sendMediaAction({ type: 'toggle' }),
         },
         {
           label: 'Siguiente pista',
@@ -393,6 +500,8 @@ async function createMainWindow(): Promise<void> {
     await mainWindow.loadFile(join(__dirname, '../dist/index.html'));
   }
 
+  updateTaskbarThumbar(false);
+
   mainWindow.on('enter-full-screen', () => {
     mainWindow?.webContents.send('pmusic:fullscreen-changed', true);
   });
@@ -407,6 +516,13 @@ ipcMain.handle('pmusic:get-auth-headers', () => ({
 }));
 ipcMain.handle('pmusic:update-discord', async (_event, state: DiscordPresenceState) => {
   await discordRpc.updateActivity(state);
+});
+ipcMain.handle('pmusic:update-media-session', (_event, state: NativeMediaSessionState) => {
+  updateTaskbarThumbar(Boolean(state?.isPlaying));
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const tTitle = state?.track?.title?.trim();
+    mainWindow.setTitle(tTitle ? `${tTitle} — pMusic` : 'pMusic');
+  }
 });
 ipcMain.handle('pmusic:configure-discord', async (_event, clientId: string) => {
   return discordRpc.configureAndReconnect(clientId ?? '');
@@ -478,7 +594,7 @@ void app.whenReady().then(async () => {
   discordRpc.start();
 
   try {
-    globalShortcut.register('MediaPlayPause', () => sendMediaAction({ type: 'play' }));
+    globalShortcut.register('MediaPlayPause', () => sendMediaAction({ type: 'toggle' }));
     globalShortcut.register('MediaNextTrack', () => sendMediaAction({ type: 'nexttrack' }));
     globalShortcut.register('MediaPreviousTrack', () => sendMediaAction({ type: 'previoustrack' }));
   } catch {

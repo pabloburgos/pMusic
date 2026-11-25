@@ -84,6 +84,7 @@ import {
 import {
   applyAmbientPaletteFromCover,
   getActiveAmbientTrackKey,
+  prebakeMobileBackdrop,
 } from '../utils/cover-color.ts';
 import {
   applyAccentOverride,
@@ -375,17 +376,19 @@ export type LyricsVisualStyle =
   | 'editorial';
 export type NowPlayingBackdropStyle =
   | 'fluid'
-  | 'mesh'
-  | 'vinyl'
-  | 'waves'
+  | 'paint'
+  | 'prism'
+  | 'nebula'
+  | 'pulse'
   | 'minimal';
 export type RepeatMode = 'off' | 'all' | 'one';
 
 const BACKDROP_STYLES: readonly NowPlayingBackdropStyle[] = [
   'fluid',
-  'mesh',
-  'vinyl',
-  'waves',
+  'paint',
+  'prism',
+  'nebula',
+  'pulse',
   'minimal',
 ];
 
@@ -393,10 +396,74 @@ function parseNowPlayingBackdropStyle(
   value: unknown,
   fallback: NowPlayingBackdropStyle = 'fluid'
 ): NowPlayingBackdropStyle {
-  return typeof value === 'string' &&
-    (BACKDROP_STYLES as readonly string[]).includes(value)
-    ? (value as NowPlayingBackdropStyle)
-    : fallback;
+  if (typeof value !== 'string') return fallback;
+  if ((BACKDROP_STYLES as readonly string[]).includes(value)) {
+    return value as NowPlayingBackdropStyle;
+  }
+  if (value === 'mesh' || value === 'vinyl' || value === 'waves') {
+    return 'fluid';
+  }
+  return fallback;
+}
+
+const HOME_SHELVES_CACHE_KEY = 'pmusic_home_shelves_cache_v1';
+
+function readCachedHomeShelves(): HomeEditorialShelf[] | null {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const raw = localStorage.getItem(HOME_SHELVES_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.length > 0 ? (parsed as HomeEditorialShelf[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedHomeShelves(shelves: HomeEditorialShelf[]): void {
+  try {
+    if (typeof localStorage === 'undefined' || !shelves || shelves.length === 0) return;
+    localStorage.setItem(HOME_SHELVES_CACHE_KEY, JSON.stringify(shelves.slice(0, 6)));
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
+async function preloadTopHomeCovers(shelves: HomeEditorialShelf[]): Promise<void> {
+  if (typeof Image === 'undefined') return;
+  const urls: string[] = [];
+  const seen = new Set<string>();
+  for (const shelf of shelves) {
+    for (const t of shelf.tracks ?? []) {
+      const u = t.thumbnailUrl;
+      if (u && !seen.has(u)) {
+        seen.add(u);
+        urls.push(u);
+      }
+      if (urls.length >= 8) break;
+    }
+    if (urls.length >= 8) break;
+  }
+  if (urls.length === 0) return;
+  const loaders = urls.map(
+    (u) =>
+      new Promise<void>((resolve) => {
+        try {
+          const img = new Image();
+          img.decoding = 'async';
+          img.onload = () => resolve();
+          img.onerror = () => resolve();
+          img.src = u;
+          if (img.complete) resolve();
+        } catch {
+          resolve();
+        }
+      })
+  );
+  await Promise.race([
+    Promise.all(loaders),
+    new Promise<void>((resolve) => setTimeout(resolve, 900)),
+  ]);
 }
 
 function fisherYatesShuffle<T>(items: readonly T[]): T[] {
@@ -423,7 +490,13 @@ function preloadTrackCoverArt(track: Track | null | undefined): void {
     try {
       const img = new Image();
       img.decoding = 'async';
+      img.onload = () => {
+        prebakeMobileBackdrop(url, img);
+      };
       img.src = url;
+      if (img.complete && img.naturalWidth > 0) {
+        prebakeMobileBackdrop(url, img);
+      }
     } catch {
       // ignore image preload errors
     }
@@ -475,13 +548,15 @@ function parseFanCountText(txt?: string): number {
 export interface PMusicStoreState {
   // Navigation & Sheets
   activeTab: MainNavTab;
+  appReady: boolean;
+  carModeOpen: boolean;
   sidebarCollapsed: boolean;
   rightPanelOpen: boolean;
   nowPlayingOpen: boolean;
   nowPlayingTab: NowPlayingSubTab;
   eqSheetOpen: boolean;
   djPopoverOpen: boolean;
-  audioPanelTab: 'dj' | 'eq';
+  audioPanelTab: 'dj' | 'eq' | 'display';
   outgoingTransitionTrack: Track | null;
   incomingTransitionTrack: Track | null;
   devicesSheetOpen: boolean;
@@ -633,7 +708,9 @@ export interface PMusicStoreState {
   setNowPlayingTab: (tab: NowPlayingSubTab) => void;
   setEqSheetOpen: (open: boolean) => void;
   setDjPopoverOpen: (open: boolean) => void;
-  setAudioPanelTab: (tab: 'dj' | 'eq') => void;
+  setAudioPanelTab: (tab: 'dj' | 'eq' | 'display') => void;
+  setCarModeOpen: (open: boolean) => void;
+  playFromVoiceQuery: (query: string) => Promise<void>;
   setDevicesSheetOpen: (open: boolean) => void;
   setImportModalOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
@@ -825,11 +902,20 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       mediaController = new MediaSessionController({
         platformBridge: defaultPlatformBridge,
         onAction: (action) => {
-          if (action.type === 'play') void get().togglePlayPause();
-          else if (action.type === 'pause') void get().togglePlayPause();
-          else if (action.type === 'nexttrack') void get().nextTrack();
-          else if (action.type === 'previoustrack') void get().prevTrack();
-          else if (action.type === 'seekto' && typeof action.seekTimeSec === 'number') {
+          const playing = get().isPlaying;
+          if (action.type === 'toggle') {
+            void get().togglePlayPause();
+          } else if (action.type === 'play') {
+            if (!playing) void get().togglePlayPause();
+          } else if (action.type === 'pause') {
+            if (playing) void get().togglePlayPause();
+          } else if (action.type === 'stop') {
+            if (playing) void get().togglePlayPause();
+          } else if (action.type === 'nexttrack') {
+            void get().nextTrack();
+          } else if (action.type === 'previoustrack') {
+            void get().prevTrack();
+          } else if (action.type === 'seekto' && typeof action.seekTimeSec === 'number') {
             get().seekTo(action.seekTimeSec);
           }
         },
@@ -2029,8 +2115,60 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }));
   }
 
+  function syncAndroidAutoLibrarySnapshot(): void {
+    if (typeof window === 'undefined') return;
+    const native = (window as unknown as {
+      PMusicNative?: { syncCarLibrary?: (json: string) => void };
+    }).PMusicNative;
+    if (!native?.syncCarLibrary) return;
+    try {
+      const st = get();
+      const mapMiniTrack = (t: Track) => ({
+        id: t.id,
+        title: t.title,
+        artist: t.artists.map((a) => a.name).join(', '),
+        art: t.thumbnailUrl ?? '',
+        durationSec: t.durationSec,
+      });
+      const recentTracks: Track[] = [];
+      const seen = new Set<string>();
+      for (const h of st.playHistory) {
+        if (h.track && !seen.has(h.track.id)) {
+          seen.add(h.track.id);
+          recentTracks.push(h.track);
+        }
+        if (recentTracks.length >= 16) break;
+      }
+      for (const s of st.homeShelves) {
+        for (const t of s.tracks ?? []) {
+          if (!seen.has(t.id)) {
+            seen.add(t.id);
+            recentTracks.push(t);
+          }
+          if (recentTracks.length >= 18) break;
+        }
+        if (recentTracks.length >= 18) break;
+      }
+      const payload = {
+        recents: recentTracks.map(mapMiniTrack),
+        liked: st.likedTracks.slice(0, 20).map((l) => mapMiniTrack(l.track)),
+        playlists: st.playlists.slice(0, 14).map((p) => ({
+          id: p.id,
+          name: p.name,
+          count: p.tracks.length,
+          art: p.coverUrl ?? p.tracks[0]?.thumbnailUrl ?? '',
+        })),
+      };
+      native.syncCarLibrary(JSON.stringify(payload));
+    } catch {
+      // ignore Android Auto bridge failures
+    }
+  }
+
   return {
   activeTab: 'Inicio',
+  appReady: false,
+  carModeOpen: false,
   sidebarCollapsed: typeof window !== 'undefined' ? window.innerWidth < 1024 : false,
   rightPanelOpen: typeof window !== 'undefined' ? window.innerWidth >= 1280 : false,
   nowPlayingOpen: false,
@@ -2324,12 +2462,17 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }
 
     let shelves: HomeEditorialShelf[] = [];
+    const cachedHome = readCachedHomeShelves();
+    if (cachedHome && cachedHome.length > 0 && get().homeShelves.length <= 2) {
+      set({ homeShelves: cachedHome });
+    }
     const preAuthEpoch = ++homeShelvesBuildEpoch;
     try {
       const builtShelves = await recommendationEngine.buildHomeShelves();
       shelves = preAuthEpoch === homeShelvesBuildEpoch ? builtShelves : get().homeShelves;
+      saveCachedHomeShelves(shelves);
     } catch {
-      shelves = get().homeShelves;
+      shelves = cachedHome ?? get().homeShelves;
     }
     for (const shelf of shelves) {
       for (const track of shelf.tracks ?? []) {
@@ -2595,11 +2738,51 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     applyAmbientPaletteForTrack(get().currentTrack);
     void get().loadLyricsForTrack(get().currentTrack);
     if (isLiveRuntime()) {
+      await preloadTopHomeCovers(get().homeShelves);
+    }
+    set({ appReady: true });
+    syncAndroidAutoLibrarySnapshot();
+    if (isLiveRuntime()) {
       void get().refreshExploreDiscovery();
       void get().replenishRecommendedQueue();
     }
     if (get().djMode.enabled) {
       void recomputeActiveDjPlan();
+    }
+
+    // Expose native car/media callbacks for Android Auto & OS voice search
+    if (typeof window !== 'undefined') {
+      (window as any).__pmusicPlayFromSearch = (q: string) => {
+        void get().playFromVoiceQuery(q);
+      };
+      (window as any).__pmusicPlayFromMediaId = (mediaId: string) => {
+        if (!mediaId) return;
+        const stCur = get();
+        if (mediaId.startsWith('playlist:')) {
+          const plId = mediaId.slice('playlist:'.length);
+          const pl = stCur.playlists.find((p) => p.id === plId);
+          if (pl && pl.tracks[0]) {
+            void stCur.playTrack(pl.tracks[0], pl.tracks);
+          }
+          return;
+        }
+        const trackId = mediaId.startsWith('track:') ? mediaId.slice('track:'.length) : mediaId;
+        const pools: Track[] = [
+          ...stCur.queue,
+          ...stCur.likedTracks.map((l) => l.track),
+          ...stCur.playHistory.map((h) => h.track),
+          ...stCur.homeShelves.flatMap((s) => s.tracks ?? []),
+          ...stCur.playlists.flatMap((p) => p.tracks),
+        ];
+        const found = pools.find((t) => t.id === trackId);
+        if (found) {
+          const matchingPl = stCur.playlists.find((p) => p.tracks.some((t) => t.id === trackId));
+          void stCur.playTrack(
+            found,
+            matchingPl ? matchingPl.tracks : stCur.homeShelves[0]?.tracks ?? pools.slice(0, 15)
+          );
+        }
+      };
     }
 
     // Wire native & web OAuth deep-link callbacks (Google Sign-In)
@@ -2683,9 +2866,49 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     set((st) => ({
       audioPanelTab: tab,
       ...(st.eqSheetOpen || st.djPopoverOpen
-        ? { eqSheetOpen: tab === 'eq', djPopoverOpen: tab === 'dj' }
+        ? { eqSheetOpen: tab !== 'dj', djPopoverOpen: tab === 'dj' }
         : {}),
     })),
+  setCarModeOpen: (open) => set({ carModeOpen: open }),
+  playFromVoiceQuery: async (query) => {
+    const clean = query.trim();
+    if (!clean) {
+      const first =
+        get().homeShelves[0]?.tracks?.[0] ??
+        get().likedTracks[0]?.track ??
+        get().currentTrack;
+      if (first) await get().playTrack(first);
+      return;
+    }
+    try {
+      const bundle = await musicProvider.search(clean, 'all');
+      const hit = bundle.songs[0] ?? get().homeShelves[0]?.tracks?.[0];
+      if (hit) {
+        await get().playTrack(hit, bundle.songs.length > 0 ? bundle.songs.slice(0, 20) : [hit]);
+        get().showToast(`Reproduciendo: ${hit.title}`);
+        return;
+      }
+    } catch {
+      // fall back to local search across queue/shelves
+    }
+    const localPool = [
+      ...get().playlists.flatMap((p) => p.tracks),
+      ...get().likedTracks.map((l) => l.track),
+      ...get().homeShelves.flatMap((s) => s.tracks ?? []),
+    ];
+    const qLow = clean.toLowerCase();
+    const localHit = localPool.find(
+      (t) =>
+        t.title.toLowerCase().includes(qLow) ||
+        t.artists.some((a) => a.name.toLowerCase().includes(qLow))
+    );
+    if (localHit) {
+      await get().playTrack(localHit, localPool.slice(0, 15));
+      get().showToast(`Reproduciendo: ${localHit.title}`);
+    } else {
+      get().showToast(`Sin resultados para "${clean}"`);
+    }
+  },
   setDevicesSheetOpen: (open) => set({ devicesSheetOpen: open }),
   setImportModalOpen: (open) => set({ importModalOpen: open, importError: null }),
   setSettingsOpen: (open) => set({ settingsOpen: open }),
@@ -5347,4 +5570,67 @@ if (typeof window !== 'undefined') {
       // ignore
     }
   }
+
+  let prevHome = usePMusicStore.getState().homeShelves;
+  let prevPl = usePMusicStore.getState().playlists;
+  let prevLiked = usePMusicStore.getState().likedTracks;
+  let carSyncTimer: ReturnType<typeof setTimeout> | null = null;
+  usePMusicStore.subscribe((st) => {
+    if (st.homeShelves !== prevHome || st.playlists !== prevPl || st.likedTracks !== prevLiked) {
+      prevHome = st.homeShelves;
+      prevPl = st.playlists;
+      prevLiked = st.likedTracks;
+      if (carSyncTimer) clearTimeout(carSyncTimer);
+      carSyncTimer = setTimeout(() => {
+        carSyncTimer = null;
+        const nativeBridge = (window as unknown as {
+          PMusicNative?: { syncCarLibrary?: (json: string) => void };
+        }).PMusicNative;
+        if (!nativeBridge?.syncCarLibrary) return;
+        try {
+          const cur = usePMusicStore.getState();
+          const mapMini = (t: Track) => ({
+            id: t.id,
+            title: t.title,
+            artist: t.artists.map((a) => a.name).join(', '),
+            art: t.thumbnailUrl ?? '',
+            durationSec: t.durationSec,
+          });
+          const seen = new Set<string>();
+          const recents: ReturnType<typeof mapMini>[] = [];
+          for (const h of cur.playHistory) {
+            if (h.track && !seen.has(h.track.id)) {
+              seen.add(h.track.id);
+              recents.push(mapMini(h.track));
+            }
+            if (recents.length >= 16) break;
+          }
+          for (const s of cur.homeShelves) {
+            for (const t of s.tracks ?? []) {
+              if (!seen.has(t.id)) {
+                seen.add(t.id);
+                recents.push(mapMini(t));
+              }
+              if (recents.length >= 18) break;
+            }
+            if (recents.length >= 18) break;
+          }
+          nativeBridge.syncCarLibrary(
+            JSON.stringify({
+              recents,
+              liked: cur.likedTracks.slice(0, 20).map((l) => mapMini(l.track)),
+              playlists: cur.playlists.slice(0, 14).map((p) => ({
+                id: p.id,
+                name: p.name,
+                count: p.tracks.length,
+                art: p.coverUrl ?? p.tracks[0]?.thumbnailUrl ?? '',
+              })),
+            })
+          );
+        } catch {
+          // ignore Android Auto snapshot error
+        }
+      }, 250);
+    }
+  });
 }

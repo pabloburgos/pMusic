@@ -56,7 +56,7 @@ function readRunsText(node: any): string {
 function upscaleYtmImageUrl(url: string, targetW: number, targetH: number): string {
   if (!url) return '';
   if (/=w\d+-h\d+/.test(url)) {
-    return url.replace(/=w\d+-h\d+[^?#]*/, `=w${targetW}-h${targetH}-p-k-no-rj`);
+    return url.replace(/=w\d+-h\d+[^?#]*/, `=w${targetW}-h${targetH}-l90-rj`);
   }
   return url;
 }
@@ -289,6 +289,11 @@ export class DeezerCatalog {
   private readonly cache = new Map<string, { at: number; data: unknown }>();
   private readonly inFlight = new Map<string, Promise<Json>>();
   private readonly searchCache = new Map<string, { at: number; bundle: SearchResultBundle }>();
+  private readonly ytmVisualsCache = new Map<
+    string,
+    { at: number; data: { avatarUrl?: string; bannerUrl?: string; listenersText?: string; bio?: string } | null }
+  >();
+  private readonly artistDetailCache = new Map<string, { at: number; detail: ArtistDetail }>();
 
   public constructor(fetchFn?: typeof fetch) {
     this.fetchFn = fetchFn ?? globalThis.fetch.bind(globalThis);
@@ -884,6 +889,12 @@ export class DeezerCatalog {
     const cleanName = artistName.trim();
     if (!cleanName) return null;
 
+    const normCacheKey = normalizeSearchStr(cleanName);
+    const cachedYtm = this.ytmVisualsCache.get(normCacheKey);
+    if (cachedYtm && Date.now() - cachedYtm.at < 30 * 60_000) {
+      return cachedYtm.data;
+    }
+
     const ytmPost = async (ep: 'search' | 'browse', bodyObj: Record<string, unknown>) => {
       const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
       const timer = controller ? setTimeout(() => controller.abort(), 3200) : null;
@@ -959,9 +970,7 @@ export class DeezerCatalog {
         header?.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails
       );
       const bannerUrl = bannerBest
-        ? bannerBest.width >= 1000
-          ? bannerBest.url
-          : upscaleYtmImageUrl(bannerBest.url, 2240, 933)
+        ? upscaleYtmImageUrl(bannerBest.url, 1440, 600)
         : searchAvatarUrl;
 
       const listenersText =
@@ -971,18 +980,29 @@ export class DeezerCatalog {
         undefined;
       const bio = readRunsText(header?.description) || undefined;
 
-      return {
+      const result = {
         avatarUrl: searchAvatarUrl || bannerUrl,
         bannerUrl,
         listenersText,
         bio,
       };
+      this.ytmVisualsCache.set(normCacheKey, { at: Date.now(), data: result });
+      if (this.ytmVisualsCache.size > 120) {
+        const oldest = this.ytmVisualsCache.keys().next().value;
+        if (oldest) this.ytmVisualsCache.delete(oldest);
+      }
+      return result;
     } catch {
       return null;
     }
   }
 
   public async artist(id: string, signal?: AbortSignal): Promise<ArtistDetail> {
+    const cachedDetail = this.artistDetailCache.get(id);
+    if (cachedDetail && Date.now() - cachedDetail.at < 5 * 60_000) {
+      return cachedDetail.detail;
+    }
+
     const artistPromise = this.get(`/artist/${encodeURIComponent(id)}`, signal);
     const ytmVisualsPromise = artistPromise
       .then((a) =>
@@ -1029,7 +1049,7 @@ export class DeezerCatalog {
       rawReleases.filter((al) => String(al.record_type ?? '').toLowerCase() === 'single')
     ).map((al) => this.mapAlbum(al, a));
 
-    return {
+    const detail = {
       artist,
       bannerUrl:
         ytmVisuals?.bannerUrl ||
@@ -1042,6 +1062,12 @@ export class DeezerCatalog {
       singles: singlesList,
       relatedArtists: (related.data ?? []).map((r: Json) => this.mapArtist(r)),
     } as ArtistDetail;
+    this.artistDetailCache.set(id, { at: Date.now(), detail });
+    if (this.artistDetailCache.size > 80) {
+      const oldest = this.artistDetailCache.keys().next().value;
+      if (oldest) this.artistDetailCache.delete(oldest);
+    }
+    return detail;
   }
 
   public async album(id: string, signal?: AbortSignal): Promise<AlbumDetail> {

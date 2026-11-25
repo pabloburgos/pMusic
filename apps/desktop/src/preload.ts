@@ -3,6 +3,7 @@ import type {
   DiscordPresenceState,
   DiscordRpcStatus,
   NativeMediaAction,
+  NativeMediaSessionState,
 } from '@pmusic/core';
 
 contextBridge.exposeInMainWorld('pmusicDesktop', {
@@ -10,6 +11,8 @@ contextBridge.exposeInMainWorld('pmusicDesktop', {
   getApiBaseUrl: (): Promise<string> => ipcRenderer.invoke('pmusic:get-api-base-url'),
   getAuthHeaders: (): Promise<Record<string, string>> =>
     ipcRenderer.invoke('pmusic:get-auth-headers'),
+  updateMediaSession: (state: NativeMediaSessionState): Promise<void> =>
+    ipcRenderer.invoke('pmusic:update-media-session', state),
   updateDiscordPresence: (state: DiscordPresenceState): Promise<void> =>
     ipcRenderer.invoke('pmusic:update-discord', state),
   configureDiscordRpc: (clientId: string): Promise<DiscordRpcStatus> =>
