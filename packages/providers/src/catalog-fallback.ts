@@ -189,7 +189,7 @@ export const FALLBACK_ARTISTS: readonly ArtistSummary[] = [
   {
     id: '7524936',
     name: 'La Pantera',
-    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/artist/a94524c08a3b37ea4b25577a5c8a0965/500x500-000000-80-0-0.jpg',
+    thumbnailUrl: 'https://i.scdn.co/image/ab6761610000e5eb0445559a074ca4ac92c4434f',
     subscribersText: '820 mil suscriptores',
   },
   {
@@ -201,13 +201,13 @@ export const FALLBACK_ARTISTS: readonly ArtistSummary[] = [
   {
     id: 'UC_BAD_BUNNY',
     name: 'Bad Bunny',
-    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/artist/044a3f315b041864887a8dd8709e6926/500x500-000000-80-0-0.jpg',
+    thumbnailUrl: 'https://i.scdn.co/image/ab6761610000e5eb81f47f44084e0a09b5f0fa13',
     subscribersText: '48,5 M de suscriptores',
   },
   {
     id: 'UC_QUEVEDO',
     name: 'Quevedo',
-    thumbnailUrl: 'https://cdn-images.dzcdn.net/images/artist/79880cc1b999b15567e332203464c34e/500x500-000000-80-0-0.jpg',
+    thumbnailUrl: 'https://i.scdn.co/image/ab6761610000e5eb6ba600ad0f41d8a3aa3f53b2',
     subscribersText: '4,9 M de suscriptores',
   },
   {

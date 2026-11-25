@@ -2,6 +2,7 @@ import type { Track } from '@pmusic/core';
 
 export type RgbTriple = [number, number, number];
 export type PaletteTriplet = [RgbTriple, RgbTriple, RgbTriple];
+export type PaletteQuad = [RgbTriple, RgbTriple, RgbTriple, RgbTriple];
 
 const FALLBACK_PALETTES_RGB: readonly PaletteTriplet[] = [
   [
@@ -31,12 +32,21 @@ const FALLBACK_PALETTES_RGB: readonly PaletteTriplet[] = [
   ],
 ];
 
-const paletteCache = new Map<string, PaletteTriplet>();
+const paletteCache = new Map<
+  string,
+  { triplet: PaletteTriplet; quad: PaletteQuad; luma: number }
+>();
 
 let liveRgb: PaletteTriplet = [
   [58, 58, 66],
   [38, 38, 44],
   [16, 16, 20],
+];
+let liveQuad: PaletteQuad = [
+  [58, 58, 66],
+  [48, 48, 55],
+  [38, 38, 44],
+  [18, 18, 22],
 ];
 let liveLuminance = 0.45;
 let paletteAnimRafId = 0;
@@ -121,10 +131,20 @@ function fallbackPaletteForTrack(track: Track | null): PaletteTriplet {
   return FALLBACK_PALETTES_RGB[idx] ?? FALLBACK_PALETTES_RGB[0]!;
 }
 
+function tripletToDefaultQuad(p: PaletteTriplet): PaletteQuad {
+  const mid: RgbTriple = [
+    Math.round((p[0][0] + p[1][0]) * 0.5),
+    Math.round((p[0][1] + p[1][1]) * 0.5),
+    Math.round((p[0][2] + p[1][2]) * 0.5),
+  ];
+  return [p[0], p[1], mid, p[2]];
+}
+
 function transitionToPalette(
   target: PaletteTriplet,
   durationMs: number,
-  targetLuma?: number
+  targetLuma?: number,
+  targetQuad?: PaletteQuad
 ): void {
   if (paletteAnimRafId && typeof cancelAnimationFrame === 'function') {
     cancelAnimationFrame(paletteAnimRafId);
@@ -135,6 +155,7 @@ function transitionToPalette(
     typeof targetLuma === 'number' && Number.isFinite(targetLuma)
       ? Math.max(0.15, Math.min(1, targetLuma))
       : liveLuminance;
+  const resolvedTargetQuad = targetQuad ?? tripletToDefaultQuad(target);
 
   const reduced =
     typeof document !== 'undefined' &&
@@ -142,6 +163,12 @@ function transitionToPalette(
 
   if (durationMs <= 0 || reduced || typeof requestAnimationFrame !== 'function') {
     liveLuminance = nextLuma;
+    liveQuad = [
+      [...resolvedTargetQuad[0]],
+      [...resolvedTargetQuad[1]],
+      [...resolvedTargetQuad[2]],
+      [...resolvedTargetQuad[3]],
+    ];
     applyRgbTripletToRoot(target);
     return;
   }
@@ -152,6 +179,12 @@ function transitionToPalette(
     [liveRgb[1][0], liveRgb[1][1], liveRgb[1][2]],
     [liveRgb[2][0], liveRgb[2][1], liveRgb[2][2]],
   ];
+  const fromQuad: PaletteQuad = [
+    [liveQuad[0][0], liveQuad[0][1], liveQuad[0][2]],
+    [liveQuad[1][0], liveQuad[1][1], liveQuad[1][2]],
+    [liveQuad[2][0], liveQuad[2][1], liveQuad[2][2]],
+    [liveQuad[3][0], liveQuad[3][1], liveQuad[3][2]],
+  ];
   const startMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
   let lastPaintMs = -Infinity;
 
@@ -161,6 +194,28 @@ function transitionToPalette(
       lastPaintMs = now;
       const lerp = (a: number, b: number) => a + (b - a) * rawT;
       liveLuminance = lerp(fromLuma, nextLuma);
+      liveQuad = [
+        [
+          lerp(fromQuad[0][0], resolvedTargetQuad[0][0]),
+          lerp(fromQuad[0][1], resolvedTargetQuad[0][1]),
+          lerp(fromQuad[0][2], resolvedTargetQuad[0][2]),
+        ],
+        [
+          lerp(fromQuad[1][0], resolvedTargetQuad[1][0]),
+          lerp(fromQuad[1][1], resolvedTargetQuad[1][1]),
+          lerp(fromQuad[1][2], resolvedTargetQuad[1][2]),
+        ],
+        [
+          lerp(fromQuad[2][0], resolvedTargetQuad[2][0]),
+          lerp(fromQuad[2][1], resolvedTargetQuad[2][1]),
+          lerp(fromQuad[2][2], resolvedTargetQuad[2][2]),
+        ],
+        [
+          lerp(fromQuad[3][0], resolvedTargetQuad[3][0]),
+          lerp(fromQuad[3][1], resolvedTargetQuad[3][1]),
+          lerp(fromQuad[3][2], resolvedTargetQuad[3][2]),
+        ],
+      ];
       applyRgbTripletToRoot([
         [lerp(from[0][0], target[0][0]), lerp(from[0][1], target[0][1]), lerp(from[0][2], target[0][2])],
         [lerp(from[1][0], target[1][0]), lerp(from[1][1], target[1][1]), lerp(from[1][2], target[1][2])],
@@ -186,6 +241,15 @@ export function getLiveAmbientRgb(): PaletteTriplet {
     [liveRgb[0][0], liveRgb[0][1], liveRgb[0][2]],
     [liveRgb[1][0], liveRgb[1][1], liveRgb[1][2]],
     [liveRgb[2][0], liveRgb[2][1], liveRgb[2][2]],
+  ];
+}
+
+export function getLiveAmbientQuad(): PaletteQuad {
+  return [
+    [liveQuad[0][0], liveQuad[0][1], liveQuad[0][2]],
+    [liveQuad[1][0], liveQuad[1][1], liveQuad[1][2]],
+    [liveQuad[2][0], liveQuad[2][1], liveQuad[2][2]],
+    [liveQuad[3][0], liveQuad[3][1], liveQuad[3][2]],
   ];
 }
 
@@ -320,7 +384,7 @@ export function prebakeMobileBackdrop(url?: string | null, loadedImg?: HTMLImage
 
 export function getCachedPaletteCss(coverUrl?: string | null): [string, string, string] {
   const cached = coverUrl ? paletteCache.get(coverUrl) : undefined;
-  const p = cached ?? liveRgb;
+  const p = cached?.triplet ?? liveRgb;
   return [rgbCss(p[0]), rgbCss(p[1]), rgbCss(p[2])];
 }
 
@@ -348,10 +412,148 @@ export function trimBackdropMemoryCaches(): void {
   }
 }
 
+function toneDownExtremeNeon(rgb: RgbTriple): RgbTriple {
+  const [h, s, l] = rgbToHsl(rgb[0], rgb[1], rgb[2]);
+  const naturalSatPct = Math.min(68, Math.round(s * 100));
+  const boundedLumaPct = Math.max(12, Math.min(76, Math.round(l * 100)));
+  return hslToRgb(h, naturalSatPct, boundedLumaPct);
+}
+
+function rgbDist(a: RgbTriple, b: RgbTriple): number {
+  const dr = a[0] - b[0];
+  const dg = a[1] - b[1];
+  const db = a[2] - b[2];
+  return Math.sqrt(dr * dr + dg * dg + db * db);
+}
+
 /**
- * Extracts vibrant harmonious ambient colors from the track cover and interpolates
- * `--pm-ambient-1/2/3` strictly linearly over `durationMs` (0->10->20->...->100)
- * so backdrop color shifts are steady and seamless without abrupt jumps.
+ * Quantizes the cover into a 5x5x5 color space to extract up to 4 real tones
+ * proportional to cover area + visual identity, never inflating pastel/neutral covers into neon.
+ */
+function extractCoverEssenceQuad(data: Uint8ClampedArray): {
+  quad: PaletteQuad;
+  avgL: number;
+} {
+  const buckets = new Map<
+    number,
+    { sumR: number; sumG: number; sumB: number; count: number }
+  >();
+  let totalR = 0;
+  let totalG = 0;
+  let totalB = 0;
+  let totalCount = 0;
+
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i] ?? 0;
+    const g = data[i + 1] ?? 0;
+    const b = data[i + 2] ?? 0;
+    const a = data[i + 3] ?? 255;
+    if (a < 180) continue;
+    totalR += r;
+    totalG += g;
+    totalB += b;
+    totalCount++;
+
+    const qr = Math.min(4, Math.floor(r / 51));
+    const qg = Math.min(4, Math.floor(g / 51));
+    const qb = Math.min(4, Math.floor(b / 51));
+    const key = qr * 25 + qg * 5 + qb;
+    const existing = buckets.get(key);
+    if (existing) {
+      existing.sumR += r;
+      existing.sumG += g;
+      existing.sumB += b;
+      existing.count++;
+    } else {
+      buckets.set(key, { sumR: r, sumG: g, sumB: b, count: 1 });
+    }
+  }
+
+  if (totalCount === 0) {
+    return {
+      quad: [
+        [58, 58, 66],
+        [48, 48, 55],
+        [38, 38, 44],
+        [18, 18, 22],
+      ],
+      avgL: 0.45,
+    };
+  }
+
+  const avgRgb: RgbTriple = [totalR / totalCount, totalG / totalCount, totalB / totalCount];
+  const [, , avgL] = rgbToHsl(avgRgb[0], avgRgb[1], avgRgb[2]);
+
+  const ranked = Array.from(buckets.values())
+    .map((b) => {
+      const rgb: RgbTriple = [
+        Math.round(b.sumR / b.count),
+        Math.round(b.sumG / b.count),
+        Math.round(b.sumB / b.count),
+      ];
+      const [, sat, luma] = rgbToHsl(rgb[0], rgb[1], rgb[2]);
+      const prominence = b.count * (0.72 + sat * 0.45);
+      return {
+        rgb: toneDownExtremeNeon(rgb),
+        luma,
+        prominence,
+      };
+    })
+    .sort((a, b) => b.prominence - a.prominence);
+
+  const chosen: Array<{ rgb: RgbTriple; luma: number; prominence: number }> = [];
+  for (const minDist of [38, 20, 0]) {
+    for (const item of ranked) {
+      if (chosen.length >= 4) break;
+      if (chosen.some((c) => rgbDist(c.rgb, item.rgb) < minDist && minDist > 0)) continue;
+      if (minDist === 0 && chosen.includes(item)) continue;
+      chosen.push(item);
+    }
+    if (chosen.length >= 4) break;
+  }
+
+  // Minimalist / monochrome covers: fill remaining slots with authentic tonal steps from cover average
+  const baseTone = toneDownExtremeNeon(avgRgb);
+  const [baseH, baseS, baseL] = rgbToHsl(baseTone[0], baseTone[1], baseTone[2]);
+  const mutedSatPct = Math.min(40, Math.round(baseS * 100));
+  const tonalFallbackLumas = [
+    Math.min(72, Math.max(28, Math.round(baseL * 100) + 12)),
+    Math.min(62, Math.max(22, Math.round(baseL * 100))),
+    Math.min(50, Math.max(16, Math.round(baseL * 100) - 10)),
+    Math.min(34, Math.max(11, Math.round(baseL * 100) - 22)),
+  ];
+  let fallbackIdx = 0;
+  while (chosen.length < 4) {
+    const stepL = tonalFallbackLumas[fallbackIdx % tonalFallbackLumas.length]!;
+    fallbackIdx++;
+    chosen.push({
+      rgb: hslToRgb(baseH, mutedSatPct, stepL),
+      luma: stepL / 100,
+      prominence: 0,
+    });
+  }
+
+  // Deepest tone goes in slot 4 for organic edge grounding; remaining 3 ordered by cover prominence
+  let deepestIdx = 0;
+  for (let i = 1; i < chosen.length; i++) {
+    if (chosen[i]!.luma < chosen[deepestIdx]!.luma) {
+      deepestIdx = i;
+    }
+  }
+  const deepest = chosen[deepestIdx]!.rgb;
+  const others = chosen.filter((_, i) => i !== deepestIdx).map((c) => c.rgb);
+  const quad: PaletteQuad = [
+    others[0] ?? baseTone,
+    others[1] ?? others[0] ?? baseTone,
+    others[2] ?? others[1] ?? others[0] ?? baseTone,
+    deepest,
+  ];
+  return { quad, avgL };
+}
+
+/**
+ * Extracts faithful harmonious cover colors (4 real cover tones + luminance) and interpolates
+ * `--pm-ambient-1/2/3` cleanly over `durationMs` so backdrop shifts match the artwork essence.
  */
 export function animateAmbientPaletteFromCover(track: Track | null, durationMs = 1100): void {
   if (typeof document === 'undefined') return;
@@ -366,7 +568,7 @@ export function animateAmbientPaletteFromCover(track: Track | null, durationMs =
 
   const cached = paletteCache.get(imgUrl);
   if (cached) {
-    transitionToPalette(cached, durationMs);
+    transitionToPalette(cached.triplet, durationMs, cached.luma, cached.quad);
     return;
   }
 
@@ -393,72 +595,14 @@ export function animateAmbientPaletteFromCover(track: Track | null, durationMs =
         ctx.drawImage(img, 0, 0, 24, 24);
         const { data } = ctx.getImageData(0, 0, 24, 24);
 
-        let bestH = 220;
-        let bestS = 0;
-        let bestScore = -1;
-        let secondH = 215;
-        let sumR = 0;
-        let sumG = 0;
-        let sumB = 0;
-        let count = 0;
-
-        for (let i = 0; i < data.length; i += 4) {
-          const r = data[i] ?? 0;
-          const g = data[i + 1] ?? 0;
-          const b = data[i + 2] ?? 0;
-          const a = data[i + 3] ?? 255;
-          if (a < 180) continue;
-          sumR += r;
-          sumG += g;
-          sumB += b;
-          count++;
-
-          const [h, s, l] = rgbToHsl(r, g, b);
-          if (l < 0.08 || l > 0.96) continue;
-          const vibrance = s * (1 - Math.abs(l - 0.54) * 1.1);
-          if (vibrance > bestScore) {
-            if (Math.abs(h - bestH) > 28) secondH = bestH;
-            bestScore = vibrance;
-            bestH = h;
-            bestS = s;
-          }
+        const { quad, avgL } = extractCoverEssenceQuad(data);
+        const extracted: PaletteTriplet = [quad[0], quad[1], quad[3]];
+        paletteCache.set(imgUrl, { triplet: extracted, quad, luma: avgL });
+        if (paletteCache.size > 32) {
+          const oldest = paletteCache.keys().next().value;
+          if (oldest) paletteCache.delete(oldest);
         }
-
-        if (count > 0) {
-          const [avgH, avgS, avgL] = rgbToHsl(sumR / count, sumG / count, sumB / count);
-          const clampPct = (v: number, lo: number, hi: number) =>
-            Math.max(lo, Math.min(hi, Math.round(v)));
-          let extracted: PaletteTriplet;
-          if (bestScore > 0.14) {
-            const sat1 = Math.min(72, Math.max(26, Math.round(bestS * 100)));
-            const sat2 = Math.min(66, Math.max(22, Math.round(sat1 * 0.9)));
-            const secondary = Math.abs(secondH - bestH) > 25 ? secondH : avgH + 30;
-            const l1 = clampPct(44 + avgL * 32, 46, 72);
-            const l2 = clampPct(32 + avgL * 28, 34, 60);
-            const l3 = clampPct(16 + avgL * 22, 16, 36);
-            extracted = [
-              hslToRgb(bestH, sat1, l1),
-              hslToRgb(secondary, sat2, l2),
-              hslToRgb(bestH, Math.min(48, Math.round(sat1 * 0.65)), l3),
-            ];
-          } else {
-            const mutedSat = Math.min(20, Math.round(avgS * 100));
-            const l1 = clampPct(38 + avgL * 38, 40, 76);
-            const l2 = clampPct(28 + avgL * 34, 30, 64);
-            const l3 = clampPct(15 + avgL * 26, 15, 40);
-            extracted = [
-              hslToRgb(avgH, mutedSat, l1),
-              hslToRgb(avgH, Math.max(4, Math.round(mutedSat * 0.75)), l2),
-              hslToRgb(avgH, Math.max(3, Math.round(mutedSat * 0.5)), l3),
-            ];
-          }
-          paletteCache.set(imgUrl, extracted);
-          if (paletteCache.size > 32) {
-            const oldest = paletteCache.keys().next().value;
-            if (oldest) paletteCache.delete(oldest);
-          }
-          transitionToPalette(extracted, remainingMs, avgL);
-        }
+        transitionToPalette(extracted, remainingMs, avgL, quad);
       } catch {
         transitionToPalette(fallback, remainingMs);
       }

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import {
   getLiveAmbientLuminance,
-  getLiveAmbientRgb,
+  getLiveAmbientQuad,
   type RgbTriple,
 } from '../utils/cover-color.ts';
 
@@ -31,6 +31,7 @@ uniform vec2 u_res;
 uniform vec3 u_c1;
 uniform vec3 u_c2;
 uniform vec3 u_c3;
+uniform vec3 u_c4;
 uniform float u_luma;
 
 float hash(vec2 p) {
@@ -60,10 +61,10 @@ float fbm(vec2 p) {
   return v;
 }
 
-vec3 boostVivid(vec3 c, float luma) {
+vec3 naturalTone(vec3 c, float luma) {
   float l = dot(c, vec3(0.299, 0.587, 0.114));
-  float lift = 1.18 + luma * 0.24;
-  return clamp(mix(vec3(l), c, 1.45) * lift, 0.0, 1.0);
+  float lift = 0.96 + luma * 0.12;
+  return clamp(mix(vec3(l), c, 1.06) * lift, 0.0, 1.0);
 }
 
 void main() {
@@ -79,21 +80,24 @@ void main() {
   );
   float f = fbm(uv + 2.1 * r);
 
-  vec3 c1 = boostVivid(u_c1, u_luma);
-  vec3 c2 = boostVivid(u_c2, u_luma);
-  vec3 c3 = clamp(mix(u_c3, c1, 0.32) * (1.08 + u_luma * 0.26), 0.0, 1.0);
-  vec3 comp = mix(c3, c1, smoothstep(0.14, 0.68, f));
-  comp = mix(comp, c2, smoothstep(0.26, 0.84, length(q) * 0.72));
-  float ridge = smoothstep(0.56, 0.86, abs(q.x - q.y) + 0.32 * f);
-  comp += ridge * mix(c1, c2, 0.5) * (0.28 + u_luma * 0.12);
+  vec3 c1 = naturalTone(u_c1, u_luma);
+  vec3 c2 = naturalTone(u_c2, u_luma);
+  vec3 c3 = naturalTone(u_c3, u_luma);
+  vec3 c4 = naturalTone(u_c4, u_luma);
 
-  float vig = 1.0 - smoothstep(0.38, 1.24, length(v_uv - 0.5) * 1.12);
-  comp *= mix(0.76, 1.02, vig);
+  vec3 comp = mix(c4, c1, smoothstep(0.14, 0.68, f));
+  comp = mix(comp, c2, smoothstep(0.24, 0.82, length(q) * 0.74));
+  comp = mix(comp, c3, smoothstep(0.32, 0.84, r.x * 0.6 + r.y * 0.4) * 0.72);
+  float ridge = smoothstep(0.58, 0.88, abs(q.x - q.y) + 0.3 * f);
+  comp += ridge * mix(c1, c3, 0.5) * 0.14;
+
+  float vig = 1.0 - smoothstep(0.42, 1.24, length(v_uv - 0.5) * 1.12);
+  comp *= mix(0.8, 1.0, vig);
   gl_FragColor = vec4(clamp(comp, 0.0, 1.0), 1.0);
 }
 `;
 
-// Softly blurred irregular organic tie-dye kaleidoscope with continuous fluid motion (luminous, never overly dark)
+// Softly blurred irregular organic tie-dye kaleidoscope faithful to real cover essence
 const PULSE_FRAGMENT_SRC = `
 precision mediump float;
 varying vec2 v_uv;
@@ -102,6 +106,7 @@ uniform vec2 u_res;
 uniform vec3 u_c1;
 uniform vec3 u_c2;
 uniform vec3 u_c3;
+uniform vec3 u_c4;
 uniform float u_luma;
 
 float hash(vec2 p) {
@@ -131,10 +136,10 @@ float fbm(vec2 p) {
   return v;
 }
 
-vec3 boostVivid(vec3 c, float luma) {
+vec3 naturalTone(vec3 c, float luma) {
   float l = dot(c, vec3(0.299, 0.587, 0.114));
-  float lift = 1.2 + luma * 0.24;
-  return clamp(mix(vec3(l), c, 1.54) * lift, 0.0, 1.0);
+  float lift = 0.96 + luma * 0.12;
+  return clamp(mix(vec3(l), c, 1.06) * lift, 0.0, 1.0);
 }
 
 void main() {
@@ -157,22 +162,24 @@ void main() {
   float swirlB = fbm(kPos * 1.35 - vec2(t * 0.38, swirlA * 1.1) + vec2(4.1, 1.9));
   float ringWave = 0.5 + 0.5 * sin(breathR * 6.2 - t * 2.0 - swirlA * 2.6);
 
-  vec3 c1 = boostVivid(u_c1, u_luma);
-  vec3 c2 = boostVivid(u_c2, u_luma);
-  vec3 cGlow = mix(c1, vec3(1.0, 0.94, 0.98) * 0.92, 0.32);
-  vec3 cDeep = clamp(mix(u_c3, c2, 0.38) * (1.02 + u_luma * 0.3), 0.0, 1.0);
+  vec3 c1 = naturalTone(u_c1, u_luma);
+  vec3 c2 = naturalTone(u_c2, u_luma);
+  vec3 c3 = naturalTone(u_c3, u_luma);
+  vec3 c4 = naturalTone(u_c4, u_luma);
+  vec3 cGlow = mix(c2, c3, 0.5);
 
-  vec3 col = mix(cDeep, c1, smoothstep(0.14, 0.74, swirlA));
+  vec3 col = mix(c4, c1, smoothstep(0.14, 0.74, swirlA));
   col = mix(col, c2, smoothstep(0.24, 0.82, swirlB));
-  col += cGlow * pow(ringWave, 1.8) * (0.26 + u_luma * 0.1);
+  col = mix(col, c3, smoothstep(0.22, 0.86, wobble) * 0.65);
+  col += cGlow * pow(ringWave, 2.0) * 0.16;
 
-  float coreSoft = 1.0 - smoothstep(0.18, 1.18, rawR);
-  col *= mix(0.72, 1.04, coreSoft);
+  float coreSoft = 1.0 - smoothstep(0.2, 1.2, rawR);
+  col *= mix(0.78, 1.0, coreSoft);
   gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }
 `;
 
-function boostRgb([r, g, b]: RgbTriple, sat = 1.48, mult = 1.2): RgbTriple {
+function toneRgb([r, g, b]: RgbTriple, sat = 1.06, mult = 1.0): RgbTriple {
   const luma = r * 0.299 + g * 0.587 + b * 0.114;
   return [
     Math.max(0, Math.min(255, Math.round((luma + (r - luma) * sat) * mult))),
@@ -218,6 +225,7 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = ({
     let uC1: WebGLUniformLocation | null = null;
     let uC2: WebGLUniformLocation | null = null;
     let uC3: WebGLUniformLocation | null = null;
+    let uC4: WebGLUniformLocation | null = null;
     let uLuma: WebGLUniformLocation | null = null;
 
     try {
@@ -257,6 +265,7 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = ({
               uC1 = gl.getUniformLocation(prog, 'u_c1');
               uC2 = gl.getUniformLocation(prog, 'u_c2');
               uC3 = gl.getUniformLocation(prog, 'u_c3');
+              uC4 = gl.getUniformLocation(prog, 'u_c4');
               uLuma = gl.getUniformLocation(prog, 'u_luma');
             } else {
               gl = null;
@@ -330,7 +339,7 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = ({
         accumTimeSec += dt * (isPlayingRef.current ? 1.0 : 0.35);
       }
 
-      const [c1Raw, c2Raw, c3Raw] = getLiveAmbientRgb();
+      const [c1Raw, c2Raw, c3Raw, c4Raw] = getLiveAmbientQuad();
       const coverLuma = getLiveAmbientLuminance();
       const t = accumTimeSec;
 
@@ -342,14 +351,18 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = ({
         gl.uniform3f(uC1, c1Raw[0] / 255, c1Raw[1] / 255, c1Raw[2] / 255);
         gl.uniform3f(uC2, c2Raw[0] / 255, c2Raw[1] / 255, c2Raw[2] / 255);
         gl.uniform3f(uC3, c3Raw[0] / 255, c3Raw[1] / 255, c3Raw[2] / 255);
+        if (uC4) gl.uniform3f(uC4, c4Raw[0] / 255, c4Raw[1] / 255, c4Raw[2] / 255);
         if (uLuma) gl.uniform1f(uLuma, coverLuma);
         gl.drawArrays(gl.TRIANGLES, 0, 6);
       } else if (ctx2d) {
         const w = canvas.width;
         const h = canvas.height;
-        const vivid1 = boostRgb(c1Raw, 1.5, 1.24 + coverLuma * 0.18);
-        const vivid2 = boostRgb(c2Raw, 1.46, 1.2 + coverLuma * 0.18);
-        const baseRgb = boostRgb(c3Raw, 1.15, 1.25 + coverLuma * 0.25);
+        const mult = 0.96 + coverLuma * 0.12;
+        const t1 = toneRgb(c1Raw, 1.06, mult);
+        const t2 = toneRgb(c2Raw, 1.06, mult);
+        const t3 = toneRgb(c3Raw, 1.04, mult);
+        const baseRgb = toneRgb(c4Raw, 1.04, mult);
+        const paletteList = [t1, t2, t3];
         const curStyle = styleRef.current;
 
         ctx2d.globalCompositeOperation = 'source-over';
@@ -361,20 +374,20 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = ({
             const ang = t * (0.28 + i * 0.07) + i * 1.05;
             const cx = w * (0.5 + 0.34 * Math.cos(ang));
             const cy = h * (0.5 + 0.32 * Math.sin(ang * 1.25));
-            const rad = Math.max(w, h) * (0.34 + 0.1 * Math.sin(t * 0.5 + i));
-            const col = i % 2 === 0 ? vivid1 : vivid2;
+            const rad = Math.max(w, h) * (0.38 + 0.1 * Math.sin(t * 0.5 + i));
+            const col = paletteList[i % 3]!;
             const grad = ctx2d.createRadialGradient(cx, cy, 0, cx, cy, rad);
-            grad.addColorStop(0, rgbStr(col, 0.88));
-            grad.addColorStop(0.55, rgbStr(col, 0.38));
+            grad.addColorStop(0, rgbStr(col, 0.62));
+            grad.addColorStop(0.58, rgbStr(col, 0.24));
             grad.addColorStop(1, rgbStr(col, 0));
-            ctx2d.globalCompositeOperation = i % 2 === 0 ? 'screen' : 'lighter';
+            ctx2d.globalCompositeOperation = 'source-over';
             ctx2d.fillStyle = grad;
             ctx2d.fillRect(0, 0, w, h);
           }
         } else {
           ctx2d.save();
           ctx2d.filter = 'blur(26px)';
-          ctx2d.globalCompositeOperation = 'screen';
+          ctx2d.globalCompositeOperation = 'source-over';
           const cx = w * 0.5;
           const cy = h * 0.5;
           const lobes = 6;
@@ -383,11 +396,11 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = ({
             const dist = Math.min(w, h) * (0.16 + 0.08 * Math.sin(t * 0.6 + k * 1.7));
             const lx = cx + Math.cos(ang) * dist;
             const ly = cy + Math.sin(ang) * dist;
-            const lr = Math.max(w, h) * (0.38 + 0.06 * Math.cos(t * 0.5 + k));
-            const col = k % 2 === 0 ? vivid1 : vivid2;
+            const lr = Math.max(w, h) * (0.4 + 0.06 * Math.cos(t * 0.5 + k));
+            const col = paletteList[k % 3]!;
             const g = ctx2d.createRadialGradient(lx, ly, 0, lx, ly, lr);
-            g.addColorStop(0, rgbStr(col, 0.78));
-            g.addColorStop(0.55, rgbStr(col, 0.3));
+            g.addColorStop(0, rgbStr(col, 0.58));
+            g.addColorStop(0.58, rgbStr(col, 0.22));
             g.addColorStop(1, rgbStr(col, 0));
             ctx2d.fillStyle = g;
             ctx2d.fillRect(0, 0, w, h);

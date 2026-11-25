@@ -1378,7 +1378,88 @@ describe('@pmusic/providers', () => {
       'https://i.scdn.co/image/ab6761610000e5eb9f52199eefb0ccb6f69afe2c'
     );
     expect(detail.bannerUrl).toBe(
-      'https://yt3.googleusercontent.com/cruzzi_real=w1440-h600-p-l90-rj'
+      'https://i.scdn.co/image/ab6761610000e5eb9f52199eefb0ccb6f69afe2c'
     );
+  });
+
+  it('resolves Wikidata P1902 Spotify oEmbed HD portraits with homonym guard, Apple Music fallback on 404, and enriches search()', async () => {
+    const mockFetch = (async (input: RequestInfo | URL) => {
+      const u = String(input);
+      if (u.includes('wikidata.org/w/api.php') && u.includes('action=wbsearchentities')) {
+        return new Response(
+          JSON.stringify({ search: [{ id: 'QwrongPantera' }, { id: 'QrealLaPantera' }] }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('wikidata.org/w/api.php') && u.includes('action=wbgetentities')) {
+        return new Response(
+          JSON.stringify({
+            entities: {
+              QwrongPantera: {
+                labels: { en: { value: 'Pantera' } },
+                claims: { P1902: [{ mainsnak: { datavalue: { value: '14pVkFUHDL207LzLHtSA18' } } }] },
+              },
+              QrealLaPantera: {
+                labels: { es: { value: 'La Pantera' } },
+                claims: { P1902: [{ mainsnak: { datavalue: { value: '0IEzMvarfVycBJAXjjEZOL' } } }] },
+              },
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('open.spotify.com/oembed') && u.includes('0IEzMvarfVycBJAXjjEZOL')) {
+        return new Response(
+          JSON.stringify({
+            title: 'La Pantera',
+            thumbnail_url: 'https://image-cdn-fa.spotifycdn.com/image/ab676161000051740445559a074ca4ac92c4434f',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('itunes.apple.com/search')) {
+        return new Response(
+          JSON.stringify({
+            results: [
+              { artistName: 'JC Reyes', artistLinkUrl: 'https://music.apple.com/es/artist/jc-reyes/12345' },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('music.apple.com/es/artist/jc-reyes/12345')) {
+        return new Response(
+          '<html><head><meta property="og:image" content="https://is1-ssl.mzstatic.com/image/thumb/Features211/v4/fd/9b/d1/mza_8866.jpg/1200x630cw.png"></head></html>',
+          { status: 200, headers: { 'content-type': 'text/html' } }
+        );
+      }
+      if (u.includes('/search/artist')) {
+        return new Response(
+          JSON.stringify({
+            data: [{ id: 7524936, name: 'La Pantera', nb_fan: 500000, picture_big: 'https://dz/old.jpg' }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('/search/')) {
+        return new Response(JSON.stringify({ data: [] }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({ data: [] }), { status: 404 });
+    }) as typeof fetch;
+
+    const catalog = new DeezerCatalog(mockFetch);
+    const spPortrait = await catalog.fetchSpotifyArtistAvatar('La Pantera');
+    expect(spPortrait).toBe('https://i.scdn.co/image/ab6761610000e5eb0445559a074ca4ac92c4434f');
+
+    const bundle = await catalog.search('La Pantera', 'artist');
+    expect(bundle.artists[0]?.thumbnailUrl).toBe(
+      'https://i.scdn.co/image/ab6761610000e5eb0445559a074ca4ac92c4434f'
+    );
+
+    const appleVisuals = await catalog.fetchAppleMusicArtistVisuals('JC Reyes');
+    expect(appleVisuals).toEqual({
+      avatarUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Features211/v4/fd/9b/d1/mza_8866.jpg/800x800cc.webp',
+      bannerUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Features211/v4/fd/9b/d1/mza_8866.jpg/1200x1200bb.jpg',
+    });
   });
 });

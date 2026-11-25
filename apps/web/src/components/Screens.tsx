@@ -746,40 +746,102 @@ export const DetailViewPanel: React.FC = () => {
               : 'relative -mx-4 flex min-h-0 flex-col justify-end overflow-hidden bg-[var(--pm-bg-canvas)] px-5 pt-[calc(4.7rem+var(--pm-safe-top,env(safe-area-inset-top)))] pb-3 sm:-mx-7 sm:px-7 sm:pt-7 sm:pb-3'
           }
         >
-          {activeHeroImage && (
-            <>
-              <img
-                src={activeHeroImage}
-                alt=""
-                aria-hidden="true"
-                referrerPolicy="no-referrer"
-                decoding="async"
-                fetchPriority="high"
-                onError={() => setHeroCandidateIdx((i) => i + 1)}
-                className="pointer-events-none absolute inset-0 h-full w-full scale-[1.02] object-cover object-[50%_22%]"
-              />
-              <div
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-0"
-                style={{
-                  background:
-                    'linear-gradient(180deg, color-mix(in srgb, var(--pm-bg-canvas) 18%, transparent) 0%, transparent 24%, color-mix(in srgb, var(--pm-bg-canvas) 14%, transparent) 46%, color-mix(in srgb, var(--pm-bg-canvas) 52%, transparent) 66%, color-mix(in srgb, var(--pm-bg-canvas) 84%, transparent) 82%, color-mix(in srgb, var(--pm-bg-canvas) 97%, transparent) 93%, var(--pm-bg-canvas) 100%)',
-                }}
-              />
-              <div
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-0"
-                style={{
-                  background:
-                    'linear-gradient(90deg, color-mix(in srgb, var(--pm-bg-canvas) 62%, transparent) 0%, transparent 55%)',
-                }}
-              />
-              <div
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-x-0 bottom-0 h-2 bg-[var(--pm-bg-canvas)]"
-              />
-            </>
-          )}
+          {activeHeroImage &&
+            (/i\.scdn\.co\/image\/ab676161|spotifycdn\.com\/image\/ab676161|mzstatic\.com\/image\/thumb\/|dzcdn\.net\/images\/artist\//i.test(
+              activeHeroImage
+            ) ? (
+              <>
+                {/* Mobile portrait framing fits vertically naturally */}
+                <img
+                  src={activeHeroImage}
+                  alt=""
+                  aria-hidden="true"
+                  referrerPolicy="no-referrer"
+                  decoding="async"
+                  fetchPriority="high"
+                  onError={() => setHeroCandidateIdx((i) => i + 1)}
+                  className="pointer-events-none absolute inset-0 h-full w-full scale-[1.02] object-cover object-[50%_18%] sm:hidden"
+                />
+                {/* Desktop two-layer editorial portrait so Spotify/Apple artist photos never zoom-crop faces */}
+                <img
+                  src={activeHeroImage}
+                  alt=""
+                  aria-hidden="true"
+                  referrerPolicy="no-referrer"
+                  decoding="async"
+                  className="pointer-events-none hidden sm:block absolute inset-0 h-full w-full scale-110 object-cover object-[50%_24%] blur-[34px] brightness-[0.5] saturate-[1.3]"
+                />
+                <img
+                  src={activeHeroImage}
+                  alt=""
+                  aria-hidden="true"
+                  referrerPolicy="no-referrer"
+                  decoding="async"
+                  fetchPriority="high"
+                  onError={() => setHeroCandidateIdx((i) => i + 1)}
+                  className="pointer-events-none hidden sm:block absolute inset-y-0 right-[4%] lg:right-[8%] h-full w-[56%] max-w-[540px] object-cover object-[50%_18%]"
+                  style={{
+                    WebkitMaskImage:
+                      'linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.88) 18%, #000 34%, #000 78%, transparent 100%)',
+                    maskImage:
+                      'linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.88) 18%, #000 34%, #000 78%, transparent 100%)',
+                  }}
+                />
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0"
+                  style={{
+                    background:
+                      'linear-gradient(180deg, color-mix(in srgb, var(--pm-bg-canvas) 18%, transparent) 0%, transparent 24%, color-mix(in srgb, var(--pm-bg-canvas) 14%, transparent) 46%, color-mix(in srgb, var(--pm-bg-canvas) 52%, transparent) 66%, color-mix(in srgb, var(--pm-bg-canvas) 84%, transparent) 82%, color-mix(in srgb, var(--pm-bg-canvas) 97%, transparent) 93%, var(--pm-bg-canvas) 100%)',
+                  }}
+                />
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0"
+                  style={{
+                    background:
+                      'linear-gradient(90deg, color-mix(in srgb, var(--pm-bg-canvas) 62%, transparent) 0%, transparent 55%)',
+                  }}
+                />
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-x-0 bottom-0 h-2 bg-[var(--pm-bg-canvas)]"
+                />
+              </>
+            ) : (
+              <>
+                <img
+                  src={activeHeroImage}
+                  alt=""
+                  aria-hidden="true"
+                  referrerPolicy="no-referrer"
+                  decoding="async"
+                  fetchPriority="high"
+                  onError={() => setHeroCandidateIdx((i) => i + 1)}
+                  className="pointer-events-none absolute inset-0 h-full w-full scale-[1.02] object-cover object-[50%_22%]"
+                />
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0"
+                  style={{
+                    background:
+                      'linear-gradient(180deg, color-mix(in srgb, var(--pm-bg-canvas) 18%, transparent) 0%, transparent 24%, color-mix(in srgb, var(--pm-bg-canvas) 14%, transparent) 46%, color-mix(in srgb, var(--pm-bg-canvas) 52%, transparent) 66%, color-mix(in srgb, var(--pm-bg-canvas) 84%, transparent) 82%, color-mix(in srgb, var(--pm-bg-canvas) 97%, transparent) 93%, var(--pm-bg-canvas) 100%)',
+                  }}
+                />
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0"
+                  style={{
+                    background:
+                      'linear-gradient(90deg, color-mix(in srgb, var(--pm-bg-canvas) 62%, transparent) 0%, transparent 55%)',
+                  }}
+                />
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-x-0 bottom-0 h-2 bg-[var(--pm-bg-canvas)]"
+                />
+              </>
+            ))}
 
           <div className="relative z-10 flex items-end justify-between gap-4">
             <div className="min-w-0 flex-1 space-y-1.5">

@@ -518,10 +518,10 @@ describe('@pmusic/web UI', () => {
     );
     const inkImg = screen.getByAltText('Incoming') as HTMLImageElement;
     expect(inkImg.style.transform).toContain('scale(1.035');
-    expect(inkImg.style.opacity).toBe('0');
+    expect(inkImg.style.opacity).toBe('1');
     const inkContainer = screen.getByTestId('ink-bleed-cover');
     const fallbackImg = inkContainer.querySelector('img[aria-hidden="true"]') as HTMLImageElement | null;
-    expect(fallbackImg?.style.transform).toContain('scale(1.015');
+    expect(fallbackImg?.style.transform).toContain('scale(1');
     cleanup();
 
     // 3. mergeAccountTasteProfiles preserves desktop richness over cold mobile profile

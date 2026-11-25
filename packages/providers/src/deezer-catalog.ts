@@ -551,6 +551,16 @@ export class DeezerCatalog {
   private readonly inFlightAlbum = new Map<string, Promise<AlbumDetail>>();
   private readonly creditsCache = new Map<string, { at: number; credits: TrackCredits }>();
   private readonly spotifyAvatarCache = new Map<string, { at: number; url: string | null }>();
+  private readonly inFlightSpotifyAvatar = new Map<string, Promise<string | null>>();
+  private readonly appleArtistVisualsCache = new Map<
+    string,
+    { at: number; visuals: { avatarUrl: string; bannerUrl: string } | null }
+  >();
+  private readonly inFlightAppleVisuals = new Map<
+    string,
+    Promise<{ avatarUrl: string; bannerUrl: string } | null>
+  >();
+  private mbNextAllowedAtMs = 0;
 
   public constructor(fetchFn?: typeof fetch) {
     this.fetchFn = fetchFn ?? globalThis.fetch.bind(globalThis);
@@ -770,12 +780,18 @@ export class DeezerCatalog {
         }
       }
       const songs = await this.enrichTracks(rawUnique, songsInit, 12, signal);
+      const enrichedArtists = await this.enrichArtistListWithPreferredPortraits(
+        (artists.data ?? []).map((a: Json) => this.mapArtist(a)),
+        4,
+        850,
+        signal
+      );
       return {
         query,
         topResult: songs[0] ? { kind: 'song', item: songs[0] } : undefined,
         songs,
         videos: songs.slice(0, 4),
-        artists: (artists.data ?? []).map((a: Json) => this.mapArtist(a)),
+        artists: enrichedArtists,
         albums: (albums.data ?? []).map((a: Json) => this.mapAlbum(a)),
         playlists: (playlists.data ?? []).map((p: Json) => this.mapPlaylist(p)),
       };
@@ -796,7 +812,12 @@ export class DeezerCatalog {
         12,
         signal
       );
-      const artistList = (artists.data ?? []).map((a: Json) => this.mapArtist(a));
+      const artistList = await this.enrichArtistListWithPreferredPortraits(
+        (artists.data ?? []).map((a: Json) => this.mapArtist(a)),
+        4,
+        850,
+        signal
+      );
       return {
         query,
         topResult: songs[0]
@@ -1026,8 +1047,15 @@ export class DeezerCatalog {
       .sort((a: { score: number; idx: number }, b: { score: number; idx: number }) => b.score - a.score || a.idx - b.idx)
       .map((x: { album: AlbumSummary }) => x.album);
 
+    const rawArtistScore = artistList[0];
+    const enrichedArtistList = await this.enrichArtistListWithPreferredPortraits(
+      artistList,
+      3,
+      900,
+      signal
+    );
     const topSong = songList[0];
-    const topArtist = artistList[0];
+    const topArtist = enrichedArtistList[0] ?? rawArtistScore;
     const topAlbum = albumList[0];
 
     const normQ = normalizeSearchStr(rawQ);
@@ -1070,7 +1098,7 @@ export class DeezerCatalog {
       topResult,
       songs: songList,
       videos: songList.slice(0, 4),
-      artists: artistList,
+      artists: enrichedArtistList,
       albums: albumList,
       playlists: (playlists?.data ?? []).map((p: Json) => this.mapPlaylist(p)),
     };
@@ -1097,97 +1125,446 @@ export class DeezerCatalog {
       this.get('/chart/0/playlists?limit=10', signal),
     ]);
     const rawChartTracks = chartTracks.data ?? [];
-    const enrichedChartTracks = await this.enrichTracks(
-      rawChartTracks,
-      rawChartTracks.map((t: Json) => this.mapTrack(t)),
-      10,
-      signal
-    );
+    const [enrichedChartTracks, homeArtists] = await Promise.all([
+      this.enrichTracks(
+        rawChartTracks,
+        rawChartTracks.map((t: Json) => this.mapTrack(t)),
+        10,
+        signal
+      ),
+      this.enrichArtistListWithPreferredPortraits(
+        (chartArtists.data ?? []).map((a: Json) => this.mapArtist(a)),
+        4,
+        850,
+        signal
+      ),
+    ]);
     return {
       moods: ['Para ti', 'Tendencias', 'Reggaeton', 'Pop', 'Hip-Hop', 'Electrónica'],
       shelves: [
         { title: 'Éxitos del momento', items: enrichedChartTracks },
-        { title: 'Artistas del momento', items: (chartArtists.data ?? []).map((a: Json) => this.mapArtist(a)) },
+        { title: 'Artistas del momento', items: homeArtists },
         { title: 'Álbumes populares', items: (chartAlbums.data ?? []).map((a: Json) => this.mapAlbum(a)) },
         { title: 'Listas para descubrir', items: (chartPlaylists.data ?? []).map((p: Json) => this.mapPlaylist(p)) },
       ],
     } as HomeFeedResult;
   }
 
+  public async fetchSpotifyPortraitById(
+    spotifyId: string,
+    signal?: AbortSignal
+  ): Promise<string | null> {
+    const cleanId = spotifyId.trim();
+    if (!/^[A-Za-z0-9]{22}$/.test(cleanId)) return null;
+
+    // Primary: lightweight Spotify oEmbed endpoint (returns official ab676161 artist portrait)
+    try {
+      const oembedRes = await this.fetchFn(
+        `https://open.spotify.com/oembed?url=${encodeURIComponent(`https://open.spotify.com/artist/${cleanId}`)}`,
+        { headers: { Accept: 'application/json' }, signal }
+      );
+      if (oembedRes.ok) {
+        const oembed = (await oembedRes.json()) as { thumbnail_url?: string };
+        const rawThumb = String(oembed?.thumbnail_url ?? '').trim();
+        if (rawThumb.includes('ab676161')) {
+          const upgraded = rawThumb
+            .replace(
+              /^https:\/\/image-cdn-[a-z0-9]+\.spotifycdn\.com\/image\//i,
+              'https://i.scdn.co/image/'
+            )
+            .replace('ab67616100005174', 'ab6761610000e5eb')
+            .replace('ab6761610000f178', 'ab6761610000e5eb');
+          return upgraded;
+        }
+      }
+    } catch {
+      // fall through to open.spotify.com og:image
+    }
+
+    // Fallback: OpenGraph metadata on open.spotify.com/artist/<id>
+    try {
+      const spHtmlRes = await this.fetchFn(`https://open.spotify.com/artist/${cleanId}`, {
+        headers: { 'User-Agent': 'facebookexternalhit/1.1' },
+        signal,
+      });
+      if (!spHtmlRes.ok) return null;
+      const html = await spHtmlRes.text();
+      const ogImg =
+        html.match(/property=["']og:image["']\s+content=["'](https:\/\/i\.scdn\.co\/image\/ab676161[^"']+)["']/i)?.[1] ??
+        html.match(/content=["'](https:\/\/i\.scdn\.co\/image\/ab676161[^"']+)["']\s+property=["']og:image["']/i)?.[1] ??
+        null;
+      if (!ogImg || /download-page-image/i.test(ogImg)) return null;
+      return ogImg;
+    } catch {
+      return null;
+    }
+  }
+
+  private async waitForMusicBrainzSlot(signal?: AbortSignal): Promise<void> {
+    if (this.fetchFn !== globalThis.fetch) return;
+    const now = Date.now();
+    const waitMs = Math.max(0, this.mbNextAllowedAtMs - now);
+    this.mbNextAllowedAtMs = Math.max(now, this.mbNextAllowedAtMs) + 1150;
+    if (waitMs <= 0) return;
+    await new Promise<void>((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(new Error('Aborted'));
+        return;
+      }
+      const t = setTimeout(() => {
+        signal?.removeEventListener('abort', onAbort);
+        resolve();
+      }, waitMs);
+      const onAbort = () => {
+        clearTimeout(t);
+        reject(new Error('Aborted'));
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+
+  private buildArtistQueryCandidates(artistName: string): string[] {
+    const clean = artistName.trim();
+    if (!clean) return [];
+    const norm = normalizeSearchStr(clean);
+    const out = [clean];
+    if (norm === 'cruzzi') out.push('Cruz Cafuné');
+    else if (norm === 'cruz cafune') out.push('Cruzzi');
+    return out;
+  }
+
   public async fetchSpotifyArtistAvatar(
     artistName: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    options?: { allowMusicBrainz?: boolean }
   ): Promise<string | null> {
     const cleanName = artistName.trim();
     if (!cleanName) return null;
     const normKey = normalizeSearchStr(cleanName);
     const cached = this.spotifyAvatarCache.get(normKey);
-    if (cached && Date.now() - cached.at < 24 * 3600_000) {
-      return cached.url;
+    if (cached) {
+      const ttl = cached.url ? 24 * 3600_000 : 10 * 60_000;
+      if (Date.now() - cached.at < ttl) {
+        return cached.url;
+      }
     }
 
+    if (!signal) {
+      const pending = this.inFlightSpotifyAvatar.get(normKey);
+      if (pending) return pending;
+    }
+
+    const candidates = this.buildArtistQueryCandidates(cleanName);
+    const acceptedNorms = new Set(candidates.map((c) => normalizeSearchStr(c)));
+    const allowMusicBrainz = options?.allowMusicBrainz !== false;
+
+    const exec = (async (): Promise<string | null> => {
+      const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timer = ctrl ? setTimeout(() => ctrl.abort(), allowMusicBrainz ? 4800 : 2200) : null;
+      const onOuter = () => ctrl?.abort();
+      signal?.addEventListener('abort', onOuter, { once: true });
+      const effectiveSignal = ctrl?.signal ?? signal;
+
+      try {
+        const wdHeaders = {
+          Accept: 'application/json',
+          'User-Agent': 'pMusicDesktop/0.18.7 (https://github.com/pabloburgos/pMusic)',
+        };
+
+        // Tier 1: Wikidata P1902 (Spotify artist ID) — fast, high coverage, no strict 1-req/s throttle
+        for (const candName of candidates) {
+          try {
+            const wdSearchRes = await this.fetchFn(
+              `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(candName)}&language=es&format=json&limit=5`,
+              { headers: wdHeaders, signal: effectiveSignal }
+            );
+            if (!wdSearchRes.ok) continue;
+            const wdSearch = (await wdSearchRes.json()) as {
+              search?: Array<{ id?: string; label?: string }>;
+            };
+            const qids = (wdSearch?.search ?? [])
+              .map((item) => String(item?.id ?? '').trim())
+              .filter(Boolean);
+            if (qids.length === 0) continue;
+
+            const wdEntRes = await this.fetchFn(
+              `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${encodeURIComponent(qids.join('|'))}&props=claims|labels|aliases&languages=es|en&format=json`,
+              { headers: wdHeaders, signal: effectiveSignal }
+            );
+            if (!wdEntRes.ok) continue;
+            const wdEnt = (await wdEntRes.json()) as {
+              entities?: Record<
+                string,
+                {
+                  labels?: Record<string, { value?: string }>;
+                  aliases?: Record<string, Array<{ value?: string }>>;
+                  claims?: {
+                    P1902?: Array<{ mainsnak?: { datavalue?: { value?: string } } }>;
+                  };
+                }
+              >;
+            };
+
+            let matchedSpId: string | null = null;
+            for (const qid of qids) {
+              const entity = wdEnt?.entities?.[qid];
+              if (!entity) continue;
+              const labelNames = [
+                entity.labels?.es?.value ?? '',
+                entity.labels?.en?.value ?? '',
+                ...(entity.aliases?.es ?? []).map((a) => a.value ?? ''),
+                ...(entity.aliases?.en ?? []).map((a) => a.value ?? ''),
+              ].filter(Boolean);
+              const isExactArtist = labelNames.some((n) => acceptedNorms.has(normalizeSearchStr(n)));
+              if (!isExactArtist) continue;
+
+              const spId = String(
+                entity.claims?.P1902?.[0]?.mainsnak?.datavalue?.value ?? ''
+              ).trim();
+              if (/^[A-Za-z0-9]{22}$/.test(spId)) {
+                matchedSpId = spId;
+                break;
+              }
+            }
+
+            if (matchedSpId) {
+              const portraitUrl = await this.fetchSpotifyPortraitById(matchedSpId, effectiveSignal);
+              if (portraitUrl) {
+                this.spotifyAvatarCache.set(normKey, { at: Date.now(), url: portraitUrl });
+                if (this.spotifyAvatarCache.size > 160) {
+                  const oldest = this.spotifyAvatarCache.keys().next().value;
+                  if (oldest) this.spotifyAvatarCache.delete(oldest);
+                }
+                return portraitUrl;
+              }
+            }
+          } catch {
+            // continue to next candidate or tier
+          }
+        }
+
+        // Tier 2: Rate-limited MusicBrainz url-rels fallback
+        if (allowMusicBrainz) {
+          const mbHeaders = {
+            Accept: 'application/json',
+            'User-Agent': 'pMusicDesktop/0.18.7 ( https://github.com/pabloburgos/pMusic )',
+          };
+          for (const candName of candidates) {
+            try {
+              await this.waitForMusicBrainzSlot(effectiveSignal);
+              const searchRes = await this.fetchFn(
+                `https://musicbrainz.org/ws/2/artist?query=artist:${encodeURIComponent(`"${candName}"`)}&fmt=json&limit=3`,
+                { headers: mbHeaders, signal: effectiveSignal }
+              );
+              if (!searchRes.ok) continue;
+              const mbJson = (await searchRes.json()) as {
+                artists?: Array<{ id?: string; name?: string; score?: number }>;
+              };
+              const artistsList = Array.isArray(mbJson?.artists) ? mbJson.artists : [];
+              const bestMb = artistsList.find((ar) =>
+                acceptedNorms.has(normalizeSearchStr(String(ar.name ?? '')))
+              );
+              const mbId = bestMb?.id;
+              if (!mbId) continue;
+
+              await this.waitForMusicBrainzSlot(effectiveSignal);
+              const relRes = await this.fetchFn(
+                `https://musicbrainz.org/ws/2/artist/${encodeURIComponent(mbId)}?inc=url-rels&fmt=json`,
+                { headers: mbHeaders, signal: effectiveSignal }
+              );
+              if (!relRes.ok) continue;
+              const relJson = (await relRes.json()) as {
+                relations?: Array<{ url?: { resource?: string } }>;
+              };
+              const spUrl = (relJson?.relations ?? [])
+                .map((r) => String(r?.url?.resource ?? '').trim())
+                .find((u) => /https?:\/\/open\.spotify\.com\/artist\/([A-Za-z0-9]{22})/i.test(u));
+              const spId = spUrl?.match(/artist\/([A-Za-z0-9]{22})/i)?.[1];
+              if (!spId) continue;
+
+              const portraitUrl = await this.fetchSpotifyPortraitById(spId, effectiveSignal);
+              if (portraitUrl) {
+                this.spotifyAvatarCache.set(normKey, { at: Date.now(), url: portraitUrl });
+                if (this.spotifyAvatarCache.size > 160) {
+                  const oldest = this.spotifyAvatarCache.keys().next().value;
+                  if (oldest) this.spotifyAvatarCache.delete(oldest);
+                }
+                return portraitUrl;
+              }
+            } catch {
+              // continue to next candidate
+            }
+          }
+        }
+
+        this.spotifyAvatarCache.set(normKey, { at: Date.now(), url: null });
+        return null;
+      } catch {
+        return null;
+      } finally {
+        if (timer) clearTimeout(timer);
+        signal?.removeEventListener('abort', onOuter);
+      }
+    })();
+
+    if (!signal) {
+      this.inFlightSpotifyAvatar.set(normKey, exec);
+    }
+    try {
+      return await exec;
+    } finally {
+      this.inFlightSpotifyAvatar.delete(normKey);
+    }
+  }
+
+  public async fetchAppleMusicArtistVisuals(
+    artistName: string,
+    signal?: AbortSignal
+  ): Promise<{ avatarUrl: string; bannerUrl: string } | null> {
+    const cleanName = artistName.trim();
+    if (!cleanName) return null;
+    const normKey = normalizeSearchStr(cleanName);
+    const cached = this.appleArtistVisualsCache.get(normKey);
+    if (cached) {
+      const ttl = cached.visuals ? 24 * 3600_000 : 10 * 60_000;
+      if (Date.now() - cached.at < ttl) {
+        return cached.visuals;
+      }
+    }
+
+    if (!signal) {
+      const pending = this.inFlightAppleVisuals.get(normKey);
+      if (pending) return pending;
+    }
+
+    const candidates = this.buildArtistQueryCandidates(cleanName);
+    const acceptedNorms = new Set(candidates.map((c) => normalizeSearchStr(c)));
+
+    const exec = (async (): Promise<{ avatarUrl: string; bannerUrl: string } | null> => {
+      const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timer = ctrl ? setTimeout(() => ctrl.abort(), 2400) : null;
+      const onOuter = () => ctrl?.abort();
+      signal?.addEventListener('abort', onOuter, { once: true });
+      const effectiveSignal = ctrl?.signal ?? signal;
+
+      try {
+        for (const candName of candidates) {
+          const itunesRes = await this.fetchFn(
+            `https://itunes.apple.com/search?term=${encodeURIComponent(candName)}&entity=musicArtist&limit=5&country=ES`,
+            { signal: effectiveSignal }
+          );
+          if (!itunesRes.ok) continue;
+          const itunesJson = (await itunesRes.json()) as {
+            results?: Array<{ artistName?: string; artistLinkUrl?: string }>;
+          };
+          const match = (itunesJson?.results ?? []).find(
+            (r) =>
+              Boolean(r?.artistLinkUrl) &&
+              acceptedNorms.has(normalizeSearchStr(String(r?.artistName ?? '')))
+          );
+          const artistLinkUrl = match?.artistLinkUrl?.trim();
+          if (!artistLinkUrl) continue;
+
+          const amRes = await this.fetchFn(artistLinkUrl, {
+            headers: {
+              'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            },
+            signal: effectiveSignal,
+          });
+          if (!amRes.ok) continue;
+          const html = await amRes.text();
+          const rawOg =
+            html.match(/property=["']og:image["']\s+content=["'](https:\/\/is\d+-ssl\.mzstatic\.com\/image\/thumb\/[^"']+)["']/i)?.[1] ??
+            html.match(/content=["'](https:\/\/is\d+-ssl\.mzstatic\.com\/image\/thumb\/[^"']+)["']\s+property=["']og:image["']/i)?.[1] ??
+            null;
+          if (!rawOg) continue;
+
+          // Strip trailing size/cw OpenGraph badge segment so we get clean studio portrait crops
+          const base = rawOg.replace(/\/[^/]+$/, '');
+          if (!base.includes('mzstatic.com/image/thumb/')) continue;
+          const visuals = {
+            avatarUrl: `${base}/800x800cc.webp`,
+            bannerUrl: `${base}/1200x1200bb.jpg`,
+          };
+          this.appleArtistVisualsCache.set(normKey, { at: Date.now(), visuals });
+          if (this.appleArtistVisualsCache.size > 160) {
+            const oldest = this.appleArtistVisualsCache.keys().next().value;
+            if (oldest) this.appleArtistVisualsCache.delete(oldest);
+          }
+          return visuals;
+        }
+
+        this.appleArtistVisualsCache.set(normKey, { at: Date.now(), visuals: null });
+        return null;
+      } catch {
+        return null;
+      } finally {
+        if (timer) clearTimeout(timer);
+        signal?.removeEventListener('abort', onOuter);
+      }
+    })();
+
+    if (!signal) {
+      this.inFlightAppleVisuals.set(normKey, exec);
+    }
+    try {
+      return await exec;
+    } finally {
+      this.inFlightAppleVisuals.delete(normKey);
+    }
+  }
+
+  private async enrichArtistListWithPreferredPortraits(
+    artists: ArtistSummary[],
+    maxCount = 4,
+    timeoutMs = 900,
+    signal?: AbortSignal
+  ): Promise<ArtistSummary[]> {
+    if (artists.length === 0 || maxCount <= 0) return artists;
+    const count = Math.min(maxCount, artists.length);
+    const out = [...artists];
     const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const timer = ctrl ? setTimeout(() => ctrl.abort(), 1400) : null;
     const onOuter = () => ctrl?.abort();
     signal?.addEventListener('abort', onOuter, { once: true });
 
-    try {
-      const mbHeaders = {
-        Accept: 'application/json',
-        'User-Agent': 'pMusic/0.18.6 (https://pmusic.app)',
-      };
-      const searchRes = await this.fetchFn(
-        `https://musicbrainz.org/ws/2/artist?query=artist:${encodeURIComponent(`"${cleanName}"`)}&fmt=json&limit=3`,
-        { headers: mbHeaders, signal: ctrl?.signal ?? signal }
-      );
-      if (!searchRes.ok) return null;
-      const mbJson = (await searchRes.json()) as {
-        artists?: Array<{ id?: string; name?: string; score?: number }>;
-      };
-      const wantNorm = normalizeSearchStr(cleanName);
-      const artistsList = Array.isArray(mbJson?.artists) ? mbJson.artists : [];
-      const bestMb =
-        artistsList.find((ar) => normalizeSearchStr(String(ar.name ?? '')) === wantNorm) ??
-        artistsList[0];
-      const mbId = bestMb?.id;
-      if (!mbId) return null;
-
-      const relRes = await this.fetchFn(
-        `https://musicbrainz.org/ws/2/artist/${encodeURIComponent(mbId)}?inc=url-rels&fmt=json`,
-        { headers: mbHeaders, signal: ctrl?.signal ?? signal }
-      );
-      if (!relRes.ok) return null;
-      const relJson = (await relRes.json()) as {
-        relations?: Array<{ url?: { resource?: string } }>;
-      };
-      const spUrl = (relJson?.relations ?? [])
-        .map((r) => String(r?.url?.resource ?? '').trim())
-        .find((u) => /https?:\/\/open\.spotify\.com\/artist\/[a-zA-Z0-9]+/i.test(u));
-      if (!spUrl) return null;
-
-      const spHtmlRes = await this.fetchFn(spUrl, {
-        headers: { 'User-Agent': 'facebookexternalhit/1.1' },
-        signal: ctrl?.signal ?? signal,
-      });
-      if (!spHtmlRes.ok) return null;
-      const html = await spHtmlRes.text();
-      const ogImg =
-        html.match(/property=["']og:image["']\s+content=["'](https:\/\/i\.scdn\.co\/image\/[^"']+)["']/i)?.[1] ??
-        html.match(/content=["'](https:\/\/i\.scdn\.co\/image\/[^"']+)["']\s+property=["']og:image["']/i)?.[1] ??
-        null;
-
-      this.spotifyAvatarCache.set(normKey, { at: Date.now(), url: ogImg });
-      if (this.spotifyAvatarCache.size > 120) {
-        const oldest = this.spotifyAvatarCache.keys().next().value;
-        if (oldest) this.spotifyAvatarCache.delete(oldest);
+    const jobs = out.slice(0, count).map(async (artist, idx) => {
+      if (!artist?.name) return;
+      try {
+        const sp = await this.fetchSpotifyArtistAvatar(artist.name, ctrl?.signal ?? signal, {
+          allowMusicBrainz: false,
+        });
+        const cleanSp = sanitizeArtistImageUrl(sp);
+        if (cleanSp) {
+          out[idx] = { ...artist, thumbnailUrl: cleanSp };
+          return;
+        }
+        const apple = await this.fetchAppleMusicArtistVisuals(artist.name, ctrl?.signal ?? signal);
+        const cleanApple = sanitizeArtistImageUrl(apple?.avatarUrl);
+        if (cleanApple) {
+          out[idx] = { ...artist, thumbnailUrl: cleanApple };
+        }
+      } catch {
+        // keep original thumbnail on timeout/failure
       }
-      return ogImg;
-    } catch {
-      return null;
-    } finally {
+    });
+
+    try {
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      await Promise.race([
+        Promise.allSettled(jobs),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(() => {
+            ctrl?.abort();
+            resolve();
+          }, timeoutMs);
+        }),
+      ]);
       if (timer) clearTimeout(timer);
+    } finally {
       signal?.removeEventListener('abort', onOuter);
     }
+    return out;
   }
 
   public async artistByName(name: string, signal?: AbortSignal): Promise<ArtistDetail> {
@@ -1460,11 +1837,25 @@ export class DeezerCatalog {
             .catch(() => null);
 
       const spotifyAvatarPromise = canonHint
-        ? this.fetchSpotifyArtistAvatar(canonHint, signal).catch(() => null)
+        ? this.fetchSpotifyArtistAvatar(canonHint, signal, { allowMusicBrainz: true }).catch(() => null)
         : artistPromise
             .then((a) =>
               a?.name
                 ? this.fetchSpotifyArtistAvatar(
+                    canonicalizeArtistIdentity(resolvedId, String(a.name)).name,
+                    signal,
+                    { allowMusicBrainz: true }
+                  )
+                : null
+            )
+            .catch(() => null);
+
+      const appleVisualsPromise = canonHint
+        ? this.fetchAppleMusicArtistVisuals(canonHint, signal).catch(() => null)
+        : artistPromise
+            .then((a) =>
+              a?.name
+                ? this.fetchAppleMusicArtistVisuals(
                     canonicalizeArtistIdentity(resolvedId, String(a.name)).name,
                     signal
                   )
@@ -1484,20 +1875,26 @@ export class DeezerCatalog {
           );
         });
 
-      const [a, topSongs, albumsRes, related, ytmVisuals, spotifyAvatar] = await Promise.all([
-        artistPromise,
-        topTracksPromise,
-        this.get(`/artist/${encodeURIComponent(resolvedId)}/albums?limit=60`, signal),
-        this.get(`/artist/${encodeURIComponent(resolvedId)}/related?limit=10`, signal),
-        ytmVisualsPromise,
-        spotifyAvatarPromise,
-      ]);
+      const [a, topSongs, albumsRes, related, ytmVisuals, spotifyAvatar, appleVisuals] =
+        await Promise.all([
+          artistPromise,
+          topTracksPromise,
+          this.get(`/artist/${encodeURIComponent(resolvedId)}/albums?limit=60`, signal),
+          this.get(`/artist/${encodeURIComponent(resolvedId)}/related?limit=10`, signal),
+          ytmVisualsPromise,
+          spotifyAvatarPromise,
+          appleVisualsPromise,
+        ]);
 
       const baseArtist = this.mapArtist(a);
+      const cleanSpotifyAvatar = sanitizeArtistImageUrl(spotifyAvatar);
+      const cleanAppleAvatar = sanitizeArtistImageUrl(appleVisuals?.avatarUrl);
+      const cleanAppleBanner = sanitizeArtistImageUrl(appleVisuals?.bannerUrl);
       const artist: ArtistSummary = {
         ...baseArtist,
         thumbnailUrl:
-          sanitizeArtistImageUrl(spotifyAvatar) ||
+          cleanSpotifyAvatar ||
+          cleanAppleAvatar ||
           sanitizeArtistImageUrl(ytmVisuals?.avatarUrl) ||
           baseArtist.thumbnailUrl,
         subscribersText: ytmVisuals?.listenersText || baseArtist.subscribersText,
@@ -1583,10 +1980,19 @@ export class DeezerCatalog {
       ).map((al) => this.mapAlbum(al, a));
 
       const sanitizedBanner =
+        cleanSpotifyAvatar ||
+        cleanAppleBanner ||
         sanitizeArtistImageUrl(ytmVisuals?.bannerUrl) ||
         sanitizeArtistImageUrl(ytmVisuals?.avatarUrl) ||
         sanitizeArtistImageUrl(a.picture_xl) ||
         artist.thumbnailUrl;
+
+      const relatedArtists = await this.enrichArtistListWithPreferredPortraits(
+        (related.data ?? []).map((r: Json) => this.mapArtist(r)),
+        4,
+        850,
+        signal
+      );
 
       const detail = {
         artist,
@@ -1595,7 +2001,7 @@ export class DeezerCatalog {
         topSongs,
         albums: albumsList,
         singles: singlesList,
-        relatedArtists: (related.data ?? []).map((r: Json) => this.mapArtist(r)),
+        relatedArtists,
       } as ArtistDetail;
       this.artistDetailCache.set(resolvedId, { at: Date.now(), detail });
       if (this.artistDetailCache.size > 24) {

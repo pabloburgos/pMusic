@@ -11,7 +11,7 @@ interface InkBleedCoverTransitionProps {
 
 const GRID = 128;
 const TOTAL = GRID * GRID;
-const CANVAS_SIZE = 384;
+const CANVAS_SIZE = 512;
 
 function hash2D(ix: number, iy: number, seed: number): number {
   let h = Math.imul(ix, 374761393) + Math.imul(iy, 668265263) + Math.imul(seed, 1442695041);
@@ -114,6 +114,9 @@ export const InkBleedCoverTransition: React.FC<InkBleedCoverTransitionProps> = (
       displayCtx = null;
     }
 
+    let outCanvas: HTMLCanvasElement | null = null;
+    let outCtx: CanvasRenderingContext2D | null = null;
+
     let maskCanvas: HTMLCanvasElement | null = null;
     let maskCtx: CanvasRenderingContext2D | null = null;
     let maskImg: ImageData | null = null;
@@ -126,11 +129,24 @@ export const InkBleedCoverTransition: React.FC<InkBleedCoverTransitionProps> = (
 
     let outgoingImg: HTMLImageElement | null = null;
     let outgoingReady = false;
+    let incomingImg: HTMLImageElement | null = null;
+    let incomingReady = false;
 
     if (displayCtx && typeof document !== 'undefined') {
       displayCtx.imageSmoothingEnabled = true;
       if ('imageSmoothingQuality' in displayCtx) {
         displayCtx.imageSmoothingQuality = 'high';
+      }
+
+      outCanvas = document.createElement('canvas');
+      outCanvas.width = CANVAS_SIZE;
+      outCanvas.height = CANVAS_SIZE;
+      outCtx = outCanvas.getContext('2d');
+      if (outCtx) {
+        outCtx.imageSmoothingEnabled = true;
+        if ('imageSmoothingQuality' in outCtx) {
+          outCtx.imageSmoothingQuality = 'high';
+        }
       }
 
       maskCanvas = document.createElement('canvas');
@@ -159,21 +175,45 @@ export const InkBleedCoverTransition: React.FC<InkBleedCoverTransitionProps> = (
       if (outgoingImg.complete && outgoingImg.naturalWidth > 0) {
         outgoingReady = true;
       }
+
+      incomingImg = new Image();
+      incomingImg.decoding = 'async';
+      incomingImg.onload = () => {
+        incomingReady = true;
+      };
+      incomingImg.src = incomingUrl;
+      if (incomingImg.complete && incomingImg.naturalWidth > 0) {
+        incomingReady = true;
+      }
     }
+
+    const drawCoverFit = (
+      ctx: CanvasRenderingContext2D,
+      img: HTMLImageElement,
+      zoom = 1
+    ) => {
+      const iw = img.naturalWidth || CANVAS_SIZE;
+      const ih = img.naturalHeight || CANVAS_SIZE;
+      const coverScale = Math.max(CANVAS_SIZE / iw, CANVAS_SIZE / ih);
+      const sw = CANVAS_SIZE / coverScale;
+      const sh = CANVAS_SIZE / coverScale;
+      const sx = (iw - sw) * 0.5;
+      const sy = (ih - sh) * 0.5;
+      const dw = CANVAS_SIZE * zoom;
+      const dh = CANVAS_SIZE * zoom;
+      const dx = (CANVAS_SIZE - dw) * 0.5;
+      const dy = (CANVAS_SIZE - dh) * 0.5;
+      ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
+    };
 
     const drawFrame = (pRaw: number) => {
       const p = 0.5 - 0.5 * Math.cos(Math.PI * pRaw);
-
-      if (incomingImgRef.current) {
-        // Keep incoming hidden during initial subpixel frames, then ramp opacity cleanly so edges never bleed white
-        const inAlpha = pRaw < 0.06 ? Math.max(0, pRaw / 0.06) : 1;
-        const scale = 1.035 - 0.035 * p;
-        incomingImgRef.current.style.transform = `translate3d(0, 0, 0) scale(${scale.toFixed(4)})`;
-        incomingImgRef.current.style.opacity = inAlpha.toFixed(3);
-      }
+      const thr = -0.15 + 1.3 * p;
 
       const canPaintCanvas = Boolean(
         displayCtx &&
+          outCtx &&
+          outCanvas &&
           maskCtx &&
           maskCanvas &&
           maskImg &&
@@ -186,8 +226,46 @@ export const InkBleedCoverTransition: React.FC<InkBleedCoverTransitionProps> = (
           outgoingReady
       );
 
-      if (canPaintCanvas && displayCtx && maskCtx && maskCanvas && maskImg && mask32 && rimCtx && rimCanvas && rimImg && rim32 && outgoingImg) {
-        const thr = -0.03 + 1.18 * p;
+      if (
+        canPaintCanvas &&
+        displayCtx &&
+        outCtx &&
+        outCanvas &&
+        maskCtx &&
+        maskCanvas &&
+        maskImg &&
+        mask32 &&
+        rimCtx &&
+        rimCanvas &&
+        rimImg &&
+        rim32 &&
+        outgoingImg
+      ) {
+        if (!hidFallback) {
+          hidFallback = true;
+          if (fallbackOutgoingRef.current) fallbackOutgoingRef.current.style.opacity = '0';
+          if (incomingImgRef.current) incomingImgRef.current.style.opacity = '0';
+        }
+
+        displayCtx.globalCompositeOperation = 'source-over';
+        displayCtx.globalAlpha = 1;
+
+        if (pRaw <= 0 || thr <= -0.145) {
+          // 100% opaque outgoing cover at exact scale 1.0 -> zero edge fringing possible
+          displayCtx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+          drawCoverFit(displayCtx, outgoingImg, 1);
+          return;
+        }
+
+        displayCtx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+        if (incomingImg && incomingReady) {
+          const inScale = 1.028 - 0.028 * p;
+          drawCoverFit(displayCtx, incomingImg, inScale);
+        }
+
+        const outAlpha = pRaw > 0.94 ? Math.max(0, (1 - pRaw) / 0.06) : 1;
+        if (outAlpha <= 0) return;
+
         const invSoft = 1 / 0.145;
         const rimPeak = Math.sin(Math.PI * pRaw) * 0.42;
 
@@ -211,40 +289,31 @@ export const InkBleedCoverTransition: React.FC<InkBleedCoverTransitionProps> = (
         maskCtx.putImageData(maskImg, 0, 0);
         rimCtx.putImageData(rimImg, 0, 0);
 
-        const iw = outgoingImg.naturalWidth || CANVAS_SIZE;
-        const ih = outgoingImg.naturalHeight || CANVAS_SIZE;
-        const coverScale = Math.max(CANVAS_SIZE / iw, CANVAS_SIZE / ih);
-        const sw = CANVAS_SIZE / coverScale;
-        const sh = CANVAS_SIZE / coverScale;
-        const sx = (iw - sw) * 0.5;
-        const sy = (ih - sh) * 0.5;
+        outCtx.globalCompositeOperation = 'source-over';
+        outCtx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+        drawCoverFit(outCtx, outgoingImg, 1 + 0.015 * p);
 
-        displayCtx.globalCompositeOperation = 'source-over';
-        displayCtx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-        displayCtx.drawImage(outgoingImg, sx, sy, sw, sh, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
+        outCtx.globalCompositeOperation = 'source-atop';
+        outCtx.drawImage(rimCanvas, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
-        displayCtx.globalCompositeOperation = 'source-atop';
-        displayCtx.drawImage(rimCanvas, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
+        outCtx.globalCompositeOperation = 'destination-in';
+        outCtx.drawImage(maskCanvas, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
-        displayCtx.globalCompositeOperation = 'destination-in';
-        displayCtx.drawImage(maskCanvas, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
-
-        if (canvas) {
-          const outScale = 1.015 + 0.02 * p;
-          const outOpacity = pRaw > 0.94 ? Math.max(0, (1 - pRaw) / 0.06) : 1;
-          canvas.style.transform = `translate3d(0, 0, 0) scale(${outScale.toFixed(4)})`;
-          canvas.style.opacity = outOpacity.toFixed(3);
+        displayCtx.globalAlpha = outAlpha;
+        displayCtx.drawImage(outCanvas, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
+        displayCtx.globalAlpha = 1;
+      } else {
+        if (incomingImgRef.current) {
+          const scale = 1.035 - 0.035 * p;
+          incomingImgRef.current.style.transform = `translate3d(0, 0, 0) scale(${scale.toFixed(4)})`;
+          incomingImgRef.current.style.opacity = '1';
         }
-
-        if (!hidFallback && fallbackOutgoingRef.current) {
-          hidFallback = true;
-          fallbackOutgoingRef.current.style.opacity = '0';
+        if (fallbackOutgoingRef.current) {
+          const outScale = 1 + 0.018 * p;
+          const outOpacity = Math.max(0, 1 - p);
+          fallbackOutgoingRef.current.style.transform = `translate3d(0, 0, 0) scale(${outScale.toFixed(4)})`;
+          fallbackOutgoingRef.current.style.opacity = outOpacity.toFixed(3);
         }
-      } else if (fallbackOutgoingRef.current) {
-        const outScale = 1.015 + 0.02 * p;
-        const outOpacity = Math.max(0, 1 - p);
-        fallbackOutgoingRef.current.style.transform = `translate3d(0, 0, 0) scale(${outScale.toFixed(4)})`;
-        fallbackOutgoingRef.current.style.opacity = outOpacity.toFixed(3);
       }
     };
 
@@ -268,14 +337,14 @@ export const InkBleedCoverTransition: React.FC<InkBleedCoverTransitionProps> = (
         cancelAnimationFrame(rafId);
       }
     };
-  }, [durationSec, inkField, outgoingUrl]);
+  }, [durationSec, incomingUrl, inkField, outgoingUrl]);
 
   return (
     <div
       data-testid="ink-bleed-cover"
-      className="relative h-full w-full overflow-hidden rounded-[16px] shadow-[0_26px_64px_rgba(0,0,0,0.58)]"
+      className="relative h-full w-full overflow-hidden rounded-[16px]"
     >
-      {/* Back Layer: Incoming track emerging smoothly once dissolve starts */}
+      {/* Back Layer (jsdom / canvas fallback only; single-canvas compositor paints inside canvas) */}
       <img
         ref={incomingImgRef}
         src={incomingUrl}
@@ -284,29 +353,28 @@ export const InkBleedCoverTransition: React.FC<InkBleedCoverTransitionProps> = (
         className="h-full w-full select-none object-cover will-change-transform"
         style={{
           transform: 'translate3d(0, 0, 0) scale(1.035)',
-          opacity: 0,
+          opacity: 1,
         }}
       />
 
-      {/* First-frame fallback image (overscanned 3px to guarantee zero subpixel edge fringe) */}
+      {/* First-frame fallback image (hidden cleanly once single-canvas takes over) */}
       <img
         ref={fallbackOutgoingRef}
         src={outgoingUrl}
         alt={outgoingTitle}
         aria-hidden="true"
         draggable={false}
-        className="pointer-events-none absolute -inset-[3px] h-[calc(100%+6px)] w-[calc(100%+6px)] max-w-none select-none object-cover will-change-transform"
-        style={{ transform: 'translate3d(0, 0, 0) scale(1.015)' }}
+        className="pointer-events-none absolute inset-0 h-full w-full select-none object-cover will-change-transform"
+        style={{ transform: 'translate3d(0, 0, 0) scale(1)' }}
       />
 
-      {/* Front Layer: Overscanned 60/120fps Canvas2D Domain-Warped fBM Ink-Bleed Compositor */}
+      {/* Single-Canvas 60/120fps Ink-Bleed Compositor (Incoming + Masked Outgoing in same pixel buffer) */}
       <canvas
         ref={canvasRef}
         width={CANVAS_SIZE}
         height={CANVAS_SIZE}
         aria-hidden="true"
-        className="pointer-events-none absolute -inset-[3px] h-[calc(100%+6px)] w-[calc(100%+6px)] max-w-none will-change-transform"
-        style={{ transform: 'translate3d(0, 0, 0) scale(1.015)' }}
+        className="pointer-events-none absolute inset-0 h-full w-full will-change-transform"
       />
     </div>
   );
