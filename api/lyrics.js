@@ -106,25 +106,28 @@ async function fetchFromLetrasCom(titleVariants, artistVariants) {
     for (const title of titleVariants) {
       const tSlug = slugify(title);
       if (!tSlug) continue;
-      const res = await fetchWithTimeout(`https://www.letras.com/${aSlug}/${tSlug}/`, 3800, {
-        Accept: 'text/html,application/xhtml+xml',
-        'Accept-Language': 'es-ES,es;q=0.9',
-      });
-      if (!res?.ok) continue;
-      const html = await res.text();
-      const match =
-        html.match(/<div class="lyric-original[^>]*>([\s\S]*?)<\/div>/i) ||
-        html.match(/<div class="cnt-letra[^>]*>([\s\S]*?)<\/div>/i);
-      if (!match?.[1]) continue;
-      const plain = decodeHtmlEntities(
-        match[1]
-          .replace(/<br\s*\/?>/gi, '\n')
-          .replace(/<\/p>/gi, '\n\n')
-          .replace(/<[^>]+>/g, '')
-      )
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
-      if (plain.length >= 25) return plain;
+      for (const host of ['https://www.letras.com', 'https://www.letras.mus.br']) {
+        const res = await fetchWithTimeout(`${host}/${aSlug}/${tSlug}/`, 3800, {
+          Accept: 'text/html,application/xhtml+xml',
+          'Accept-Language': 'es-ES,es;q=0.9,pt;q=0.8',
+          Referer: `${host}/`,
+        });
+        if (!res?.ok) continue;
+        const html = await res.text();
+        const match =
+          html.match(/<div class="lyric-original[^>]*>([\s\S]*?)<\/div>/i) ||
+          html.match(/<div class="cnt-letra[^>]*>([\s\S]*?)<\/div>/i);
+        if (!match?.[1]) continue;
+        const plain = decodeHtmlEntities(
+          match[1]
+            .replace(/<br\s*\/?>/gi, '\n')
+            .replace(/<\/p>/gi, '\n\n')
+            .replace(/<[^>]+>/g, '')
+        )
+          .replace(/\n{3,}/g, '\n\n')
+          .trim();
+        if (plain.length >= 25) return plain;
+      }
     }
   }
   return null;
