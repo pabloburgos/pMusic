@@ -375,4 +375,39 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
     );
     expect(canvasSrc).toContain('throttleFps');
   });
+
+  it('holds previous decoded cover visible in NowPlaying during track switch and renders compact mobile transport controls', () => {
+    const { container, rerender } = render(
+      <TrackArtwork
+        trackId="tr-cover-1"
+        src="https://example.com/cover1.jpg"
+        alt="Track 1"
+        variant="nowplaying"
+      />
+    );
+    const img1 = container.querySelector('img');
+    expect(img1).not.toBeNull();
+    expect(img1?.getAttribute('loading')).toBe('eager');
+    expect(img1?.getAttribute('src')).toBe('https://example.com/cover1.jpg');
+
+    rerender(
+      <TrackArtwork
+        trackId="tr-cover-2"
+        src="https://example.com/cover2.jpg"
+        alt="Track 2"
+        variant="nowplaying"
+      />
+    );
+    const imgDuringLoad = container.querySelector('img');
+    expect(imgDuringLoad).not.toBeNull();
+    expect(imgDuringLoad?.getAttribute('src')).toBe('https://example.com/cover1.jpg');
+
+    const overlaysSrc = readFileSync(
+      resolve(__dirname, '../components/Overlays.tsx'),
+      'utf-8'
+    );
+    expect(overlaysSrc).toContain('h-[38px] w-[38px]');
+    expect(overlaysSrc).toContain('h-[22px] w-[22px] md:h-8 md:w-8');
+    expect(overlaysSrc).toContain('h-[15px] w-[15px] md:h-[18px] md:w-[18px]');
+  });
 });

@@ -26,7 +26,7 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
   variant,
   className = '',
   imgClassName = 'h-full w-full object-cover',
-  loading = 'lazy',
+  loading,
   draggable = false,
   onUnavailableChange,
   children,
@@ -34,6 +34,8 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
   const isOfflineNetwork = usePMusicStore((s) => s.isOfflineNetwork);
   const cleanSrc = (src ?? '').trim();
 
+  const isEagerVariant = variant === 'nowplaying' || variant === 'mini';
+  const effectiveLoading = loading ?? (isEagerVariant ? 'eager' : 'lazy');
   const [resolvedSrc, setResolvedSrc] = useState<string | null>(() => {
     const cached = getCachedOfflineCoverUrl(trackId, cleanSrc);
     if (cached) return cached;
@@ -41,49 +43,102 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
     if (isOfflineNetwork) return null;
     return cleanSrc || null;
   });
+  const [displayedSrc, setDisplayedSrc] = useState<string | null>(resolvedSrc);
   const [failed, setFailed] = useState<boolean>(false);
 
   useEffect(() => {
     let active = true;
     setFailed(false);
 
+    const commitSrc = (nextUrl: string | null) => {
+      if (!active) return;
+      setResolvedSrc(nextUrl);
+      if (nextUrl) {
+        setFailed(false);
+        onUnavailableChange?.(false);
+        if (
+          !isEagerVariant ||
+          nextUrl.startsWith('data:') ||
+          nextUrl.startsWith('blob:') ||
+          typeof Image === 'undefined' ||
+          displayedSrc === nextUrl
+        ) {
+          setDisplayedSrc(nextUrl);
+        } else {
+          // Hold previous decoded image visible until the incoming artwork finishes decoding (zero 0.2s blink)
+          const pre = new Image();
+          pre.decoding = 'async';
+          let settled = false;
+          const promote = () => {
+            if (settled || !active) return;
+            settled = true;
+            setDisplayedSrc(nextUrl);
+          };
+          const safety = setTimeout(promote, 1800);
+          pre.onload = () => {
+            clearTimeout(safety);
+            if (typeof pre.decode === 'function') {
+              void pre.decode().catch(() => {}).finally(promote);
+            } else {
+              promote();
+            }
+          };
+          pre.onerror = () => {
+            clearTimeout(safety);
+            promote();
+          };
+          pre.src = nextUrl;
+          if (pre.complete && pre.naturalWidth > 0) {
+            clearTimeout(safety);
+            promote();
+          }
+        }
+      } else {
+        setDisplayedSrc(null);
+        setFailed(true);
+        onUnavailableChange?.(true);
+      }
+    };
+
     const mem = getCachedOfflineCoverUrl(trackId, cleanSrc);
     if (mem) {
-      setResolvedSrc(mem);
-      onUnavailableChange?.(false);
-      return;
+      commitSrc(mem);
+      return () => {
+        active = false;
+      };
     }
 
     if (cleanSrc.startsWith('data:') || cleanSrc.startsWith('blob:')) {
-      setResolvedSrc(cleanSrc);
-      onUnavailableChange?.(false);
-      return;
+      commitSrc(cleanSrc);
+      return () => {
+        active = false;
+      };
+    }
+
+    // Online fast-path: begin loading immediately while IDB cache check runs in parallel
+    if (!isOfflineNetwork && cleanSrc) {
+      commitSrc(cleanSrc);
     }
 
     void resolveOfflineCoverUrl(trackId, cleanSrc).then((idbUrl) => {
       if (!active) return;
       if (idbUrl) {
-        setResolvedSrc(idbUrl);
-        onUnavailableChange?.(false);
+        commitSrc(idbUrl);
       } else if (isOfflineNetwork || !cleanSrc) {
-        setResolvedSrc(null);
-        setFailed(true);
-        onUnavailableChange?.(true);
-      } else {
-        setResolvedSrc(cleanSrc);
-        onUnavailableChange?.(false);
+        commitSrc(null);
       }
     });
 
     return () => {
       active = false;
     };
-  }, [trackId, cleanSrc, isOfflineNetwork, onUnavailableChange]);
+  }, [trackId, cleanSrc, isOfflineNetwork, isEagerVariant, onUnavailableChange]);
 
   const handleImgError = () => {
     void resolveOfflineCoverUrl(trackId, cleanSrc).then((idbUrl) => {
       if (idbUrl && idbUrl !== resolvedSrc) {
         setResolvedSrc(idbUrl);
+        setDisplayedSrc(idbUrl);
         setFailed(false);
         onUnavailableChange?.(false);
       } else {
@@ -93,7 +148,8 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
     });
   };
 
-  if (failed || !resolvedSrc) {
+  const renderSrc = displayedSrc ?? resolvedSrc;
+  if (failed || !renderSrc) {
     if (variant === 'list') {
       return null;
     }
@@ -131,9 +187,9 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
   return (
     <>
       <img
-        src={resolvedSrc}
+        src={renderSrc}
         alt={alt}
-        loading={loading}
+        loading={effectiveLoading}
         draggable={draggable}
         onError={handleImgError}
         className={imgClassName}

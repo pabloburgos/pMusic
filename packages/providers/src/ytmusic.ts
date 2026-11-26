@@ -667,7 +667,87 @@ export class HttpProxyMusicProvider implements IMusicProvider {
         return this.fetchFn(input, init);
       };
       try {
-        return await fetchExternalReleaseRadar({ fetchFn: proxyFetch, signal });
+        const directItems = await fetchExternalReleaseRadar({ fetchFn: proxyFetch, signal });
+        if (directItems.length > 0) return directItems;
+      } catch {
+        // Older APK (< 0.23.5) without /api/radar-proxy: cascade to Vercel & Deezer proxy below
+      }
+
+      // 2. Public Vercel Release Radar endpoint (CORS-enabled, works on any Android APK version)
+      try {
+        const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timer = ctrl ? setTimeout(() => ctrl.abort(), 3800) : null;
+        const onOuter = () => ctrl?.abort();
+        signal?.addEventListener('abort', onOuter, { once: true });
+        try {
+          const vRes = await this.fetchFn('https://pmusic-olive.vercel.app/api/release-radar', {
+            signal: ctrl?.signal ?? signal,
+          });
+          if (vRes.ok) {
+            const vData = (await vRes.json()) as { releases?: ExternalReleaseCandidate[] };
+            if (Array.isArray(vData?.releases) && vData.releases.length > 0) {
+              return vData.releases;
+            }
+          }
+        } finally {
+          if (timer) clearTimeout(timer);
+          signal?.removeEventListener('abort', onOuter);
+        }
+      } catch {
+        // Fall through to Deezer editorial playlists via /api/dz-proxy
+      }
+
+      // 3. Resilient Android fallback via /api/dz-proxy editorial playlists (no new native route needed)
+      try {
+        const fridayIso = getMostRecentFridayIso();
+        const searchPl = await this.fetchApiJson<{ data?: Array<{ id?: number | string }> }>(
+          `/api/dz-proxy?path=${encodeURIComponent('/search/playlist?q=Novedades+Viernes+Espa%C3%B1a&limit=3')}`,
+          signal
+        );
+        const playlistIds = [
+          ...(Array.isArray(searchPl?.data) ? searchPl.data.map((p) => String(p?.id ?? '')).filter(Boolean).slice(0, 2) : []),
+          '1282495565',
+        ];
+        const uniqueIds = Array.from(new Set(playlistIds));
+        const plResults = await Promise.allSettled(
+          uniqueIds.map((id) =>
+            this.fetchApiJson<{
+              data?: Array<{
+                title?: string;
+                title_short?: string;
+                artist?: { name?: string };
+                album?: { cover_medium?: string };
+                release_date?: string;
+              }>;
+            }>(`/api/dz-proxy?path=${encodeURIComponent(`/playlist/${id}/tracks?limit=45`)}`, signal)
+          )
+        );
+        const out: ExternalReleaseCandidate[] = [];
+        const seen = new Set<string>();
+        for (const r of plResults) {
+          if (r.status !== 'fulfilled' || !Array.isArray(r.value?.data)) continue;
+          for (const t of r.value.data) {
+            const title = String(t?.title ?? t?.title_short ?? '').trim();
+            const artist = String(t?.artist?.name ?? '').trim();
+            if (!title || !artist) continue;
+            const k = `${title.toLowerCase()}::${artist.toLowerCase()}`;
+            if (seen.has(k)) continue;
+            seen.add(k);
+            out.push({
+              title,
+              artists: [artist],
+              releaseDate:
+                typeof t.release_date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(t.release_date)
+                  ? t.release_date.slice(0, 10)
+                  : fridayIso,
+              kind: 'track',
+              source: 'spotify_novedades_es',
+              priority: 90,
+              ...(t.album?.cover_medium ? { thumbnailUrl: t.album.cover_medium } : {}),
+            });
+          }
+        }
+        return out;
       } catch {
         return [];
       }

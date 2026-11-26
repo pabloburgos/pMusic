@@ -223,7 +223,9 @@ export const InkBleedCoverTransition: React.FC<InkBleedCoverTransitionProps> = (
           rimImg &&
           rim32 &&
           outgoingImg &&
-          outgoingReady
+          outgoingReady &&
+          incomingImg &&
+          incomingReady
       );
 
       if (
@@ -239,7 +241,8 @@ export const InkBleedCoverTransition: React.FC<InkBleedCoverTransitionProps> = (
         rimCanvas &&
         rimImg &&
         rim32 &&
-        outgoingImg
+        outgoingImg &&
+        incomingImg
       ) {
         if (!hidFallback) {
           hidFallback = true;

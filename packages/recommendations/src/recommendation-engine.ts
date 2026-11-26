@@ -1364,7 +1364,9 @@ export class RecommendationEngine implements IRecommendationEngine {
         ) ||
         userOwnedTracks.some((t) => this.scoreTrackSceneFit(t) >= 30);
 
-      const matchedRadarCandidates = (Array.isArray(externalRadarRaw) ? externalRadarRaw : [])
+      const rawRadarList = Array.isArray(externalRadarRaw) ? externalRadarRaw : [];
+      const allowEditorialFill = rawRadarList.length >= 12;
+      const matchedRadarCandidates = rawRadarList
         .map((cand) => {
           if (!cand?.title || !Array.isArray(cand.artists) || cand.artists.length === 0) return null;
           if (cand.releaseDate && cand.releaseDate < rollingWin.startIso) return null;
@@ -1395,12 +1397,24 @@ export class RecommendationEngine implements IRecommendationEngine {
               (KNOWN_ES_SCENE_ARTISTS.has(ak) ||
                 Array.from(KNOWN_ES_SCENE_ARTISTS).some((sk) => isSameArtistAlias(ak, sk)))
             ) {
-              tasteScore += 32;
-              if (32 > bestTierWeight) {
-                bestTierWeight = 32;
+              tasteScore += 36;
+              if (36 > bestTierWeight) {
+                bestTierWeight = 36;
                 matchedArtistName = aName;
               }
             }
+          }
+          // Tier 4 broad fresh editorial fill when live feed has >=12 candidates so Descubre lo Nuevo stays 25-35+ songs rich
+          if (
+            tasteScore <= 0 &&
+            allowEditorialFill &&
+            cand.releaseDate &&
+            (cand.source === 'spotify_novedades_es' ||
+              cand.source === 'lahiguera_canciones' ||
+              cand.source === 'spotify_nmf')
+          ) {
+            tasteScore = 16;
+            matchedArtistName = cand.artists[0]!;
           }
           if (tasteScore <= 0) return null;
           // Prioritize fresh-dated editorial drops (Novedades Viernes ES / LaHiguera) above undated chart tracks (PEGAO)
@@ -1430,7 +1444,7 @@ export class RecommendationEngine implements IRecommendationEngine {
         if (seenRadarTargetKeys.has(item.candKey)) continue;
         seenRadarTargetKeys.add(item.candKey);
         dedupedRadarTargets.push({ cand: item.cand, queryArtist: item.matchedArtistName });
-        if (dedupedRadarTargets.length >= 18) break;
+        if (dedupedRadarTargets.length >= 34) break;
       }
 
       // Wave 2: Prioritize rolling 15-day (then 30-day) releases, resolve taste-matched radar drops, and emerging artists
@@ -1485,7 +1499,7 @@ export class RecommendationEngine implements IRecommendationEngine {
             : this.musicProvider!.search(a.name, 'song', signal)
         ),
         dedupedRadarTargets.length > 0
-          ? runBoundedBatch(dedupedRadarTargets, 5, 4200, (target) =>
+          ? runBoundedBatch(dedupedRadarTargets, 6, 3800, (target) =>
               this.musicProvider!.search(
                 `${target.queryArtist} ${target.cand.title}`.trim(),
                 'song',
@@ -1904,6 +1918,7 @@ export class RecommendationEngine implements IRecommendationEngine {
       let hasTier1 = false;
       let hasFav = false;
       let hasTier2 = false;
+      let hasScene = false;
       for (const a of t.artists) {
         const ak = normalizeArtistKey(a.name);
         if (!ak) continue;
@@ -1915,10 +1930,17 @@ export class RecommendationEngine implements IRecommendationEngine {
         } else if (hasKeyInSet(ak, allowedTasteKeys)) {
           hasTier2 = true;
         }
+        if (
+          KNOWN_ES_SCENE_ARTISTS.has(ak) ||
+          Array.from(KNOWN_ES_SCENE_ARTISTS).some((sk) => isSameArtistAlias(ak, sk))
+        ) {
+          hasScene = true;
+        }
       }
       if (hasTier1) sc += 45;
       if (hasFav) sc += 15;
       else if (!hasTier1 && hasTier2) sc += 20;
+      else if (!hasTier1 && !hasTier2 && hasScene) sc += 12;
       if (isUnheard(t)) sc += 14;
       const primaryKey = normalizeArtistKey(t.artists[0]?.name ?? '');
       if (t.artists.length > 1 || (hasTier1 && !hasKeyInSet(primaryKey, seenCoreKeys))) {

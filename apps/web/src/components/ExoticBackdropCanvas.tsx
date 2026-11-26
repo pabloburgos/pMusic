@@ -744,13 +744,21 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = ({
   }, [style, ambientMotionEnabled, reducedMotionPref]);
 
   // Upload new cover photo textures dynamically without resetting the WebGL shader state
+  const crossfadeMsRef = useRef<number>(crossfadeMs);
+  crossfadeMsRef.current = crossfadeMs;
+  const lastCommittedCoverUrlRef = useRef<string>('');
+
   useEffect(() => {
     const cleanUrl = coverUrl?.trim();
     if (!cleanUrl || typeof Image === 'undefined') return;
+    if (cleanUrl === lastCommittedCoverUrlRef.current) return;
     let cancelled = false;
+    let committed = false;
 
     const commitSoftImage = (img: HTMLImageElement, tryUploadGl: boolean) => {
-      if (cancelled) return;
+      if (cancelled || committed) return;
+      committed = true;
+      lastCommittedCoverUrlRef.current = cleanUrl;
       const soft = buildSoftCoverCanvas(img, styleRef.current);
       if (!soft) return;
       const media = coverMediaRef.current;
@@ -787,10 +795,11 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = ({
         }
       }
 
-      if (hadPrev && !reducedMotionPref && crossfadeMs > 80) {
+      const activeCrossfadeMs = crossfadeMsRef.current;
+      if (hadPrev && !reducedMotionPref && activeCrossfadeMs > 80) {
         media.mix = 0;
         media.mixStartMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
-        media.mixDurMs = crossfadeMs;
+        media.mixDurMs = activeCrossfadeMs;
       } else {
         media.mix = 1;
       }
@@ -803,7 +812,7 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = ({
       img.decoding = 'async';
       img.onload = () => commitSoftImage(img, withCors);
       img.onerror = () => {
-        if (withCors && !cancelled) {
+        if (withCors && !cancelled && !committed) {
           loadCover(false);
         }
       };
@@ -817,7 +826,7 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [coverUrl, crossfadeMs, reducedMotionPref]);
+  }, [coverUrl, reducedMotionPref]);
 
   return (
     <canvas

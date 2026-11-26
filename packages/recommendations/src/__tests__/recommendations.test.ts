@@ -684,4 +684,90 @@ describe('@pmusic/recommendations', () => {
     expect(ids).not.toContain('dz:old_pegao_1');
     expect((dln?.tracks ?? []).some((t) => t.title === 'Go Easy')).toBe(false);
   });
+
+  it('expands Descubre lo Nuevo beyond 15 tracks using Tier 4 editorial fill when live radar >= 12 while keeping favorites ranked first', async () => {
+    const now = new Date();
+    const todayIso = getDailyMixDateKey(now);
+    const twoDaysAgo = getDailyMixDateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 2));
+
+    const favTrack: Track = {
+      id: 'dz:fav_la_pantera',
+      title: 'Tema Favorito Pantera',
+      artists: [{ id: '7524936', name: 'La Pantera' }],
+      durationSec: 180,
+      thumbnailUrl: 'https://example.com/lp.jpg',
+      source: 'ytmusic',
+      releaseYear: Number(twoDaysAgo.slice(0, 4)),
+      releaseDate: twoDaysAgo,
+    };
+
+    const radarItems = [
+      {
+        title: 'Tema Favorito Pantera',
+        artists: ['La Pantera'],
+        releaseDate: twoDaysAgo,
+        kind: 'track' as const,
+        source: 'spotify_novedades_es' as const,
+        priority: 95,
+      },
+      ...Array.from({ length: 20 }, (_, i) => ({
+        title: `Estreno Radar ${String(i + 1).padStart(2, '0')}`,
+        artists: [`Artista Nuevo ${String(i + 1).padStart(2, '0')}`],
+        releaseDate: todayIso,
+        kind: 'track' as const,
+        source: 'spotify_novedades_es' as const,
+        priority: 95,
+      })),
+    ];
+
+    const mockProvider = {
+      search: async (query: string) => {
+        const qLower = query.trim().toLowerCase();
+        const match = radarItems.find(
+          (r) => `${r.artists[0]} ${r.title}`.trim().toLowerCase() === qLower
+        );
+        if (match) {
+          const track: Track =
+            match.title === favTrack.title
+              ? favTrack
+              : {
+                  id: `dz:${match.title.replace(/\W+/g, '_')}`,
+                  title: match.title,
+                  artists: [{ id: `id_${match.artists[0]}`, name: match.artists[0]! }],
+                  durationSec: 195,
+                  thumbnailUrl: 'https://example.com/ed.jpg',
+                  source: 'ytmusic',
+                  releaseYear: Number(todayIso.slice(0, 4)),
+                  releaseDate: todayIso,
+                };
+          return { query, songs: [track], videos: [], artists: [], albums: [], playlists: [] };
+        }
+        return { query, songs: [], videos: [], artists: [], albums: [], playlists: [] };
+      },
+      getHomeFeed: async () => ({ shelves: [], moods: [] }),
+      getUpNext: async () => [],
+      getRelated: async () => ({ tracks: [], artists: [], playlists: [] }),
+      getArtist: async (idOrName: string) => ({
+        artist: { id: idOrName, name: idOrName, thumbnailUrl: 'https://example.com/a.jpg' },
+        topSongs: [],
+        appearances: [],
+        albums: [],
+        singles: [],
+        relatedArtists: [],
+      }),
+      getReleaseRadar: async () => radarItems,
+    };
+
+    const engine = new RecommendationEngine({ musicProvider: mockProvider });
+    engine.setFavoriteArtists([
+      { artistId: '7524936', artistName: 'La Pantera', likedAt: '2026-11-20T10:00:00Z' },
+    ]);
+
+    const shelves = await engine.buildHomeShelves();
+    const dln = shelves
+      .find((s) => s.kind === 'mixes_for_you')
+      ?.mixes?.find((m) => m.id === 'mix_descubre_lo_nuevo');
+    expect(dln?.tracks.length).toBeGreaterThanOrEqual(18);
+    expect(dln?.tracks[0]?.id).toBe('dz:fav_la_pantera');
+  });
 });

@@ -1797,4 +1797,81 @@ describe('@pmusic/providers', () => {
     const radar = await proxy.getReleaseRadar();
     expect(radar.some((r) => r.title === 'Tremendo Desastre' && r.source === 'spotify_novedades_es')).toBe(true);
   });
+
+  it('falls back on Android mobileDirect to Vercel /api/release-radar and Deezer /api/dz-proxy playlists when /api/radar-proxy is unavailable', async () => {
+    const origWindow = (globalThis as any).window;
+    (globalThis as any).window = {
+      location: { hostname: 'appassets.pmusic.local', origin: 'https://appassets.pmusic.local' },
+    };
+    try {
+      const vercelFetch = (async (input: RequestInfo | URL) => {
+        const u = String(input);
+        if (u.includes('/api/radar-proxy')) {
+          return new Response('', { status: 404 });
+        }
+        if (u.includes('pmusic-olive.vercel.app/api/release-radar')) {
+          return new Response(
+            JSON.stringify({
+              releases: [
+                {
+                  title: 'SOY MEJOR 2.0',
+                  artists: ['Kristina', 'Quevedo'],
+                  releaseDate: '2026-11-20',
+                  kind: 'track',
+                  source: 'spotify_novedades_es',
+                  priority: 95,
+                },
+              ],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        return new Response('{}', { status: 404 });
+      }) as typeof fetch;
+
+      const mobileProvider = new HttpProxyMusicProvider({ fetchFn: vercelFetch });
+      const radarFromVercel = await mobileProvider.getReleaseRadar();
+      expect(radarFromVercel.some((r) => r.title === 'SOY MEJOR 2.0')).toBe(true);
+
+      const dzPlaylistFetch = (async (input: RequestInfo | URL) => {
+        const u = String(input);
+        if (u.includes('/api/radar-proxy') || u.includes('pmusic-olive.vercel.app')) {
+          return new Response('', { status: 502 });
+        }
+        if (u.includes('/api/dz-proxy') && u.includes('search%2Fplaylist')) {
+          return new Response(JSON.stringify({ data: [{ id: 15987808083 }] }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        if (u.includes('/api/dz-proxy') && u.includes('playlist%2F15987808083')) {
+          return new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: 4437886881,
+                  title: 'GRACIAS X TODO',
+                  artist: { name: 'Feid' },
+                  release_date: '2026-11-26',
+                },
+              ],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        return new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }) as typeof fetch;
+
+      const mobileDzProvider = new HttpProxyMusicProvider({ fetchFn: dzPlaylistFetch });
+      const radarFromDz = await mobileDzProvider.getReleaseRadar();
+      expect(radarFromDz.some((r) => r.title === 'GRACIAS X TODO' && r.releaseDate === '2026-11-26')).toBe(
+        true
+      );
+    } finally {
+      (globalThis as any).window = origWindow;
+    }
+  });
 });

@@ -38,6 +38,10 @@ export const MobileFluidBackdropCanvas: React.FC<MobileFluidBackdropCanvasProps>
   const phaseRef = useRef<number>(0);
   const motionRef = useRef<boolean>(ambientMotionEnabled && !reducedMotionPref);
   motionRef.current = ambientMotionEnabled && !reducedMotionPref;
+  const crossfadeMsPropRef = useRef<number>(crossfadeMs);
+  crossfadeMsPropRef.current = crossfadeMs;
+  const crossfadeLinearPropRef = useRef<boolean>(crossfadeLinear);
+  crossfadeLinearPropRef.current = crossfadeLinear;
 
   // Transition cover URL seamlessly without ever clearing the currently displayed cover while loading
   useEffect(() => {
@@ -60,8 +64,8 @@ export const MobileFluidBackdropCanvas: React.FC<MobileFluidBackdropCanvasProps>
       outgoingUrlRef.current = activeUrlRef.current;
       activeUrlRef.current = nextUrl;
       blendStartRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
-      blendDurRef.current = Math.max(280, crossfadeMs || 950);
-      blendLinearRef.current = Boolean(crossfadeLinear);
+      blendDurRef.current = Math.max(280, crossfadeMsPropRef.current || 950);
+      blendLinearRef.current = Boolean(crossfadeLinearPropRef.current);
       blendActiveRef.current = true;
     };
 
@@ -120,7 +124,7 @@ export const MobileFluidBackdropCanvas: React.FC<MobileFluidBackdropCanvasProps>
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [coverUrl, crossfadeMs, crossfadeLinear, reducedMotionPref]);
+  }, [coverUrl, reducedMotionPref]);
 
   // Continuous single-canvas render loop (throttled ~30fps for zero-jank Android smoothness)
   useEffect(() => {
