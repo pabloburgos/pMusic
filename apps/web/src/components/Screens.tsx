@@ -795,8 +795,16 @@ export const DetailViewPanel: React.FC = () => {
 
   if (activeDetailView.kind === 'artist') {
     const isArtistLoading = Boolean(activeDetailView.isLoading);
-    const { artist, bannerUrl, description, topSongs, albums, singles, relatedArtists } =
-      activeDetailView.data;
+    const {
+      artist,
+      bannerUrl,
+      description,
+      topSongs,
+      appearances = [],
+      albums,
+      singles,
+      relatedArtists,
+    } = activeDetailView.data;
     const popularSongs = topSongs.slice(0, 10);
     const visiblePopularSongs = showAllPopular ? popularSongs : popularSongs.slice(0, 5);
 
@@ -814,8 +822,39 @@ export const DetailViewPanel: React.FC = () => {
     const allReleases = [
       ...albums.map((al) => ({ ...al, releaseKind: 'Álbum' as const })),
       ...(singles ?? []).map((sg) => ({ ...sg, releaseKind: 'Sencillo' as const })),
-    ].sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
+    ].sort((a, b) => {
+      const da = a.releaseDate ?? `${a.year ?? 0}-01-01`;
+      const db = b.releaseDate ?? `${b.year ?? 0}-01-01`;
+      return db.localeCompare(da);
+    });
     const latestRelease = allReleases[0] ?? null;
+    const artistKeyNorm = artist.name.trim().toLowerCase();
+    const sortedAppearances = [...appearances].sort((a, b) => {
+      const da = a.releaseDate ?? `${a.releaseYear ?? 0}-01-01`;
+      const db = b.releaseDate ?? `${b.releaseYear ?? 0}-01-01`;
+      return db.localeCompare(da);
+    });
+    const latestAppearance: Track | null =
+      sortedAppearances[0] ??
+      [...topSongs]
+        .filter(
+          (t) =>
+            t.artists.length > 1 ||
+            (t.artists[0]?.name ?? '').trim().toLowerCase() !== artistKeyNorm
+        )
+        .sort((a, b) => {
+          const da = a.releaseDate ?? `${a.releaseYear ?? 0}-01-01`;
+          const db = b.releaseDate ?? `${b.releaseYear ?? 0}-01-01`;
+          return db.localeCompare(da);
+        })[0] ??
+      null;
+    const isDistinctAppearance = Boolean(
+      latestAppearance &&
+        (!latestRelease ||
+          (latestAppearance.title.trim().toLowerCase() !== latestRelease.title.trim().toLowerCase() &&
+            (latestAppearance.album?.name ?? '').trim().toLowerCase() !==
+              latestRelease.title.trim().toLowerCase()))
+    );
     const filteredDiscography =
       artistDiscoTab === 'albums'
         ? albums.map((al) => ({ ...al, releaseKind: 'Álbum' as const }))
@@ -1110,50 +1149,136 @@ export const DetailViewPanel: React.FC = () => {
             </section>
 
             {isArtistLoading && !latestRelease ? (
-              <section className="space-y-2 lg:col-span-5">
-                <h2 className="text-[20px] font-bold pm-text-primary">Último lanzamiento</h2>
-                <div className="pm-surface-card flex items-center gap-4 rounded-[18px] p-4">
-                  <div className="h-24 w-24 shrink-0 animate-pulse rounded-[12px] bg-white/[0.08]" />
-                  <div className="min-w-0 flex-1 space-y-2">
-                    <div className="h-4 w-20 animate-pulse rounded-full bg-white/[0.08]" />
-                    <div className="h-4 w-40 animate-pulse rounded bg-white/[0.09]" />
-                    <div className="h-3 w-24 animate-pulse rounded bg-white/[0.06]" />
+              <section className="space-y-4 lg:col-span-5">
+                <div className="space-y-2">
+                  <h2 className="text-[20px] font-bold pm-text-primary">Último lanzamiento</h2>
+                  <div className="pm-surface-card flex items-center gap-4 rounded-[18px] p-4">
+                    <div className="h-24 w-24 shrink-0 animate-pulse rounded-[12px] bg-white/[0.08]" />
+                    <div className="min-w-0 flex-1 space-y-2">
+                      <div className="h-4 w-20 animate-pulse rounded-full bg-white/[0.08]" />
+                      <div className="h-4 w-40 animate-pulse rounded bg-white/[0.09]" />
+                      <div className="h-3 w-24 animate-pulse rounded bg-white/[0.06]" />
+                    </div>
                   </div>
                 </div>
               </section>
             ) : (
-              latestRelease && (
-                <section className="space-y-2 lg:col-span-5">
-                  <h2 className="text-[20px] font-bold pm-text-primary">Último lanzamiento</h2>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void openAlbumDetail(latestRelease.id, {
-                        title: latestRelease.title,
-                        artist: latestRelease.artists?.[0]?.name ?? artist.name,
-                        thumbnailUrl: latestRelease.thumbnailUrl,
-                      })
-                    }
-                    className="pm-surface-card pm-card-lift group flex w-full items-center gap-4 rounded-[18px] p-4 text-left"
-                  >
-                    <img
-                      src={latestRelease.thumbnailUrl}
-                      alt={latestRelease.title}
-                      className="h-24 w-24 shrink-0 rounded-[12px] object-cover shadow-lg transition-transform duration-300 group-hover:scale-[1.04]"
-                    />
-                    <div className="min-w-0 flex-1 space-y-1">
-                      <span className="inline-block rounded-full bg-white/[0.08] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider pm-text-secondary">
-                        {latestRelease.releaseKind}
-                        {latestRelease.year ? ` · ${latestRelease.year}` : ''}
-                      </span>
-                      <div className="line-clamp-2 text-base font-bold leading-snug pm-text-primary group-hover:underline">
-                        {latestRelease.title}
-                      </div>
-                      <div className="truncate text-xs pm-text-tertiary">
-                        {artist.name}
-                      </div>
+              (latestRelease || latestAppearance) && (
+                <section className="space-y-4 lg:col-span-5">
+                  {latestRelease && (
+                    <div className="space-y-2">
+                      <h2 className="text-[20px] font-bold pm-text-primary">Último lanzamiento</h2>
+                      <button
+                        type="button"
+                        data-testid="artist-latest-release-card"
+                        onClick={() =>
+                          void openAlbumDetail(latestRelease.id, {
+                            title: latestRelease.title,
+                            artist: latestRelease.artists?.[0]?.name ?? artist.name,
+                            thumbnailUrl: latestRelease.thumbnailUrl,
+                          })
+                        }
+                        className="pm-surface-card pm-card-lift group flex w-full items-center gap-4 rounded-[18px] p-4 text-left"
+                      >
+                        <img
+                          src={latestRelease.thumbnailUrl}
+                          alt={latestRelease.title}
+                          className="h-24 w-24 shrink-0 rounded-[12px] object-cover shadow-lg transition-transform duration-300 group-hover:scale-[1.04]"
+                        />
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <span className="inline-block rounded-full bg-white/[0.08] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider pm-text-secondary">
+                            {latestRelease.releaseKind}
+                            {latestRelease.releaseDate
+                              ? ` · ${latestRelease.releaseDate}`
+                              : latestRelease.year
+                                ? ` · ${latestRelease.year}`
+                                : ''}
+                          </span>
+                          <div className="line-clamp-2 text-base font-bold leading-snug pm-text-primary group-hover:underline">
+                            {latestRelease.title}
+                          </div>
+                          <div className="truncate text-xs pm-text-tertiary">
+                            {artist.name}
+                          </div>
+                        </div>
+                      </button>
                     </div>
-                  </button>
+                  )}
+
+                  {(latestAppearance || latestRelease) && (
+                    <div className="space-y-2">
+                      <h2 className="text-[20px] font-bold pm-text-primary">Última aparición</h2>
+                      {latestAppearance && (isDistinctAppearance || !latestRelease) ? (
+                        <button
+                          type="button"
+                          data-testid="artist-latest-appearance-card"
+                          onClick={() =>
+                            void playTrack(latestAppearance, [latestAppearance, ...topSongs])
+                          }
+                          className="pm-surface-card pm-card-lift group flex w-full items-center gap-4 rounded-[18px] p-4 text-left"
+                        >
+                          <img
+                            src={latestAppearance.thumbnailHighUrl ?? latestAppearance.thumbnailUrl}
+                            alt={latestAppearance.title}
+                            className="h-24 w-24 shrink-0 rounded-[12px] object-cover shadow-lg transition-transform duration-300 group-hover:scale-[1.04]"
+                          />
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <span className="inline-block rounded-full bg-purple-500/20 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-purple-200">
+                              Colaboración · feat.
+                              {latestAppearance.releaseDate
+                                ? ` · ${latestAppearance.releaseDate}`
+                                : latestAppearance.releaseYear
+                                  ? ` · ${latestAppearance.releaseYear}`
+                                  : ''}
+                            </span>
+                            <div className="line-clamp-2 text-base font-bold leading-snug pm-text-primary group-hover:underline">
+                              {latestAppearance.title}
+                            </div>
+                            <div className="truncate text-xs pm-text-tertiary">
+                              {latestAppearance.artists.map((a) => a.name).join(', ')}
+                            </div>
+                          </div>
+                        </button>
+                      ) : (
+                        latestRelease && (
+                          <button
+                            type="button"
+                            data-testid="artist-latest-appearance-card"
+                            onClick={() =>
+                              void openAlbumDetail(latestRelease.id, {
+                                title: latestRelease.title,
+                                artist: latestRelease.artists?.[0]?.name ?? artist.name,
+                                thumbnailUrl: latestRelease.thumbnailUrl,
+                              })
+                            }
+                            className="pm-surface-card pm-card-lift group flex w-full items-center gap-4 rounded-[18px] p-4 text-left"
+                          >
+                            <img
+                              src={latestRelease.thumbnailUrl}
+                              alt={latestRelease.title}
+                              className="h-24 w-24 shrink-0 rounded-[12px] object-cover shadow-lg transition-transform duration-300 group-hover:scale-[1.04]"
+                            />
+                            <div className="min-w-0 flex-1 space-y-1">
+                              <span className="inline-block rounded-full bg-white/[0.08] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider pm-text-secondary">
+                                Último lanzamiento
+                                {latestRelease.releaseDate
+                                  ? ` · ${latestRelease.releaseDate}`
+                                  : latestRelease.year
+                                    ? ` · ${latestRelease.year}`
+                                    : ''}
+                              </span>
+                              <div className="line-clamp-2 text-base font-bold leading-snug pm-text-primary group-hover:underline">
+                                {latestRelease.title}
+                              </div>
+                              <div className="truncate text-xs pm-text-tertiary">
+                                {artist.name}
+                              </div>
+                            </div>
+                          </button>
+                        )
+                      )}
+                    </div>
+                  )}
                 </section>
               )
             )}

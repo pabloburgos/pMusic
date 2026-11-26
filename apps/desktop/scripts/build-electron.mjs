@@ -164,16 +164,95 @@ const officialPathData =
 // Update src/main.ts to serve both static dist/ files AND /api/* over http://127.0.0.1:<port>
 const mainEntrySource = `import { createServer, type Server } from 'node:http';
 import { execFileSync, spawn } from 'node:child_process';
-import { createWriteStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join, normalize } from 'node:path';
 import { tmpdir } from 'node:os';
-import { deflateSync } from 'node:zlib';
+import { deflateSync, inflateRawSync } from 'node:zlib';
 import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, shell } from 'electron';
 import { Client as DiscordRpcClient } from '@xhayper/discord-rpc';
 import type { DiscordPresenceState, DiscordRpcStatus } from '@pmusic/core';
 import { createPMusicApiHandler } from '@pmusic/providers';
 
-const PMUSIC_DESKTOP_VERSION = '0.23.1';
+const PMUSIC_DESKTOP_VERSION = '0.23.2';
+
+function getOtaRootDir(): string {
+  return join(app.getPath('userData'), 'ota_web');
+}
+
+function readInstalledOtaVersion(): string {
+  try {
+    const verFile = join(getOtaRootDir(), 'current', 'ota-version.txt');
+    if (existsSync(verFile)) {
+      return readFileSync(verFile, 'utf-8').trim();
+    }
+  } catch {
+    // ignore read failure
+  }
+  return '';
+}
+
+function getActiveWebDistRoot(): string {
+  const defaultDist = join(__dirname, '../dist');
+  try {
+    const currentDir = join(getOtaRootDir(), 'current');
+    if (existsSync(join(currentDir, 'index.html'))) {
+      const otaVer = readInstalledOtaVersion();
+      if (otaVer && compareSemverDesktop(otaVer, PMUSIC_DESKTOP_VERSION) >= 0) {
+        return currentDir;
+      }
+    }
+  } catch {
+    // fall back to packaged dist
+  }
+  return defaultDist;
+}
+
+function extractZipBufferToDir(zipBuf: Buffer, destDir: string): void {
+  let eocdOffset = -1;
+  for (let i = zipBuf.length - 22; i >= Math.max(0, zipBuf.length - 65558); i--) {
+    if (zipBuf.readUInt32LE(i) === 0x06054b50) {
+      eocdOffset = i;
+      break;
+    }
+  }
+  if (eocdOffset < 0) {
+    throw new Error('Invalid OTA zip archive (missing EOCD)');
+  }
+  const cdOffset = zipBuf.readUInt32LE(eocdOffset + 16);
+  const totalEntries = zipBuf.readUInt16LE(eocdOffset + 10);
+  const resolvedRoot = normalize(destDir);
+  mkdirSync(resolvedRoot, { recursive: true });
+
+  let cursor = cdOffset;
+  for (let n = 0; n < totalEntries && cursor + 46 <= zipBuf.length; n++) {
+    if (zipBuf.readUInt32LE(cursor) !== 0x02014b50) break;
+    const method = zipBuf.readUInt16LE(cursor + 10);
+    const compSize = zipBuf.readUInt32LE(cursor + 20);
+    const nameLen = zipBuf.readUInt16LE(cursor + 28);
+    const extraLen = zipBuf.readUInt16LE(cursor + 30);
+    const commentLen = zipBuf.readUInt16LE(cursor + 32);
+    const localHeaderOffset = zipBuf.readUInt32LE(cursor + 42);
+    const rawName = zipBuf.subarray(cursor + 46, cursor + 46 + nameLen).toString('utf-8');
+    cursor += 46 + nameLen + extraLen + commentLen;
+
+    if (!rawName || rawName.endsWith('/')) continue;
+    const targetPath = normalize(join(resolvedRoot, rawName));
+    if (!targetPath.startsWith(resolvedRoot)) continue;
+
+    if (zipBuf.readUInt32LE(localHeaderOffset) !== 0x04034b50) continue;
+    const lNameLen = zipBuf.readUInt16LE(localHeaderOffset + 26);
+    const lExtraLen = zipBuf.readUInt16LE(localHeaderOffset + 28);
+    const dataStart = localHeaderOffset + 30 + lNameLen + lExtraLen;
+    const compSlice = zipBuf.subarray(dataStart, dataStart + compSize);
+
+    const outData = method === 0 ? compSlice : method === 8 ? inflateRawSync(compSlice) : null;
+    if (!outData) {
+      throw new Error('Unsupported zip compression method: ' + String(method));
+    }
+    mkdirSync(dirname(targetPath), { recursive: true });
+    writeFileSync(targetPath, outData);
+  }
+}
 
 function compareSemverDesktop(remoteRaw: string, localRaw: string): number {
   const clean = (v: string) =>
@@ -762,7 +841,10 @@ const MIME_MAP: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
   '.svg': 'image/svg+xml',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
   '.ico': 'image/x-icon',
   '.wav': 'audio/wav',
 };
@@ -770,7 +852,6 @@ const MIME_MAP: Record<string, string> = {
 async function startLoopbackServer(): Promise<number> {
   if (loopbackServer && loopbackPort > 0) return loopbackPort;
   const apiHandler = createPMusicApiHandler();
-  const distRoot = join(__dirname, '../dist');
 
   return new Promise<number>((resolvePort, reject) => {
     const srv = createServer(async (req, res) => {
@@ -780,6 +861,7 @@ async function startLoopbackServer(): Promise<number> {
         return;
       }
 
+      const distRoot = getActiveWebDistRoot();
       const urlObj = new URL(rawUrl, 'http://127.0.0.1');
       let relPath = decodeURIComponent(urlObj.pathname);
       if (relPath === '/' || relPath === '') relPath = '/index.html';
@@ -796,6 +878,9 @@ async function startLoopbackServer(): Promise<number> {
         res.statusCode = 200;
         res.setHeader('Content-Type', MIME_MAP[ext] ?? 'application/octet-stream');
         res.setHeader('Access-Control-Allow-Origin', '*');
+        if (ext === '.html') {
+          res.setHeader('Cache-Control', 'no-store');
+        }
         res.end(data);
       } catch {
         res.statusCode = 404;
@@ -985,7 +1070,97 @@ ipcMain.handle('pmusic:toggle-fullscreen', () => {
   mainWindow.setFullScreen(next);
   return mainWindow.isFullScreen();
 });
-ipcMain.handle('pmusic:check-and-apply-update', async () => {
+ipcMain.handle('pmusic:check-and-apply-update', async (_event, runningWebVersion?: string) => {
+  const sendProg = (percent: number, message: string, phase = 'downloading') => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('pmusic:update-progress', {
+        phase,
+        version: runningWebVersion ?? PMUSIC_DESKTOP_VERSION,
+        percent,
+        message,
+      });
+    }
+  };
+  const currentWebVer =
+    typeof runningWebVersion === 'string' && runningWebVersion.trim()
+      ? runningWebVersion.trim().replace(/^v/i, '')
+      : readInstalledOtaVersion() || PMUSIC_DESKTOP_VERSION;
+
+  // 1. Instant In-Splash OTA web bundle update (zero Setup.exe reinstall needed)
+  try {
+    const acOta = new AbortController();
+    const tOta = setTimeout(() => acOta.abort(), 1800);
+    const otaRes = await fetch(
+      'https://raw.githubusercontent.com/pabloburgos/pMusic/main/ota/latest.json?t=' + Date.now(),
+      { signal: acOta.signal, headers: { 'User-Agent': 'pMusic-Updater' } }
+    ).finally(() => clearTimeout(tOta));
+    if (otaRes.ok) {
+      const ota = (await otaRes.json()) as {
+        version?: string;
+        minNativeVersion?: string;
+        bundleUrl?: string;
+      };
+      const otaVer = String(ota?.version ?? '').trim().replace(/^v/i, '');
+      const minNative = String(ota?.minNativeVersion ?? '').trim().replace(/^v/i, '');
+      const nativeCompatible =
+        !minNative || compareSemverDesktop(minNative, PMUSIC_DESKTOP_VERSION) <= 0;
+      if (
+        otaVer &&
+        ota?.bundleUrl &&
+        nativeCompatible &&
+        compareSemverDesktop(otaVer, currentWebVer) > 0
+      ) {
+        sendProg(10, 'Actualización v' + otaVer + ' · Descargando…');
+        const dlRes = await fetch(ota.bundleUrl, {
+          headers: { 'User-Agent': 'pMusic-Updater' },
+        });
+        if (dlRes.ok && dlRes.body) {
+          const total = Number(dlRes.headers.get('content-length') ?? 0) || 1_500_000;
+          const chunks: Buffer[] = [];
+          let received = 0;
+          const reader = dlRes.body.getReader();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) {
+              const buf = Buffer.from(value);
+              chunks.push(buf);
+              received += buf.length;
+              const pct = Math.min(88, Math.max(12, Math.round((received / total) * 85)));
+              sendProg(pct, 'Actualización v' + otaVer + ' · Descargando ' + pct + '%…');
+            }
+          }
+          sendProg(92, 'Actualización v' + otaVer + ' · Instalando…', 'installing');
+          const otaRoot = getOtaRootDir();
+          const stagingDir = join(otaRoot, 'staging');
+          const currentDir = join(otaRoot, 'current');
+          rmSync(stagingDir, { recursive: true, force: true });
+          extractZipBufferToDir(Buffer.concat(chunks), stagingDir);
+          if (existsSync(join(stagingDir, 'index.html'))) {
+            writeFileSync(join(stagingDir, 'ota-version.txt'), otaVer, 'utf-8');
+            rmSync(currentDir, { recursive: true, force: true });
+            renameSync(stagingDir, currentDir);
+            sendProg(100, 'Actualización v' + otaVer + ' instalada · Cargando…', 'installing');
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              await mainWindow.webContents.session.clearCache().catch(() => {});
+              setTimeout(() => {
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                  void mainWindow.loadURL(
+                    'http://127.0.0.1:' + String(loopbackPort) + '/?ota=' + encodeURIComponent(otaVer)
+                  );
+                }
+              }, 220);
+            }
+            return { updated: true, version: otaVer };
+          }
+        }
+      }
+    }
+  } catch {
+    // Fall back to GitHub Release native installer check when needed
+  }
+
+  // 2. Native Electron installer fallback (only when packaged + native update needed)
   if (!app.isPackaged || process.platform !== 'win32') {
     return { updated: false };
   }
@@ -1010,18 +1185,7 @@ ipcMain.handle('pmusic:check-and-apply-update', async () => {
       return { updated: false };
     }
 
-    const sendProg = (percent: number, message: string, phase = 'downloading') => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('pmusic:update-progress', {
-          phase,
-          version: latestVer,
-          percent,
-          message,
-        });
-      }
-    };
-
-    sendProg(8, \`Actualizando pMusic a v\${latestVer}…\`);
+    sendProg(8, 'Actualizando pMusic a v' + latestVer + '…');
     const dlAc = new AbortController();
     const dlRes = await fetch(exeAsset.browser_download_url, {
       signal: dlAc.signal,
@@ -1030,7 +1194,7 @@ ipcMain.handle('pmusic:check-and-apply-update', async () => {
     if (!dlRes.ok || !dlRes.body) return { updated: false };
 
     const totalBytes = Number(dlRes.headers.get('content-length') ?? 0) || 170 * 1024 * 1024;
-    const installerPath = join(tmpdir(), \`pMusic-Setup-Update-\${latestVer}.exe\`);
+    const installerPath = join(tmpdir(), 'pMusic-Setup-Update-' + latestVer + '.exe');
     const ws = createWriteStream(installerPath);
     const reader = dlRes.body.getReader();
     let received = 0;
@@ -1046,7 +1210,7 @@ ipcMain.handle('pmusic:check-and-apply-update', async () => {
         if (nowMs - lastReportMs > 120) {
           lastReportMs = nowMs;
           const pct = Math.min(94, Math.max(10, Math.round((received / totalBytes) * 90)));
-          sendProg(pct, \`Actualizando pMusic a v\${latestVer} (\${pct}%)…\`);
+          sendProg(pct, 'Actualizando pMusic a v' + latestVer + ' (' + pct + '%)…');
         }
       }
     }
@@ -1063,7 +1227,7 @@ ipcMain.handle('pmusic:check-and-apply-update', async () => {
     const installDir = dirname(process.execPath);
     const child = spawn(
       installerPath,
-      ['/silent', \`/dir=\${installDir}\`, '/relaunch'],
+      ['/silent', '/dir=' + installDir, '/relaunch'],
       { detached: true, stdio: 'ignore', windowsHide: true }
     );
     child.unref();

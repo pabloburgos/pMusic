@@ -1,5 +1,7 @@
-export const APP_VERSION = '0.23.1';
+export const APP_VERSION = '0.23.2';
 
+const OTA_MANIFEST_URL =
+  'https://raw.githubusercontent.com/pabloburgos/pMusic/main/ota/latest.json';
 const GITHUB_LATEST_RELEASE_URL =
   'https://api.github.com/repos/pabloburgos/pMusic/releases/latest';
 const RAW_DESKTOP_PKG_URL =
@@ -32,12 +34,48 @@ export function compareSemver(remoteRaw: string, localRaw: string): number {
   return 0;
 }
 
-async function fetchLatestReleaseInfo(timeoutMs = 1350): Promise<{
+async function fetchLatestReleaseInfo(timeoutMs = 1800): Promise<{
   version: string;
+  minNativeVersion?: string;
+  bundleUrl?: string;
   apkUrl?: string;
   exeUrl?: string;
 } | null> {
   if (typeof fetch !== 'function') return null;
+
+  // 1. Primary fast OTA manifest (enables in-splash instant updates on Android & Windows)
+  const acOta = new AbortController();
+  const tOta = setTimeout(() => acOta.abort(), timeoutMs);
+  try {
+    const otaRes = await fetch(`${OTA_MANIFEST_URL}?t=${Date.now()}`, {
+      signal: acOta.signal,
+      cache: 'no-store',
+    });
+    if (otaRes.ok) {
+      const ota = (await otaRes.json()) as {
+        version?: string;
+        minNativeVersion?: string;
+        bundleUrl?: string;
+        apkUrl?: string;
+        exeUrl?: string;
+      };
+      if (ota?.version) {
+        return {
+          version: ota.version.trim().replace(/^v/i, ''),
+          minNativeVersion: ota.minNativeVersion?.trim().replace(/^v/i, ''),
+          bundleUrl: ota.bundleUrl,
+          apkUrl: ota.apkUrl,
+          exeUrl: ota.exeUrl,
+        };
+      }
+    }
+  } catch {
+    // Fall back to GitHub Releases / raw package.json
+  } finally {
+    clearTimeout(tOta);
+  }
+
+  // 2. GitHub Releases API fallback (for native binary upgrades)
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
@@ -118,28 +156,32 @@ export async function runSplashAutoUpdateCheck(
 
   const win = window as unknown as {
     pmusicDesktop?: {
-      checkAndApplyUpdate?: () => Promise<{ updated: boolean; version?: string }>;
+      checkAndApplyUpdate?: (
+        currentWebVersion?: string
+      ) => Promise<{ updated: boolean; version?: string }>;
       onUpdateProgress?: (
         cb: (p: { phase?: string; version?: string; percent?: number; message?: string }) => void
       ) => () => void;
     };
     PMusicNative?: {
+      getNativeVersion?: () => string;
+      downloadAndInstallOtaBundle?: (zipUrl: string, version: string) => boolean;
       downloadAndInstallUpdate?: (apkUrl: string, version: string) => boolean;
     };
     __pmusicUpdateProgress?: (percent: number, message: string) => void;
   };
 
-  // 1. Electron Desktop native updater (IPC handles fast check + download + silent installer)
+  // 1. Electron Desktop native / OTA updater
   if (win.pmusicDesktop?.checkAndApplyUpdate) {
     let unsub: (() => void) | undefined;
     try {
       unsub = win.pmusicDesktop.onUpdateProgress?.((p) => {
-        const msg = p.message || `Actualizando a pMusic v${p.version ?? ''}…`;
+        const msg = p.message || `Actualización v${p.version ?? ''} · Instalando…`;
         const pct = typeof p.percent === 'number' ? p.percent : 15;
         onStateChange?.({ updating: true, message: msg, percent: pct });
         setSplashUpdateBanner(msg, pct);
       });
-      const res = await win.pmusicDesktop.checkAndApplyUpdate();
+      const res = await win.pmusicDesktop.checkAndApplyUpdate(APP_VERSION);
       if (res?.updated) {
         return { updating: true };
       }
@@ -151,13 +193,40 @@ export async function runSplashAutoUpdateCheck(
     }
   }
 
-  // 2. Android / Web fast release check
-  const remote = await fetchLatestReleaseInfo(1350);
+  // 2. Android / Web fast release & OTA check
+  const remote = await fetchLatestReleaseInfo(1800);
   if (!remote || compareSemver(remote.version, APP_VERSION) <= 0) {
     return { updating: false };
   }
 
-  // Android native APK download & install prompt
+  // Android WebView OTA bundle (installs right inside splash without APK reinstall)
+  const nativeVer = win.PMusicNative?.getNativeVersion?.() ?? APP_VERSION;
+  const nativeCompatible =
+    !remote.minNativeVersion || compareSemver(remote.minNativeVersion, nativeVer) <= 0;
+  if (win.PMusicNative?.downloadAndInstallOtaBundle && remote.bundleUrl && nativeCompatible) {
+    const msg = `Actualización v${remote.version} · Descargando…`;
+    onStateChange?.({ updating: true, message: msg, percent: 8 });
+    setSplashUpdateBanner(msg, 8);
+    win.__pmusicUpdateProgress = (pct: number, customMsg?: string) => {
+      const m = customMsg || msg;
+      onStateChange?.({ updating: true, message: m, percent: pct });
+      setSplashUpdateBanner(m, pct);
+    };
+    try {
+      const started = win.PMusicNative.downloadAndInstallOtaBundle(
+        remote.bundleUrl,
+        remote.version
+      );
+      if (started) {
+        return { updating: true };
+      }
+    } catch {
+      // fall through
+    }
+    return { updating: false };
+  }
+
+  // Android native APK download & install prompt (only when minNativeVersion requires APK upgrade)
   if (win.PMusicNative?.downloadAndInstallUpdate && remote.apkUrl) {
     const msg = `Actualizando a pMusic v${remote.version}…`;
     onStateChange?.({ updating: true, message: msg, percent: 8 });

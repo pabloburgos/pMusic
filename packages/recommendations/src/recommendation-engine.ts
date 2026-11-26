@@ -180,6 +180,54 @@ export function getMondayWeekWindow(now: Date = new Date()): MondayWeekWindow {
   };
 }
 
+export interface RollingDaysWindow {
+  startIso: string;
+  endIso: string;
+  days: number;
+  dayKey: string;
+  rangeLabel: string;
+}
+
+/**
+ * Returns a rolling [today - days, tomorrow) YYYY-MM-DD window inclusive of today,
+ * updating daily so releases and collaborations within the last N days appear immediately.
+ */
+export function getRollingDaysWindow(
+  now: Date = new Date(),
+  days = 10
+): RollingDaysWindow {
+  const safeDays = Math.max(1, Math.round(days));
+  const start = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() - safeDays,
+    0,
+    0,
+    0,
+    0
+  );
+  const end = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() + 1,
+    0,
+    0,
+    0,
+    0
+  );
+  const startIso = getDailyMixDateKey(start);
+  const endIso = getDailyMixDateKey(end);
+  const dayKey = getDailyMixDateKey(now);
+  const rangeLabel = `${start.getDate()} ${SPANISH_SHORT_MONTHS[start.getMonth()]} – Hoy`;
+  return {
+    startIso,
+    endIso,
+    days: safeDays,
+    dayKey,
+    rangeLabel,
+  };
+}
+
 /**
  * Strict check that a YYYY-MM-DD releaseDate lies inside [startIso, endIso).
  */
@@ -1010,7 +1058,8 @@ export class RecommendationEngine implements IRecommendationEngine {
   public async buildHomeShelves(signal?: AbortSignal): Promise<HomeEditorialShelf[]> {
     const now = new Date();
     const dailyKey = getDailyMixDateKey(now);
-    const weekWin = getMondayWeekWindow(now);
+    const rollingWin = getRollingDaysWindow(now, 10);
+    const rolling30Win = getRollingDaysWindow(now, 30);
     const currentYear = now.getFullYear();
 
     const makeTrackKey = (t: Track): string =>
@@ -1214,6 +1263,11 @@ export class RecommendationEngine implements IRecommendationEngine {
             for (const co of t.artists ?? []) addAllowedArtist(co.name);
             pushTrack(t, true);
           }
+          for (const ap of (val.appearances ?? []) as Track[]) {
+            for (const co of ap.artists ?? []) addAllowedArtist(co.name);
+            if (!recentReleasesMap.has(ap.id)) recentReleasesMap.set(ap.id, ap);
+            pushTrack(ap, true);
+          }
           for (const rel of val.relatedArtists ?? []) {
             queueEmergingArtist(rel.name, rel.id, seenCoreKeys.has(normalizeArtistKey(rel.name)) ? 4 : 25);
           }
@@ -1222,7 +1276,7 @@ export class RecommendationEngine implements IRecommendationEngine {
             pushAlbum(al, true);
             if (
               (al.year ?? 0) >= currentYear - 1 ||
-              isReleaseDateInWindow(al.releaseDate, weekWin.prevStartIso, weekWin.endIso)
+              isReleaseDateInWindow(al.releaseDate, rolling30Win.startIso, rolling30Win.endIso)
             ) {
               recentAlbumCandidates.push(al);
             }
@@ -1251,25 +1305,31 @@ export class RecommendationEngine implements IRecommendationEngine {
         }
       }
 
-      // Wave 2: Prioritize Monday-to-Monday weekly releases (then newest albums) + emerging/related artists
+      // Wave 2: Prioritize rolling 10-day (then 30-day) releases + emerging/related artists
       const allCandidateAlbums = [...recentAlbumCandidates, ...collectedAlbums].filter(
         (a, idx, arr) => arr.findIndex((x) => x.id === a.id) === idx
       );
-      const weeklyAlbumTargets = allCandidateAlbums.filter(
-        (al) =>
-          isReleaseDateInWindow(al.releaseDate, weekWin.startIso, weekWin.endIso) ||
-          (now.getDay() === 1 &&
-            isReleaseDateInWindow(al.releaseDate, weekWin.prevStartIso, weekWin.prevEndIso))
+      const recentWindowAlbums = allCandidateAlbums.filter((al) =>
+        isReleaseDateInWindow(al.releaseDate, rollingWin.startIso, rollingWin.endIso)
       );
-      const nonWeeklyNewest = allCandidateAlbums
-        .filter((al) => !weeklyAlbumTargets.some((w) => w.id === al.id))
+      const fallback30Albums =
+        recentWindowAlbums.length >= 4
+          ? []
+          : allCandidateAlbums.filter(
+              (al) =>
+                !recentWindowAlbums.some((w) => w.id === al.id) &&
+                isReleaseDateInWindow(al.releaseDate, rolling30Win.startIso, rolling30Win.endIso)
+            );
+      const prioritizedWindowAlbums = [...recentWindowAlbums, ...fallback30Albums];
+      const nonWindowNewest = allCandidateAlbums
+        .filter((al) => !prioritizedWindowAlbums.some((w) => w.id === al.id))
         .sort((a, b) => {
           const da = a.releaseDate ?? `${a.year ?? 0}-01-01`;
           const db = b.releaseDate ?? `${b.year ?? 0}-01-01`;
           return db.localeCompare(da);
         })
-        .slice(0, weeklyAlbumTargets.length < 4 ? 6 : 3);
-      const newestReleaseTargets = [...weeklyAlbumTargets.slice(0, 5), ...nonWeeklyNewest].slice(0, 6);
+        .slice(0, prioritizedWindowAlbums.length < 4 ? 6 : 2);
+      const newestReleaseTargets = [...prioritizedWindowAlbums.slice(0, 6), ...nonWindowNewest].slice(0, 8);
       const fetchedAlbumIds = new Set(newestReleaseTargets.map((al) => al.id));
 
       const emergingTargets = seededShuffle(
@@ -1291,7 +1351,7 @@ export class RecommendationEngine implements IRecommendationEngine {
               Promise.allSettled(
                 newestReleaseTargets.map((al) => this.musicProvider!.getAlbum!(al.id, signal))
               ),
-              2200
+              2600
             ).then((r) => r ?? [])
           : Promise.resolve([] as PromiseSettledResult<any>[]),
         withTimeout(
@@ -1348,13 +1408,16 @@ export class RecommendationEngine implements IRecommendationEngine {
             secondWaveSeeds.push(t);
           }
         }
+        for (const ap of (val.appearances ?? []) as Track[]) {
+          for (const co of ap.artists ?? []) addAllowedArtist(co.name);
+          if (!recentReleasesMap.has(ap.id)) recentReleasesMap.set(ap.id, ap);
+          pushTrack(ap, true);
+        }
         for (const al of [...(val.singles ?? []), ...(val.albums ?? [])] as AlbumSummary[]) {
           pushAlbum(al, true);
           if (
             !fetchedAlbumIds.has(al.id) &&
-            (isReleaseDateInWindow(al.releaseDate, weekWin.startIso, weekWin.endIso) ||
-              (now.getDay() === 1 &&
-                isReleaseDateInWindow(al.releaseDate, weekWin.prevStartIso, weekWin.prevEndIso)))
+            isReleaseDateInWindow(al.releaseDate, rolling30Win.startIso, rolling30Win.endIso)
           ) {
             fetchedAlbumIds.add(al.id);
             emergingWeeklyAlbums.push(al);
@@ -1556,38 +1619,38 @@ export class RecommendationEngine implements IRecommendationEngine {
       return out;
     };
 
-    // 1. Descubre lo Nuevo (STRICT Monday-to-Monday weekly releases using real releaseDate!)
+    // 1. Descubre lo Nuevo (Rolling 10-day window before today, including guest feat/collabs!)
     const allDatedPool = Array.from(
       new Map<string, Track>(
         [...Array.from(recentReleasesMap.values()), ...catalogSongs].map((t) => [t.id, t])
       ).values()
     );
-    const currentWeekTracks = allDatedPool
-      .filter((t) => isReleaseDateInWindow(t.releaseDate, weekWin.startIso, weekWin.endIso))
+    const rolling10Tracks = allDatedPool
+      .filter((t) => isReleaseDateInWindow(t.releaseDate, rollingWin.startIso, rollingWin.endIso))
       .sort((a, b) => (b.releaseDate ?? '').localeCompare(a.releaseDate ?? ''));
-    const strictWeeklyTracks =
-      currentWeekTracks.length > 0 || now.getDay() !== 1
-        ? currentWeekTracks
-        : allDatedPool
-            .filter((t) =>
-              isReleaseDateInWindow(t.releaseDate, weekWin.prevStartIso, weekWin.prevEndIso)
-            )
-            .sort((a, b) => (b.releaseDate ?? '').localeCompare(a.releaseDate ?? ''));
+    const used30Fallback = rolling10Tracks.length === 0;
+    const strictRecentTracks = used30Fallback
+      ? allDatedPool
+          .filter((t) =>
+            isReleaseDateInWindow(t.releaseDate, rolling30Win.startIso, rolling30Win.endIso)
+          )
+          .sort((a, b) => (b.releaseDate ?? '').localeCompare(a.releaseDate ?? ''))
+      : rolling10Tracks;
 
-    const orderedWeekly = [...strictWeeklyTracks.filter(isUnheard), ...strictWeeklyTracks];
-    const seenWeeklyIds = new Set<string>();
-    const seenWeeklyKeys = new Set<string>();
-    const weeklyArtistCounts = new Map<string, number>();
+    const orderedRecent = [...strictRecentTracks.filter(isUnheard), ...strictRecentTracks];
+    const seenRecentIds = new Set<string>();
+    const seenRecentKeys = new Set<string>();
+    const recentArtistCounts = new Map<string, number>();
     const radarTracks: Track[] = [];
-    for (const t of orderedWeekly) {
-      if (!t?.id || seenWeeklyIds.has(t.id)) continue;
+    for (const t of orderedRecent) {
+      if (!t?.id || seenRecentIds.has(t.id)) continue;
       const tk = makeTrackKey(t);
-      if (tk !== '::' && seenWeeklyKeys.has(tk)) continue;
+      if (tk !== '::' && seenRecentKeys.has(tk)) continue;
       const pArtist = normalizeArtistKey(t.artists[0]?.name ?? '');
-      if (pArtist && (weeklyArtistCounts.get(pArtist) ?? 0) >= 4) continue;
-      seenWeeklyIds.add(t.id);
-      if (tk !== '::') seenWeeklyKeys.add(tk);
-      if (pArtist) weeklyArtistCounts.set(pArtist, (weeklyArtistCounts.get(pArtist) ?? 0) + 1);
+      if (pArtist && (recentArtistCounts.get(pArtist) ?? 0) >= 4) continue;
+      seenRecentIds.add(t.id);
+      if (tk !== '::') seenRecentKeys.add(tk);
+      if (pArtist) recentArtistCounts.set(pArtist, (recentArtistCounts.get(pArtist) ?? 0) + 1);
       radarTracks.push(t);
       if (radarTracks.length >= 40) break;
     }
@@ -1659,10 +1722,12 @@ export class RecommendationEngine implements IRecommendationEngine {
         id: 'mix_descubre_lo_nuevo',
         title: 'Descubre lo Nuevo',
         subtitle:
-          radarTracks.length > 0
-            ? `Lanzamientos de esta semana (${weekWin.rangeLabel}) · Lunes a lunes`
-            : `Novedades de ${weekWin.rangeLabel} (lunes a lunes · sin estrenos esta semana)`,
-        badge: 'LUNES A LUNES',
+          radarTracks.length > 0 && !used30Fallback
+            ? `Estrenos y colaboraciones de los últimos 10 días (${rollingWin.rangeLabel}) · Actualizada cada día`
+            : radarTracks.length > 0
+              ? 'Estrenos y colaboraciones recientes (últimos 30 días) · Actualizada cada día'
+              : 'Sin estrenos recientes detectados todavía · Actualizada cada día',
+        badge: 'ÚLTIMOS 10 DÍAS',
         coverUrl:
           radarTracks[0]?.thumbnailHighUrl ??
           radarTracks[0]?.thumbnailUrl ??

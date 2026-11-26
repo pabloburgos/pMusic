@@ -436,8 +436,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="47"
-    android:versionName="0.23.1">
+    android:versionCode="48"
+    android:versionName="0.23.2">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -1340,6 +1340,7 @@ import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -1369,8 +1370,62 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 public class MainActivity extends Activity {
+    private static final String NATIVE_APP_VERSION = "0.23.2";
+    private volatile File activeOtaDir = null;
+
+    private static int compareSemverNative(String a, String b) {
+        String[] pa = (a == null ? "" : a.trim().replaceFirst("^[vV]", "")).split("-")[0].split("\\\\.");
+        String[] pb = (b == null ? "" : b.trim().replaceFirst("^[vV]", "")).split("-")[0].split("\\\\.");
+        int len = Math.max(Math.max(pa.length, pb.length), 3);
+        for (int i = 0; i < len; i++) {
+            int va = 0;
+            int vb = 0;
+            try { if (i < pa.length && !pa[i].isEmpty()) va = Integer.parseInt(pa[i]); } catch (Exception ignored) {}
+            try { if (i < pb.length && !pb[i].isEmpty()) vb = Integer.parseInt(pb[i]); } catch (Exception ignored) {}
+            if (va > vb) return 1;
+            if (va < vb) return -1;
+        }
+        return 0;
+    }
+
+    private static void deleteRecursive(File target) {
+        if (target == null || !target.exists()) return;
+        File[] children = target.listFiles();
+        if (children != null) {
+            for (File child : children) {
+                deleteRecursive(child);
+            }
+        }
+        try {
+            target.delete();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void refreshActiveOtaDir() {
+        try {
+            File currentDir = new File(getFilesDir(), "ota_web/current");
+            File idx = new File(currentDir, "index.html");
+            File verFile = new File(currentDir, "ota-version.txt");
+            if (idx.exists() && idx.isFile() && verFile.exists() && verFile.isFile()) {
+                byte[] buf = new byte[(int) Math.min(64L, verFile.length())];
+                FileInputStream fis = new FileInputStream(verFile);
+                int r = fis.read(buf);
+                fis.close();
+                String otaVer = r > 0 ? new String(buf, 0, r, StandardCharsets.UTF_8).trim() : "";
+                if (!otaVer.isEmpty() && compareSemverNative(otaVer, NATIVE_APP_VERSION) >= 0) {
+                    activeOtaDir = currentDir;
+                    return;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        activeOtaDir = null;
+    }
     private static final int REQ_VOICE_SEARCH = 4102;
     private static volatile MainActivity sInstance;
     private static volatile String sPendingMediaAction = null;
@@ -1662,6 +1717,140 @@ public class MainActivity extends Activity {
                         }
                     }
                 });
+            }
+
+            @android.webkit.JavascriptInterface
+            public String getNativeVersion() {
+                return NATIVE_APP_VERSION;
+            }
+
+            @android.webkit.JavascriptInterface
+            public boolean downloadAndInstallOtaBundle(final String zipUrl, final String version) {
+                if (zipUrl == null || !zipUrl.startsWith("https://") || version == null || version.trim().isEmpty()) {
+                    return false;
+                }
+                final String safeVer = version.trim().replaceAll("[^0-9A-Za-z._-]", "");
+                streamExecutor.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        HttpURLConnection conn = null;
+                        try {
+                            URL u = new URL(zipUrl);
+                            conn = (HttpURLConnection) u.openConnection();
+                            conn.setConnectTimeout(6000);
+                            conn.setReadTimeout(20000);
+                            conn.setInstanceFollowRedirects(true);
+                            conn.setRequestProperty("User-Agent", "pMusic-Updater/" + NATIVE_APP_VERSION);
+                            if (conn.getResponseCode() < 200 || conn.getResponseCode() >= 300) return;
+                            int total = Math.max(1024, conn.getContentLength());
+                            File outZip = new File(getCacheDir(), "pmusic-ota.zip");
+                            FileOutputStream fos = new FileOutputStream(outZip);
+                            InputStream in = conn.getInputStream();
+                            byte[] buf = new byte[16384];
+                            long received = 0L;
+                            int n;
+                            long lastReport = 0L;
+                            while ((n = in.read(buf)) != -1) {
+                                fos.write(buf, 0, n);
+                                received += n;
+                                long now = System.currentTimeMillis();
+                                if (now - lastReport > 110L) {
+                                    lastReport = now;
+                                    final int pct = (int) Math.min(88L, Math.max(10L, (received * 86L) / total));
+                                    runOnUiThread(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            if (webView != null) {
+                                                webView.evaluateJavascript("window.__pmusicUpdateProgress&&window.__pmusicUpdateProgress(" + pct + ",'Actualización v" + safeVer + " · Descargando " + pct + "%…')", null);
+                                            }
+                                        }
+                                    });
+                                }
+                            }
+                            in.close();
+                            fos.close();
+
+                            runOnUiThread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    if (webView != null) {
+                                        webView.evaluateJavascript("window.__pmusicUpdateProgress&&window.__pmusicUpdateProgress(92,'Actualización v" + safeVer + " · Instalando…')", null);
+                                    }
+                                }
+                            });
+
+                            File otaBase = new File(getFilesDir(), "ota_web");
+                            File staging = new File(otaBase, "staging");
+                            File current = new File(otaBase, "current");
+                            deleteRecursive(staging);
+                            staging.mkdirs();
+                            String canonicalRoot = staging.getCanonicalPath() + File.separator;
+
+                            ZipInputStream zis = new ZipInputStream(new FileInputStream(outZip));
+                            ZipEntry entry;
+                            byte[] zbuf = new byte[16384];
+                            while ((entry = zis.getNextEntry()) != null) {
+                                String entryName = entry.getName();
+                                if (entryName == null || entryName.isEmpty()) {
+                                    zis.closeEntry();
+                                    continue;
+                                }
+                                File destFile = new File(staging, entryName);
+                                String canonicalDest = destFile.getCanonicalPath();
+                                if (!canonicalDest.startsWith(canonicalRoot)) {
+                                    zis.closeEntry();
+                                    continue;
+                                }
+                                if (entry.isDirectory()) {
+                                    destFile.mkdirs();
+                                } else {
+                                    File parent = destFile.getParentFile();
+                                    if (parent != null) parent.mkdirs();
+                                    FileOutputStream efos = new FileOutputStream(destFile);
+                                    int rn;
+                                    while ((rn = zis.read(zbuf)) != -1) {
+                                        efos.write(zbuf, 0, rn);
+                                    }
+                                    efos.close();
+                                }
+                                zis.closeEntry();
+                            }
+                            zis.close();
+
+                            if (new File(staging, "index.html").exists()) {
+                                FileOutputStream vfos = new FileOutputStream(new File(staging, "ota-version.txt"));
+                                vfos.write(safeVer.getBytes(StandardCharsets.UTF_8));
+                                vfos.close();
+                                deleteRecursive(current);
+                                if (!staging.renameTo(current)) {
+                                    current.mkdirs();
+                                }
+                                refreshActiveOtaDir();
+                                runOnUiThread(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        if (webView != null) {
+                                            webView.evaluateJavascript("window.__pmusicUpdateProgress&&window.__pmusicUpdateProgress(100,'Actualización v" + safeVer + " instalada · Cargando…')", null);
+                                            webView.postDelayed(new Runnable() {
+                                                @Override
+                                                public void run() {
+                                                    if (webView != null) {
+                                                        webView.clearCache(true);
+                                                        webView.loadUrl("https://appassets.pmusic.local/index.html?ota=" + Uri.encode(safeVer));
+                                                    }
+                                                }
+                                            }, 220L);
+                                        }
+                                    }
+                                });
+                            }
+                        } catch (Throwable ignored) {
+                        } finally {
+                            if (conn != null) conn.disconnect();
+                        }
+                    }
+                });
+                return true;
             }
 
             @android.webkit.JavascriptInterface
@@ -1971,7 +2160,30 @@ public class MainActivity extends Activity {
                     }
 
                     String cleanPath = path.split("[?#]", 2)[0];
-                    String assetPath = cleanPath.equals("/") ? "public/index.html" : "public" + cleanPath;
+                    if (cleanPath.equals("/")) cleanPath = "/index.html";
+                    File otaRoot = activeOtaDir;
+                    if (otaRoot != null) {
+                        try {
+                            String relPath = cleanPath.startsWith("/") ? cleanPath.substring(1) : cleanPath;
+                            File otaFile = new File(otaRoot, relPath);
+                            String rootCan = otaRoot.getCanonicalPath() + File.separator;
+                            if (!otaFile.exists() || !otaFile.isFile() || !otaFile.getCanonicalPath().startsWith(rootCan)) {
+                                otaFile = new File(otaRoot, "index.html");
+                                relPath = "index.html";
+                            }
+                            if (otaFile.exists() && otaFile.isFile()) {
+                                String mime = guessMime("public/" + relPath);
+                                String enc = mime.startsWith("text/") || mime.contains("javascript") || mime.contains("json") || mime.contains("svg") ? "UTF-8" : null;
+                                Map<String, String> otaHeaders = new HashMap<String, String>(corsHeaders);
+                                if ("text/html".equals(mime)) {
+                                    otaHeaders.put("Cache-Control", "no-store");
+                                }
+                                return new WebResourceResponse(mime, enc, 200, "OK", otaHeaders, new FileInputStream(otaFile));
+                            }
+                        } catch (Exception ignored) {
+                        }
+                    }
+                    String assetPath = "public" + cleanPath;
                     try {
                         InputStream is = getAssets().open(assetPath);
                         String mime = guessMime(assetPath);
@@ -2030,6 +2242,7 @@ public class MainActivity extends Activity {
             }
         } catch (Throwable ignored) {
         }
+        refreshActiveOtaDir();
         startLocalStreamServer();
         webView.loadUrl("https://appassets.pmusic.local/index.html");
     }

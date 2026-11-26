@@ -17,6 +17,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "build:web": "npm run build -w @pmusic/web",
+    "build:ota": "node scripts/build-ota-bundle.mjs",
     "test:e2e": "playwright test",
     "build:desktop": "npm run build:web && npm run build -w @pmusic/desktop",
     "dist:win:unpacked": "npm run build:desktop && npm run dist:win:unpacked -w @pmusic/desktop",

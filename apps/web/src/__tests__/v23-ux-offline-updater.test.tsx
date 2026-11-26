@@ -207,13 +207,15 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
       resolve(__dirname, '../../../mobile/scripts/build-apk.mjs'),
       'utf-8'
     );
-    expect(buildApkSrc).toContain('versionName="0.23.1"');
+    expect(buildApkSrc).toContain('versionName="0.23.2"');
     expect(buildApkSrc).toContain('ic_media_play.xml');
     expect(buildApkSrc).toContain('ic_media_pause.xml');
     expect(buildApkSrc).toContain('ic_media_prev.xml');
     expect(buildApkSrc).toContain('ic_media_next.xml');
     expect(buildApkSrc).toContain('R.drawable.ic_media_play');
     expect(buildApkSrc).toContain('R.drawable.ic_media_pause');
+    expect(buildApkSrc).toContain('downloadAndInstallOtaBundle');
+    expect(buildApkSrc).toContain('ota_web/current');
 
     // Mobile SettingsModal hides Discord category
     const origInnerWidth = window.innerWidth;
@@ -260,5 +262,73 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
     );
     expect(storeSrc).toContain('pmusic_home_shelves_cache_v3');
     expect(storeSrc).toContain('isLegacyOrFallbackShelves');
+  });
+
+  it('renders Último lanzamiento and Última aparición on artist profiles and wires in-splash OTA bundle extraction', () => {
+    const t1 = makeTrack(91);
+    const collab: Track = {
+      id: 'collab-feat-92',
+      title: 'LAMINE YAMAL (feat. Cruzzi)',
+      artists: [
+        { id: 'ext-nemzzz', name: 'Nemzzz' },
+        { id: 'ar-cruz', name: 'Cruzzi' },
+      ],
+      album: { id: 'alb-ext', name: 'LOCKED IN' },
+      durationSec: 178,
+      thumbnailUrl: 'https://example.com/feat.jpg',
+      source: 'ytmusic',
+      releaseDate: '2026-11-22',
+      releaseYear: 2026,
+    };
+
+    act(() => {
+      usePMusicStore.setState({
+        activeDetailView: {
+          kind: 'artist',
+          data: {
+            artist: { id: 'ar-cruz', name: 'Cruzzi', thumbnailUrl: 'https://example.com/a.jpg' },
+            topSongs: [t1],
+            appearances: [collab],
+            albums: [
+              {
+                id: 'alb-main',
+                title: 'FILIPENSES',
+                artists: [{ id: 'ar-cruz', name: 'Cruzzi' }],
+                thumbnailUrl: 'https://example.com/alb.jpg',
+                year: 2026,
+                releaseDate: '2026-11-06',
+              },
+            ],
+            singles: [],
+            relatedArtists: [],
+          },
+        },
+      });
+    });
+
+    render(<App />);
+    const relCard = screen.getByTestId('artist-latest-release-card');
+    const appCard = screen.getByTestId('artist-latest-appearance-card');
+    expect(relCard.textContent).toContain('FILIPENSES');
+    expect(appCard.textContent).toContain('LAMINE YAMAL (feat. Cruzzi)');
+    expect(appCard.textContent).toMatch(/Colaboración · feat\./i);
+
+    const buildElectronSrc = readFileSync(
+      resolve(__dirname, '../../../desktop/scripts/build-electron.mjs'),
+      'utf-8'
+    );
+    const appUpdaterSrc = readFileSync(
+      resolve(__dirname, '../utils/app-updater.ts'),
+      'utf-8'
+    );
+    const otaScriptSrc = readFileSync(
+      resolve(__dirname, '../../../../scripts/build-ota-bundle.mjs'),
+      'utf-8'
+    );
+    expect(buildElectronSrc).toContain('extractZipBufferToDir');
+    expect(buildElectronSrc).toContain('getActiveWebDistRoot');
+    expect(appUpdaterSrc).toContain('ota/latest.json');
+    expect(appUpdaterSrc).toContain('downloadAndInstallOtaBundle');
+    expect(otaScriptSrc).toContain('pMusic-web-bundle.zip');
   });
 });

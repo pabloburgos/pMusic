@@ -1936,13 +1936,112 @@ export class DeezerCatalog {
         )
       ).then((lists) => lists.flat());
 
-      const [a, topSongs, mergedRawReleases, related, ytmVisuals] =
+      const lookupNamePromise: Promise<string> = canonHint
+        ? Promise.resolve(canonHint)
+        : artistPromise
+            .then((artObj) =>
+              artObj?.name
+                ? canonicalizeArtistIdentity(resolvedId, String(artObj.name)).name
+                : ''
+            )
+            .catch(() => '');
+
+      const appearancesPromise = (async (): Promise<Track[]> => {
+        try {
+          const targetName = (await lookupNamePromise).trim();
+          if (!targetName) return [];
+          const searchQ = targetName === 'Cruzzi' ? 'Cruz Cafuné' : targetName;
+          const searchController = new AbortController();
+          const timer = setTimeout(() => searchController.abort(), 1450);
+          const onOuterAbort = () => searchController.abort();
+          signal?.addEventListener('abort', onOuterAbort, { once: true });
+          let rawHits: Json[] = [];
+          try {
+            const res = await this.get(
+              `/search/track?q=${encodeURIComponent(searchQ)}&limit=40`,
+              searchController.signal
+            );
+            rawHits = Array.isArray(res?.data) ? (res.data as Json[]) : [];
+          } finally {
+            clearTimeout(timer);
+            signal?.removeEventListener('abort', onOuterAbort);
+          }
+          if (rawHits.length === 0) return [];
+
+          const sourceIdSet = new Set(sourceIds);
+          const normTarget = normalizeSearchStr(targetName);
+          const matchesTargetArtist = (n: string): boolean => {
+            const kn = normalizeSearchStr(n);
+            if (!kn) return false;
+            if (kn === normTarget) return true;
+            if (
+              (normTarget === 'cruzzi' || normTarget === 'cruz cafune') &&
+              (kn === 'cruzzi' || kn === 'cruz cafune')
+            ) {
+              return true;
+            }
+            return false;
+          };
+
+          const candidates = rawHits
+            .filter((t) => {
+              if (!t?.id) return false;
+              const mainId = String(t?.artist?.id ?? '');
+              const titleStr = String(t?.title ?? '');
+              return (
+                !sourceIdSet.has(mainId) ||
+                /\((?:feat\.?|ft\.?|with|con)\b/i.test(titleStr)
+              );
+            })
+            .sort((x, y) => Number(y?.id ?? 0) - Number(x?.id ?? 0))
+            .slice(0, 12);
+
+          if (candidates.length === 0) return [];
+
+          const enriched = await this.enrichTracks(
+            candidates,
+            candidates.map((t) => this.mapTrack(t)),
+            10,
+            signal,
+            800
+          );
+
+          const seenKey = new Set<string>();
+          const kept: Track[] = [];
+          for (const tr of enriched) {
+            const involvesArtist = tr.artists.some(
+              (ar) => (ar.id && sourceIdSet.has(ar.id)) || matchesTargetArtist(ar.name)
+            );
+            if (!involvesArtist) continue;
+            const isGuestOrCollab =
+              tr.artists.length > 1 ||
+              !matchesTargetArtist(tr.artists[0]?.name ?? '');
+            if (!isGuestOrCollab) continue;
+            const dedupKey = `${normalizeSearchStr(tr.title)}::${normalizeSearchStr(tr.artists[0]?.name ?? '')}`;
+            if (seenKey.has(dedupKey)) continue;
+            seenKey.add(dedupKey);
+            kept.push(tr);
+          }
+
+          kept.sort((x, y) => {
+            const dx = x.releaseDate ?? `${x.releaseYear ?? 0}-01-01`;
+            const dy = y.releaseDate ?? `${y.releaseYear ?? 0}-01-01`;
+            return dy.localeCompare(dx);
+          });
+          return kept;
+        } catch {
+          return [];
+        }
+      })();
+
+      const [a, topSongs, mergedRawReleases, related, ytmVisuals, appearances] =
         await Promise.all([
           artistPromise,
           topTracksPromise,
           albumsPromise,
           this.get(`/artist/${encodeURIComponent(resolvedId)}/related?limit=10`, signal),
           ytmVisualsPromise,
+          appearancesPromise,
         ]);
 
       const baseArtist = this.mapArtist(a);
@@ -1976,17 +2075,23 @@ export class DeezerCatalog {
       // Filter out homonym / fake AI spam releases uploaded to shared artist IDs on Deezer
       // and deduplicate identical normalized titles (keeping highest fan count / newest release).
       const keptByTitle = new Map<string, Json>();
+      const recentCutoffMs = Date.now() - 45 * 86_400_000;
       for (const al of rawReleases) {
         const recType = String(al?.record_type ?? '').toLowerCase();
         if (recType === 'compile') continue;
         const normTitle = normalizeReleaseTitle(String(al?.title ?? ''));
         if (!normTitle) continue;
         const fans = Number(al?.fans ?? 0);
+        const relDateStr = typeof al?.release_date === 'string' ? al.release_date.trim().slice(0, 10) : '';
+        const relMs = /^\d{4}-\d{2}-\d{2}$/.test(relDateStr) ? Date.parse(`${relDateStr}T00:00:00Z`) : 0;
+        const isRecentRelease = relMs > recentCutoffMs;
 
         if (hasYtmCatalog) {
           const matchedYtm = matchesYtmCatalog(normTitle, ytmAllSet);
           if (!matchedYtm) {
-            if (ytmVisuals?.ytmHasFullDiscography) {
+            if (isRecentRelease) {
+              if (artistFans >= 1500 && fans === 0) continue;
+            } else if (ytmVisuals?.ytmHasFullDiscography) {
               if (fans < 150) continue;
             } else if (artistFans >= 1500 && fans < 25) {
               continue;
@@ -2044,6 +2149,7 @@ export class DeezerCatalog {
         bannerUrl: sanitizedBanner || undefined,
         description: ytmVisuals?.bio || artist.subscribersText || '',
         topSongs,
+        appearances,
         albums: albumsList,
         singles: singlesList,
         relatedArtists: (related.data ?? []).map((r: Json) => this.mapArtist(r)),

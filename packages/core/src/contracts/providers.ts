@@ -64,6 +64,7 @@ export interface ArtistDetail {
   bannerUrl?: string;
   description?: string;
   topSongs: Track[];
+  appearances?: Track[];
   albums: AlbumSummary[];
   singles: AlbumSummary[];
   relatedArtists: ArtistSummary[];

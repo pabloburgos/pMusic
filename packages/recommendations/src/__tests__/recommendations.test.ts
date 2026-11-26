@@ -4,6 +4,7 @@ import {
   RecommendationEngine,
   getDailyMixDateKey,
   getMondayWeekWindow,
+  getRollingDaysWindow,
   getThursdayNoonCycleKey,
   isReleaseDateInWindow,
 } from '../index.ts';
@@ -243,7 +244,7 @@ describe('@pmusic/recommendations', () => {
     expect(titles.some((t) => /Sesión DJ/i.test(t))).toBe(false);
   });
 
-  it('enforces Monday-to-Monday Descubre lo Nuevo, builds a single 100-song Daily Mix + 100-song unheard Daily Discover, and blocks unrelated chart pop', async () => {
+  it('builds a rolling 10-day Descubre lo Nuevo including guest appearances/collabs, 100-song Daily Mix + Daily Discover, and blocks unrelated pop', async () => {
     const searchCalls: string[] = [];
     const unrelatedPop: Track = {
       id: 'pop_ariana',
@@ -257,22 +258,26 @@ describe('@pmusic/recommendations', () => {
     };
 
     const now = new Date();
-    const weekWin = getMondayWeekWindow(now);
+    const rollingWin = getRollingDaysWindow(now, 10);
     const thuNov26 = new Date(2026, 10, 26, 0, 23, 0);
-    const thuWin = getMondayWeekWindow(thuNov26);
-    expect(thuWin.startIso).toBe('2026-11-23');
-    expect(thuWin.endIso).toBe('2026-11-30');
-    expect(isReleaseDateInWindow('2026-11-23', thuWin.startIso, thuWin.endIso)).toBe(true);
-    expect(isReleaseDateInWindow('2026-11-26', thuWin.startIso, thuWin.endIso)).toBe(true);
-    expect(isReleaseDateInWindow('2026-11-30', thuWin.startIso, thuWin.endIso)).toBe(false);
-    expect(isReleaseDateInWindow('2026-11-06', thuWin.startIso, thuWin.endIso)).toBe(false);
+    const thuRolling = getRollingDaysWindow(thuNov26, 10);
+    expect(thuRolling.startIso).toBe('2026-11-16');
+    expect(thuRolling.endIso).toBe('2026-11-27');
+    expect(isReleaseDateInWindow('2026-11-19', thuRolling.startIso, thuRolling.endIso)).toBe(true); // Thursday 7 days ago
+    expect(isReleaseDateInWindow('2026-11-26', thuRolling.startIso, thuRolling.endIso)).toBe(true); // Today
+    expect(isReleaseDateInWindow('2026-11-10', thuRolling.startIso, thuRolling.endIso)).toBe(false); // Older than 10 days
+
+    const sevenDaysAgo = getDailyMixDateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7));
+    const fifteenDaysAgo = getDailyMixDateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 15));
+    const weekWin = getMondayWeekWindow(now);
+    void weekWin;
 
     // Build 260 distinct scene/related + 2nd-degree emerging tracks
     const sceneArtists = ['Cruzzi', 'La Pantera', 'Quevedo', 'Rels B', 'D.Valentino', 'Mvrk', 'Judeline', 'Rusowsky'];
     const poolTracks: Track[] = [];
     for (let i = 0; i < 260; i++) {
       const art = sceneArtists[i % sceneArtists.length]!;
-      const isThisWeek = i >= 15 && i < 27;
+      const isRecent = i >= 15 && i < 27;
       poolTracks.push({
         id: `scene_${i}`,
         title: `Tema Escena ${i}`,
@@ -281,10 +286,25 @@ describe('@pmusic/recommendations', () => {
         durationSec: 185,
         thumbnailUrl: `https://example.com/${i}.jpg`,
         source: 'ytmusic',
-        releaseYear: isThisWeek ? Number(weekWin.startIso.slice(0, 4)) : 2023,
-        releaseDate: isThisWeek ? weekWin.startIso : '2023-05-12',
+        releaseYear: isRecent ? Number(sevenDaysAgo.slice(0, 4)) : 2023,
+        releaseDate: isRecent ? sevenDaysAgo : '2023-05-12',
       });
     }
+
+    const guestCollabTrack: Track = {
+      id: 'collab_guest_1',
+      title: 'Tema Invitado (feat. La Pantera)',
+      artists: [
+        { id: 'ext_99', name: 'Artista Invitado' },
+        { id: 'art_1', name: 'La Pantera' },
+      ],
+      album: { id: 'alb_collab', name: 'Single Invitado' },
+      durationSec: 192,
+      thumbnailUrl: 'https://example.com/collab.jpg',
+      source: 'ytmusic',
+      releaseYear: Number(sevenDaysAgo.slice(0, 4)),
+      releaseDate: sevenDaysAgo,
+    };
 
     const mockProvider = {
       search: async (query: string) => {
@@ -321,22 +341,23 @@ describe('@pmusic/recommendations', () => {
         return {
           artist: { id: idOrName, name: artistName, thumbnailUrl: 'https://example.com/a.jpg' },
           topSongs: matched.length > 0 ? matched : poolTracks.slice(0, 40),
+          appearances: artistName === 'La Pantera' ? [guestCollabTrack] : [],
           albums: [
             {
               id: `alb_rel_${artistName}`,
-              title: `Disco Semanal ${artistName}`,
+              title: `Disco Reciente ${artistName}`,
               artists: [{ name: artistName }],
               thumbnailUrl: 'https://example.com/al.jpg',
-              year: Number(weekWin.startIso.slice(0, 4)),
-              releaseDate: weekWin.startIso,
+              year: Number(sevenDaysAgo.slice(0, 4)),
+              releaseDate: sevenDaysAgo,
             },
             {
               id: `alb_old_${artistName}`,
               title: `Disco Viejo ${artistName}`,
               artists: [{ name: artistName }],
               thumbnailUrl: 'https://example.com/al_old.jpg',
-              year: 2026,
-              releaseDate: weekWin.prevStartIso,
+              year: Number(fifteenDaysAgo.slice(0, 4)),
+              releaseDate: fifteenDaysAgo,
             },
           ],
           singles: [],
@@ -352,27 +373,27 @@ describe('@pmusic/recommendations', () => {
         return {
           album: {
             id: albumId,
-            title: isOld ? 'Disco Viejo' : 'Disco Semanal',
+            title: isOld ? 'Disco Viejo' : 'Disco Reciente',
             artists: [{ name: 'Cruzzi' }],
             thumbnailUrl: 'https://example.com/al.jpg',
-            year: Number(weekWin.startIso.slice(0, 4)),
-            releaseDate: isOld ? weekWin.prevStartIso : weekWin.startIso,
+            year: Number(sevenDaysAgo.slice(0, 4)),
+            releaseDate: isOld ? fifteenDaysAgo : sevenDaysAgo,
           },
           tracks: isOld
             ? [
                 {
                   id: `old_track_${albumId}`,
-                  title: 'Canción Semana Pasada',
+                  title: 'Canción Antiguo 15d',
                   artists: [{ id: 'art_0', name: 'Cruzzi' }],
                   album: { id: albumId, name: 'Disco Viejo' },
                   durationSec: 190,
                   thumbnailUrl: 'https://example.com/old.jpg',
                   source: 'ytmusic' as const,
-                  releaseYear: Number(weekWin.prevStartIso.slice(0, 4)),
-                  releaseDate: weekWin.prevStartIso,
+                  releaseYear: Number(fifteenDaysAgo.slice(0, 4)),
+                  releaseDate: fifteenDaysAgo,
                 },
               ]
-            : poolTracks.filter((t) => t.releaseDate === weekWin.startIso),
+            : poolTracks.filter((t) => t.releaseDate === sevenDaysAgo),
         };
       },
     };
@@ -382,7 +403,10 @@ describe('@pmusic/recommendations', () => {
     const ownedIds = new Set([...librarySlice, ...likedList].map((t) => t.id));
 
     const engine = new RecommendationEngine({ musicProvider: mockProvider });
-    engine.setFavoriteArtists([{ artistId: 'art_0', artistName: 'Cruzzi', likedAt: '2026-11-25T10:00:00Z' }]);
+    engine.setFavoriteArtists([
+      { artistId: 'art_0', artistName: 'Cruzzi', likedAt: '2026-11-25T10:00:00Z' },
+      { artistId: 'art_1', artistName: 'La Pantera', likedAt: '2026-11-25T10:00:00Z' },
+    ]);
     engine.setUserLibraryContext({
       libraryTracks: librarySlice,
       likedTracks: likedList,
@@ -412,8 +436,9 @@ describe('@pmusic/recommendations', () => {
 
     const weeklyMix = mixesList[0]!;
     expect(weeklyMix.tracks.length).toBeGreaterThan(0);
+    expect(weeklyMix.tracks.some((t) => t.id === 'collab_guest_1')).toBe(true);
     for (const t of weeklyMix.tracks) {
-      expect(isReleaseDateInWindow(t.releaseDate, weekWin.startIso, weekWin.endIso)).toBe(true);
+      expect(isReleaseDateInWindow(t.releaseDate, rollingWin.startIso, rollingWin.endIso)).toBe(true);
     }
     expect(weeklyMix.tracks.some((t) => t.id.startsWith('old_track_'))).toBe(false);
 
