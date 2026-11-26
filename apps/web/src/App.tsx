@@ -68,6 +68,7 @@ import { LiquidHeartIcon } from './components/LiquidHeartIcon.tsx';
 import { generatePlaylistCoverDataUrl } from './utils/playlist-artwork.ts';
 import { ArtistLinks } from './components/ArtistLinks.tsx';
 import { SettingsModal } from './components/SettingsModal.tsx';
+import { MobileHubPage } from './components/MobileHubPage.tsx';
 import { CarModeView } from './components/CarModeView.tsx';
 import { TrackInfoModal } from './components/TrackInfoModal.tsx';
 import { AuthOnboardingModal } from './components/AuthOnboardingModal.tsx';
@@ -174,6 +175,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     onlineDevices,
     importModalOpen,
     settingsOpen,
+    mobileHubOpen,
     spotlightOpen,
     themeId,
     playerBarStyle,
@@ -198,6 +200,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     setDevicesSheetOpen,
     setImportModalOpen,
     setSettingsOpen,
+    setMobileHubOpen,
     setSpotlightOpen,
     playFromVoiceQuery,
     setLibraryCategory,
@@ -735,7 +738,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       setTimeout(() => el.remove(), 420);
     };
     const isOfflineStart = typeof navigator !== 'undefined' && navigator.onLine === false;
-    const maxCapMs = isTestEnv ? 0 : isOfflineStart ? 1400 : 5200;
+    const maxCapMs = isTestEnv ? 0 : isOfflineStart ? 900 : 2200;
     const safetyTimer = setTimeout(dismissSplash, maxCapMs);
     if (!appReady) {
       return () => {
@@ -777,19 +780,22 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       Promise.resolve();
 
     const rafId = requestAnimationFrame(() => {
-      const imgs = Array.from(document.querySelectorAll('img')).slice(0, 10) as HTMLImageElement[];
+      const imgs = Array.from(document.querySelectorAll('img')).slice(0, 6) as HTMLImageElement[];
       const elapsed =
         (typeof performance !== 'undefined' ? performance.now() : Date.now()) -
         bootMountMsRef.current;
-      const minWaitMs = Math.max(0, 480 - elapsed);
+      const minWaitMs = Math.max(0, 220 - elapsed);
       const minPromise = new Promise<void>((r) => {
         hideTimer = setTimeout(r, minWaitMs);
       });
       const visualPromise = isOfflineStart
         ? Promise.resolve()
-        : Promise.all([fontsReady.catch(() => undefined), ...imgs.map(waitImageReady)]).then(
-            () => undefined
-          );
+        : Promise.race([
+            Promise.all([fontsReady.catch(() => undefined), ...imgs.map(waitImageReady)]).then(
+              () => undefined
+            ),
+            new Promise<void>((resolveCap) => setTimeout(resolveCap, 600)),
+          ]);
       void Promise.all([minPromise, visualPromise]).then(() => {
         dismissSplash();
       });
@@ -840,6 +846,10 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       }
       if (st.settingsOpen) {
         st.setSettingsOpen(false);
+        return true;
+      }
+      if (st.mobileHubOpen) {
+        st.setMobileHubOpen(false);
         return true;
       }
       if (st.devicesSheetOpen) {
@@ -917,6 +927,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
         else if (devicesSheetOpen) setDevicesSheetOpen(false);
         else if (importModalOpen) setImportModalOpen(false);
         else if (settingsOpen) setSettingsOpen(false);
+        else if (mobileHubOpen) setMobileHubOpen(false);
         return;
       }
 
@@ -1279,14 +1290,14 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
         </header>
       )}
 
-      {/* Pinned Mobile Top Command Bar (outside scroll container so pMusic & profile stay locked on screen) */}
+      {/* Pinned Mobile Top Command Bar (sticky across scrolling pages; borderless large profile photo) */}
       {isMobileViewport && (
         <div
           data-testid="mobile-top-header"
           className={
             isFullBleedHeroView
               ? 'fixed inset-x-0 top-0 z-40 flex items-center justify-between gap-3 bg-gradient-to-b from-black/65 via-black/25 to-transparent px-4 pt-[max(0.8rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3'
-              : 'pm-mobile-glass-header relative z-40 flex shrink-0 items-center justify-between gap-3 px-4 pt-[max(0.8rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3'
+              : 'pm-mobile-glass-header sticky top-0 z-40 flex shrink-0 items-center justify-between gap-3 px-4 pt-[max(0.8rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3'
           }
         >
           <div className="flex items-center gap-2.5">
@@ -1312,53 +1323,20 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
             )}
           </div>
 
-          <div className="flex items-center gap-2">
-            {authState.connected ? (
-              <button
-                type="button"
-                data-testid="mobile-profile-btn"
-                aria-label="Tu perfil"
-                onClick={() => setSettingsOpen(true)}
-                className="pm-glass-chip pm-pressable inline-flex h-9 items-center gap-1.5 rounded-full pl-1.5 pr-2.5 text-xs font-semibold pm-text-primary"
-              >
-                <UserAvatar
-                  src={userProfile?.avatarUrl || authState.avatarUrl}
-                  name={userProfile?.displayName || authState.email || 'P'}
-                  size="sm"
-                />
-                <span className="max-w-[76px] truncate">
-                  {userProfile?.username ? `@${userProfile.username}` : 'Cuenta'}
-                </span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                data-testid="mobile-signin-btn"
-                onClick={() => setAuthOnboardingOpen(true)}
-                className="pm-btn-primary pm-pressable inline-flex h-9 items-center rounded-full px-3 text-xs font-bold"
-              >
-                Entrar
-              </button>
-            )}
-
+          <div className="flex items-center">
             <button
               type="button"
-              data-testid="mobile-devices-btn"
-              aria-label="Dispositivos"
-              onClick={() => setDevicesSheetOpen(true)}
-              className="pm-glass-chip pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full text-emerald-400"
+              data-testid="mobile-profile-btn"
+              aria-label="Tu cuenta y preajustes"
+              onClick={() => setMobileHubOpen(true)}
+              className="pm-pressable relative flex items-center justify-center rounded-full bg-transparent p-0 transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none drop-shadow-[0_4px_14px_rgba(0,0,0,0.45)]"
             >
-              <Wifi className="h-4 w-4" />
-            </button>
-
-            <button
-              type="button"
-              data-testid="mobile-settings-btn"
-              aria-label="Ajustes"
-              onClick={() => setSettingsOpen(true)}
-              className="pm-glass-chip pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-secondary"
-            >
-              <Settings className="h-4 w-4" />
+              <UserAvatar
+                src={userProfile?.avatarUrl || authState.avatarUrl}
+                name={userProfile?.displayName || authState.email || 'pMusic'}
+                size="md"
+                className="!h-10 !w-10 !text-sm"
+              />
             </button>
           </div>
         </div>
@@ -3550,6 +3528,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       <CarModeView />
       <ImportPlaylistModal />
       <SettingsModal />
+      <MobileHubPage />
       <AuthOnboardingModal />
       <WrappedStoriesModal />
       <SharedPlaylistLinkModal

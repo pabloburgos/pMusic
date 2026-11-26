@@ -80,6 +80,7 @@ const SwitchRow: React.FC<{
 export const SettingsModal: React.FC = () => {
   const {
     settingsOpen,
+    settingsInitialCategory,
     setSettingsOpen,
     currentTrack,
     positionSec,
@@ -209,9 +210,12 @@ export const SettingsModal: React.FC = () => {
 
   useEffect(() => {
     if (settingsOpen) {
+      if (settingsInitialCategory) {
+        setActiveCategory(settingsInitialCategory);
+      }
       void refreshDiscordRpcStatus();
     }
-  }, [settingsOpen, refreshDiscordRpcStatus]);
+  }, [settingsOpen, settingsInitialCategory, refreshDiscordRpcStatus]);
 
   if (!settingsOpen) return null;
 

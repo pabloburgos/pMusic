@@ -87,6 +87,68 @@ const PlayingEqBars: React.FC = () => (
   </span>
 );
 
+const HeroIconAction: React.FC<{
+  label: string;
+  tooltip?: string;
+  onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  disabled?: boolean;
+  pressed?: boolean;
+  activeDot?: boolean;
+  activeDotClass?: string;
+  badge?: string | null;
+  dataTestId?: string;
+  className?: string;
+  tooltipVariant?: 'dark' | 'surface';
+  children: React.ReactNode;
+}> = ({
+  label,
+  tooltip,
+  onClick,
+  disabled,
+  pressed,
+  activeDot,
+  activeDotClass = 'bg-white',
+  badge,
+  dataTestId,
+  className = '',
+  tooltipVariant = 'dark',
+  children,
+}) => (
+  <button
+    type="button"
+    data-testid={dataTestId}
+    aria-label={label}
+    title={tooltip ?? label}
+    aria-pressed={pressed}
+    disabled={disabled}
+    onClick={onClick}
+    className={`group/act pm-pressable relative inline-flex h-10 w-10 items-center justify-center rounded-lg border-0 bg-transparent transition-transform duration-150 hover:scale-115 active:scale-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 disabled:pointer-events-none disabled:opacity-35 ${className}`}
+  >
+    {children}
+    <span
+      aria-hidden="true"
+      className={`pointer-events-none absolute -top-8 left-1/2 -translate-x-1/2 translate-y-1 whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-semibold opacity-0 shadow-lg transition-all duration-150 group-hover/act:translate-y-0 group-hover/act:opacity-100 group-focus-visible/act:translate-y-0 group-focus-visible/act:opacity-100 ${
+        tooltipVariant === 'surface'
+          ? 'pm-elevated border pm-border pm-text-primary'
+          : 'bg-black/85 text-white ring-1 ring-white/15'
+      }`}
+    >
+      {tooltip ?? label}
+    </span>
+    {activeDot && (
+      <span
+        aria-hidden="true"
+        className={`absolute bottom-0.5 h-1.5 w-1.5 rounded-full shadow ${activeDotClass}`}
+      />
+    )}
+    {badge && (
+      <span className="absolute -bottom-1 rounded-full bg-black/85 px-1 text-[9px] font-bold text-emerald-300 ring-1 ring-white/15">
+        {badge}
+      </span>
+    )}
+  </button>
+);
+
 export const TrackListRow: React.FC<{
   track: Track;
   index?: number;
@@ -511,6 +573,7 @@ export const DetailViewPanel: React.FC = () => {
     isPlaying,
     shuffleEnabled,
     alwaysShuffle,
+    djMode,
     playlists,
     sharedPlaylists,
     friends,
@@ -1214,7 +1277,7 @@ export const DetailViewPanel: React.FC = () => {
                 linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
               />
             </div>
-            <div className="flex flex-wrap items-center gap-2.5 pt-2 sm:gap-3">
+            <div className="flex flex-wrap items-center gap-2 pt-2 sm:gap-2.5">
               <button
                 type="button"
                 aria-label={isPlayingAlbum ? 'Pausar álbum' : 'Reproducir álbum'}
@@ -1227,45 +1290,46 @@ export const DetailViewPanel: React.FC = () => {
                     void playCollection(tracks);
                   }
                 }}
-                className="pm-pressable flex h-12 w-12 items-center justify-center overflow-visible bg-transparent pm-text-primary drop-shadow-[0_6px_18px_rgba(0,0,0,0.35)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none disabled:opacity-40 sm:h-14 sm:w-14"
+                className="pm-pressable mr-1 flex h-12 w-12 items-center justify-center overflow-visible border-0 bg-transparent pm-text-primary drop-shadow-[0_6px_18px_rgba(0,0,0,0.35)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none disabled:opacity-40 sm:h-14 sm:w-14"
               >
                 {isPlayingAlbum ? (
-                  <RoundedPauseIcon className="h-[42px] w-[42px] sm:h-[48px] sm:w-[48px]" />
+                  <RoundedPauseIcon className="h-[44px] w-[44px] sm:h-[50px] sm:w-[50px]" />
                 ) : (
-                  <RoundedPlayIcon className="h-[42px] w-[42px] translate-x-[2px] sm:h-[48px] sm:w-[48px]" />
+                  <RoundedPlayIcon className="h-[44px] w-[44px] translate-x-[2px] sm:h-[50px] sm:w-[50px]" />
                 )}
               </button>
-              <button
-                type="button"
-                aria-label="Aleatorio"
-                title="Reproducir en aleatorio"
-                aria-pressed={isPlayingAlbum && shuffleEnabled}
+              <HeroIconAction
+                label="Aleatorio"
+                tooltip="Reproducir en aleatorio"
+                tooltipVariant="surface"
+                pressed={isPlayingAlbum && shuffleEnabled}
+                activeDot={isPlayingAlbum && shuffleEnabled}
+                activeDotClass="bg-[var(--pm-accent-primary)]"
                 disabled={isAlbumLoading && tracks.length === 0}
                 onClick={() => {
                   if (tracks[0]) {
                     void playCollection(tracks, { forceShuffle: true });
                   }
                 }}
-                className="pm-pressable relative flex h-10 w-10 items-center justify-center rounded-full pm-text-secondary transition-transform duration-150 hover:scale-110 hover:text-[var(--pm-text-primary)] active:scale-90 focus:outline-none disabled:opacity-40 sm:h-11 sm:w-11"
+                className="pm-text-secondary hover:text-[var(--pm-text-primary)]"
               >
-                <Shuffle className="h-5 w-5 sm:h-6 sm:w-6" />
-                {isPlayingAlbum && shuffleEnabled && (
-                  <span className="absolute bottom-0.5 h-1.5 w-1.5 rounded-full bg-[var(--pm-accent-primary)]" />
-                )}
-              </button>
-              <button
-                type="button"
-                aria-label="Sesión DJ"
-                title="Sesión DJ"
+                <Shuffle className="h-[22px] w-[22px] sm:h-6 sm:w-6" />
+              </HeroIconAction>
+              <HeroIconAction
+                label="Sesión DJ"
+                tooltip="Sesión DJ AutoMix"
+                tooltipVariant="surface"
+                activeDot={djMode.enabled && isPlayingAlbum}
+                activeDotClass="bg-purple-400"
                 disabled={isAlbumLoading && tracks.length === 0}
                 onClick={async () => {
                   await toggleDjMode(true);
                   if (tracks[0]) await playTrack(tracks[0], tracks);
                 }}
-                className="pm-pressable pm-btn-secondary flex h-10 w-10 items-center justify-center rounded-full disabled:opacity-45"
+                className="text-purple-500 hover:text-purple-400"
               >
-                <Disc3 className="h-4.5 w-4.5 text-purple-500" />
-              </button>
+                <Disc3 className="h-[22px] w-[22px] transition-transform duration-300 group-hover/act:rotate-45 sm:h-6 sm:w-6" />
+              </HeroIconAction>
             </div>
           </div>
         </section>
@@ -1360,7 +1424,7 @@ export const DetailViewPanel: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
               <button
                 type="button"
                 aria-label={
@@ -1368,7 +1432,13 @@ export const DetailViewPanel: React.FC = () => {
                     ? 'Pausar'
                     : 'Reproducir'
                 }
-                title="Reproducir"
+                title={
+                  isPlaying && currentTrack && tracks.some((t) => t.id === currentTrack.id)
+                    ? 'Pausar'
+                    : shuffleEnabled || alwaysShuffle
+                      ? 'Reproducir en aleatorio'
+                      : 'Reproducir'
+                }
                 onClick={() => {
                   if (isPlaying && currentTrack && tracks.some((t) => t.id === currentTrack.id)) {
                     void togglePlayPause();
@@ -1376,75 +1446,67 @@ export const DetailViewPanel: React.FC = () => {
                     void playCollection(tracks, { isPlaylist: true });
                   }
                 }}
-                className="pm-pressable flex h-12 w-12 items-center justify-center overflow-visible bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.6)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none disabled:opacity-40 sm:h-14 sm:w-14"
+                className="pm-pressable mr-1.5 flex h-12 w-12 items-center justify-center overflow-visible border-0 bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.65)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none disabled:opacity-40 sm:h-14 sm:w-14"
               >
                 {isPlaying && currentTrack && tracks.some((t) => t.id === currentTrack.id) ? (
-                  <RoundedPauseIcon className="h-[42px] w-[42px] sm:h-[48px] sm:w-[48px]" />
+                  <RoundedPauseIcon className="h-[44px] w-[44px] sm:h-[50px] sm:w-[50px]" />
                 ) : (
-                  <RoundedPlayIcon className="h-[42px] w-[42px] translate-x-[2px] sm:h-[48px] sm:w-[48px]" />
+                  <RoundedPlayIcon className="h-[44px] w-[44px] translate-x-[2px] sm:h-[50px] sm:w-[50px]" />
                 )}
               </button>
-              <button
-                type="button"
-                aria-label="Aleatorio"
-                title="Aleatorio"
-                aria-pressed={shuffleEnabled}
-                onClick={() => {
-                  if (tracks.length > 0) {
-                    void playCollection(tracks, { isPlaylist: true, forceShuffle: true });
-                  }
-                }}
-                className="pm-pressable relative flex h-10 w-10 items-center justify-center bg-transparent text-white/85 drop-shadow-[0_4px_14px_rgba(0,0,0,0.55)] transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none sm:h-11 sm:w-11"
-              >
-                <Shuffle className="h-5 w-5 sm:h-6 sm:w-6" />
-                {shuffleEnabled &&
-                  currentTrack &&
-                  tracks.some((t) => t.id === currentTrack.id) && (
-                    <span className="absolute bottom-0.5 h-1.5 w-1.5 rounded-full bg-white shadow" />
-                  )}
-              </button>
-              <button
-                type="button"
-                aria-label="Sesión DJ"
-                title="Sesión DJ"
+
+              <HeroIconAction
+                label="Sesión DJ"
+                tooltip="Sesión DJ AutoMix"
+                activeDot={djMode.enabled}
+                activeDotClass="bg-purple-300"
                 onClick={async () => {
                   await toggleDjMode(true);
                   if (tracks.length > 0) await playCollection(tracks, { isPlaylist: true });
                 }}
-                className="pm-pressable flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white/90 shadow-lg backdrop-blur-md transition-all hover:scale-105 hover:bg-white/20"
+                className="text-purple-300/90 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-purple-200 hover:drop-shadow-[0_0_12px_rgba(192,132,252,0.75)]"
               >
-                <Disc3 className="h-4.5 w-4.5 text-purple-300" />
-              </button>
-              <button
-                type="button"
-                aria-label={
+                <Disc3 className="h-[22px] w-[22px] transition-transform duration-300 group-hover/act:rotate-45 sm:h-6 sm:w-6" />
+              </HeroIconAction>
+
+              <HeroIconAction
+                label={
                   isDownloadingThis
                     ? `Descargando ${playlistDownloadProgress.completed} de ${playlistDownloadProgress.total}`
                     : allDownloaded
                       ? 'Descargada offline'
                       : 'Descargar offline'
                 }
-                title={allDownloaded ? 'Descargada offline' : 'Descargar offline'}
+                tooltip={
+                  isDownloadingThis
+                    ? `Descargando ${playlistDownloadProgress.completed}/${playlistDownloadProgress.total}`
+                    : allDownloaded
+                      ? 'Descargada offline'
+                      : 'Descargar para escuchar sin conexión'
+                }
                 disabled={tracks.length === 0}
+                badge={
+                  isDownloadingThis
+                    ? `${playlistDownloadProgress.completed}/${playlistDownloadProgress.total}`
+                    : null
+                }
                 onClick={() => {
                   if (isDownloadingThis) cancelPlaylistDownload();
                   else void downloadPlaylistOffline(playlist.id, tracks, playlist.title);
                 }}
-                className="pm-pressable relative flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white/90 shadow-lg backdrop-blur-md transition-all hover:scale-105 hover:bg-white/20 disabled:opacity-40"
+                className="text-white/85 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-white"
               >
                 {isDownloadingThis ? (
-                  <Loader2 className="h-4.5 w-4.5 animate-spin text-emerald-300" />
+                  <Loader2 className="h-[22px] w-[22px] animate-spin text-emerald-300 sm:h-6 sm:w-6" />
                 ) : allDownloaded ? (
-                  <Check className="h-4.5 w-4.5 text-emerald-300" />
+                  <Check
+                    strokeWidth={2.5}
+                    className="h-[22px] w-[22px] text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.6)] sm:h-6 sm:w-6"
+                  />
                 ) : (
-                  <Download className="h-4.5 w-4.5" />
+                  <Download className="h-[22px] w-[22px] sm:h-6 sm:w-6" />
                 )}
-                {isDownloadingThis && (
-                  <span className="absolute -bottom-1 rounded-full bg-black/80 px-1 text-[9px] font-bold text-emerald-300">
-                    {playlistDownloadProgress.completed}/{playlistDownloadProgress.total}
-                  </span>
-                )}
-              </button>
+              </HeroIconAction>
             </div>
           </div>
         </section>
@@ -1862,7 +1924,7 @@ export const DetailViewPanel: React.FC = () => {
             </h1>
           ),
           actionsRow: (
-            <div className="relative flex flex-wrap items-center gap-2.5 sm:gap-3">
+            <div className="relative flex flex-wrap items-center gap-2 sm:gap-2.5">
               <button
                 type="button"
                 aria-label={
@@ -1872,7 +1934,15 @@ export const DetailViewPanel: React.FC = () => {
                     ? 'Pausar'
                     : 'Reproducir'
                 }
-                title="Reproducir"
+                title={
+                  isPlaying &&
+                  currentTrack &&
+                  sharedPl.tracks.some((t) => t.id === currentTrack.id)
+                    ? 'Pausar'
+                    : shuffleEnabled || alwaysShuffle
+                      ? 'Reproducir en aleatorio'
+                      : 'Reproducir'
+                }
                 onClick={() => {
                   if (
                     isPlaying &&
@@ -1884,115 +1954,112 @@ export const DetailViewPanel: React.FC = () => {
                     void playCollection(sharedPl.tracks, { isPlaylist: true });
                   }
                 }}
-                className="pm-pressable flex h-12 w-12 items-center justify-center overflow-visible bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.6)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none sm:h-14 sm:w-14"
+                className="pm-pressable mr-1.5 flex h-12 w-12 items-center justify-center overflow-visible border-0 bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.65)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none sm:h-14 sm:w-14"
               >
                 {isPlaying &&
                 currentTrack &&
                 sharedPl.tracks.some((t) => t.id === currentTrack.id) ? (
-                  <RoundedPauseIcon className="h-[42px] w-[42px] sm:h-[48px] sm:w-[48px]" />
+                  <RoundedPauseIcon className="h-[44px] w-[44px] sm:h-[50px] sm:w-[50px]" />
                 ) : (
-                  <RoundedPlayIcon className="h-[42px] w-[42px] translate-x-[2px] sm:h-[48px] sm:w-[48px]" />
+                  <RoundedPlayIcon className="h-[44px] w-[44px] translate-x-[2px] sm:h-[50px] sm:w-[50px]" />
                 )}
               </button>
-              <button
-                type="button"
-                aria-label="Aleatorio"
-                title="Aleatorio"
-                aria-pressed={shuffleEnabled}
-                onClick={() => {
-                  if (sharedPl.tracks.length > 0) {
-                    void playCollection(sharedPl.tracks, { isPlaylist: true, forceShuffle: true });
-                  }
-                }}
-                className="pm-pressable relative flex h-10 w-10 items-center justify-center bg-transparent text-white/85 drop-shadow-[0_4px_14px_rgba(0,0,0,0.55)] transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none sm:h-11 sm:w-11"
-              >
-                <Shuffle className="h-5 w-5 sm:h-6 sm:w-6" />
-                {shuffleEnabled &&
-                  currentTrack &&
-                  sharedPl.tracks.some((t) => t.id === currentTrack.id) && (
-                    <span className="absolute bottom-0.5 h-1.5 w-1.5 rounded-full bg-white shadow" />
-                  )}
-              </button>
-              <button
-                type="button"
-                aria-label="Sesión DJ"
-                title="Sesión DJ"
+
+              <HeroIconAction
+                label="Sesión DJ"
+                tooltip="Sesión DJ AutoMix"
+                activeDot={djMode.enabled}
+                activeDotClass="bg-purple-300"
                 onClick={async () => {
                   await toggleDjMode(true);
                   if (sharedPl.tracks.length > 0) {
                     await playCollection(sharedPl.tracks, { isPlaylist: true });
                   }
                 }}
-                className="pm-pressable flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white/90 shadow-lg backdrop-blur-md transition-all hover:scale-105 hover:bg-white/20"
+                className="text-purple-300/90 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-purple-200 hover:drop-shadow-[0_0_12px_rgba(192,132,252,0.75)]"
               >
-                <Disc3 className="h-4.5 w-4.5 text-purple-300" />
-              </button>
-              <button
-                type="button"
-                aria-label={
+                <Disc3 className="h-[22px] w-[22px] transition-transform duration-300 group-hover/act:rotate-45 sm:h-6 sm:w-6" />
+              </HeroIconAction>
+
+              <HeroIconAction
+                label={
                   isDownloadingThis
                     ? `Descargando ${playlistDownloadProgress.completed} de ${playlistDownloadProgress.total}`
                     : allDownloaded
                       ? 'Descargada offline'
                       : 'Descargar offline'
                 }
-                title={allDownloaded ? 'Descargada offline' : 'Descargar offline'}
+                tooltip={
+                  isDownloadingThis
+                    ? `Descargando ${playlistDownloadProgress.completed}/${playlistDownloadProgress.total}`
+                    : allDownloaded
+                      ? 'Descargada offline'
+                      : 'Descargar para escuchar sin conexión'
+                }
                 disabled={sharedPl.tracks.length === 0}
+                badge={
+                  isDownloadingThis
+                    ? `${playlistDownloadProgress.completed}/${playlistDownloadProgress.total}`
+                    : null
+                }
                 onClick={() => {
                   if (isDownloadingThis) cancelPlaylistDownload();
                   else void downloadPlaylistOffline(sharedPl.id, sharedPl.tracks, sharedPl.name);
                 }}
-                className="pm-pressable relative flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white/90 shadow-lg backdrop-blur-md transition-all hover:scale-105 hover:bg-white/20 disabled:opacity-40"
+                className="text-white/85 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-white"
               >
                 {isDownloadingThis ? (
-                  <Loader2 className="h-4.5 w-4.5 animate-spin text-emerald-300" />
+                  <Loader2 className="h-[22px] w-[22px] animate-spin text-emerald-300 sm:h-6 sm:w-6" />
                 ) : allDownloaded ? (
-                  <Check className="h-4.5 w-4.5 text-emerald-300" />
+                  <Check
+                    strokeWidth={2.5}
+                    className="h-[22px] w-[22px] text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.6)] sm:h-6 sm:w-6"
+                  />
                 ) : (
-                  <Download className="h-4.5 w-4.5" />
+                  <Download className="h-[22px] w-[22px] sm:h-6 sm:w-6" />
                 )}
-                {isDownloadingThis && (
-                  <span className="absolute -bottom-1 rounded-full bg-black/80 px-1 text-[9px] font-bold text-emerald-300">
-                    {playlistDownloadProgress.completed}/{playlistDownloadProgress.total}
-                  </span>
-                )}
-              </button>
-              <button
-                type="button"
-                aria-label="Añadir canciones"
-                title="Añadir canciones"
-                aria-pressed={isAddOpen}
+              </HeroIconAction>
+
+              <HeroIconAction
+                label="Añadir canciones"
+                tooltip={isAddOpen ? 'Ocultar buscador' : 'Añadir canciones'}
+                pressed={isAddOpen}
                 onClick={() => setAddFinderOverride(!isAddOpen)}
-                className={`pm-pressable flex h-10 w-10 items-center justify-center rounded-full border shadow-lg backdrop-blur-md transition-all hover:scale-105 ${
-                  isAddOpen
-                    ? 'border-white bg-white text-black'
-                    : 'border-white/20 bg-white/10 text-white/90 hover:bg-white/20'
+                className={`drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] ${
+                  isAddOpen ? 'text-white' : 'text-white/85 hover:text-white'
                 }`}
               >
-                <Plus className="h-5 w-5" />
-              </button>
-              <button
-                type="button"
-                aria-label="Invitar colaboradores"
-                title="Invitar / Enlace"
+                <Plus
+                  strokeWidth={2.4}
+                  className={`h-[22px] w-[22px] transition-transform duration-200 sm:h-6 sm:w-6 ${
+                    isAddOpen ? 'rotate-45' : ''
+                  }`}
+                />
+              </HeroIconAction>
+
+              <HeroIconAction
+                label="Invitar colaboradores"
+                tooltip="Invitar / Compartir enlace"
                 onClick={() => setCollabModalOpen(true)}
-                className="pm-pressable flex h-10 w-10 items-center justify-center rounded-full border border-emerald-400/35 bg-emerald-500/20 text-emerald-200 shadow-lg backdrop-blur-md transition-all hover:scale-105 hover:bg-emerald-500/30"
+                className="text-emerald-300/90 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-emerald-200 hover:drop-shadow-[0_0_12px_rgba(52,211,153,0.65)]"
               >
-                <UserPlus className="h-4.5 w-4.5" />
-              </button>
-              <button
-                type="button"
-                data-testid="playlist-more-actions-btn"
-                aria-label="Más acciones de playlist"
-                title="Más acciones"
+                <UserPlus className="h-[22px] w-[22px] sm:h-6 sm:w-6" />
+              </HeroIconAction>
+
+              <span aria-hidden="true" className="mx-0.5 h-5 w-px bg-white/15" />
+
+              <HeroIconAction
+                dataTestId="playlist-more-actions-btn"
+                label="Más acciones de playlist"
+                tooltip="Más opciones"
                 onClick={(e) => {
                   const r = e.currentTarget.getBoundingClientRect();
                   openPlaylistContextMenu('shared', sharedPl.id, r.left, r.bottom + 8);
                 }}
-                className="pm-pressable flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white/90 shadow-lg backdrop-blur-md transition-all hover:scale-105 hover:bg-white/20"
+                className="text-white/60 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-white"
               >
-                <MoreHorizontal className="h-4.5 w-4.5" />
-              </button>
+                <MoreHorizontal className="h-5 w-5" />
+              </HeroIconAction>
             </div>
           ),
         })}
@@ -2240,7 +2307,7 @@ export const DetailViewPanel: React.FC = () => {
           </div>
         ),
         actionsRow: (
-          <div className="relative flex flex-wrap items-center gap-2.5 sm:gap-3">
+          <div className="relative flex flex-wrap items-center gap-2 sm:gap-2.5">
             <button
               type="button"
               aria-label={
@@ -2250,7 +2317,15 @@ export const DetailViewPanel: React.FC = () => {
                   ? 'Pausar'
                   : 'Reproducir'
               }
-              title="Reproducir"
+              title={
+                isPlaying &&
+                currentTrack &&
+                localPl.tracks.some((t) => t.id === currentTrack.id)
+                  ? 'Pausar'
+                  : shuffleEnabled || alwaysShuffle
+                    ? 'Reproducir en aleatorio'
+                    : 'Reproducir'
+              }
               onClick={() => {
                 if (
                   isPlaying &&
@@ -2263,42 +2338,22 @@ export const DetailViewPanel: React.FC = () => {
                   void playCollection(localPl.tracks, { isPlaylist: true });
                 }
               }}
-              className="pm-pressable flex h-12 w-12 items-center justify-center overflow-visible bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.6)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none sm:h-14 sm:w-14"
+              className="pm-pressable mr-1.5 flex h-12 w-12 items-center justify-center overflow-visible border-0 bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.65)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none sm:h-14 sm:w-14"
             >
               {isPlaying &&
               currentTrack &&
               localPl.tracks.some((t) => t.id === currentTrack.id) ? (
-                <RoundedPauseIcon className="h-[42px] w-[42px] sm:h-[48px] sm:w-[48px]" />
+                <RoundedPauseIcon className="h-[44px] w-[44px] sm:h-[50px] sm:w-[50px]" />
               ) : (
-                <RoundedPlayIcon className="h-[42px] w-[42px] translate-x-[2px] sm:h-[48px] sm:w-[48px]" />
+                <RoundedPlayIcon className="h-[44px] w-[44px] translate-x-[2px] sm:h-[50px] sm:w-[50px]" />
               )}
             </button>
 
-            <button
-              type="button"
-              aria-label="Aleatorio"
-              title="Aleatorio"
-              aria-pressed={shuffleEnabled}
-              onClick={() => {
-                if (localPl.tracks.length > 0) {
-                  recordPlaylistPlay(localPl);
-                  void playCollection(localPl.tracks, { isPlaylist: true, forceShuffle: true });
-                }
-              }}
-              className="pm-pressable relative flex h-10 w-10 items-center justify-center bg-transparent text-white/85 drop-shadow-[0_4px_14px_rgba(0,0,0,0.55)] transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none sm:h-11 sm:w-11"
-            >
-              <Shuffle className="h-5 w-5 sm:h-6 sm:w-6" />
-              {shuffleEnabled &&
-                currentTrack &&
-                localPl.tracks.some((t) => t.id === currentTrack.id) && (
-                  <span className="absolute bottom-0.5 h-1.5 w-1.5 rounded-full bg-white shadow" />
-                )}
-            </button>
-
-            <button
-              type="button"
-              aria-label="Sesión DJ"
-              title="Sesión DJ"
+            <HeroIconAction
+              label="Sesión DJ"
+              tooltip="Sesión DJ AutoMix"
+              activeDot={djMode.enabled}
+              activeDotClass="bg-purple-300"
               onClick={async () => {
                 await toggleDjMode(true);
                 if (localPl.tracks.length > 0) {
@@ -2306,83 +2361,93 @@ export const DetailViewPanel: React.FC = () => {
                   await playCollection(localPl.tracks, { isPlaylist: true });
                 }
               }}
-              className="pm-pressable flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white/90 shadow-lg backdrop-blur-md transition-all hover:scale-105 hover:bg-white/20"
+              className="text-purple-300/90 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-purple-200 hover:drop-shadow-[0_0_12px_rgba(192,132,252,0.75)]"
             >
-              <Disc3 className="h-4.5 w-4.5 text-purple-300" />
-            </button>
+              <Disc3 className="h-[22px] w-[22px] transition-transform duration-300 group-hover/act:rotate-45 sm:h-6 sm:w-6" />
+            </HeroIconAction>
 
-            <button
-              type="button"
-              aria-label={
+            <HeroIconAction
+              label={
                 isDownloadingThis
                   ? `Descargando ${playlistDownloadProgress.completed} de ${playlistDownloadProgress.total}`
                   : allDownloaded
                     ? 'Descargada offline'
                     : 'Descargar offline'
               }
-              title={allDownloaded ? 'Descargada offline' : 'Descargar offline'}
+              tooltip={
+                isDownloadingThis
+                  ? `Descargando ${playlistDownloadProgress.completed}/${playlistDownloadProgress.total}`
+                  : allDownloaded
+                    ? 'Descargada offline'
+                    : 'Descargar para escuchar sin conexión'
+              }
               disabled={localPl.tracks.length === 0}
+              badge={
+                isDownloadingThis
+                  ? `${playlistDownloadProgress.completed}/${playlistDownloadProgress.total}`
+                  : null
+              }
               onClick={() => {
                 if (isDownloadingThis) cancelPlaylistDownload();
                 else void downloadPlaylistOffline(localPl.id, localPl.tracks, localPl.name);
               }}
-              className="pm-pressable relative flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white/90 shadow-lg backdrop-blur-md transition-all hover:scale-105 hover:bg-white/20 disabled:opacity-40"
+              className="text-white/85 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-white"
             >
               {isDownloadingThis ? (
-                <Loader2 className="h-4.5 w-4.5 animate-spin text-emerald-300" />
+                <Loader2 className="h-[22px] w-[22px] animate-spin text-emerald-300 sm:h-6 sm:w-6" />
               ) : allDownloaded ? (
-                <Check className="h-4.5 w-4.5 text-emerald-300" />
+                <Check
+                  strokeWidth={2.5}
+                  className="h-[22px] w-[22px] text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.6)] sm:h-6 sm:w-6"
+                />
               ) : (
-                <Download className="h-4.5 w-4.5" />
+                <Download className="h-[22px] w-[22px] sm:h-6 sm:w-6" />
               )}
-              {isDownloadingThis && (
-                <span className="absolute -bottom-1 rounded-full bg-black/80 px-1 text-[9px] font-bold text-emerald-300">
-                  {playlistDownloadProgress.completed}/{playlistDownloadProgress.total}
-                </span>
-              )}
-            </button>
+            </HeroIconAction>
 
-            <button
-              type="button"
-              data-testid="playlist-add-songs-btn"
-              aria-label="Añadir canciones"
-              title="Añadir canciones"
-              aria-pressed={isAddFinderOpen}
+            <HeroIconAction
+              dataTestId="playlist-add-songs-btn"
+              label="Añadir canciones"
+              tooltip={isAddFinderOpen ? 'Ocultar buscador' : 'Añadir canciones'}
+              pressed={isAddFinderOpen}
               onClick={() => setAddFinderOverride(!isAddFinderOpen)}
-              className={`pm-pressable flex h-10 w-10 items-center justify-center rounded-full border shadow-lg backdrop-blur-md transition-all hover:scale-105 ${
-                isAddFinderOpen
-                  ? 'border-white bg-white text-black'
-                  : 'border-white/20 bg-white/10 text-white/90 hover:bg-white/20'
+              className={`drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] ${
+                isAddFinderOpen ? 'text-white' : 'text-white/85 hover:text-white'
               }`}
             >
-              <Plus className="h-5 w-5" />
-            </button>
+              <Plus
+                strokeWidth={2.4}
+                className={`h-[22px] w-[22px] transition-transform duration-200 sm:h-6 sm:w-6 ${
+                  isAddFinderOpen ? 'rotate-45' : ''
+                }`}
+              />
+            </HeroIconAction>
 
             {localPl.isCollaborative && (
-              <button
-                type="button"
-                aria-label="Colaborativa · Invitar"
-                title="Colaborativa · Invitar"
+              <HeroIconAction
+                label="Colaborativa · Invitar"
+                tooltip="Invitar colaboradores"
                 onClick={() => setCollabModalOpen(true)}
-                className="pm-pressable flex h-10 w-10 items-center justify-center rounded-full border border-emerald-400/35 bg-emerald-500/20 text-emerald-200 shadow-lg backdrop-blur-md transition-all hover:scale-105 hover:bg-emerald-500/30"
+                className="text-emerald-300/90 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-emerald-200 hover:drop-shadow-[0_0_12px_rgba(52,211,153,0.65)]"
               >
-                <Users className="h-4.5 w-4.5" />
-              </button>
+                <Users className="h-[22px] w-[22px] sm:h-6 sm:w-6" />
+              </HeroIconAction>
             )}
 
-            <button
-              type="button"
-              data-testid="playlist-more-actions-btn"
-              aria-label="Más acciones de playlist"
-              title="Más acciones"
+            <span aria-hidden="true" className="mx-0.5 h-5 w-px bg-white/15" />
+
+            <HeroIconAction
+              dataTestId="playlist-more-actions-btn"
+              label="Más acciones de playlist"
+              tooltip="Más opciones"
               onClick={(e) => {
                 const r = e.currentTarget.getBoundingClientRect();
                 openPlaylistContextMenu('local', localPl.id, r.left, r.bottom + 8);
               }}
-              className="pm-pressable flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white/90 shadow-lg backdrop-blur-md transition-all hover:scale-105 hover:bg-white/20"
+              className="text-white/60 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-white"
             >
-              <MoreHorizontal className="h-4.5 w-4.5" />
-            </button>
+              <MoreHorizontal className="h-5 w-5" />
+            </HeroIconAction>
           </div>
         ),
       })}

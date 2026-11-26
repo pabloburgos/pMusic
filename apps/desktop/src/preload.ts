@@ -44,6 +44,8 @@ contextBridge.exposeInMainWorld('pmusicDesktop', {
   },
   openExternalUrl: (url: string): Promise<void> =>
     ipcRenderer.invoke('pmusic:open-external-url', url),
+  openAuthWindow: (url: string): Promise<void> =>
+    ipcRenderer.invoke('pmusic:open-auth-window', url),
   getOAuthRedirectUrl: (): Promise<string> =>
     ipcRenderer.invoke('pmusic:get-oauth-redirect-url'),
   consumePendingAuthCallback: (): Promise<string | null> =>

@@ -270,8 +270,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="44"
-    android:versionName="0.22.0">
+    android:versionCode="45"
+    android:versionName="0.22.1">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -352,8 +352,6 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.media.AudioAttributes;
-import android.media.AudioFocusRequest;
 import android.media.AudioManager;
 import android.media.MediaMetadata;
 import android.media.session.MediaSession;
@@ -398,15 +396,11 @@ public class PMusicPlaybackService extends Service {
     private static volatile String sAlbum = "pMusic";
     private static volatile String sArtworkUrl = "";
     private static volatile boolean sIsPlaying = false;
-    private static volatile boolean sPausedByTransientLoss = false;
     private static volatile long sPositionMs = 0L;
     private static volatile long sDurationMs = 200000L;
 
     private PowerManager.WakeLock wakeLock;
     private WifiManager.WifiLock wifiLock;
-    private AudioManager audioManager;
-    private AudioManager.OnAudioFocusChangeListener focusListener;
-    private Object audioFocusRequest;
     private BroadcastReceiver noisyReceiver;
     private boolean noisyRegistered = false;
 
@@ -503,7 +497,7 @@ public class PMusicPlaybackService extends Service {
                 } catch (Throwable ignored) {
                 }
             } else {
-                sServiceInstance.updateFocusAndLocks(sIsPlaying);
+                sServiceInstance.updateLocks(sIsPlaying);
                 sServiceInstance.syncMediaSessionAndNotification(metaChanged);
             }
 
@@ -705,40 +699,10 @@ public class PMusicPlaybackService extends Service {
         } catch (Throwable ignored) {
         }
         try {
-            audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
-            focusListener = new AudioManager.OnAudioFocusChangeListener() {
-                @Override
-                public void onAudioFocusChange(int focusChange) {
-                    if (focusChange == AudioManager.AUDIOFOCUS_LOSS) {
-                        sPausedByTransientLoss = false;
-                        sIsPlaying = false;
-                        MainActivity.dispatchMediaAction(PMusicPlaybackService.this, "pause", -1);
-                        syncMediaSessionAndNotification(true);
-                    } else if (focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
-                        if (sIsPlaying) {
-                            sPausedByTransientLoss = true;
-                            sIsPlaying = false;
-                            MainActivity.dispatchMediaAction(PMusicPlaybackService.this, "pause", -1);
-                            syncMediaSessionAndNotification(true);
-                        }
-                    } else if (focusChange == AudioManager.AUDIOFOCUS_GAIN) {
-                        if (sPausedByTransientLoss) {
-                            sPausedByTransientLoss = false;
-                            sIsPlaying = true;
-                            MainActivity.dispatchMediaAction(PMusicPlaybackService.this, "play", -1);
-                            syncMediaSessionAndNotification(true);
-                        }
-                    }
-                }
-            };
-        } catch (Throwable ignored) {
-        }
-        try {
             noisyReceiver = new BroadcastReceiver() {
                 @Override
                 public void onReceive(Context context, Intent intent) {
                     if (intent != null && AudioManager.ACTION_AUDIO_BECOMING_NOISY.equals(intent.getAction())) {
-                        sPausedByTransientLoss = false;
                         sIsPlaying = false;
                         MainActivity.dispatchMediaAction(PMusicPlaybackService.this, "pause", -1);
                         syncMediaSessionAndNotification(true);
@@ -747,7 +711,7 @@ public class PMusicPlaybackService extends Service {
             };
             IntentFilter noisyFilter = new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY);
             if (Build.VERSION.SDK_INT >= 33) {
-                registerReceiver(noisyReceiver, noisyFilter, Context.RECEIVER_NOT_EXPORTED);
+                registerReceiver(noisyReceiver, noisyFilter, Context.RECEIVER_EXPORTED);
             } else {
                 registerReceiver(noisyReceiver, noisyFilter);
             }
@@ -757,7 +721,7 @@ public class PMusicPlaybackService extends Service {
         syncMediaSessionAndNotification();
     }
 
-    private void updateFocusAndLocks(boolean playing) {
+    private void updateLocks(boolean playing) {
         try {
             if (playing) {
                 if (wakeLock != null && !wakeLock.isHeld()) {
@@ -765,23 +729,6 @@ public class PMusicPlaybackService extends Service {
                 }
                 if (wifiLock != null && !wifiLock.isHeld()) {
                     wifiLock.acquire();
-                }
-                if (audioManager != null && focusListener != null) {
-                    if (Build.VERSION.SDK_INT >= 26) {
-                        if (audioFocusRequest == null) {
-                            AudioAttributes attrs = new AudioAttributes.Builder()
-                                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                                    .build();
-                            audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                                    .setAudioAttributes(attrs)
-                                    .setOnAudioFocusChangeListener(focusListener)
-                                    .build();
-                        }
-                        audioManager.requestAudioFocus((AudioFocusRequest) audioFocusRequest);
-                    } else {
-                        audioManager.requestAudioFocus(focusListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN);
-                    }
                 }
             } else {
                 if (wifiLock != null && wifiLock.isHeld()) {
@@ -795,7 +742,7 @@ public class PMusicPlaybackService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         sServiceInstance = this;
-        updateFocusAndLocks(sIsPlaying || intent == null || !ACTION_STOP.equals(intent.getAction()));
+        updateLocks(sIsPlaying || intent == null || !ACTION_STOP.equals(intent.getAction()));
         String action = intent != null ? intent.getAction() : null;
         if (ACTION_PREV.equals(action)) {
             MainActivity.dispatchMediaAction(this, "previoustrack", -1);
@@ -821,16 +768,6 @@ public class PMusicPlaybackService extends Service {
             } catch (Throwable ignored) {
             }
             noisyRegistered = false;
-        }
-        try {
-            if (audioManager != null && focusListener != null) {
-                if (Build.VERSION.SDK_INT >= 26 && audioFocusRequest != null) {
-                    audioManager.abandonAudioFocusRequest((AudioFocusRequest) audioFocusRequest);
-                } else {
-                    audioManager.abandonAudioFocus(focusListener);
-                }
-            }
-        } catch (Throwable ignored) {
         }
         try {
             stopForeground(true);

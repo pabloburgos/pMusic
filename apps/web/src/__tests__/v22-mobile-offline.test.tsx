@@ -1,8 +1,11 @@
 // @vitest-environment jsdom
 import React from 'react';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { App } from '../App.tsx';
+import { AuthOnboardingModal } from '../components/AuthOnboardingModal.tsx';
 import { NowPlayingSheet } from '../components/Overlays.tsx';
 import { createPlatformBridge } from '../platform/web-bridge.ts';
 import { usePMusicStore } from '../store/usePMusicStore.ts';
@@ -119,7 +122,7 @@ describe('pMusic v0.22.0 mobile & offline hardening', () => {
     expect(dlBtns.some((btn) => !btn.className.includes('hidden'))).toBe(true);
   });
 
-  it('uses iconic Artist-style controls on local playlists while preserving playlist testids', () => {
+  it('uses borderless hierarchical controls on playlists without Shuffle and preserves testids', () => {
     const t1 = makeTrack(21);
     const t2 = makeTrack(22);
     const pl: PlaylistRecord = {
@@ -142,8 +145,129 @@ describe('pMusic v0.22.0 mobile & offline hardening', () => {
 
     render(<App />);
 
-    expect(screen.getByTestId('playlist-add-songs-btn')).toBeTruthy();
-    expect(screen.getByTestId('playlist-more-actions-btn')).toBeTruthy();
-    expect(screen.getByLabelText('Sesión DJ')).toBeTruthy();
+    // Playlist header must NOT show a duplicate Shuffle button
+    expect(screen.queryByLabelText('Aleatorio')).toBeNull();
+
+    const addBtn = screen.getByTestId('playlist-add-songs-btn');
+    const moreBtn = screen.getByTestId('playlist-more-actions-btn');
+    const djBtn = screen.getByLabelText('Sesión DJ');
+
+    expect(addBtn).toBeTruthy();
+    expect(moreBtn).toBeTruthy();
+    expect(djBtn).toBeTruthy();
+
+    // Pure borderless icons: zero circular bordered pills
+    expect(addBtn.className.includes('bg-transparent')).toBe(true);
+    expect(addBtn.className.includes('rounded-full border ')).toBe(false);
+    expect(djBtn.className.includes('bg-transparent')).toBe(true);
+  });
+
+  it('renders sticky mobile header with borderless avatar and opens mobile Preajustes Hub with multi-account, history, and devices', () => {
+    const origInnerWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      writable: true,
+      value: 390,
+    });
+    window.dispatchEvent(new Event('resize'));
+
+    act(() => {
+      usePMusicStore.setState({
+        activeTab: 'Inicio',
+        activeDetailView: null,
+        mobileHubOpen: false,
+        authState: {
+          userId: 'user-mobile-1',
+          email: 'pablo@pmusic.es',
+          connected: true,
+          displayName: 'Pablo',
+        },
+        userProfile: {
+          userId: 'user-mobile-1',
+          username: 'pablopm',
+          displayName: 'Pablo',
+          avatarUrl: null,
+        },
+      });
+    });
+
+    render(<App />);
+
+    const header = screen.getByTestId('mobile-top-header');
+    expect(header.className.includes('sticky top-0')).toBe(true);
+
+    const avatarBtn = screen.getByTestId('mobile-profile-btn');
+    expect(avatarBtn.textContent?.includes('@pablopm')).toBe(false);
+
+    fireEvent.click(avatarBtn);
+
+    const hub = screen.getByTestId('mobile-hub-page');
+    expect(hub).toBeTruthy();
+    expect(screen.getByTestId('add-secondary-account-btn')).toBeTruthy();
+    expect(screen.getByText('Historial de escucha')).toBeTruthy();
+    expect(screen.getByText('Dispositivos conectados')).toBeTruthy();
+    expect(screen.getByText('Toda la configuración')).toBeTruthy();
+
+    act(() => {
+      usePMusicStore.setState({ mobileHubOpen: false });
+    });
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      writable: true,
+      value: origInnerWidth,
+    });
+    window.dispatchEvent(new Event('resize'));
+  });
+
+  it('does not steal Android AudioFocus from WebView inside PMusicPlaybackService', () => {
+    const buildApkSrc = readFileSync(
+      resolve(__dirname, '../../../mobile/scripts/build-apk.mjs'),
+      'utf-8'
+    );
+    expect(buildApkSrc.includes('requestAudioFocus')).toBe(false);
+    expect(buildApkSrc.includes('abandonAudioFocus')).toBe(false);
+  });
+
+  it('shows branded Google auth waiting screen in-app and configures standalone browser window + callback page', async () => {
+    const openAuthWindowMock = vi.fn(async () => undefined);
+    (window as unknown as { pmusicDesktop?: unknown }).pmusicDesktop = {
+      openAuthWindow: openAuthWindowMock,
+      getOAuthRedirectUrl: async () => 'http://127.0.0.1:47821/auth/callback',
+    };
+    const origSignIn = usePMusicStore.getState().signInWithGoogle;
+    const signInSpy = vi.fn(async () => {
+      await (window as unknown as { pmusicDesktop?: { openAuthWindow?: (u: string) => Promise<void> } })
+        .pmusicDesktop?.openAuthWindow?.('https://accounts.google.com/o/oauth2/v2/auth');
+    });
+
+    act(() => {
+      usePMusicStore.setState({
+        authOnboardingOpen: true,
+        needsProfileSetup: false,
+        signInWithGoogle: signInSpy,
+      });
+    });
+
+    render(<AuthOnboardingModal />);
+    fireEvent.click(screen.getByText('Continuar con Google'));
+
+    const waitScreen = await screen.findByTestId('google-auth-waiting-screen');
+    expect(waitScreen).toBeTruthy();
+    expect(screen.getByText('Autentícate en Google')).toBeTruthy();
+    expect(screen.getByText('Reabrir ventana de Google')).toBeTruthy();
+    expect(openAuthWindowMock).toHaveBeenCalledTimes(1);
+
+    const buildElectronSrc = readFileSync(
+      resolve(__dirname, '../../../desktop/scripts/build-electron.mjs'),
+      'utf-8'
+    );
+    expect(buildElectronSrc.includes('pmusic:open-auth-window')).toBe(true);
+    expect(buildElectronSrc.includes('--new-window')).toBe(true);
+    expect(buildElectronSrc.includes('Sesión iniciada correctamente')).toBe(true);
+
+    act(() => {
+      usePMusicStore.setState({ authOnboardingOpen: false, signInWithGoogle: origSignIn });
+    });
+    delete (window as unknown as { pmusicDesktop?: unknown }).pmusicDesktop;
   });
 });

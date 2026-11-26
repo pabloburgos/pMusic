@@ -79,7 +79,7 @@ import {
   MediaSessionController,
 } from '@pmusic/audio-engine';
 import { RecommendationEngine } from '@pmusic/recommendations';
-import { LibraryStore, SyncEngine } from '@pmusic/sync';
+import { LibraryStore, SyncEngine, type SavedAccountSlot } from '@pmusic/sync';
 import {
   addTrackToSharedPlaylist,
   computeBlendScoreAndTracks,
@@ -541,6 +541,63 @@ function saveCachedHomeShelves(shelves: HomeEditorialShelf[]): void {
   }
 }
 
+const CACHED_PROFILE_STORAGE_KEY = 'pmusic.cached_profile.v1';
+const CACHED_SHARED_PLAYLISTS_KEY = 'pmusic.cached_shared_playlists.v1';
+
+async function writeCachedProfile(
+  ownerUserId: string | null | undefined,
+  profile: UserProfile | null
+): Promise<void> {
+  if (!ownerUserId || !profile) return;
+  try {
+    await defaultPlatformBridge.preferencesStorage.setItem(
+      CACHED_PROFILE_STORAGE_KEY,
+      JSON.stringify({ ownerUserId, profile })
+    );
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
+async function writeCachedSharedPlaylists(
+  ownerUserId: string | null | undefined,
+  sharedPlaylists: SharedPlaylistRecord[]
+): Promise<void> {
+  if (!ownerUserId) return;
+  try {
+    await defaultPlatformBridge.preferencesStorage.setItem(
+      CACHED_SHARED_PLAYLISTS_KEY,
+      JSON.stringify({ ownerUserId, sharedPlaylists })
+    );
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
+async function clearCachedAccountArtifacts(): Promise<void> {
+  try {
+    await Promise.all([
+      defaultPlatformBridge.preferencesStorage.removeItem(CACHED_PROFILE_STORAGE_KEY),
+      defaultPlatformBridge.preferencesStorage.removeItem(CACHED_SHARED_PLAYLISTS_KEY),
+    ]);
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function parseCachedForOwner<T>(raw: string | null | undefined, expectedUserId: string | null): T | null {
+  if (!raw || !expectedUserId) return null;
+  try {
+    const parsed = JSON.parse(raw) as { ownerUserId?: string; profile?: T; sharedPlaylists?: T };
+    if (parsed.ownerUserId !== expectedUserId) return null;
+    if ('profile' in parsed) return (parsed.profile ?? null) as T | null;
+    if ('sharedPlaylists' in parsed) return (parsed.sharedPlaylists ?? null) as T | null;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 async function preloadTopHomeCovers(shelves: HomeEditorialShelf[]): Promise<void> {
   if (typeof Image === 'undefined') return;
   const urls: string[] = [];
@@ -824,6 +881,15 @@ export interface PMusicStoreState {
   devicesSheetOpen: boolean;
   importModalOpen: boolean;
   settingsOpen: boolean;
+  settingsInitialCategory:
+    | 'apariencia'
+    | 'audio'
+    | 'dj'
+    | 'discord'
+    | 'reproduccion'
+    | 'cuenta'
+    | null;
+  mobileHubOpen: boolean;
   spotlightOpen: boolean;
   activeDetailView: ActiveDetailView;
   detailViewHistory: Exclude<ActiveDetailView, null>[];
@@ -992,6 +1058,11 @@ export interface PMusicStoreState {
   setDevicesSheetOpen: (open: boolean) => void;
   setImportModalOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
+  setMobileHubOpen: (open: boolean) => void;
+  openSettingsCategory: (
+    cat: 'apariencia' | 'audio' | 'dj' | 'discord' | 'reproduccion' | 'cuenta'
+  ) => void;
+  clearPlayHistory: () => Promise<void>;
   setSpotlightOpen: (open: boolean) => void;
   openArtistDetail: (
     artistId: string,
@@ -1191,6 +1262,7 @@ export interface PMusicStoreState {
   saveImportedPlaylistToLibrary: () => Promise<void>;
 
   // Sync & Connect Actions
+  savedAccounts: SavedAccountSlot[];
   configureSupabase: (url: string, anonKey: string, deviceName?: string) => Promise<void>;
   setDeviceName: (deviceName: string) => Promise<void>;
   signInSupabase: (email: string, password: string) => Promise<void>;
@@ -1201,6 +1273,9 @@ export interface PMusicStoreState {
   signInWithGoogle: () => Promise<void>;
   handleAuthCallbackUrl: (callbackUrl: string) => Promise<void>;
   signOutSupabase: () => Promise<void>;
+  switchSavedAccount: (userId: string) => Promise<void>;
+  prepareAddSecondaryAccount: () => Promise<void>;
+  removeSavedAccount: (userId: string) => Promise<void>;
   setAuthOnboardingOpen: (open: boolean) => void;
   continueAsGuest: () => void;
   saveUserProfile: (input: {
@@ -2499,7 +2574,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     });
   }
 
-  async function hydrateAndMergeCloudTaste(cloudPrefs: Record<string, any> | null | undefined): Promise<void> {
+  async function hydrateAndMergeCloudTaste(
+    cloudPrefs: Record<string, any> | null | undefined,
+    options?: { skipShelfRebuild?: boolean }
+  ): Promise<void> {
     const remoteTaste = (cloudPrefs?.tasteProfile ?? null) as AccountTasteProfile | null;
     const localTaste = buildLocalTasteSnapshot();
     const merged = mergeAccountTasteProfiles(localTaste, remoteTaste);
@@ -2523,32 +2601,34 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       seedArtists: recommendationEngine.getSeedArtists(),
     });
 
-    // Trigger immediate shelf refresh under the latest epoch so merged account taste wins over initial cold shelves
-    const myEpoch = ++homeShelvesBuildEpoch;
-    try {
-      const freshShelves = await recommendationEngine.buildHomeShelves();
-      if (myEpoch !== homeShelvesBuildEpoch) return;
-      const allReal = Array.from(
-        new Map(freshShelves.flatMap((s) => s.tracks ?? []).map((t) => [t.id, t])).values()
-      );
-      set((prev) => ({
-        homeShelves: allReal.length > 0 ? freshShelves : prev.homeShelves,
-        ...(allReal.length > 0 && !prev.isPlaying
-          ? {
-              currentTrack: allReal[0]!,
-              queue: allReal.slice(0, 10),
-              recommendedQueue: allReal.slice(10, 20),
-              queueIndex: 0,
-              durationSec: allReal[0]!.durationSec,
-              positionSec: 0,
-            }
-          : {}),
-      }));
-      if (isLiveRuntime()) {
-        void get().refreshExploreDiscovery(true);
+    if (!options?.skipShelfRebuild) {
+      // Trigger immediate shelf refresh under the latest epoch so merged account taste wins over initial cold shelves
+      const myEpoch = ++homeShelvesBuildEpoch;
+      try {
+        const freshShelves = await recommendationEngine.buildHomeShelves();
+        if (myEpoch !== homeShelvesBuildEpoch) return;
+        const allReal = Array.from(
+          new Map(freshShelves.flatMap((s) => s.tracks ?? []).map((t) => [t.id, t])).values()
+        );
+        set((prev) => ({
+          homeShelves: allReal.length > 0 ? freshShelves : prev.homeShelves,
+          ...(allReal.length > 0 && !prev.isPlaying
+            ? {
+                currentTrack: allReal[0]!,
+                queue: allReal.slice(0, 10),
+                recommendedQueue: allReal.slice(10, 20),
+                queueIndex: 0,
+                durationSec: allReal[0]!.durationSec,
+                positionSec: 0,
+              }
+            : {}),
+        }));
+        if (isLiveRuntime()) {
+          void get().refreshExploreDiscovery(true);
+        }
+      } catch {
+        // keep existing shelves if offline
       }
-    } catch {
-      // keep existing shelves if offline
     }
 
     if (get().authState.connected && (!remoteTaste || merged.richnessScore > (remoteTaste.richnessScore ?? 0))) {
@@ -2865,7 +2945,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   devicesSheetOpen: false,
   importModalOpen: false,
   settingsOpen: false,
+  settingsInitialCategory: null,
+  mobileHubOpen: false,
   spotlightOpen: false,
+  savedAccounts: [],
   activeDetailView: null,
   detailViewHistory: [],
   isOfflineNetwork: typeof navigator !== 'undefined' ? !navigator.onLine : false,
@@ -3091,22 +3174,52 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     if (initialized) return;
     initialized = true;
 
-    try {
-      await libraryStore.hydrate();
-    } catch {
-      // ignore hydration failure
+    const cachedHome = readCachedHomeShelves();
+    if (cachedHome && cachedHome.length > 0 && get().homeShelves.length <= 2) {
+      set({ homeShelves: cachedHome });
     }
-    try {
-      await recommendationEngine.hydrate();
-    } catch {
-      // ignore hydration failure
-    }
-    syncUserLibraryContextToEngine();
+
+    // 1. Run ALL local storage, audio init, offline catalog & local session restore in parallel
+    const [
+      ,
+      ,
+      ,
+      offlineEntriesRes,
+      rawRecentRes,
+      migratedFlagRes,
+      rawPrefsRes,
+      diskPrefsRes,
+      rawCachedProfileRes,
+      rawCachedSharedRes,
+      rpcStatusRes,
+      savedAccountsRes,
+      restoredAuthRes,
+    ] = await Promise.allSettled([
+      libraryStore.hydrate(),
+      recommendationEngine.hydrate(),
+      audioEngine.init(),
+      defaultPlatformBridge.offlineStorage.listOfflineIds(),
+      defaultPlatformBridge.preferencesStorage.getItem(RECENT_SEARCH_ITEMS_STORAGE_KEY),
+      defaultPlatformBridge.preferencesStorage.getItem(HOME_HISTORY_MIGRATION_KEY),
+      defaultPlatformBridge.preferencesStorage.getItem(USER_PREFS_STORAGE_KEY),
+      typeof window !== 'undefined' && (window as any).pmusicDesktop?.readPrefsFile
+        ? (window as any).pmusicDesktop.readPrefsFile()
+        : Promise.resolve(null),
+      defaultPlatformBridge.preferencesStorage.getItem(CACHED_PROFILE_STORAGE_KEY),
+      defaultPlatformBridge.preferencesStorage.getItem(CACHED_SHARED_PLAYLISTS_KEY),
+      defaultPlatformBridge.getDiscordRpcStatus?.() ?? Promise.resolve(undefined),
+      syncEngine.listSavedAccounts(),
+      syncEngine.restoreSession({ deferSync: true }),
+    ]);
+
+    const restoredAuth: SyncAuthState =
+      restoredAuthRes.status === 'fulfilled'
+        ? restoredAuthRes.value
+        : { userId: null, email: null, connected: false };
+
     let ranV3Migration = false;
     try {
-      const migrated = await defaultPlatformBridge.preferencesStorage.getItem(
-        HOME_HISTORY_MIGRATION_KEY
-      );
+      const migrated = migratedFlagRes.status === 'fulfilled' ? migratedFlagRes.value : null;
       if (migrated !== '1') {
         ranV3Migration = true;
         await recommendationEngine.clearPlayHistory();
@@ -3127,14 +3240,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     } catch {
       // ignore storage failure
     }
-    await audioEngine.init();
-    try {
-      await syncEngine.connectRealtime();
-    } catch {
-      // ignore offline/sync error so initApp never stalls
-    }
+    syncUserLibraryContextToEngine();
 
-    // Ensure at least one companion peer device is visible in Dispositivos for smooth cross-device demo/E2E
     const isMobileUa =
       typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('android');
     syncEngine.upsertPeerDevice({
@@ -3147,49 +3254,16 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       updated_at: Date.now(),
     });
 
-    let offlineEntries: OfflineAudioEntry[] = [];
-    try {
-      offlineEntries = await defaultPlatformBridge.offlineStorage.listOfflineIds();
-    } catch {
-      offlineEntries = [];
-    }
+    const offlineEntries: OfflineAudioEntry[] =
+      offlineEntriesRes.status === 'fulfilled' ? offlineEntriesRes.value : [];
     const offlineDownloads: Record<string, OfflineDownloadStatus> = {};
     for (const entry of offlineEntries) {
       offlineDownloads[entry.trackId] = 'downloaded';
     }
 
-    // Pre-analyze initial fallback catalog for DJ badges
-    const analyses: Record<string, TrackAnalysis> = {};
-    for (const track of FALLBACK_TRACKS) {
-      analyses[track.id] = await djPlanner.analyzeTrack(track.id, null, track.durationSec);
-    }
-
-    let shelves: HomeEditorialShelf[] = [];
-    const cachedHome = readCachedHomeShelves();
-    if (cachedHome && cachedHome.length > 0 && get().homeShelves.length <= 2) {
-      set({ homeShelves: cachedHome });
-    }
-    const preAuthEpoch = ++homeShelvesBuildEpoch;
-    try {
-      const builtShelves = await recommendationEngine.buildHomeShelves();
-      shelves = preAuthEpoch === homeShelvesBuildEpoch ? builtShelves : get().homeShelves;
-      saveCachedHomeShelves(shelves);
-    } catch {
-      shelves = cachedHome ?? get().homeShelves;
-    }
-    for (const shelf of shelves) {
-      for (const track of shelf.tracks ?? []) {
-        if (!analyses[track.id]) {
-          analyses[track.id] = await djPlanner.analyzeTrack(track.id, null, track.durationSec);
-        }
-      }
-    }
-
     let hydratedRecentItems = get().recentSearchItems;
     try {
-      const rawRecent = await defaultPlatformBridge.preferencesStorage.getItem(
-        RECENT_SEARCH_ITEMS_STORAGE_KEY
-      );
+      const rawRecent = rawRecentRes.status === 'fulfilled' ? rawRecentRes.value : null;
       if (rawRecent !== null && rawRecent !== undefined) {
         const parsed = JSON.parse(rawRecent) as unknown;
         if (Array.isArray(parsed)) {
@@ -3210,25 +3284,16 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
     let hydratedPrefs: Record<string, any> | null = null;
     try {
-      const rawPrefs = await defaultPlatformBridge.preferencesStorage.getItem(
-        USER_PREFS_STORAGE_KEY
-      );
+      const rawPrefs = rawPrefsRes.status === 'fulfilled' ? rawPrefsRes.value : null;
+      const diskPrefs = diskPrefsRes.status === 'fulfilled' ? diskPrefsRes.value : null;
       if (rawPrefs) {
         hydratedPrefs = JSON.parse(rawPrefs) as Record<string, any>;
-      } else if (typeof window !== 'undefined' && (window as any).pmusicDesktop?.readPrefsFile) {
-        const diskPrefs = await (window as any).pmusicDesktop.readPrefsFile();
-        if (diskPrefs && diskPrefs !== '{}') {
-          hydratedPrefs = JSON.parse(diskPrefs) as Record<string, any>;
-        }
+      } else if (typeof diskPrefs === 'string' && diskPrefs && diskPrefs !== '{}') {
+        hydratedPrefs = JSON.parse(diskPrefs) as Record<string, any>;
       }
     } catch {
       hydratedPrefs = null;
     }
-
-    const restoredAuth = await syncEngine.restoreSession();
-    const restoredProfile = restoredAuth.connected
-      ? ((await syncEngine.getProfile?.()) ?? null)
-      : null;
 
     if (
       restoredAuth.connected &&
@@ -3238,30 +3303,29 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       hydratedPrefs = null;
     }
 
-    if (restoredAuth.connected && !hydratedPrefs) {
-      try {
-        const cloudPrefs = await syncEngine.loadAccountPreferences?.();
-        if (cloudPrefs) {
-          hydratedPrefs = cloudPrefs;
-        }
-      } catch {
-        // ignore offline cloud prefs error
-      }
-    }
+    const cachedProfile = restoredAuth.connected
+      ? parseCachedForOwner<UserProfile>(
+          rawCachedProfileRes.status === 'fulfilled' ? rawCachedProfileRes.value : null,
+          restoredAuth.userId
+        )
+      : null;
+    const cachedSharedPlaylists =
+      (restoredAuth.connected
+        ? parseCachedForOwner<SharedPlaylistRecord[]>(
+            rawCachedSharedRes.status === 'fulfilled' ? rawCachedSharedRes.value : null,
+            restoredAuth.userId
+          )
+        : null) ?? [];
+    const savedAccounts: SavedAccountSlot[] =
+      savedAccountsRes.status === 'fulfilled' ? savedAccountsRes.value : [];
 
-    let restoredFavoriteArtists: FavoriteArtistRecord[] = Array.isArray(hydratedPrefs?.favoriteArtists)
+    const restoredFavoriteArtists: FavoriteArtistRecord[] = Array.isArray(
+      hydratedPrefs?.favoriteArtists
+    )
       ? (hydratedPrefs!.favoriteArtists as FavoriteArtistRecord[]).filter(
           (a) => Boolean(a?.artistId && a?.artistName)
         )
       : [];
-    if (restoredAuth.connected && restoredFavoriteArtists.length === 0) {
-      try {
-        const remoteFavs = (await syncEngine.listFavoriteArtists?.()) ?? [];
-        if (remoteFavs.length > 0) restoredFavoriteArtists = remoteFavs;
-      } catch {
-        // ignore
-      }
-    }
     if (restoredFavoriteArtists.length > 0) {
       recommendationEngine.setFavoriteArtists(restoredFavoriteArtists);
     }
@@ -3331,8 +3395,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       audioEngine.setVolume(1.0);
     }
 
-    const rpcStatus = await defaultPlatformBridge.getDiscordRpcStatus?.();
-
+    const rpcStatus = rpcStatusRes.status === 'fulfilled' ? rpcStatusRes.value : undefined;
     const canonicalPlaylists = libraryStore.getPlaylists().map((pl) => ({
       ...pl,
       tracks: pl.tracks.map(canonicalizeTrackArtists),
@@ -3345,19 +3408,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       ...h,
       track: canonicalizeTrackArtists(h.track),
     }));
-    const canonicalShelves = shelves.map((sh) => ({
-      ...sh,
-      anchorArtist:
-        sh.anchorArtist && /cruz\s*cafun[eé]/i.test(sh.anchorArtist)
-          ? 'Cruzzi'
-          : sh.anchorArtist,
-      tracks: sh.tracks?.map(canonicalizeTrackArtists),
-      albums: sh.albums?.map((al) => ({
-        ...al,
-        artists: al.artists.map((ar) => canonicalizeArtistRefName(ar.id, ar.name)),
-      })),
-    }));
 
+    // 2. Commit instant local state immediately (auth, cached profile, playlists, likes, prefs)
     set((prev) => ({
       ...(isMobileHardwareVolumeRuntime()
         ? { volume: 1.0 }
@@ -3365,8 +3417,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           ? { volume: Math.max(0, Math.min(1, hydratedPrefs.volume)) }
           : {}),
       authState: restoredAuth,
-      userProfile: restoredProfile,
-      needsProfileSetup: restoredAuth.connected && !restoredProfile,
+      userProfile: cachedProfile,
+      needsProfileSetup: restoredAuth.connected && !cachedProfile,
+      savedAccounts,
+      sharedPlaylists: cachedSharedPlaylists,
       favoriteArtists: restoredFavoriteArtists,
       playlists: canonicalPlaylists,
       likedTracks: canonicalLiked,
@@ -3376,10 +3430,6 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       recentSearchItems: hydratedRecentItems,
       offlineEntries,
       offlineDownloads,
-      trackAnalyses: analyses,
-      homeShelves: canonicalShelves.some((s) => (s.tracks?.length ?? 0) > 0)
-        ? canonicalShelves
-        : prev.homeShelves,
       onlineDevices: syncEngine.getOnlineDevices(),
       ...(rpcStatus ? { discordRpcStatus: rpcStatus } : {}),
       ...(hydratedPrefs
@@ -3396,7 +3446,9 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
               (hydratedPrefs.accentPreset as PMusicAccentPresetId) ?? prev.accentPreset,
             surfaceStyle: resolvedSurfaceStyle,
             liquidGlassMode: resolvedSurfaceStyle === 'liquid-glass',
-            ambientMotionEnabled: Boolean(hydratedPrefs.ambientMotionEnabled ?? prev.ambientMotionEnabled),
+            ambientMotionEnabled: Boolean(
+              hydratedPrefs.ambientMotionEnabled ?? prev.ambientMotionEnabled
+            ),
             graphicSaverMode: resolvedSurfaceStyle === 'simple',
             reducedMotionPref: Boolean(hydratedPrefs.reducedMotionPref ?? prev.reducedMotionPref),
             visualizerEnabled: Boolean(hydratedPrefs.visualizerEnabled ?? prev.visualizerEnabled),
@@ -3449,11 +3501,15 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
               ...prev.discordRpcConfig,
               ...(hydratedPrefs.discordRpcConfig ?? {}),
               clientId:
-                hydratedPrefs.discordRpcConfig?.clientId || rpcStatus?.clientId || prev.discordRpcConfig.clientId,
+                hydratedPrefs.discordRpcConfig?.clientId ||
+                rpcStatus?.clientId ||
+                prev.discordRpcConfig.clientId,
             },
             playbackRate: Number(hydratedPrefs.playbackRate ?? prev.playbackRate),
             preservesPitch: Boolean(hydratedPrefs.preservesPitch ?? prev.preservesPitch),
-            audioNormalization: Boolean(hydratedPrefs.audioNormalization ?? prev.audioNormalization),
+            audioNormalization: Boolean(
+              hydratedPrefs.audioNormalization ?? prev.audioNormalization
+            ),
             normalizationTarget: hydratedPrefs.normalizationTarget ?? prev.normalizationTarget,
             stereoBalance: Number(hydratedPrefs.stereoBalance ?? prev.stereoBalance),
             monoAudio: Boolean(hydratedPrefs.monoAudio ?? prev.monoAudio),
@@ -3476,34 +3532,6 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         : {}),
     }));
 
-    const localSavedAt = Number(hydratedPrefs?.savedAt ?? 0);
-    let cloudTasteMerged = false;
-    if (restoredAuth.connected) {
-      try {
-        const cloudPrefs = await syncEngine.loadAccountPreferences?.();
-        if (cloudPrefs) {
-          const cloudSavedAt = Number(cloudPrefs.savedAt ?? 0);
-          if (!hydratedPrefs || cloudSavedAt >= localSavedAt) {
-            applyPreferencesPayload(cloudPrefs);
-            void defaultPlatformBridge.preferencesStorage
-              .setItem(USER_PREFS_STORAGE_KEY, JSON.stringify(cloudPrefs))
-              .catch(() => {});
-          } else {
-            persistPrefsFromStore(true);
-          }
-          await hydrateAndMergeCloudTaste(cloudPrefs);
-          cloudTasteMerged = true;
-        }
-      } catch {
-        // ignore offline cloud prefs load
-      }
-      if (!cloudTasteMerged) {
-        await hydrateAndMergeCloudTaste(null);
-        persistPrefsFromStore(true);
-      }
-      void get().hydrateSocialAndSubscribe();
-    }
-
     if (!prefsUnloadBound) {
       prefsUnloadBound = true;
       if (typeof window !== 'undefined') {
@@ -3517,55 +3545,217 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       }
     }
 
-    const activeShelves = cloudTasteMerged ? get().homeShelves : shelves;
-    const allRealTracks = Array.from(
-      new Map(activeShelves.flatMap((s) => s.tracks ?? []).map((t) => [t.id, t])).values()
-    );
-    const firstReal = allRealTracks[0];
-    if (firstReal && !get().isPlaying && !cloudTasteMerged) {
-      const listenTracks = activeShelves.find((s) => s.kind === 'listen_again')?.tracks ?? [];
+    // 3. Fire single non-blocking Realtime connection
+    void syncEngine.connectRealtime().catch(() => {});
+
+    const canonicalizeShelves = (rawShelves: HomeEditorialShelf[]) =>
+      rawShelves.map((sh) => ({
+        ...sh,
+        anchorArtist:
+          sh.anchorArtist && /cruz\s*cafun[eé]/i.test(sh.anchorArtist)
+            ? 'Cruzzi'
+            : sh.anchorArtist,
+        tracks: sh.tracks?.map(canonicalizeTrackArtists),
+        albums: sh.albums?.map((al) => ({
+          ...al,
+          artists: al.artists.map((ar) => canonicalizeArtistRefName(ar.id, ar.name)),
+        })),
+      }));
+
+    const commitShelvesAndSeedPlayer = async (builtShelves: HomeEditorialShelf[]) => {
+      const canonicalShelves = canonicalizeShelves(builtShelves);
+      const allRealTracks = Array.from(
+        new Map(canonicalShelves.flatMap((s) => s.tracks ?? []).map((t) => [t.id, t])).values()
+      );
+      const trackSample = [...FALLBACK_TRACKS, ...allRealTracks].slice(0, 24);
+      const analyzedPairs = await Promise.all(
+        trackSample.map(
+          async (t) => [t.id, await djPlanner.analyzeTrack(t.id, null, t.durationSec)] as const
+        )
+      );
+      const analyses: Record<string, TrackAnalysis> = {};
+      for (const [id, ana] of analyzedPairs) {
+        analyses[id] = ana;
+      }
+      const listenTracks = canonicalShelves.find((s) => s.kind === 'listen_again')?.tracks ?? [];
       const baseQueue = (listenTracks.length > 0 ? listenTracks : allRealTracks).slice(0, 10);
+      const firstReal = baseQueue[0] ?? allRealTracks[0];
       const qIds = new Set(baseQueue.map((t) => t.id));
       const initialRec = allRealTracks.filter((t) => !qIds.has(t.id)).slice(0, 10);
       const keepShuffle = get().alwaysShuffle || get().shuffleEnabled;
       const realQueue =
-        keepShuffle && baseQueue.length > 1
+        firstReal && keepShuffle && baseQueue.length > 1
           ? [firstReal, ...fisherYatesShuffle(baseQueue.filter((t) => t.id !== firstReal.id))]
           : baseQueue;
-      set({
-        currentTrack: firstReal,
-        queue: realQueue,
-        ...(keepShuffle ? { unshuffledQueue: baseQueue, shuffleEnabled: true } : {}),
-        recommendedQueue: initialRec,
-        queueIndex: 0,
-        durationSec: firstReal.durationSec,
-        positionSec: 0,
-      });
+
+      set((prev) => ({
+        homeShelves: canonicalShelves.some((s) => (s.tracks?.length ?? 0) > 0)
+          ? canonicalShelves
+          : prev.homeShelves,
+        trackAnalyses: { ...prev.trackAnalyses, ...analyses },
+        ...(firstReal && !prev.isPlaying
+          ? {
+              currentTrack: firstReal,
+              queue: realQueue,
+              ...(keepShuffle ? { unshuffledQueue: baseQueue, shuffleEnabled: true } : {}),
+              recommendedQueue: initialRec,
+              queueIndex: 0,
+              durationSec: firstReal.durationSec,
+              positionSec: 0,
+            }
+          : {}),
+      }));
+      if (isLiveRuntime()) {
+        void preloadTopHomeCovers(canonicalShelves);
+      }
+    };
+
+    const hasWarmAccount =
+      !restoredAuth.connected ||
+      (Boolean(cachedProfile) &&
+        (canonicalPlaylists.length > 0 || cachedSharedPlaylists.length > 0));
+    const hasWarmHome = Boolean(cachedHome && cachedHome.length > 0);
+    const localSavedAt = Number(hydratedPrefs?.savedAt ?? 0);
+    const isOnline = typeof navigator === 'undefined' || navigator.onLine !== false;
+
+    const runCloudAndShelfSync = async () => {
+      const shelfEpoch = ++homeShelvesBuildEpoch;
+      const initialShelvesPromise = !hasWarmHome
+        ? recommendationEngine
+            .buildHomeShelves()
+            .then((built) => {
+              saveCachedHomeShelves(built);
+              return built;
+            })
+            .catch(() => get().homeShelves)
+        : Promise.resolve(cachedHome!);
+
+      let mergedPrefsFound = false;
+      if (restoredAuth.connected && isOnline) {
+        await Promise.allSettled([
+          syncEngine.syncNow().then(() => {
+            syncUserLibraryContextToEngine();
+            set({
+              playlists: libraryStore.getPlaylists().map((pl) => ({
+                ...pl,
+                tracks: pl.tracks.map(canonicalizeTrackArtists),
+              })),
+              likedTracks: libraryStore.getLikedTracks().map((l) => ({
+                ...l,
+                track: canonicalizeTrackArtists(l.track),
+              })),
+              playHistory: libraryStore.getPlayHistory().map((h) => ({
+                ...h,
+                track: canonicalizeTrackArtists(h.track),
+              })),
+            });
+            syncAndroidAutoLibrarySnapshot();
+          }),
+          syncEngine.getProfile?.().then(async (prof) => {
+            if (prof) {
+              set({ userProfile: prof, needsProfileSetup: false });
+              void writeCachedProfile(prof.userId, prof);
+              const slots = await syncEngine.rememberCurrentAccountSession({
+                username: prof.username,
+                displayName: prof.displayName,
+                avatarUrl: prof.avatarUrl,
+              });
+              set({ savedAccounts: slots });
+            } else {
+              set({ needsProfileSetup: !cachedProfile });
+            }
+          }),
+          syncEngine.loadAccountPreferences?.().then(async (cloudPrefs) => {
+            if (cloudPrefs) {
+              mergedPrefsFound = true;
+              const cloudSavedAt = Number(cloudPrefs.savedAt ?? 0);
+              if (!hydratedPrefs || cloudSavedAt >= localSavedAt) {
+                applyPreferencesPayload(cloudPrefs);
+                void defaultPlatformBridge.preferencesStorage
+                  .setItem(USER_PREFS_STORAGE_KEY, JSON.stringify(cloudPrefs))
+                  .catch(() => {});
+              } else {
+                persistPrefsFromStore(true);
+              }
+              await hydrateAndMergeCloudTaste(cloudPrefs, { skipShelfRebuild: true });
+            }
+          }),
+          get().hydrateSocialAndSubscribe(),
+          restoredFavoriteArtists.length === 0
+            ? syncEngine.listFavoriteArtists?.().then((favs) => {
+                if (favs && favs.length > 0) {
+                  recommendationEngine.setFavoriteArtists(favs);
+                  set({ favoriteArtists: favs });
+                }
+              })
+            : Promise.resolve(),
+        ]);
+
+        if (!mergedPrefsFound) {
+          await hydrateAndMergeCloudTaste(null, { skipShelfRebuild: true });
+          persistPrefsFromStore(true);
+        }
+      }
+
+      if (!hasWarmHome) {
+        const initialBuilt = await initialShelvesPromise;
+        if (shelfEpoch === homeShelvesBuildEpoch) {
+          await commitShelvesAndSeedPlayer(initialBuilt);
+        }
+      } else {
+        await commitShelvesAndSeedPlayer(cachedHome!);
+        if (isOnline && isLiveRuntime()) {
+          void recommendationEngine
+            .buildHomeShelves()
+            .then(async (fresh) => {
+              saveCachedHomeShelves(fresh);
+              if (shelfEpoch === homeShelvesBuildEpoch) {
+                await commitShelvesAndSeedPlayer(fresh);
+              }
+            })
+            .catch(() => {});
+        }
+      }
+    };
+
+    const syncWorkPromise = runCloudAndShelfSync();
+    if (isLiveRuntime() && isOnline) {
+      const budgetMs = hasWarmAccount && hasWarmHome ? 650 : 1700;
+      await Promise.race([
+        syncWorkPromise,
+        new Promise<void>((resolve) => setTimeout(resolve, budgetMs)),
+      ]);
+    } else {
+      await syncWorkPromise;
     }
 
-    if (isLiveRuntime() && !get().searchQuery) {
+    if (isLiveRuntime() && !get().searchQuery && isOnline) {
       const firstFav = get().favoriteArtists[0]?.artistName;
       const firstLibArtist = libraryStore.getPlaylists()[0]?.tracks[0]?.artists[0]?.name;
-      const seedQ = firstFav || firstLibArtist || recommendationEngine.getAffinityProfile()[0]?.artistName || 'Cruzzi';
-      void musicProvider.search(seedQ, 'all').then((bundle) => {
-        if (!get().searchQuery && bundle.songs.length > 0) {
-          const reranked = recommendationEngine.rerankTracks(bundle.songs);
-          set({
-            searchResults: { ...bundle, songs: reranked },
-            bestResult: recommendationEngine.selectBestResult(seedQ, { ...bundle, songs: reranked }),
-          });
-        }
-      }).catch(() => {});
+      const seedQ =
+        firstFav || firstLibArtist || recommendationEngine.getAffinityProfile()[0]?.artistName || 'Cruzzi';
+      void musicProvider
+        .search(seedQ, 'all')
+        .then((bundle) => {
+          if (!get().searchQuery && bundle.songs.length > 0) {
+            const reranked = recommendationEngine.rerankTracks(bundle.songs);
+            set({
+              searchResults: { ...bundle, songs: reranked },
+              bestResult: recommendationEngine.selectBestResult(seedQ, {
+                ...bundle,
+                songs: reranked,
+              }),
+            });
+          }
+        })
+        .catch(() => {});
     }
 
     applyAmbientPaletteForTrack(get().currentTrack);
     void get().loadLyricsForTrack(get().currentTrack);
-    if (isLiveRuntime()) {
-      await preloadTopHomeCovers(get().homeShelves);
-    }
     set({ appReady: true });
     syncAndroidAutoLibrarySnapshot();
-    if (isLiveRuntime()) {
+    if (isLiveRuntime() && isOnline) {
       void get().refreshExploreDiscovery();
       void get().replenishRecommendedQueue();
     }
@@ -3778,7 +3968,24 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     return null;
   },
   setImportModalOpen: (open) => set({ importModalOpen: open, importError: null }),
-  setSettingsOpen: (open) => set({ settingsOpen: open }),
+  setSettingsOpen: (open) =>
+    set((prev) => ({
+      settingsOpen: open,
+      settingsInitialCategory: open ? prev.settingsInitialCategory : null,
+    })),
+  setMobileHubOpen: (open) => set({ mobileHubOpen: open }),
+  openSettingsCategory: (cat) =>
+    set({
+      mobileHubOpen: false,
+      settingsInitialCategory: cat,
+      settingsOpen: true,
+    }),
+  clearPlayHistory: async () => {
+    await recommendationEngine.clearPlayHistory();
+    await libraryStore.setPlayHistory([]);
+    set({ playHistory: [] });
+    get().showToast('Historial de reproducción borrado');
+  },
   setSpotlightOpen: (open) => set({ spotlightOpen: open }),
 
   openArtistDetail: async (artistId, hint) => {
@@ -5578,7 +5785,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           displayName: st.authState.displayName,
           avatarUrl: st.authState.avatarUrl,
         });
-        if (ensured) set({ userProfile: ensured, needsProfileSetup: false });
+        if (ensured) {
+          set({ userProfile: ensured, needsProfileSetup: false });
+          void writeCachedProfile(myUserId, ensured);
+        }
       }
       const [fList, spList, hostJam] = await Promise.all([
         listFriendships(sb, myUserId),
@@ -5589,6 +5799,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         friends: fList,
         sharedPlaylists: spList,
       });
+      void writeCachedSharedPlaylists(myUserId, spList);
       await syncSharedPlaylistsToLocalPlaylists(spList);
       syncUserLibraryContextToEngine();
 
@@ -6085,6 +6296,14 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       authState: syncEngine.getAuthState(),
       needsProfileSetup: false,
     });
+    void writeCachedProfile(updated.userId, updated);
+    void syncEngine
+      .rememberCurrentAccountSession({
+        username: updated.username,
+        displayName: updated.displayName,
+        avatarUrl: updated.avatarUrl,
+      })
+      .then((slots) => set({ savedAccounts: slots }));
     get().showToast('Perfil actualizado en pMusic');
     return updated;
   },
@@ -6927,6 +7146,18 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       playlists: libraryStore.getPlaylists(),
       playHistory: libraryStore.getPlayHistory(),
     });
+    if (profile) void writeCachedProfile(profile.userId, profile);
+    void syncEngine
+      .rememberCurrentAccountSession(
+        profile
+          ? {
+              username: profile.username,
+              displayName: profile.displayName,
+              avatarUrl: profile.avatarUrl,
+            }
+          : undefined
+      )
+      .then((slots) => set({ savedAccounts: slots }));
     void syncEngine.sendRemoteCommand({
       targetDeviceId: '*',
       type: 'request_state',
@@ -6958,6 +7189,20 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       playlists: libraryStore.getPlaylists(),
       playHistory: libraryStore.getPlayHistory(),
     });
+    if (profile) void writeCachedProfile(profile.userId, profile);
+    if (auth.connected) {
+      void syncEngine
+        .rememberCurrentAccountSession(
+          profile
+            ? {
+                username: profile.username,
+                displayName: profile.displayName,
+                avatarUrl: profile.avatarUrl,
+              }
+            : undefined
+        )
+        .then((slots) => set({ savedAccounts: slots }));
+    }
     return res;
   },
 
@@ -6986,6 +7231,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }
     if (typeof window !== 'undefined') {
       const androidNative = (window as any).PMusicNative;
+      if (desktopBridge?.openAuthWindow) {
+        await desktopBridge.openAuthWindow(res.url);
+        get().showToast('Autentícate con Google en la ventana nueva…');
+        return;
+      }
       if (desktopBridge?.openExternalUrl) {
         await desktopBridge.openExternalUrl(res.url);
         get().showToast('Completa el inicio con Google en tu navegador...');
@@ -6996,7 +7246,14 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         get().showToast('Completa el inicio con Google en Chrome...');
         return;
       }
-      window.location.href = res.url;
+      const popup = window.open(
+        res.url,
+        'pmusic-google-auth',
+        'popup=yes,width=520,height=700,menubar=no,toolbar=no,status=no,resizable=yes,scrollbars=yes'
+      );
+      if (!popup) {
+        window.location.href = res.url;
+      }
     }
   },
 
@@ -7055,6 +7312,18 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           playlists: libraryStore.getPlaylists(),
           playHistory: libraryStore.getPlayHistory(),
         });
+        if (profile) void writeCachedProfile(profile.userId, profile);
+        void syncEngine
+          .rememberCurrentAccountSession(
+            profile
+              ? {
+                  username: profile.username,
+                  displayName: profile.displayName,
+                  avatarUrl: profile.avatarUrl,
+                }
+              : undefined
+          )
+          .then((slots) => set({ savedAccounts: slots }));
         get().showToast(
           profile
             ? `Sesión iniciada como @${profile.username}`
@@ -7101,9 +7370,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }
     try {
       await defaultPlatformBridge.preferencesStorage.removeItem(USER_PREFS_STORAGE_KEY);
+      await clearCachedAccountArtifacts();
     } catch {
       // ignore storage cleanup error
     }
+    const remainingSavedAccounts = await syncEngine.listSavedAccounts().catch(() => []);
     try {
       if (typeof localStorage !== 'undefined') {
         localStorage.removeItem(HOME_SHELVES_CACHE_KEY);
@@ -7116,6 +7387,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       authState: syncEngine.getAuthState(),
       userProfile: null,
       needsProfileSetup: false,
+      mobileHubOpen: false,
+      savedAccounts: remainingSavedAccounts,
       favoriteArtists: [],
       friends: [],
       sharedPlaylists: [],
@@ -7147,6 +7420,114 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   },
 
   setAuthOnboardingOpen: (open) => set({ authOnboardingOpen: open }),
+
+  prepareAddSecondaryAccount: async () => {
+    const st = get();
+    if (st.authState.connected) {
+      const slots = await syncEngine.rememberCurrentAccountSession(
+        st.userProfile
+          ? {
+              username: st.userProfile.username,
+              displayName: st.userProfile.displayName,
+              avatarUrl: st.userProfile.avatarUrl,
+            }
+          : undefined
+      );
+      set({ savedAccounts: slots });
+    }
+    set({
+      mobileHubOpen: false,
+      settingsOpen: false,
+      authOnboardingOpen: true,
+    });
+  },
+
+  switchSavedAccount: async (userId) => {
+    const st = get();
+    if (st.authState.userId === userId && st.authState.connected) {
+      set({ mobileHubOpen: false });
+      return;
+    }
+    if (st.authState.connected) {
+      await syncEngine.rememberCurrentAccountSession(
+        st.userProfile
+          ? {
+              username: st.userProfile.username,
+              displayName: st.userProfile.displayName,
+              avatarUrl: st.userProfile.avatarUrl,
+            }
+          : undefined
+      );
+    }
+    cleanupJamRealtime();
+    cleanupSocialRealtime();
+    clearSessionTrackMemory();
+
+    const res = await syncEngine.switchToSavedAccount(userId);
+    if (!res.switched) {
+      set({
+        savedAccounts: await syncEngine.listSavedAccounts().catch(() => st.savedAccounts),
+        mobileHubOpen: false,
+        authOnboardingOpen: true,
+      });
+      get().showToast(
+        res.needsReloginEmail
+          ? `Vuelve a iniciar sesión con ${res.needsReloginEmail} para reactivar esta cuenta`
+          : 'No se pudo cambiar a esa cuenta. Inicia sesión de nuevo.'
+      );
+      return;
+    }
+
+    const [profile, cloudPrefs, nextSlots] = await Promise.all([
+      syncEngine.getProfile?.() ?? Promise.resolve(null),
+      syncEngine.loadAccountPreferences?.() ?? Promise.resolve(null),
+      syncEngine.listSavedAccounts(),
+    ]);
+    if (cloudPrefs) {
+      applyPreferencesPayload(cloudPrefs);
+      void defaultPlatformBridge.preferencesStorage
+        .setItem(USER_PREFS_STORAGE_KEY, JSON.stringify(cloudPrefs))
+        .catch(() => {});
+    }
+    await hydrateAndMergeCloudTaste(cloudPrefs);
+    if (profile) void writeCachedProfile(profile.userId, profile);
+
+    set((prev) => ({
+      authState: syncEngine.getAuthState(),
+      userProfile: profile,
+      savedAccounts: nextSlots,
+      needsProfileSetup: !profile,
+      mobileHubOpen: false,
+      onlineDevices: syncEngine.getOnlineDevices(),
+      playlists: libraryStore.getPlaylists().map((pl) => ({
+        ...pl,
+        tracks: pl.tracks.map(canonicalizeTrackArtists),
+      })),
+      likedTracks: libraryStore.getLikedTracks().map((l) => ({
+        ...l,
+        track: canonicalizeTrackArtists(l.track),
+      })),
+      playHistory: libraryStore.getPlayHistory().map((h) => ({
+        ...h,
+        track: canonicalizeTrackArtists(h.track),
+      })),
+      activeDetailView:
+        prev.activeDetailView?.kind === 'local_playlist' ||
+        prev.activeDetailView?.kind === 'shared_playlist'
+          ? null
+          : prev.activeDetailView,
+    }));
+    void get().hydrateSocialAndSubscribe();
+    get().showToast(
+      profile ? `Cambiado a @${profile.username}` : 'Cuenta cambiada'
+    );
+  },
+
+  removeSavedAccount: async (userId) => {
+    const nextSlots = await syncEngine.removeSavedAccount(userId);
+    set({ savedAccounts: nextSlots });
+    get().showToast('Cuenta eliminada de este dispositivo');
+  },
 
   continueAsGuest: () => {
     try {

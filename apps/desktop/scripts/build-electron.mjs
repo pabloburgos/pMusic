@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
@@ -153,8 +153,17 @@ if (existsSync(canonicalLogoPng)) {
   writeFileSync(resolve(desktopDist, 'icon.png'), brandPng);
 }
 
+const officialFaviconPath = resolve(desktopRoot, '../web/public/favicon.svg');
+const officialFaviconRaw = existsSync(officialFaviconPath)
+  ? readFileSync(officialFaviconPath, 'utf-8')
+  : '';
+const officialPathData =
+  officialFaviconRaw.match(/d="([^"]+)"/)?.[1] ??
+  'M100.6 0.2 C121.0 1.4 139.0 12.1 149.4 29.5 C163.3 52.8 159.4 81.9 140.0 101.2 C127.6 113.5 110.9 120.2 93.4 120.0 L59.0 119.6 L59.0 165.4 C59.0 176.9 49.7 186.2 38.2 186.2 L32.2 186.2 C20.7 186.2 11.4 176.9 11.4 165.4 L11.4 58.6 C11.4 25.1 39.2 -1.9 72.7 0.0 Z M91.4 33.4 C77.1 33.4 65.5 45.0 65.5 59.3 C65.5 73.6 77.1 85.2 91.4 85.2 C105.7 85.2 117.3 73.6 117.3 59.3 C117.3 45.0 105.7 33.4 91.4 33.4 Z';
+
 // Update src/main.ts to serve both static dist/ files AND /api/* over http://127.0.0.1:<port>
 const mainEntrySource = `import { createServer, type Server } from 'node:http';
+import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join, normalize } from 'node:path';
 import { deflateSync } from 'node:zlib';
@@ -249,23 +258,111 @@ function dispatchAuthCallbackUrl(url: string): void {
   }
 }
 
+async function openUrlInNewBrowserWindow(url: string): Promise<void> {
+  if (process.platform === 'win32') {
+    try {
+      const candidates: string[] = [];
+      try {
+        const regOut = execFileSync(
+          'reg',
+          ['query', 'HKCU\\\\Software\\\\Microsoft\\\\Windows\\\\Shell\\\\Associations\\\\UrlAssociations\\\\https\\\\UserChoice', '/v', 'ProgId'],
+          { encoding: 'utf-8', timeout: 1500, windowsHide: true }
+        );
+        const progId = regOut.match(/ProgId\\s+REG_SZ\\s+(\\S+)/i)?.[1];
+        if (progId) {
+          const cmdOut = execFileSync(
+            'reg',
+            ['query', \`HKCR\\\\\${progId}\\\\shell\\\\open\\\\command\`, '/ve'],
+            { encoding: 'utf-8', timeout: 1500, windowsHide: true }
+          );
+          const exePath = cmdOut.match(/"([^"]+\\.exe)"/i)?.[1];
+          if (exePath && existsSync(exePath)) candidates.push(exePath);
+        }
+      } catch {
+        // fallback below
+      }
+      for (const root of [process.env.PROGRAMFILES, process.env['PROGRAMFILES(X86)'], process.env.LOCALAPPDATA]) {
+        if (!root) continue;
+        for (const rel of [
+          'Google\\\\Chrome\\\\Application\\\\chrome.exe',
+          'Microsoft\\\\Edge\\\\Application\\\\msedge.exe',
+          'BraveSoftware\\\\Brave-Browser\\\\Application\\\\brave.exe',
+          'Vivaldi\\\\Application\\\\vivaldi.exe',
+          'Programs\\\\Opera\\\\opera.exe',
+          'Mozilla Firefox\\\\firefox.exe',
+        ]) {
+          const p = join(root, rel);
+          if (existsSync(p) && !candidates.includes(p)) candidates.push(p);
+        }
+      }
+      const exe = candidates[0];
+      if (exe) {
+        const args = /firefox\\.exe$/i.test(exe)
+          ? ['-new-window', url]
+          : ['--new-window', '--window-size=520,720', url];
+        const child = spawn(exe, args, { detached: true, stdio: 'ignore', windowsHide: false });
+        child.unref();
+        return;
+      }
+    } catch {
+      // fall back to default external opener
+    }
+  }
+  await shell.openExternal(url);
+}
+
 async function startOAuthCallbackServer(): Promise<number> {
   if (oauthServer && oauthPort > 0) return oauthPort;
   const htmlDone = \`<!doctype html>
-<html lang="es"><head><meta charset="utf-8"><title>pMusic</title>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sesión iniciada — pMusic</title>
 <style>
-  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#050507;color:#fff;font-family:system-ui,-apple-system,sans-serif}
-  .box{display:flex;flex-direction:column;align-items:center;gap:14px;animation:fade .5s cubic-bezier(.16,1,.3,1) both}
-  .dot{width:44px;height:44px;border-radius:999px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);display:flex;align-items:center;justify-content:center;font-size:18px;color:#fff}
-  .txt{font-size:13px;color:rgba(255,255,255,.6)}
-  @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#050507;color:#fff;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden}
+  .glow{position:fixed;left:50%;top:18%;width:520px;height:400px;transform:translateX(-50%);border-radius:999px;background:radial-gradient(circle,rgba(255,255,255,.18) 0%,rgba(52,211,153,.09) 45%,transparent 72%);filter:blur(100px);pointer-events:none}
+  .card{position:relative;z-index:2;width:min(90vw,390px);padding:36px 28px 30px;border-radius:28px;border:1px solid rgba(255,255,255,.11);background:rgba(255,255,255,.035);backdrop-filter:blur(28px);text-align:center;box-shadow:0 28px 80px rgba(0,0,0,.7);animation:enter .55s cubic-bezier(.16,1,.3,1) both}
+  .logo-wrap{position:relative;display:inline-flex;align-items:center;justify-content:center;width:72px;height:72px;border-radius:22px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);margin-bottom:20px}
+  .badge{position:absolute;right:-6px;bottom:-6px;width:26px;height:26px;border-radius:999px;background:#34D399;color:#050507;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;box-shadow:0 4px 14px rgba(52,211,153,.45);border:2px solid #050507}
+  .badge.err{background:#FB7185;box-shadow:0 4px 14px rgba(251,113,133,.45)}
+  .brand{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,255,255,.45);font-weight:700;margin-bottom:6px}
+  h1{margin:0 0 10px;font-size:21px;font-weight:800;letter-spacing:-.02em}
+  p{margin:0 0 22px;font-size:13.5px;line-height:1.5;color:rgba(255,255,255,.65)}
+  .bar{height:3px;width:100%;border-radius:99px;background:rgba(255,255,255,.09);overflow:hidden;margin-bottom:18px}
+  .fill{height:100%;width:100%;background:linear-gradient(90deg,#34D399,#ffffff);transform-origin:left;animation:prog 2.1s cubic-bezier(.22,1,.36,1) both}
+  .btn{width:100%;padding:12px 18px;border-radius:999px;border:0;background:#fff;color:#050507;font-size:13.5px;font-weight:700;cursor:pointer;transition:transform .15s,opacity .15s}
+  .btn:hover{opacity:.92}.btn:active{transform:scale(.98)}
+  .foot{margin-top:12px;font-size:11.5px;color:rgba(255,255,255,.4)}
+  @keyframes enter{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:none}}
+  @keyframes prog{from{transform:scaleX(0)}to{transform:scaleX(1)}}
 </style></head><body>
-<div class="box"><div class="dot">✓</div><div class="txt">pMusic</div></div>
+<div class="glow"></div>
+<div class="card">
+  <div class="logo-wrap">
+    <svg width="42" height="42" viewBox="0 0 256 256" fill="none" aria-hidden="true">
+      <g transform="translate(52.56, 34.00) scale(0.94000)">
+        <path fill="#FFFFFF" fill-rule="evenodd" d="${officialPathData}"/>
+      </g>
+    </svg>
+    <div id="badge" class="badge">✓</div>
+  </div>
+  <div class="brand">pMusic</div>
+  <h1 id="title">Sesión iniciada correctamente</h1>
+  <p id="desc">Tu cuenta de Google se ha conectado con pMusic. Ya puedes volver a la aplicación.</p>
+  <div class="bar"><div class="fill"></div></div>
+  <button type="button" class="btn" onclick="try{window.close()}catch(e){}">Volver a pMusic</button>
+  <div id="foot" class="foot">Volviendo a pMusic automáticamente…</div>
+</div>
 <script>
+  if (location.search && location.search.includes('error=')) {
+    document.getElementById('badge').textContent = '!';
+    document.getElementById('badge').className = 'badge err';
+    document.getElementById('title').textContent = 'No se pudo completar el acceso';
+    document.getElementById('desc').textContent = 'Vuelve a pMusic e inténtalo de nuevo.';
+    document.getElementById('foot').textContent = 'Puedes cerrar esta ventana.';
+  }
   if (location.hash && location.hash.includes('access_token')) {
     fetch('/auth/hash', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: location.href }).catch(()=>{});
   }
-  setTimeout(() => { try { window.close(); } catch {} }, 1000);
+  setTimeout(() => { try { window.close(); } catch {} }, 2200);
 </script></body></html>\`;
 
   const tryListen = (port: number) =>
@@ -531,6 +628,11 @@ ipcMain.handle('pmusic:update-media-session', (_event, state: { isPlaying?: bool
 ipcMain.handle('pmusic:open-external-url', async (_event, url: string) => {
   if (typeof url === 'string' && /^https?:\\/\\//i.test(url)) {
     await shell.openExternal(url);
+  }
+});
+ipcMain.handle('pmusic:open-auth-window', async (_event, url: string) => {
+  if (typeof url === 'string' && /^https?:\\/\\//i.test(url)) {
+    await openUrlInNewBrowserWindow(url);
   }
 });
 ipcMain.handle('pmusic:get-oauth-redirect-url', async () => {

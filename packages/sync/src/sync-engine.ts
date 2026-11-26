@@ -38,6 +38,18 @@ export interface SyncEngineOptions {
 
 const PRESENCE_THROTTLE_MS = 8_000;
 const BROADCAST_MAX_QUEUE_TRACKS = 100;
+const SAVED_ACCOUNTS_KEY = 'pmusic.saved_accounts.v1';
+
+export interface SavedAccountSlot {
+  userId: string;
+  email: string;
+  displayName: string;
+  username?: string | null;
+  avatarUrl?: string | null;
+  accessToken: string;
+  refreshToken: string;
+  lastUsedAt: number;
+}
 
 export class LocalOnlySyncBackend {
   public readonly mode: SyncMode = 'local_only';
@@ -259,7 +271,7 @@ export class SyncEngine implements ISyncEngine {
     };
   }
 
-  public async restoreSession(): Promise<SyncAuthState> {
+  public async restoreSession(options?: { deferSync?: boolean }): Promise<SyncAuthState> {
     try {
       const savedName = await this.preferencesStorage.getItem('pmusic.sync.deviceName');
       if (savedName && savedName.trim().length > 0) {
@@ -284,8 +296,11 @@ export class SyncEngine implements ISyncEngine {
       if (session?.user) {
         await this.ensureLocalLibraryOwner(session.user.id);
         this.updateAuthState(this.extractAuthMeta(session.user));
-        await this.connectRealtime();
-        await this.syncNow();
+        void this.rememberCurrentAccountSession();
+        if (!options?.deferSync) {
+          await this.connectRealtime();
+          await this.syncNow();
+        }
       }
       if (!this.authListenerRegistered) {
         this.authListenerRegistered = true;
@@ -725,6 +740,7 @@ export class SyncEngine implements ISyncEngine {
       ]);
       if (prevUserId) {
         authKeysToPurge.add(`pmusic.profile.${prevUserId}`);
+        await this.removeSavedAccount(prevUserId).catch(() => {});
       }
       if (this.supabaseUrl) {
         try {
@@ -1367,7 +1383,12 @@ export class SyncEngine implements ISyncEngine {
       hadError = true;
     }
 
-    // 2. Sync liked_tracks bidirectionally
+    // 2 & 3. Push local likes first if present, then pull liked_tracks + playlists + playlist_tracks concurrently
+    let remotePlaylists: any[] | null = null;
+    let remoteTrackRows: any[] | null = null;
+    let pullPlErr: unknown = null;
+    let pullTracksErr: unknown = null;
+
     try {
       const localLikes = this.libraryStore.getLikedTracks();
       if (localLikes.length > 0) {
@@ -1382,12 +1403,34 @@ export class SyncEngine implements ISyncEngine {
           .upsert(rows, { onConflict: 'user_id,track_id' });
         if (upsertLikeErr) hadError = true;
       }
-      const { data: remoteLikes, error: pullLikeErr } = await client
-        .from('liked_tracks')
-        .select('track_id,track_data,liked_at')
-        .eq('user_id', userId)
-        .order('liked_at', { ascending: false })
-        .limit(200);
+
+      const [likesPullRes, plPullRes, tracksPullRes] = await Promise.all([
+        client
+          .from('liked_tracks')
+          .select('track_id,track_data,liked_at')
+          .eq('user_id', userId)
+          .order('liked_at', { ascending: false })
+          .limit(200),
+        client
+          .from('playlists')
+          .select('id,name,description,cover_url,source,source_url,created_at,updated_at')
+          .eq('user_id', userId)
+          .order('updated_at', { ascending: false })
+          .limit(60),
+        client
+          .from('playlist_tracks')
+          .select('playlist_id,track_id,position,track_data')
+          .eq('user_id', userId)
+          .order('position', { ascending: true })
+          .limit(2000),
+      ]);
+
+      const { data: remoteLikes, error: pullLikeErr } = likesPullRes;
+      remotePlaylists = plPullRes.data;
+      pullPlErr = plPullRes.error;
+      remoteTrackRows = tracksPullRes.data;
+      pullTracksErr = tracksPullRes.error;
+
       if (pullLikeErr) {
         hadError = true;
       } else if (Array.isArray(remoteLikes)) {
@@ -1407,22 +1450,8 @@ export class SyncEngine implements ISyncEngine {
       hadError = true;
     }
 
-    // 3. Sync playlists & playlist_tracks bidirectionally
+    // 3b. Merge pulled playlists & playlist_tracks bidirectionally
     try {
-      const { data: remotePlaylists, error: pullPlErr } = await client
-        .from('playlists')
-        .select('id,name,description,cover_url,source,source_url,created_at,updated_at')
-        .eq('user_id', userId)
-        .order('updated_at', { ascending: false })
-        .limit(60);
-
-      const { data: remoteTrackRows, error: pullTracksErr } = await client
-        .from('playlist_tracks')
-        .select('playlist_id,track_id,position,track_data')
-        .eq('user_id', userId)
-        .order('position', { ascending: true })
-        .limit(2000);
-
       if (pullPlErr || pullTracksErr) {
         hadError = true;
       }
@@ -1860,6 +1889,117 @@ export class SyncEngine implements ISyncEngine {
         .eq('artist_id', artistId);
     } catch {
       // ignore offline errors
+    }
+  }
+
+  public async listSavedAccounts(): Promise<SavedAccountSlot[]> {
+    try {
+      const raw = await this.preferencesStorage.getItem(SAVED_ACCOUNTS_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .filter(
+          (s): s is SavedAccountSlot =>
+            Boolean(s && typeof s.userId === 'string' && typeof s.accessToken === 'string' && typeof s.refreshToken === 'string')
+        )
+        .sort((a, b) => Number(b.lastUsedAt ?? 0) - Number(a.lastUsedAt ?? 0))
+        .slice(0, 6);
+    } catch {
+      return [];
+    }
+  }
+
+  public async rememberCurrentAccountSession(profileHint?: {
+    username?: string | null;
+    displayName?: string | null;
+    avatarUrl?: string | null;
+  }): Promise<SavedAccountSlot[]> {
+    const existing = await this.listSavedAccounts();
+    if (!this.supabaseBackend || !this.authState.connected || !this.authState.userId) {
+      return existing;
+    }
+    try {
+      const { data } = await this.supabaseBackend.client.auth.getSession();
+      const session = data?.session;
+      if (!session?.user || !session.access_token || !session.refresh_token) {
+        return existing;
+      }
+      const meta = this.extractAuthMeta(session.user);
+      const prev = existing.find((s) => s.userId === session.user.id);
+      const email = session.user.email ?? prev?.email ?? this.authState.email ?? '';
+      const slot: SavedAccountSlot = {
+        userId: session.user.id,
+        email,
+        displayName:
+          profileHint?.displayName ||
+          meta.displayName ||
+          prev?.displayName ||
+          email.split('@')[0] ||
+          'Cuenta pMusic',
+        username: profileHint?.username !== undefined ? profileHint.username : prev?.username ?? null,
+        avatarUrl: profileHint?.avatarUrl !== undefined ? profileHint.avatarUrl : (meta.avatarUrl ?? prev?.avatarUrl ?? null),
+        accessToken: session.access_token,
+        refreshToken: session.refresh_token,
+        lastUsedAt: Date.now(),
+      };
+      const updated = [slot, ...existing.filter((s) => s.userId !== slot.userId)].slice(0, 6);
+      await this.preferencesStorage.setItem(SAVED_ACCOUNTS_KEY, JSON.stringify(updated));
+      return updated;
+    } catch {
+      return existing;
+    }
+  }
+
+  public async removeSavedAccount(userId: string): Promise<SavedAccountSlot[]> {
+    const existing = await this.listSavedAccounts();
+    const filtered = existing.filter((s) => s.userId !== userId);
+    try {
+      await this.preferencesStorage.setItem(SAVED_ACCOUNTS_KEY, JSON.stringify(filtered));
+    } catch {
+      // ignore storage error
+    }
+    return filtered;
+  }
+
+  public async switchToSavedAccount(
+    userId: string
+  ): Promise<{ switched: boolean; needsReloginEmail?: string; auth: SyncAuthState }> {
+    await this.rememberCurrentAccountSession();
+    const slots = await this.listSavedAccounts();
+    const slot = slots.find((s) => s.userId === userId);
+    if (!slot || !this.supabaseBackend) {
+      return { switched: false, auth: this.getAuthState() };
+    }
+    try {
+      await this.disconnectRealtime();
+      const { data, error } = await this.supabaseBackend.client.auth.setSession({
+        access_token: slot.accessToken,
+        refresh_token: slot.refreshToken,
+      });
+      if (error || !data.session?.user) {
+        return {
+          switched: false,
+          needsReloginEmail: slot.email,
+          auth: this.getAuthState(),
+        };
+      }
+      await this.ensureLocalLibraryOwner(data.session.user.id);
+      this.updateAuthState(this.extractAuthMeta(data.session.user));
+      await this.rememberCurrentAccountSession({
+        username: slot.username ?? null,
+        displayName: slot.displayName,
+        avatarUrl: slot.avatarUrl ?? null,
+      });
+      void this.connectRealtime();
+      await this.syncNow();
+      return { switched: true, auth: this.getAuthState() };
+    } catch {
+      return {
+        switched: false,
+        needsReloginEmail: slot.email,
+        auth: this.getAuthState(),
+      };
     }
   }
 

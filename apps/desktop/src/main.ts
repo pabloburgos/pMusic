@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
@@ -610,9 +611,66 @@ ipcMain.handle(
   }
 );
 
+async function openUrlInNewBrowserWindow(url: string): Promise<void> {
+  if (process.platform === 'win32') {
+    try {
+      const candidates: string[] = [];
+      try {
+        const regOut = execFileSync(
+          'reg',
+          ['query', 'HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\UserChoice', '/v', 'ProgId'],
+          { encoding: 'utf8', timeout: 1500, windowsHide: true }
+        );
+        const progId = regOut.match(/ProgId\s+REG_SZ\s+(\S+)/i)?.[1];
+        if (progId) {
+          const cmdOut = execFileSync(
+            'reg',
+            ['query', `HKCR\\${progId}\\shell\\open\\command`, '/ve'],
+            { encoding: 'utf8', timeout: 1500, windowsHide: true }
+          );
+          const exePath = cmdOut.match(/"([^"]+\.exe)"/i)?.[1];
+          if (exePath && existsSync(exePath)) candidates.push(exePath);
+        }
+      } catch {
+        // fallback below
+      }
+      for (const root of [process.env.PROGRAMFILES, process.env['PROGRAMFILES(X86)'], process.env.LOCALAPPDATA]) {
+        if (!root) continue;
+        for (const rel of [
+          'Google\\Chrome\\Application\\chrome.exe',
+          'Microsoft\\Edge\\Application\\msedge.exe',
+          'BraveSoftware\\Brave-Browser\\Application\\brave.exe',
+          'Vivaldi\\Application\\vivaldi.exe',
+          'Mozilla Firefox\\firefox.exe',
+        ]) {
+          const p = join(root, rel);
+          if (existsSync(p) && !candidates.includes(p)) candidates.push(p);
+        }
+      }
+      const exe = candidates[0];
+      if (exe) {
+        const args = /firefox\.exe$/i.test(exe)
+          ? ['-new-window', url]
+          : ['--new-window', '--window-size=520,720', url];
+        const child = spawn(exe, args, { detached: true, stdio: 'ignore', windowsHide: false });
+        child.unref();
+        return;
+      }
+    } catch {
+      // fall back to shell.openExternal
+    }
+  }
+  await shell.openExternal(url);
+}
+
 ipcMain.handle('pmusic:open-external-url', async (_event, url: string) => {
   if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
     await shell.openExternal(url);
+  }
+});
+ipcMain.handle('pmusic:open-auth-window', async (_event, url: string) => {
+  if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+    await openUrlInNewBrowserWindow(url);
   }
 });
 ipcMain.handle('pmusic:get-oauth-redirect-url', () => 'pmusic://auth/callback');

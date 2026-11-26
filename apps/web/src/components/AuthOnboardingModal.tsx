@@ -42,7 +42,7 @@ export const AuthOnboardingModal: React.FC = () => {
     setAuthOnboardingOpen,
   } = usePMusicStore();
 
-  const [step, setStep] = useState<'choice' | 'email'>('choice');
+  const [step, setStep] = useState<'choice' | 'email' | 'google_waiting'>('choice');
   const [emailMode, setEmailMode] = useState<'signup' | 'signin'>('signup');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -92,7 +92,10 @@ export const AuthOnboardingModal: React.FC = () => {
   }, [username, needsProfileSetup, checkUsernameAvailable]);
 
   useEffect(() => {
-    if (!authOnboardingOpen || needsProfileSetup) return;
+    if (!authOnboardingOpen || needsProfileSetup) {
+      setStep('choice');
+      return;
+    }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setAuthOnboardingOpen(false);
     };
@@ -105,6 +108,7 @@ export const AuthOnboardingModal: React.FC = () => {
   const handleGoogle = async () => {
     setBusy(true);
     setErrorMsg(null);
+    setStep('google_waiting');
     try {
       await signInWithGoogle();
     } catch (err) {
@@ -259,6 +263,72 @@ export const AuthOnboardingModal: React.FC = () => {
               Continuar
             </button>
           </form>
+        ) : step === 'google_waiting' ? (
+          <div
+            data-testid="google-auth-waiting-screen"
+            className="pm-ag-enter-1 flex flex-col items-center space-y-7 text-center"
+          >
+            <div className="flex items-center gap-4">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/15 bg-white/[0.06] shadow-lg">
+                <PMusicLogo size={32} variant="icon" />
+              </div>
+              <div className="flex items-center gap-1.5" aria-hidden="true">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white/40" />
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white/65 [animation-delay:180ms]" />
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white/90 [animation-delay:360ms]" />
+              </div>
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/15 bg-white text-black shadow-lg">
+                <GoogleLogo />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <h2 className="text-2xl font-bold tracking-tight text-white">
+                Autentícate en Google
+              </h2>
+              <p className="text-sm leading-relaxed text-white/65">
+                Hemos abierto una ventana nueva para iniciar sesión de forma segura. Al terminar, volverás automáticamente a pMusic.
+              </p>
+            </div>
+
+            {errorMsg || authCallbackError ? (
+              <p className="w-full rounded-2xl border border-rose-400/30 bg-rose-500/15 px-4 py-2.5 text-center text-xs text-rose-200">
+                {errorMsg || authCallbackError}
+              </p>
+            ) : (
+              <div className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/[0.05] px-4 py-2 text-xs font-medium text-white/80">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-400" />
+                <span>Esperando confirmación…</span>
+              </div>
+            )}
+
+            <div className="w-full space-y-2.5 pt-1">
+              <button
+                type="button"
+                onClick={handleGoogle}
+                disabled={busy}
+                className="flex w-full cursor-pointer items-center justify-center gap-2.5 rounded-full bg-white px-5 py-3.5 text-sm font-semibold text-black shadow-[0_12px_36px_rgba(255,255,255,0.12)] transition hover:bg-white/90 active:scale-[0.985] disabled:opacity-60"
+              >
+                {busy ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-black/70" />
+                ) : (
+                  <GoogleLogo />
+                )}
+                Reabrir ventana de Google
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setErrorMsg(null);
+                  setStep('choice');
+                }}
+                className="w-full cursor-pointer py-2 text-center text-xs font-medium text-white/50 transition hover:text-white"
+              >
+                ← Volver y usar otro método
+              </button>
+            </div>
+          </div>
         ) : step === 'choice' ? (
           <div className="flex flex-col items-center space-y-10">
             {/* Pure big animated motion-graphics pMusic wordmark only */}
