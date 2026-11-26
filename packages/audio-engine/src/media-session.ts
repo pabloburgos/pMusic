@@ -1,7 +1,7 @@
 import type {
   IPlatformBridge,
   NativeMediaAction,
-  Track,
+  NativeMediaSessionState,
   Unsubscribe,
 } from '@pmusic/core';
 
@@ -65,12 +65,7 @@ export class MediaSessionController {
     }
   }
 
-  public async updateSession(state: {
-    track: Track | null;
-    isPlaying: boolean;
-    positionSec: number;
-    durationSec: number;
-  }): Promise<void> {
+  public async updateSession(state: NativeMediaSessionState): Promise<void> {
     if (typeof navigator !== 'undefined' && 'mediaSession' in navigator && navigator.mediaSession) {
       const ms = navigator.mediaSession;
       ms.playbackState = state.isPlaying ? 'playing' : state.track ? 'paused' : 'none';

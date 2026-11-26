@@ -5,6 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  Clock,
   Copy,
   Disc3,
   Download,
@@ -15,6 +16,7 @@ import {
   ListPlus,
   Loader2,
   MoreHorizontal,
+  Music2,
   Palette,
   Pause,
   Pencil,
@@ -58,6 +60,7 @@ import {
   setDraggedTrack,
 } from '../utils/track-dnd.ts';
 import { ArtistLinks } from './ArtistLinks.tsx';
+import { TrackArtwork } from './TrackArtwork.tsx';
 import { RoundedPauseIcon, RoundedPlayIcon } from './TransportIcons.tsx';
 
 function getSpanishGreeting(): string {
@@ -174,6 +177,7 @@ export const TrackListRow: React.FC<{
   } = usePMusicStore();
 
   const [dragOver, setDragOver] = useState(false);
+  const [coverHidden, setCoverHidden] = useState(false);
 
   const isCurrent = currentTrack.id === track.id;
   const isLiked = likedTracks.some((l) => l.trackId === track.id);
@@ -259,31 +263,36 @@ export const TrackListRow: React.FC<{
           </span>
         )}
 
-        <button
-          type="button"
-          aria-label={`Reproducir ${track.title}`}
-          onClick={handleRowPlay}
-          className="pm-elevated relative h-11 w-11 shrink-0 overflow-hidden rounded-[8px]"
-        >
-          <img
-            src={track.thumbnailUrl}
-            alt={track.title}
-            loading="lazy"
-            draggable={false}
-            className="pointer-events-none h-full w-full select-none object-cover"
-          />
-          <span
-            className={`absolute inset-0 flex items-center justify-center bg-black/55 text-white transition-opacity ${
-              isCurrent ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-            }`}
+        {!coverHidden && (
+          <button
+            type="button"
+            aria-label={`Reproducir ${track.title}`}
+            onClick={handleRowPlay}
+            className="pm-elevated relative h-11 w-11 shrink-0 overflow-hidden rounded-[8px]"
           >
-            {isCurrent && isPlaying ? (
-              <Pause className="h-4 w-4 fill-current" />
-            ) : (
-              <Play className="h-4 w-4 translate-x-[1px] fill-current" />
-            )}
-          </span>
-        </button>
+            <TrackArtwork
+              trackId={track.id}
+              src={track.thumbnailUrl}
+              alt={track.title}
+              variant="list"
+              loading="lazy"
+              draggable={false}
+              onUnavailableChange={setCoverHidden}
+              imgClassName="pointer-events-none h-full w-full select-none object-cover"
+            />
+            <span
+              className={`absolute inset-0 flex items-center justify-center bg-black/55 text-white transition-opacity ${
+                isCurrent ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+              }`}
+            >
+              {isCurrent && isPlaying ? (
+                <Pause className="h-4 w-4 fill-current" />
+              ) : (
+                <Play className="h-4 w-4 translate-x-[1px] fill-current" />
+              )}
+            </span>
+          </button>
+        )}
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
@@ -1247,37 +1256,107 @@ export const DetailViewPanel: React.FC = () => {
     const isPlayingAlbum = Boolean(
       isPlaying && currentTrack && tracks.some((t) => t.id === currentTrack.id)
     );
+    const albumDurText = formatPlaylistDuration(
+      tracks.reduce((acc, t) => acc + (t.durationSec || 0), 0)
+    );
+    const releaseTypeLabel =
+      !isAlbumLoading && tracks.length > 0 && tracks.length <= 2
+        ? 'SINGLE'
+        : !isAlbumLoading && tracks.length >= 3 && tracks.length <= 6
+          ? 'EP'
+          : 'ÁLBUM';
+    const albumHeroCover =
+      album.thumbnailUrl || tracks[0]?.thumbnailHighUrl || tracks[0]?.thumbnailUrl || '';
+    const isDownloadingAlbum = playlistDownloadProgress?.playlistId === album.id;
+    const allAlbumDownloaded =
+      tracks.length > 0 && tracks.every((t) => offlineDownloads[t.id] === 'downloaded');
+
     return (
-      <div className="pm-page-enter space-y-7">
+      <div className="pm-page-enter space-y-6">
         <section
           data-surface="content"
-          className="pm-surface-card flex flex-col gap-6 rounded-[18px] p-6 sm:flex-row sm:items-end"
+          data-testid="album-hero-banner"
+          className="relative -mx-4 flex min-h-[260px] flex-col justify-end overflow-hidden bg-[var(--pm-bg-canvas)] px-4 pt-[calc(5rem+var(--pm-safe-top,env(safe-area-inset-top)))] pb-5 sm:-mx-7 sm:min-h-[330px] sm:px-7 sm:pt-10 sm:pb-7"
         >
-          {album.thumbnailUrl ? (
+          {albumHeroCover && (
             <img
-              src={album.thumbnailUrl}
-              alt={album.title}
-              className="h-40 w-40 shrink-0 rounded-[12px] object-cover shadow-[0_18px_48px_rgba(0,0,0,0.45)] sm:h-44 sm:w-44"
+              src={albumHeroCover}
+              alt=""
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover blur-2xl brightness-75 saturate-125"
             />
-          ) : (
-            <div className="h-40 w-40 shrink-0 animate-pulse rounded-[12px] bg-white/[0.08] sm:h-44 sm:w-44" />
           )}
-          <div className="min-w-0 flex-1 space-y-2">
-            <span className="pm-elevated inline-block rounded-md border pm-border px-2.5 py-1 text-[11px] font-semibold pm-text-secondary">
-              ÁLBUM {album.year ? `· ${album.year}` : ''} ·{' '}
-              {isAlbumLoading && tracks.length === 0 ? 'CARGANDO…' : `${tracks.length} CANCIONES`}
-            </span>
-            <h1 className="truncate text-3xl font-bold tracking-tight pm-text-primary md:text-4xl">
-              {album.title}
-            </h1>
-            <div className="text-sm pm-text-secondary">
-              <ArtistLinks
-                artists={album.artists}
-                singleLine={false}
-                linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
-              />
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0"
+            style={{
+              background:
+                'linear-gradient(180deg, color-mix(in srgb, var(--pm-bg-canvas) 22%, transparent) 0%, color-mix(in srgb, var(--pm-bg-canvas) 54%, transparent) 55%, var(--pm-bg-canvas) 100%)',
+            }}
+          />
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0"
+            style={{
+              background:
+                'linear-gradient(90deg, color-mix(in srgb, var(--pm-bg-canvas) 55%, transparent) 0%, transparent 60%)',
+            }}
+          />
+
+          <div className="relative z-10 flex flex-col gap-5">
+            <div className="flex min-w-0 flex-row items-center gap-3.5 sm:items-end sm:gap-6">
+              {albumHeroCover ? (
+                <div className="h-24 w-24 shrink-0 overflow-hidden rounded-[14px] shadow-[0_22px_50px_rgba(0,0,0,0.62)] ring-1 ring-white/15 sm:h-40 sm:w-40 sm:rounded-[16px]">
+                  <TrackArtwork
+                    trackId={tracks[0]?.id}
+                    src={albumHeroCover}
+                    alt={album.title}
+                    variant="card"
+                    imgClassName="h-full w-full object-cover"
+                  />
+                </div>
+              ) : (
+                <div className="h-24 w-24 shrink-0 animate-pulse rounded-[14px] bg-white/[0.08] sm:h-40 sm:w-40 sm:rounded-[16px]" />
+              )}
+
+              <div className="min-w-0 flex-1 space-y-1 sm:space-y-1.5">
+                <div className="text-[10.5px] font-bold uppercase tracking-[0.14em] text-white/65">
+                  {releaseTypeLabel}
+                  {album.year ? ` · ${album.year}` : ''}
+                </div>
+                <h1 className="line-clamp-2 text-xl font-black leading-tight tracking-tight text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.65)] sm:text-4xl md:text-5xl">
+                  {album.title}
+                </h1>
+                <div className="text-xs font-semibold text-white/85 sm:text-sm">
+                  <ArtistLinks
+                    artists={album.artists}
+                    singleLine={false}
+                    linkClassName="hover:underline hover:text-white"
+                  />
+                </div>
+                <div className="tabular-nums flex flex-wrap items-center gap-x-2.5 gap-y-0.5 pt-0.5 text-[12px] font-medium text-white/70 sm:text-[13px]">
+                  <span className="inline-flex items-center gap-1.5">
+                    <Music2 className="h-3.5 w-3.5 opacity-70" />
+                    <span>
+                      {isAlbumLoading && tracks.length === 0
+                        ? 'Cargando…'
+                        : `${tracks.length} ${tracks.length === 1 ? 'pista' : 'pistas'}`}
+                    </span>
+                  </span>
+                  {albumDurText && (
+                    <>
+                      <span aria-hidden="true" className="opacity-35">•</span>
+                      <span className="inline-flex items-center gap-1.5">
+                        <Clock className="h-3.5 w-3.5 opacity-70" />
+                        <span>{albumDurText}</span>
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2 pt-2 sm:gap-2.5">
+
+            <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
               <button
                 type="button"
                 aria-label={isPlayingAlbum ? 'Pausar álbum' : 'Reproducir álbum'}
@@ -1290,7 +1369,7 @@ export const DetailViewPanel: React.FC = () => {
                     void playCollection(tracks);
                   }
                 }}
-                className="pm-pressable mr-1 flex h-12 w-12 items-center justify-center overflow-visible border-0 bg-transparent pm-text-primary drop-shadow-[0_6px_18px_rgba(0,0,0,0.35)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none disabled:opacity-40 sm:h-14 sm:w-14"
+                className="pm-pressable mr-1.5 flex h-12 w-12 items-center justify-center overflow-visible border-0 bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.65)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none disabled:opacity-40 sm:h-14 sm:w-14"
               >
                 {isPlayingAlbum ? (
                   <RoundedPauseIcon className="h-[44px] w-[44px] sm:h-[50px] sm:w-[50px]" />
@@ -1298,37 +1377,76 @@ export const DetailViewPanel: React.FC = () => {
                   <RoundedPlayIcon className="h-[44px] w-[44px] translate-x-[2px] sm:h-[50px] sm:w-[50px]" />
                 )}
               </button>
+
               <HeroIconAction
                 label="Aleatorio"
                 tooltip="Reproducir en aleatorio"
-                tooltipVariant="surface"
                 pressed={isPlayingAlbum && shuffleEnabled}
                 activeDot={isPlayingAlbum && shuffleEnabled}
-                activeDotClass="bg-[var(--pm-accent-primary)]"
+                activeDotClass="bg-white"
                 disabled={isAlbumLoading && tracks.length === 0}
                 onClick={() => {
                   if (tracks[0]) {
                     void playCollection(tracks, { forceShuffle: true });
                   }
                 }}
-                className="pm-text-secondary hover:text-[var(--pm-text-primary)]"
+                className="text-white/85 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-white"
               >
                 <Shuffle className="h-[22px] w-[22px] sm:h-6 sm:w-6" />
               </HeroIconAction>
+
               <HeroIconAction
                 label="Sesión DJ"
                 tooltip="Sesión DJ AutoMix"
-                tooltipVariant="surface"
                 activeDot={djMode.enabled && isPlayingAlbum}
-                activeDotClass="bg-purple-400"
+                activeDotClass="bg-purple-300"
                 disabled={isAlbumLoading && tracks.length === 0}
                 onClick={async () => {
                   await toggleDjMode(true);
                   if (tracks[0]) await playTrack(tracks[0], tracks);
                 }}
-                className="text-purple-500 hover:text-purple-400"
+                className="text-purple-300/90 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-purple-200 hover:drop-shadow-[0_0_12px_rgba(192,132,252,0.75)]"
               >
                 <Disc3 className="h-[22px] w-[22px] transition-transform duration-300 group-hover/act:rotate-45 sm:h-6 sm:w-6" />
+              </HeroIconAction>
+
+              <HeroIconAction
+                label={
+                  isDownloadingAlbum
+                    ? `Descargando ${playlistDownloadProgress.completed} de ${playlistDownloadProgress.total}`
+                    : allAlbumDownloaded
+                      ? 'Descargado offline'
+                      : 'Descargar álbum offline'
+                }
+                tooltip={
+                  isDownloadingAlbum
+                    ? `Descargando ${playlistDownloadProgress.completed}/${playlistDownloadProgress.total}`
+                    : allAlbumDownloaded
+                      ? 'Descargado offline'
+                      : 'Descargar álbum para escuchar sin conexión'
+                }
+                disabled={tracks.length === 0}
+                badge={
+                  isDownloadingAlbum
+                    ? `${playlistDownloadProgress.completed}/${playlistDownloadProgress.total}`
+                    : null
+                }
+                onClick={() => {
+                  if (isDownloadingAlbum) cancelPlaylistDownload();
+                  else void downloadPlaylistOffline(album.id, tracks, album.title);
+                }}
+                className="text-white/85 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-white"
+              >
+                {isDownloadingAlbum ? (
+                  <Loader2 className="h-[22px] w-[22px] animate-spin text-emerald-300 sm:h-6 sm:w-6" />
+                ) : allAlbumDownloaded ? (
+                  <Check
+                    strokeWidth={2.5}
+                    className="h-[22px] w-[22px] text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.6)] sm:h-6 sm:w-6"
+                  />
+                ) : (
+                  <Download className="h-[22px] w-[22px] sm:h-6 sm:w-6" />
+                )}
               </HeroIconAction>
             </div>
           </div>
@@ -1397,30 +1515,39 @@ export const DetailViewPanel: React.FC = () => {
             }}
           />
           <div className="relative z-10 flex flex-col gap-5">
-            <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-end sm:gap-5">
+            <div className="flex min-w-0 flex-row items-center gap-3.5 sm:items-end sm:gap-6">
               <img
                 src={edCover}
                 alt={playlist.title}
-                className="h-32 w-32 shrink-0 rounded-[16px] object-cover shadow-[0_22px_50px_rgba(0,0,0,0.6)] ring-1 ring-white/15 sm:h-40 sm:w-40"
+                className="h-24 w-24 shrink-0 rounded-[14px] object-cover shadow-[0_22px_50px_rgba(0,0,0,0.6)] ring-1 ring-white/15 sm:h-40 sm:w-40 sm:rounded-[16px]"
               />
-              <div className="min-w-0 flex-1 space-y-2">
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-black/35 px-3 py-1 text-[11px] font-semibold text-white/90 backdrop-blur-md">
-                  <span>PLAYLIST pMUSIC</span>
-                  <span aria-hidden="true">·</span>
-                  <span>{tracks.length} PISTAS</span>
-                  {totalDurText && (
-                    <>
-                      <span aria-hidden="true">·</span>
-                      <span>{totalDurText}</span>
-                    </>
-                  )}
-                </span>
-                <h1 className="truncate text-3xl font-black tracking-tight text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.6)] sm:text-4xl md:text-5xl">
+              <div className="min-w-0 flex-1 space-y-1 sm:space-y-1.5">
+                <div className="text-[10.5px] font-bold uppercase tracking-[0.14em] text-white/65">
+                  PLAYLIST pMUSIC
+                </div>
+                <h1 className="line-clamp-2 text-xl font-black leading-tight tracking-tight text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.6)] sm:text-4xl md:text-5xl">
                   {playlist.title}
                 </h1>
-                <p className="text-xs font-medium text-white/75 sm:text-sm">
-                  {playlist.author ?? 'pMusic Mixes'}
-                </p>
+                {playlist.author && (
+                  <p className="text-xs font-medium text-white/75 sm:text-sm">
+                    {playlist.author}
+                  </p>
+                )}
+                <div className="tabular-nums flex flex-wrap items-center gap-x-2.5 gap-y-0.5 pt-0.5 text-[12px] font-medium text-white/70 sm:text-[13px]">
+                  <span className="inline-flex items-center gap-1.5">
+                    <Music2 className="h-3.5 w-3.5 opacity-70" />
+                    <span>{tracks.length} {tracks.length === 1 ? 'pista' : 'pistas'}</span>
+                  </span>
+                  {totalDurText && (
+                    <>
+                      <span aria-hidden="true" className="opacity-35">•</span>
+                      <span className="inline-flex items-center gap-1.5">
+                        <Clock className="h-3.5 w-3.5 opacity-70" />
+                        <span>{totalDurText}</span>
+                      </span>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -1734,6 +1861,51 @@ export const DetailViewPanel: React.FC = () => {
       opts.tracks.reduce((acc, t) => acc + (t.durationSec || 0), 0)
     );
     const isBannerAutoFromCover = !hasCustomBanner && Boolean(firstTrackThumb);
+    const cleanDesc = (opts.description ?? '').trim();
+    const showDesc = Boolean(cleanDesc) && !/^creada en pmusic$/i.test(cleanDesc);
+
+    const renderCoverButton = (sizeClass: string) => (
+      <div className={`group relative ${sizeClass} shrink-0 overflow-hidden`}>
+        <TrackArtwork
+          trackId={opts.tracks[0]?.id}
+          src={resolvedCover}
+          alt={opts.name}
+          variant="card"
+          imgClassName="h-full w-full object-cover"
+        />
+        <button
+          type="button"
+          aria-label="Personalizar portada y banner"
+          onClick={() => openPlaylistAppearanceModal(opts.kind, opts.id)}
+          className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/55 opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100"
+        >
+          <Palette className="h-5 w-5 text-white" />
+          <span className="hidden text-[10px] font-bold text-white sm:inline">Personalizar</span>
+        </button>
+      </div>
+    );
+
+    const renderStatsRow = (mutedClass: string) => (
+      <div
+        className={`tabular-nums flex flex-wrap items-center gap-x-2.5 gap-y-0.5 pt-0.5 text-[12px] font-medium sm:text-[13px] ${mutedClass}`}
+      >
+        <span className="inline-flex items-center gap-1.5">
+          <Music2 className="h-3.5 w-3.5 opacity-70" />
+          <span>
+            {opts.tracks.length} {opts.tracks.length === 1 ? 'pista' : 'pistas'}
+          </span>
+        </span>
+        {durText && (
+          <>
+            <span aria-hidden="true" className="opacity-35">•</span>
+            <span className="inline-flex items-center gap-1.5">
+              <Clock className="h-3.5 w-3.5 opacity-70" />
+              <span>{durText}</span>
+            </span>
+          </>
+        )}
+      </div>
+    );
 
     if (!opts.bannerEnabled) {
       return (
@@ -1742,53 +1914,23 @@ export const DetailViewPanel: React.FC = () => {
           data-testid="playlist-classic-header"
           className="pm-surface-card relative rounded-[20px] p-4 sm:p-6"
         >
-          <button
-            type="button"
-            aria-label="Personalizar portada y banner"
-            onClick={() => openPlaylistAppearanceModal(opts.kind, opts.id)}
-            className="pm-btn-secondary absolute right-4 top-4 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-semibold"
-          >
-            <Palette className="h-3.5 w-3.5 text-purple-400" />
-            <span className="hidden sm:inline">Personalizar</span>
-          </button>
           <div className="flex flex-col gap-5">
-            <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-end sm:gap-5">
-              <div className="group relative h-32 w-32 shrink-0 overflow-hidden rounded-[14px] shadow-[0_18px_40px_rgba(0,0,0,0.45)] sm:h-40 sm:w-40">
-                <img
-                  src={resolvedCover}
-                  alt={opts.name}
-                  className="h-full w-full object-cover"
-                />
-                <button
-                  type="button"
-                  aria-label="Cambiar portada"
-                  onClick={() => openPlaylistAppearanceModal(opts.kind, opts.id)}
-                  className="absolute inset-0 flex items-center justify-center bg-black/55 opacity-0 transition-opacity group-hover:opacity-100"
-                >
-                  <Palette className="h-5 w-5 text-white" />
-                </button>
-              </div>
-              <div className="min-w-0 flex-1 space-y-2">
-                <span
-                  className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] font-semibold ${
-                    opts.badgeCollab
-                      ? 'border-emerald-400/30 bg-emerald-500/15 text-emerald-300'
-                      : 'pm-elevated pm-border pm-text-secondary'
+            <div className="flex min-w-0 flex-row items-center gap-3.5 sm:items-end sm:gap-6">
+              {renderCoverButton(
+                'h-24 w-24 rounded-[14px] shadow-[0_18px_40px_rgba(0,0,0,0.45)] sm:h-40 sm:w-40 sm:rounded-[16px]'
+              )}
+              <div className="min-w-0 flex-1 space-y-1 sm:space-y-1.5">
+                <div
+                  className={`inline-flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-[0.14em] ${
+                    opts.badgeCollab ? 'text-emerald-400' : 'pm-text-tertiary'
                   }`}
                 >
                   {opts.badgeCollab && <Users className="h-3 w-3" />}
                   <span>{opts.badgeLabel}</span>
-                  <span aria-hidden="true">·</span>
-                  <span>{opts.tracks.length} PISTAS</span>
-                  {durText && (
-                    <>
-                      <span aria-hidden="true">·</span>
-                      <span>{durText}</span>
-                    </>
-                  )}
-                </span>
+                </div>
                 {opts.titleContent}
-                <p className="text-xs pm-text-secondary">{opts.description}</p>
+                {showDesc && <p className="truncate text-xs pm-text-secondary">{cleanDesc}</p>}
+                {renderStatsRow('pm-text-secondary')}
               </div>
             </div>
             {opts.actionsRow}
@@ -1801,7 +1943,7 @@ export const DetailViewPanel: React.FC = () => {
       <section
         data-surface="content"
         data-testid="playlist-hero-banner"
-        className="relative -mx-4 flex min-h-[300px] flex-col justify-end overflow-hidden bg-[var(--pm-bg-canvas)] px-5 pt-[calc(5.2rem+var(--pm-safe-top,env(safe-area-inset-top)))] pb-6 sm:-mx-7 sm:min-h-[340px] sm:px-7 sm:pt-10 sm:pb-7"
+        className="relative -mx-4 flex min-h-[260px] flex-col justify-end overflow-hidden bg-[var(--pm-bg-canvas)] px-4 pt-[calc(5rem+var(--pm-safe-top,env(safe-area-inset-top)))] pb-5 sm:-mx-7 sm:min-h-[340px] sm:px-7 sm:pt-10 sm:pb-7"
       >
         <img
           src={resolvedBanner}
@@ -1830,57 +1972,27 @@ export const DetailViewPanel: React.FC = () => {
           }}
         />
 
-        <button
-          type="button"
-          aria-label="Personalizar portada y banner"
-          onClick={() => openPlaylistAppearanceModal(opts.kind, opts.id)}
-          className="absolute right-4 top-[calc(max(0.8rem,var(--pm-safe-top,env(safe-area-inset-top)))+3.2rem)] z-20 inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-black/45 px-3.5 py-1.5 text-[11px] font-semibold text-white/90 backdrop-blur-md hover:bg-black/65 sm:right-7 sm:top-5"
-        >
-          <Palette className="h-3.5 w-3.5 text-purple-300" />
-          <span>Personalizar</span>
-        </button>
-
         <div className="relative z-10 flex flex-col gap-5">
-          <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-end sm:gap-6">
-            <div className="group relative h-32 w-32 shrink-0 overflow-hidden rounded-[16px] shadow-[0_22px_50px_rgba(0,0,0,0.62)] ring-1 ring-white/15 sm:h-40 sm:w-40">
-              <img
-                src={resolvedCover}
-                alt={opts.name}
-                className="h-full w-full object-cover"
-              />
-              <button
-                type="button"
-                aria-label="Cambiar portada"
-                onClick={() => openPlaylistAppearanceModal(opts.kind, opts.id)}
-                className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/55 opacity-0 transition-opacity group-hover:opacity-100"
-              >
-                <Palette className="h-5 w-5 text-white" />
-                <span className="text-[10px] font-bold text-white">Editar</span>
-              </button>
-            </div>
-            <div className="min-w-0 flex-1 space-y-2">
-              <span
-                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-semibold backdrop-blur-md ${
-                  opts.badgeCollab
-                    ? 'border-emerald-400/35 bg-emerald-500/20 text-emerald-200'
-                    : 'border-white/15 bg-black/35 text-white/90'
+          <div className="flex min-w-0 flex-row items-center gap-3.5 sm:items-end sm:gap-6">
+            {renderCoverButton(
+              'h-24 w-24 rounded-[14px] shadow-[0_22px_50px_rgba(0,0,0,0.62)] ring-1 ring-white/15 sm:h-40 sm:w-40 sm:rounded-[16px]'
+            )}
+            <div className="min-w-0 flex-1 space-y-1 sm:space-y-1.5">
+              <div
+                className={`inline-flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-[0.14em] ${
+                  opts.badgeCollab ? 'text-emerald-300' : 'text-white/65'
                 }`}
               >
                 {opts.badgeCollab && <Users className="h-3 w-3" />}
                 <span>{opts.badgeLabel}</span>
-                <span aria-hidden="true">·</span>
-                <span>{opts.tracks.length} PISTAS</span>
-                {durText && (
-                  <>
-                    <span aria-hidden="true">·</span>
-                    <span>{durText}</span>
-                  </>
-                )}
-              </span>
+              </div>
               {opts.titleContent}
-              <p className="text-xs font-medium text-white/75 sm:text-sm drop-shadow">
-                {opts.description}
-              </p>
+              {showDesc && (
+                <p className="truncate text-xs font-medium text-white/75 sm:text-sm drop-shadow">
+                  {cleanDesc}
+                </p>
+              )}
+              {renderStatsRow('text-white/70')}
             </div>
           </div>
 
@@ -1919,7 +2031,7 @@ export const DetailViewPanel: React.FC = () => {
           bannerEnabled: spApp?.bannerEnabled ?? true,
           seed: spApp?.coverStyleSeed ?? 0,
           titleContent: (
-            <h1 className="truncate text-3xl font-black tracking-tight text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.65)] sm:text-4xl md:text-5xl">
+            <h1 className="line-clamp-2 text-xl font-black leading-tight tracking-tight text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.65)] sm:text-4xl md:text-5xl">
               {sharedPl.name}
             </h1>
           ),
@@ -2242,8 +2354,7 @@ export const DetailViewPanel: React.FC = () => {
         kind: 'local',
         id: localPl.id,
         name: localPl.name,
-        description:
-          localPl.description || 'Playlist personal · Arrastra pistas para reordenar',
+        description: localPl.description ?? '',
         badgeLabel: localPl.isCollaborative ? 'COLABORATIVA' : 'TU PLAYLIST',
         badgeCollab: Boolean(localPl.isCollaborative),
         tracks: localPl.tracks,
@@ -2289,8 +2400,8 @@ export const DetailViewPanel: React.FC = () => {
             </button>
           </form>
         ) : (
-          <div className="flex items-center gap-2">
-            <h1 className="truncate text-3xl font-black tracking-tight pm-text-primary drop-shadow-[0_4px_18px_rgba(0,0,0,0.45)] sm:text-4xl md:text-5xl">
+          <div className="flex items-center gap-1.5">
+            <h1 className="line-clamp-2 text-xl font-black leading-tight tracking-tight pm-text-primary drop-shadow-[0_4px_18px_rgba(0,0,0,0.45)] sm:text-4xl md:text-5xl">
               {localPl.name}
             </h1>
             <button
@@ -4059,7 +4170,7 @@ export const LibraryScreen: React.FC = () => {
             type="button"
             onClick={async () => {
               const name = newPlaylistName.trim() || `Mi Playlist #${playlists.length + 1}`;
-              const created = await createPlaylist(name, 'Creada en pMusic', []);
+              const created = await createPlaylist(name, '', []);
               setNewPlaylistName('');
               setShowCreateBar(false);
               showToast(`Playlist «${created.name}» creada`);

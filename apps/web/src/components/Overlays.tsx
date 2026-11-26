@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
+  ArrowLeft,
   Check,
   ChevronDown,
   Clock,
@@ -53,6 +54,7 @@ import { LiquidHeartIcon } from './LiquidHeartIcon.tsx';
 import { InkBleedCoverTransition } from './InkBleedCoverTransition.tsx';
 import { ExoticBackdropCanvas } from './ExoticBackdropCanvas.tsx';
 import { MarqueeText } from './MarqueeText.tsx';
+import { TrackArtwork } from './TrackArtwork.tsx';
 import { UserAvatar } from './UserAvatar.tsx';
 import { buildJamQrImageUrl, buildJamShareUrl } from '../services/social-service.ts';
 import { useDelayedBuffering } from '../hooks/useDelayedBuffering.ts';
@@ -1365,10 +1367,12 @@ export const NowPlayingSheet: React.FC = () => {
             durationSec={cfAnimDurationSec}
           />
         ) : (
-          <img
+          <TrackArtwork
+            trackId={currentTrack.id}
             src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
             alt={currentTrack.title}
-            className="h-full w-full scale-100 object-cover opacity-100"
+            variant="nowplaying"
+            imgClassName="h-full w-full scale-100 object-cover opacity-100"
           />
         )}
       </div>
@@ -3694,10 +3698,21 @@ export const AudioStudioSheet: React.FC = () => {
     setShowRemainingTime,
   } = usePMusicStore();
 
+  const [isMobileViewport, setIsMobileViewport] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 768 : false
+  );
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const syncVp = () => setIsMobileViewport(window.innerWidth < 768);
+    window.addEventListener('resize', syncVp);
+    return () => window.removeEventListener('resize', syncVp);
+  }, []);
+
   const isOpen = eqSheetOpen || djPopoverOpen;
 
   React.useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || isMobileViewport) return;
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
       if (
@@ -3713,7 +3728,7 @@ export const AudioStudioSheet: React.FC = () => {
     };
     document.addEventListener('pointerdown', handlePointerDown);
     return () => document.removeEventListener('pointerdown', handlePointerDown);
-  }, [isOpen, setEqSheetOpen, setDjPopoverOpen]);
+  }, [isOpen, isMobileViewport, setEqSheetOpen, setDjPopoverOpen]);
 
   if (!isOpen) return null;
 
@@ -3725,19 +3740,23 @@ export const AudioStudioSheet: React.FC = () => {
       ? Math.max(0, Math.round(activeTransitionPlan.cueOutSec - positionSec))
       : null;
 
+  const closeAudioStudio = () => {
+    setEqSheetOpen(false);
+    setDjPopoverOpen(false);
+  };
+
   return (
     <>
-      <div
-        aria-hidden="true"
-        onClick={() => {
-          setEqSheetOpen(false);
-          setDjPopoverOpen(false);
-        }}
-        className="fixed inset-0 z-[64] bg-black/50 sm:hidden"
-      />
+      {!isMobileViewport && (
+        <div
+          aria-hidden="true"
+          onClick={closeAudioStudio}
+          className="fixed inset-0 z-[64] bg-black/50 sm:hidden"
+        />
+      )}
       <div
         role="dialog"
-        aria-modal="false"
+        aria-modal={isMobileViewport ? 'true' : 'false'}
         aria-label={
           audioPanelTab === 'dj'
             ? 'Modo Sesión DJ y Efectos'
@@ -3748,29 +3767,50 @@ export const AudioStudioSheet: React.FC = () => {
               : 'Ecualizador y Crossfade'
         }
         data-testid={audioPanelTab === 'dj' ? 'dj-popover' : 'eq-sheet'}
-        className={`pm-glass-frosted-neutral pm-hud-dark pm-popover-enter fixed inset-x-0 bottom-0 z-[65] max-h-[82dvh] overflow-y-auto rounded-t-[28px] px-5 pt-3 pb-[max(1.5rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] pm-no-scrollbar sm:inset-x-auto sm:mx-0 sm:w-[376px] sm:rounded-[24px] sm:p-4 ${
-          nowPlayingOpen
-            ? 'sm:right-6 sm:bottom-[74px]'
-            : playerBarStyle === 'floating-island'
-              ? 'sm:right-[max(16px,calc(50%-440px))] sm:bottom-[94px]'
-              : 'sm:right-6 sm:bottom-[104px]'
-        }`}
+        className={
+          isMobileViewport
+            ? 'pm-canvas pm-page-enter fixed inset-0 z-[95] flex flex-col overflow-y-auto px-4 pb-[max(2.25rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] pm-no-scrollbar'
+            : `pm-glass-frosted-neutral pm-hud-dark pm-popover-enter fixed inset-x-0 bottom-0 z-[65] max-h-[82dvh] overflow-y-auto rounded-t-[28px] px-5 pt-3 pb-[max(1.5rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] pm-no-scrollbar sm:inset-x-auto sm:mx-0 sm:w-[376px] sm:rounded-[24px] sm:p-4 ${
+                nowPlayingOpen
+                  ? 'sm:right-6 sm:bottom-[74px]'
+                  : playerBarStyle === 'floating-island'
+                    ? 'sm:right-[max(16px,calc(50%-440px))] sm:bottom-[94px]'
+                    : 'sm:right-6 sm:bottom-[104px]'
+              }`
+        }
       >
-        <div className="mb-3 flex items-center justify-between gap-2 sm:hidden">
-          <div className="w-7" aria-hidden="true" />
-          <div className="h-1 w-10 rounded-full bg-white/25" />
-          <button
-            type="button"
-            aria-label="Cerrar estudio de audio"
-            onClick={() => {
-              setEqSheetOpen(false);
-              setDjPopoverOpen(false);
-            }}
-            className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white/80 hover:bg-white/20 hover:text-white"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </div>
+        {isMobileViewport ? (
+          <header className="pm-mobile-glass-header sticky top-0 z-20 -mx-4 mb-4 flex shrink-0 items-center justify-between gap-3 px-4 pt-[max(0.85rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3">
+            <button
+              type="button"
+              aria-label="Volver"
+              onClick={closeAudioStudio}
+              className="pm-pressable inline-flex h-10 items-center gap-2 rounded-full px-2 text-sm font-semibold pm-text-primary hover:bg-white/[0.08]"
+            >
+              <ArrowLeft className="h-5 w-5" />
+              <span>
+                {audioPanelTab === 'dj'
+                  ? 'Sesión DJ'
+                  : audioPanelTab === 'display'
+                    ? 'Pantalla y Barra'
+                    : 'Audio y Ecualizador'}
+              </span>
+            </button>
+          </header>
+        ) : (
+          <div className="mb-3 flex items-center justify-between gap-2 sm:hidden">
+            <div className="w-7" aria-hidden="true" />
+            <div className="h-1 w-10 rounded-full bg-white/25" />
+            <button
+              type="button"
+              aria-label="Cerrar estudio de audio"
+              onClick={closeAudioStudio}
+              className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white/80 hover:bg-white/20 hover:text-white"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* Frosted Segmented Switcher: Sesión DJ | Audio y EQ | Barra / Pantalla */}
         <div
@@ -4442,6 +4482,16 @@ export const DevicesConnectSheet: React.FC = () => {
   const [remoteVol, setRemoteVol] = useState(85);
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(deviceName);
+  const [isMobileViewport, setIsMobileViewport] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 768 : false
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const syncVp = () => setIsMobileViewport(window.innerWidth < 768);
+    window.addEventListener('resize', syncVp);
+    return () => window.removeEventListener('resize', syncVp);
+  }, []);
 
   useEffect(() => {
     setNameDraft(deviceName);
@@ -4454,7 +4504,7 @@ export const DevicesConnectSheet: React.FC = () => {
   }, [remoteDeviceSnapshot]);
 
   useEffect(() => {
-    if (!devicesSheetOpen) return;
+    if (!devicesSheetOpen || isMobileViewport) return;
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
       if (
@@ -4469,7 +4519,7 @@ export const DevicesConnectSheet: React.FC = () => {
     };
     document.addEventListener('pointerdown', handlePointerDown);
     return () => document.removeEventListener('pointerdown', handlePointerDown);
-  }, [devicesSheetOpen, setDevicesSheetOpen]);
+  }, [devicesSheetOpen, isMobileViewport, setDevicesSheetOpen]);
 
   if (!devicesSheetOpen) return null;
 
@@ -4500,36 +4550,56 @@ export const DevicesConnectSheet: React.FC = () => {
 
   return (
     <>
-      <div
-        aria-hidden="true"
-        onClick={() => setDevicesSheetOpen(false)}
-        className="fixed inset-0 z-[64] bg-black/50 sm:hidden"
-      />
+      {!isMobileViewport && (
+        <div
+          aria-hidden="true"
+          onClick={() => setDevicesSheetOpen(false)}
+          className="fixed inset-0 z-[64] bg-black/50 sm:hidden"
+        />
+      )}
       <div
         role="dialog"
-        aria-modal="false"
+        aria-modal={isMobileViewport ? 'true' : 'false'}
         aria-label="Dispositivos conectados"
         data-testid="devices-sheet"
-        className={`pm-glass-frosted-neutral pm-hud-dark pm-popover-enter fixed inset-x-0 bottom-0 z-[65] max-h-[82dvh] overflow-y-auto rounded-t-[28px] px-5 pt-3 pb-[max(1.5rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] pm-no-scrollbar sm:inset-x-auto sm:mx-0 sm:w-[376px] sm:rounded-[24px] sm:p-4 ${
-          nowPlayingOpen
-            ? 'sm:right-6 sm:bottom-[74px]'
-            : playerBarStyle === 'floating-island'
-              ? 'sm:right-[max(16px,calc(50%-440px))] sm:bottom-[94px]'
-              : 'sm:right-6 sm:bottom-[104px]'
-        }`}
+        className={
+          isMobileViewport
+            ? 'pm-canvas pm-page-enter fixed inset-0 z-[95] flex flex-col overflow-y-auto px-4 pb-[max(2.25rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] pm-no-scrollbar'
+            : `pm-glass-frosted-neutral pm-hud-dark pm-popover-enter fixed inset-x-0 bottom-0 z-[65] max-h-[82dvh] overflow-y-auto rounded-t-[28px] px-5 pt-3 pb-[max(1.5rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] pm-no-scrollbar sm:inset-x-auto sm:mx-0 sm:w-[376px] sm:rounded-[24px] sm:p-4 ${
+                nowPlayingOpen
+                  ? 'sm:right-6 sm:bottom-[74px]'
+                  : playerBarStyle === 'floating-island'
+                    ? 'sm:right-[max(16px,calc(50%-440px))] sm:bottom-[94px]'
+                    : 'sm:right-6 sm:bottom-[104px]'
+              }`
+        }
       >
-        <div className="mb-3 flex items-center justify-between gap-2 sm:hidden">
-          <div className="w-7" aria-hidden="true" />
-          <div className="h-1 w-10 rounded-full bg-white/25" />
-          <button
-            type="button"
-            aria-label="Cerrar dispositivos"
-            onClick={() => setDevicesSheetOpen(false)}
-            className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white/80 hover:bg-white/20 hover:text-white"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </div>
+        {isMobileViewport ? (
+          <header className="pm-mobile-glass-header sticky top-0 z-20 -mx-4 mb-4 flex shrink-0 items-center justify-between gap-3 px-4 pt-[max(0.85rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3">
+            <button
+              type="button"
+              aria-label="Volver"
+              onClick={() => setDevicesSheetOpen(false)}
+              className="pm-pressable inline-flex h-10 items-center gap-2 rounded-full px-2 text-sm font-semibold pm-text-primary hover:bg-white/[0.08]"
+            >
+              <ArrowLeft className="h-5 w-5" />
+              <span>Dispositivos y Jam</span>
+            </button>
+          </header>
+        ) : (
+          <div className="mb-3 flex items-center justify-between gap-2 sm:hidden">
+            <div className="w-7" aria-hidden="true" />
+            <div className="h-1 w-10 rounded-full bg-white/25" />
+            <button
+              type="button"
+              aria-label="Cerrar dispositivos"
+              onClick={() => setDevicesSheetOpen(false)}
+              className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white/80 hover:bg-white/20 hover:text-white"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
 
         <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-3">
           <div className="flex min-w-0 items-center gap-2.5">

@@ -402,6 +402,73 @@ export function createPMusicApiHandler(options: PMusicApiHandlerOptions = {}) {
         return true;
       }
 
+      if (pathname === '/api/cover-proxy') {
+        const rawCoverUrl = (urlObj.searchParams.get('url') ?? '').trim();
+        let parsedCover: URL;
+        try {
+          parsedCover = new URL(rawCoverUrl);
+        } catch {
+          sendJson(res, 400, { error: 'URL de portada inválida' });
+          return true;
+        }
+        const host = parsedCover.hostname.toLowerCase();
+        const allowedHosts = [
+          'ytimg.com',
+          'googleusercontent.com',
+          'ggpht.com',
+          'scdn.co',
+          'mzstatic.com',
+          'deezer.com',
+          'dzcdn.net',
+          'tidal.com',
+          'supabase.co',
+          'discogs.com',
+          'lastfm.freetls.fastly.net',
+        ];
+        const isAllowedHost = allowedHosts.some(
+          (allowed) => host === allowed || host.endsWith(`.${allowed}`)
+        );
+        if (parsedCover.protocol !== 'https:' || !isAllowedHost) {
+          sendJson(res, 403, { error: 'Origen de portada no permitido' });
+          return true;
+        }
+        try {
+          const ac = new AbortController();
+          const timer = setTimeout(() => ac.abort(), 6000);
+          const upstream = await fetch(parsedCover.toString(), {
+            signal: ac.signal,
+            headers: {
+              'User-Agent': 'pMusic/0.23.0',
+              Accept: 'image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8',
+            },
+          }).finally(() => clearTimeout(timer));
+          if (!upstream.ok) {
+            sendJson(res, upstream.status, { error: 'No se pudo obtener la portada' });
+            return true;
+          }
+          const ctype = (upstream.headers.get('content-type') ?? 'image/jpeg').toLowerCase();
+          if (!ctype.startsWith('image/')) {
+            sendJson(res, 415, { error: 'Contenido no es imagen' });
+            return true;
+          }
+          const buf = Buffer.from(await upstream.arrayBuffer());
+          if (buf.byteLength === 0 || buf.byteLength > 5 * 1024 * 1024) {
+            sendJson(res, 413, { error: 'Portada vacía o demasiado grande' });
+            return true;
+          }
+          res.statusCode = 200;
+          res.setHeader('Content-Type', ctype);
+          res.setHeader('Content-Length', buf.byteLength);
+          res.setHeader('Cache-Control', 'public, max-age=604800');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.end(buf);
+          return true;
+        } catch {
+          sendJson(res, 502, { error: 'Error descargando portada' });
+          return true;
+        }
+      }
+
       if (pathname === '/api/download/android') {
         const { createReadStream, existsSync, statSync } = await import('node:fs');
         const { dirname, resolve } = await import('node:path');

@@ -1,5 +1,11 @@
 import { create } from 'zustand';
 import {
+  clearOfflineCovers,
+  deleteOfflineCover,
+  hydrateOfflineCoversMemory,
+  saveOfflineCover,
+} from '../utils/offline-covers.ts';
+import {
   DEFAULT_DJ_MODE_CONFIG,
   DEFAULT_SAFE_CROSSFADE_CONFIG,
   DEFAULT_SPANISH_URBAN_SEEDS,
@@ -518,24 +524,53 @@ function canonicalizeTrackArtists(track: Track): Track {
   return changed ? { ...track, artists: nextArtists } : track;
 }
 
-const HOME_SHELVES_CACHE_KEY = 'pmusic_home_shelves_cache_v1';
+const HOME_SHELVES_CACHE_KEY = 'pmusic_home_shelves_cache_v2';
+const HOME_SHELVES_CACHE_TTL_MS = 30 * 60 * 1000;
 
-function readCachedHomeShelves(): HomeEditorialShelf[] | null {
+interface CachedHomeShelvesEntry {
+  ownerUserId: string | null;
+  savedAt: number;
+  shelves: HomeEditorialShelf[];
+}
+
+function readCachedHomeShelves(
+  expectedOwnerUserId?: string | null
+): CachedHomeShelvesEntry | null {
   try {
     if (typeof localStorage === 'undefined') return null;
+    localStorage.removeItem('pmusic_home_shelves_cache_v1');
     const raw = localStorage.getItem(HOME_SHELVES_CACHE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? (parsed as HomeEditorialShelf[]) : null;
+    const parsed = JSON.parse(raw) as Partial<CachedHomeShelvesEntry> | null;
+    if (!parsed || !Array.isArray(parsed.shelves) || parsed.shelves.length === 0) {
+      return null;
+    }
+    const storedOwner = parsed.ownerUserId ?? null;
+    if (expectedOwnerUserId !== undefined && storedOwner !== (expectedOwnerUserId ?? null)) {
+      return null;
+    }
+    return {
+      ownerUserId: storedOwner,
+      savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : 0,
+      shelves: parsed.shelves,
+    };
   } catch {
     return null;
   }
 }
 
-function saveCachedHomeShelves(shelves: HomeEditorialShelf[]): void {
+function saveCachedHomeShelves(
+  shelves: HomeEditorialShelf[],
+  ownerUserId?: string | null
+): void {
   try {
     if (typeof localStorage === 'undefined' || !shelves || shelves.length === 0) return;
-    localStorage.setItem(HOME_SHELVES_CACHE_KEY, JSON.stringify(shelves.slice(0, 6)));
+    const entry: CachedHomeShelvesEntry = {
+      ownerUserId: ownerUserId ?? null,
+      savedAt: Date.now(),
+      shelves: shelves.slice(0, 6),
+    };
+    localStorage.setItem(HOME_SHELVES_CACHE_KEY, JSON.stringify(entry));
   } catch {
     // ignore storage quota errors
   }
@@ -881,6 +916,7 @@ export interface PMusicStoreState {
   devicesSheetOpen: boolean;
   importModalOpen: boolean;
   settingsOpen: boolean;
+  settingsReturnToMobileHub: boolean;
   settingsInitialCategory:
     | 'apariencia'
     | 'audio'
@@ -1365,6 +1401,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
             void get().prevTrack();
           } else if (action.type === 'seekto' && typeof action.seekTimeSec === 'number') {
             get().seekTo(action.seekTimeSec);
+          } else if (action.type === 'shuffle') {
+            get().toggleShuffle();
+          } else if (action.type === 'repeat') {
+            get().cycleRepeatMode();
           }
         },
       });
@@ -1480,7 +1520,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }
 
     const activeTrack = get().currentTrack;
-    const mediaSessionKey = `${activeTrack.id}|${engineState.isPlaying}|${Math.round(safeDur)}`;
+    const mediaSessionKey = `${activeTrack.id}|${engineState.isPlaying}|${Math.round(safeDur)}|${get().shuffleEnabled}|${get().repeatMode}`;
     const nowWallMs = Date.now();
     const minSessionIntervalMs = appHidden ? 15_000 : 1000;
     if (
@@ -1495,6 +1535,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         isPlaying: engineState.isPlaying,
         positionSec: safePos,
         durationSec: safeDur,
+        shuffleEnabled: get().shuffleEnabled,
+        repeatMode: get().repeatMode,
       });
     }
 
@@ -2945,6 +2987,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   devicesSheetOpen: false,
   importModalOpen: false,
   settingsOpen: false,
+  settingsReturnToMobileHub: false,
   settingsInitialCategory: null,
   mobileHubOpen: false,
   spotlightOpen: false,
@@ -3174,13 +3217,9 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     if (initialized) return;
     initialized = true;
 
-    const cachedHome = readCachedHomeShelves();
-    if (cachedHome && cachedHome.length > 0 && get().homeShelves.length <= 2) {
-      set({ homeShelves: cachedHome });
-    }
-
     // 1. Run ALL local storage, audio init, offline catalog & local session restore in parallel
     const [
+      ,
       ,
       ,
       ,
@@ -3198,6 +3237,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       libraryStore.hydrate(),
       recommendationEngine.hydrate(),
       audioEngine.init(),
+      hydrateOfflineCoversMemory(),
       defaultPlatformBridge.offlineStorage.listOfflineIds(),
       defaultPlatformBridge.preferencesStorage.getItem(RECENT_SEARCH_ITEMS_STORAGE_KEY),
       defaultPlatformBridge.preferencesStorage.getItem(HOME_HISTORY_MIGRATION_KEY),
@@ -3610,26 +3650,53 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       }
     };
 
+    const ownerKey = restoredAuth.connected ? restoredAuth.userId : null;
+    const cachedHomeEntry = readCachedHomeShelves(ownerKey);
+    const cachedHome = cachedHomeEntry?.shelves ?? null;
+    const hasWarmHome = Boolean(cachedHome && cachedHome.length > 0);
+    const hasFreshHomeCache = Boolean(
+      cachedHomeEntry &&
+        cachedHomeEntry.shelves.length >= 2 &&
+        Date.now() - cachedHomeEntry.savedAt < HOME_SHELVES_CACHE_TTL_MS
+    );
     const hasWarmAccount =
       !restoredAuth.connected ||
       (Boolean(cachedProfile) &&
         (canonicalPlaylists.length > 0 || cachedSharedPlaylists.length > 0));
-    const hasWarmHome = Boolean(cachedHome && cachedHome.length > 0);
     const localSavedAt = Number(hydratedPrefs?.savedAt ?? 0);
     const isOnline = typeof navigator === 'undefined' || navigator.onLine !== false;
 
+    if (isOnline && isLiveRuntime() && (offlineEntries.length > 0 || canonicalPlaylists.length > 0)) {
+      const downloadedSet = new Set(offlineEntries.map((e) => e.trackId));
+      const knownTracks = [
+        ...canonicalLiked.map((l) => l.track),
+        ...canonicalPlaylists.flatMap((pl) => pl.tracks),
+        ...canonicalHistory.map((h) => h.track),
+      ];
+      const coverBackfill = new Map<string, string>();
+      // Downloaded tracks first, then user library tracks up to 100
+      for (const tr of knownTracks) {
+        if (!tr?.id || !downloadedSet.has(tr.id)) continue;
+        const cu = tr.thumbnailHighUrl ?? tr.thumbnailUrl;
+        if (cu && !coverBackfill.has(tr.id)) coverBackfill.set(tr.id, cu);
+      }
+      for (const tr of knownTracks) {
+        if (coverBackfill.size >= 100) break;
+        if (!tr?.id || coverBackfill.has(tr.id)) continue;
+        const cu = tr.thumbnailHighUrl ?? tr.thumbnailUrl;
+        if (cu) coverBackfill.set(tr.id, cu);
+      }
+      if (coverBackfill.size > 0) {
+        void (async () => {
+          for (const [tid, cu] of coverBackfill) {
+            await saveOfflineCover(tid, cu).catch(() => false);
+          }
+        })();
+      }
+    }
+
     const runCloudAndShelfSync = async () => {
       const shelfEpoch = ++homeShelvesBuildEpoch;
-      const initialShelvesPromise = !hasWarmHome
-        ? recommendationEngine
-            .buildHomeShelves()
-            .then((built) => {
-              saveCachedHomeShelves(built);
-              return built;
-            })
-            .catch(() => get().homeShelves)
-        : Promise.resolve(cachedHome!);
-
       let mergedPrefsFound = false;
       if (restoredAuth.connected && isOnline) {
         await Promise.allSettled([
@@ -3697,30 +3764,40 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         }
       }
 
-      if (!hasWarmHome) {
-        const initialBuilt = await initialShelvesPromise;
-        if (shelfEpoch === homeShelvesBuildEpoch) {
-          await commitShelvesAndSeedPlayer(initialBuilt);
-        }
-      } else {
+      if (!isOnline && hasWarmHome) {
         await commitShelvesAndSeedPlayer(cachedHome!);
+        return;
+      }
+
+      if (hasFreshHomeCache && cachedHome) {
+        await commitShelvesAndSeedPlayer(cachedHome);
         if (isOnline && isLiveRuntime()) {
+          // Silently warm cache for next launch without mid-screen feed flash/swap
           void recommendationEngine
             .buildHomeShelves()
-            .then(async (fresh) => {
-              saveCachedHomeShelves(fresh);
-              if (shelfEpoch === homeShelvesBuildEpoch) {
-                await commitShelvesAndSeedPlayer(fresh);
-              }
+            .then((fresh) => {
+              saveCachedHomeShelves(fresh, ownerKey);
             })
             .catch(() => {});
         }
+        return;
+      }
+
+      const freshShelves = await recommendationEngine
+        .buildHomeShelves()
+        .then((built) => {
+          saveCachedHomeShelves(built, ownerKey);
+          return built;
+        })
+        .catch(() => cachedHome ?? get().homeShelves);
+      if (shelfEpoch === homeShelvesBuildEpoch) {
+        await commitShelvesAndSeedPlayer(freshShelves);
       }
     };
 
     const syncWorkPromise = runCloudAndShelfSync();
     if (isLiveRuntime() && isOnline) {
-      const budgetMs = hasWarmAccount && hasWarmHome ? 650 : 1700;
+      const budgetMs = hasWarmAccount && hasFreshHomeCache ? 850 : 3400;
       await Promise.race([
         syncWorkPromise,
         new Promise<void>((resolve) => setTimeout(resolve, budgetMs)),
@@ -3972,14 +4049,20 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     set((prev) => ({
       settingsOpen: open,
       settingsInitialCategory: open ? prev.settingsInitialCategory : null,
+      ...(open
+        ? {}
+        : {
+            mobileHubOpen: prev.settingsReturnToMobileHub ? true : prev.mobileHubOpen,
+            settingsReturnToMobileHub: false,
+          }),
     })),
   setMobileHubOpen: (open) => set({ mobileHubOpen: open }),
   openSettingsCategory: (cat) =>
-    set({
-      mobileHubOpen: false,
+    set((prev) => ({
+      settingsReturnToMobileHub: prev.mobileHubOpen,
       settingsInitialCategory: cat,
       settingsOpen: true,
-    }),
+    })),
   clearPlayHistory: async () => {
     await recommendationEngine.clearPlayHistory();
     await libraryStore.setPlayHistory([]);
@@ -4619,6 +4702,16 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }
     void recomputeActiveDjPlan();
     persistPrefsFromStore();
+    const nextShuf = get();
+    lastMediaSessionSyncKey = '';
+    void getMediaController().updateSession({
+      track: nextShuf.currentTrack,
+      isPlaying: nextShuf.isPlaying,
+      positionSec: nextShuf.positionSec,
+      durationSec: nextShuf.durationSec,
+      shuffleEnabled: nextShuf.shuffleEnabled,
+      repeatMode: nextShuf.repeatMode,
+    });
   },
 
   cycleRepeatMode: () => {
@@ -4627,6 +4720,16 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     set({ repeatMode: next });
     void recomputeActiveDjPlan();
     persistPrefsFromStore();
+    const stRep = get();
+    lastMediaSessionSyncKey = '';
+    void getMediaController().updateSession({
+      track: stRep.currentTrack,
+      isPlaying: stRep.isPlaying,
+      positionSec: stRep.positionSec,
+      durationSec: stRep.durationSec,
+      shuffleEnabled: stRep.shuffleEnabled,
+      repeatMode: stRep.repeatMode,
+    });
   },
 
   seekTo: (positionSec) => {
@@ -5737,7 +5840,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     persistPrefsFromStore();
     void recommendationEngine.buildHomeShelves().then((shelves) => {
       set({ homeShelves: shelves });
-      saveCachedHomeShelves(shelves);
+      saveCachedHomeShelves(shelves, get().authState.userId);
     });
     return likedNow;
   },
@@ -6966,12 +7069,12 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         res.headers.get('content-type') ?? 'audio/mp4'
       );
       const coverUrl = track.thumbnailHighUrl ?? track.thumbnailUrl;
-      if (coverUrl && typeof caches !== 'undefined') {
-        void caches
-          .open('pmusic-offline-covers-v1')
-          .then((cache) => cache.add(coverUrl).catch(() => undefined))
-          .catch(() => undefined);
-      }
+      await Promise.allSettled([
+        coverUrl ? saveOfflineCover(track.id, coverUrl) : Promise.resolve(false),
+        track.thumbnailUrl && track.thumbnailUrl !== coverUrl
+          ? saveOfflineCover(track.id, track.thumbnailUrl)
+          : Promise.resolve(false),
+      ]);
       const entries = await defaultPlatformBridge.offlineStorage.listOfflineIds();
       const verified = entries.some((e) => e.trackId === track.id);
       if (!verified) throw new Error('persist_failed');
@@ -6988,6 +7091,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   removeOfflineTrack: async (trackId) => {
     await defaultPlatformBridge.offlineStorage.deleteAudio(trackId);
+    await deleteOfflineCover(trackId);
     const entries = await defaultPlatformBridge.offlineStorage.listOfflineIds();
     set((prev) => {
       const nextMap = { ...prev.offlineDownloads };
@@ -7001,6 +7105,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   clearOfflineCache: async () => {
     await defaultPlatformBridge.offlineStorage.clearAll();
+    await clearOfflineCovers();
     set({
       offlineDownloads: {},
       offlineEntries: [],

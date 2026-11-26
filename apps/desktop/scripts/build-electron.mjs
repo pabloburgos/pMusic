@@ -164,11 +164,78 @@ const officialPathData =
 // Update src/main.ts to serve both static dist/ files AND /api/* over http://127.0.0.1:<port>
 const mainEntrySource = `import { createServer, type Server } from 'node:http';
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join, normalize } from 'node:path';
+import { tmpdir } from 'node:os';
 import { deflateSync } from 'node:zlib';
 import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, shell } from 'electron';
 import { createPMusicApiHandler } from '@pmusic/providers';
+
+const PMUSIC_DESKTOP_VERSION = '0.23.0';
+
+function compareSemverDesktop(remoteRaw: string, localRaw: string): number {
+  const clean = (v: string) =>
+    v
+      .trim()
+      .replace(/^v/i, '')
+      .split('-')[0]
+      ?.split('.')
+      .map((n) => Number.parseInt(n, 10) || 0) ?? [0, 0, 0];
+  const r = clean(remoteRaw);
+  const l = clean(localRaw);
+  const len = Math.max(r.length, l.length, 3);
+  for (let i = 0; i < len; i++) {
+    const rv = r[i] ?? 0;
+    const lv = l[i] ?? 0;
+    if (rv > lv) return 1;
+    if (rv < lv) return -1;
+  }
+  return 0;
+}
+
+function scheduleCloseOAuthBrowserWindow(): void {
+  if (process.platform !== 'win32') return;
+  setTimeout(() => {
+    try {
+      const psScript = \`
+Add-Type -TypeDefinition @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public class PMWinClose {
+  public delegate bool EnumProc(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc lpEnumFunc, IntPtr lParam);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+  public static void CloseMatching(string needle) {
+    EnumWindows((hWnd, lParam) => {
+      if (!IsWindowVisible(hWnd)) return true;
+      var sb = new StringBuilder(512);
+      GetWindowText(hWnd, sb, sb.Capacity);
+      var title = sb.ToString();
+      if (title.Contains(needle) && title.Contains("pMusic")) {
+        PostMessage(hWnd, 0x0010, IntPtr.Zero, IntPtr.Zero);
+      }
+      return true;
+    }, IntPtr.Zero);
+  }
+}
+"@
+[PMWinClose]::CloseMatching("Sesión iniciada")
+\`;
+      const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
+      const child = spawn(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', encoded],
+        { detached: true, stdio: 'ignore', windowsHide: true }
+      );
+      child.unref();
+    } catch {
+      // ignore window auto-close fallback errors
+    }
+  }, 1500);
+}
 
 const isTransientStreamError = (err: unknown): boolean => {
   const code = (err as { code?: string })?.code ?? '';
@@ -349,7 +416,7 @@ async function startOAuthCallbackServer(): Promise<number> {
   <p id="desc">Tu cuenta de Google se ha conectado con pMusic. Ya puedes volver a la aplicación.</p>
   <div class="bar"><div class="fill"></div></div>
   <button type="button" class="btn" onclick="try{window.close()}catch(e){}">Volver a pMusic</button>
-  <div id="foot" class="foot">Volviendo a pMusic automáticamente…</div>
+  <div id="foot" class="foot">Cerrando esta ventana automáticamente…</div>
 </div>
 <script>
   if (location.search && location.search.includes('error=')) {
@@ -362,7 +429,7 @@ async function startOAuthCallbackServer(): Promise<number> {
   if (location.hash && location.hash.includes('access_token')) {
     fetch('/auth/hash', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: location.href }).catch(()=>{});
   }
-  setTimeout(() => { try { window.close(); } catch {} }, 2200);
+  setTimeout(() => { try { window.open('', '_self'); window.close(); } catch {} }, 1400);
 </script></body></html>\`;
 
   const tryListen = (port: number) =>
@@ -375,6 +442,7 @@ async function startOAuthCallbackServer(): Promise<number> {
           req.on('end', () => {
             if (body.includes('access_token=')) {
               dispatchAuthCallbackUrl(body.trim());
+              scheduleCloseOAuthBrowserWindow();
             }
             res.statusCode = 200;
             res.end('ok');
@@ -384,6 +452,9 @@ async function startOAuthCallbackServer(): Promise<number> {
         const fullUrl = \`http://127.0.0.1:\${oauthPort}\${reqUrl}\`;
         if (reqUrl.includes('code=') || reqUrl.includes('error=')) {
           dispatchAuthCallbackUrl(fullUrl);
+          if (!reqUrl.includes('error=')) {
+            scheduleCloseOAuthBrowserWindow();
+          }
         }
         res.statusCode = 200;
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -649,6 +720,94 @@ ipcMain.handle('pmusic:toggle-fullscreen', () => {
   const next = !mainWindow.isFullScreen();
   mainWindow.setFullScreen(next);
   return mainWindow.isFullScreen();
+});
+ipcMain.handle('pmusic:check-and-apply-update', async () => {
+  if (!app.isPackaged || process.platform !== 'win32') {
+    return { updated: false };
+  }
+  try {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 1600);
+    const relRes = await fetch('https://api.github.com/repos/pabloburgos/pMusic/releases/latest', {
+      signal: ac.signal,
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'pMusic-Updater' },
+    }).finally(() => clearTimeout(t));
+    if (!relRes.ok) return { updated: false };
+    const relJson = (await relRes.json()) as {
+      tag_name?: string;
+      assets?: Array<{ name?: string; browser_download_url?: string }>;
+    };
+    const latestVer = String(relJson?.tag_name ?? '').trim().replace(/^v/i, '');
+    if (!latestVer || compareSemverDesktop(latestVer, PMUSIC_DESKTOP_VERSION) <= 0) {
+      return { updated: false };
+    }
+    const exeAsset = (relJson.assets ?? []).find((a) => /pMusic-Setup.*\.exe$/i.test(a.name ?? ''));
+    if (!exeAsset?.browser_download_url) {
+      return { updated: false };
+    }
+
+    const sendProg = (percent: number, message: string, phase = 'downloading') => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('pmusic:update-progress', {
+          phase,
+          version: latestVer,
+          percent,
+          message,
+        });
+      }
+    };
+
+    sendProg(8, \`Actualizando pMusic a v\${latestVer}…\`);
+    const dlAc = new AbortController();
+    const dlRes = await fetch(exeAsset.browser_download_url, {
+      signal: dlAc.signal,
+      headers: { 'User-Agent': 'pMusic-Updater' },
+    });
+    if (!dlRes.ok || !dlRes.body) return { updated: false };
+
+    const totalBytes = Number(dlRes.headers.get('content-length') ?? 0) || 170 * 1024 * 1024;
+    const installerPath = join(tmpdir(), \`pMusic-Setup-Update-\${latestVer}.exe\`);
+    const ws = createWriteStream(installerPath);
+    const reader = dlRes.body.getReader();
+    let received = 0;
+    let lastReportMs = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        ws.write(Buffer.from(value));
+        received += value.byteLength;
+        const nowMs = Date.now();
+        if (nowMs - lastReportMs > 120) {
+          lastReportMs = nowMs;
+          const pct = Math.min(94, Math.max(10, Math.round((received / totalBytes) * 90)));
+          sendProg(pct, \`Actualizando pMusic a v\${latestVer} (\${pct}%)…\`);
+        }
+      }
+    }
+    await new Promise<void>((resolve, reject) => {
+      ws.end(() => resolve());
+      ws.on('error', reject);
+    });
+
+    if (!existsSync(installerPath) || statSync(installerPath).size < 10_000_000) {
+      return { updated: false };
+    }
+
+    sendProg(100, 'Aplicando actualización y reiniciando…', 'installing');
+    const installDir = dirname(process.execPath);
+    const child = spawn(
+      installerPath,
+      ['/silent', \`/dir=\${installDir}\`, '/relaunch'],
+      { detached: true, stdio: 'ignore', windowsHide: true }
+    );
+    child.unref();
+    setTimeout(() => app.quit(), 300);
+    return { updated: true, version: latestVer };
+  } catch {
+    return { updated: false };
+  }
 });
 ipcMain.handle('pmusic:get-fullscreen', () => {
   if (!mainWindow || mainWindow.isDestroyed()) return false;

@@ -54,6 +54,32 @@
         0% { transform: translateX(-110%); }
         100% { transform: translateX(250%); }
       }
+      #pm-splash-status {
+        display: none;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        font-size: 12.5px;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+        color: rgba(255, 255, 255, 0.78);
+        text-align: center;
+        margin-top: -6px;
+      }
+      #pm-splash-update-bar {
+        display: none;
+        width: 172px;
+        height: 4px;
+        border-radius: 999px;
+        overflow: hidden;
+        background: rgba(255, 255, 255, 0.14);
+        margin-top: -10px;
+      }
+      #pm-splash-update-fill {
+        width: 8%;
+        height: 100%;
+        border-radius: 999px;
+        background: #ffffff;
+        transition: width 180ms ease-out;
+      }
     </style>
   </head>
   <body class="antialiased selection:bg-white/20 bg-[#070709]">
@@ -72,6 +98,8 @@
         />
       </svg>
       <div class="pm-splash-loader"></div>
+      <div id="pm-splash-status"></div>
+      <div id="pm-splash-update-bar"><div id="pm-splash-update-fill"></div></div>
     </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>

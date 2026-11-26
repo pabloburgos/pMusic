@@ -552,6 +552,8 @@ export function createPlatformBridge(): IPlatformBridge {
                 isPlaying: state.isPlaying,
                 positionMs: Math.round(state.positionSec * 1000),
                 durationMs: Math.round(Math.max(1, state.durationSec) * 1000),
+                shuffleEnabled: Boolean(state.shuffleEnabled),
+                repeatMode: state.repeatMode ?? 'off',
               })
             );
           } catch {

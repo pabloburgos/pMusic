@@ -25,6 +25,7 @@ import {
 import { formatDurationSec } from '@pmusic/core';
 import { usePMusicStore } from '../store/usePMusicStore.ts';
 import { PMusicSwitch } from './PMusicSwitch.tsx';
+import { TrackArtwork } from './TrackArtwork.tsx';
 import { UserAvatar } from './UserAvatar.tsx';
 
 type MobileHubSubView = 'home' | 'history' | 'devices';
@@ -531,10 +532,12 @@ export const MobileHubPage: React.FC = () => {
                     }}
                     className="pm-hover flex w-full items-center gap-3 rounded-[14px] px-2.5 py-2 text-left"
                   >
-                    <img
+                    <TrackArtwork
+                      trackId={item.trackId}
                       src={item.track.thumbnailUrl}
                       alt={item.track.title}
-                      className="h-12 w-12 shrink-0 rounded-[10px] object-cover"
+                      variant="list"
+                      imgClassName="h-12 w-12 shrink-0 rounded-[10px] object-cover"
                     />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-bold pm-text-primary">

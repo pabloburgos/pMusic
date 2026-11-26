@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  ArrowLeft,
   Check,
   Database,
   Disc3,
@@ -175,6 +176,9 @@ export const SettingsModal: React.FC = () => {
     showToast,
   } = usePMusicStore();
 
+  const [isMobileViewport, setIsMobileViewport] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 768 : false
+  );
   const [activeCategory, setActiveCategory] = useState<SettingsCategoryId>('apariencia');
   const [authTab, setAuthTab] = useState<'signin' | 'signup'>('signup');
   const [email, setEmail] = useState('');
@@ -209,6 +213,13 @@ export const SettingsModal: React.FC = () => {
   }, [discordRpcConfig.clientId]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const syncVp = () => setIsMobileViewport(window.innerWidth < 768);
+    window.addEventListener('resize', syncVp);
+    return () => window.removeEventListener('resize', syncVp);
+  }, []);
+
+  useEffect(() => {
     if (settingsOpen) {
       if (settingsInitialCategory) {
         setActiveCategory(settingsInitialCategory);
@@ -218,6 +229,9 @@ export const SettingsModal: React.FC = () => {
   }, [settingsOpen, settingsInitialCategory, refreshDiscordRpcStatus]);
 
   if (!settingsOpen) return null;
+
+  const activeCategoryMeta =
+    CATEGORIES.find((c) => c.id === activeCategory) ?? CATEGORIES[0]!;
 
   const totalOfflineBytes = offlineEntries.reduce((s, e) => s + e.sizeBytes, 0);
   const enabledFx = djMode.enabledTransitions ?? {
@@ -253,96 +267,8 @@ export const SettingsModal: React.FC = () => {
     showToast('Copia de seguridad descargada');
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-5">
-      <div
-        aria-hidden="true"
-        onClick={() => setSettingsOpen(false)}
-        className="pm-spotlight-backdrop absolute inset-0 bg-black/65"
-      />
-
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Ajustes de pMusic"
-        data-testid="settings-view"
-        className="pm-glass-regular pm-modal-pop relative z-10 flex h-[92dvh] w-full flex-col overflow-hidden rounded-t-[28px] sm:h-[86dvh] sm:w-[95vw] sm:max-w-4xl sm:rounded-[24px]"
-      >
-        {/* Mobile grab indicator */}
-        <div className="mx-auto mt-2.5 h-1 w-10 shrink-0 rounded-full bg-current opacity-20 sm:hidden" />
-
-        {/* Top Modal Header */}
-        <header className="flex shrink-0 items-center justify-between border-b pm-border px-4 py-3 sm:px-6 sm:py-4">
-          <div className="flex items-center gap-2.5">
-            <Settings className="h-5 w-5 pm-text-primary" />
-            <div>
-              <h2 className="text-[17px] font-bold leading-tight pm-text-primary sm:text-lg">
-                Configuración de pMusic
-              </h2>
-              <p className="hidden text-[11.5px] pm-text-tertiary sm:block">
-                Temas, motor acústico DSP, Sesión DJ, Discord RPC y sincronización
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setSettingsOpen(false);
-                setDevicesSheetOpen(true);
-              }}
-              className="pm-btn-secondary inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold md:hidden"
-            >
-              <Laptop className="h-3.5 w-3.5 text-emerald-400" />
-              <span>{onlineDevices.length}</span>
-            </button>
-            <button
-              type="button"
-              aria-label="Cerrar ajustes"
-              onClick={() => setSettingsOpen(false)}
-              className="pm-btn-secondary inline-flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold sm:h-auto sm:w-auto sm:gap-1.5 sm:px-3.5 sm:py-1.5"
-            >
-              <X className="h-4 w-4 sm:h-3.5 sm:w-3.5" />
-              <span className="hidden sm:inline">Cerrar</span>
-            </button>
-          </div>
-        </header>
-
-        {/* Body: Clean Mobile Scrollable Category Pills / Desktop Left Sidebar + Right Pane */}
-        <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-          <nav
-            role="tablist"
-            aria-label="Categorías de ajustes"
-            className="flex shrink-0 gap-1.5 overflow-x-auto border-b pm-border px-3.5 py-2.5 md:w-[232px] md:flex-col md:gap-1 md:border-r md:border-b-0 md:p-3 pm-no-scrollbar"
-          >
-            {CATEGORIES.map((cat) => {
-              const active = activeCategory === cat.id;
-              return (
-                <button
-                  key={cat.id}
-                  type="button"
-                  role="tab"
-                  data-testid={`settings-category-${cat.id}`}
-                  aria-selected={active}
-                  onClick={() => setActiveCategory(cat.id)}
-                  className={`${
-                    cat.id === 'discord' ? 'hidden md:flex' : 'flex'
-                  } shrink-0 items-center gap-2 rounded-full px-4 py-2 text-left text-xs font-bold transition-all md:rounded-[12px] md:px-3 md:py-2.5 ${
-                    active ? 'pm-btn-primary shadow-sm' : 'pm-text-secondary pm-hover'
-                  }`}
-                >
-                  {cat.icon}
-                  <span className="whitespace-nowrap md:hidden">{cat.shortLabel}</span>
-                  <span className="hidden whitespace-nowrap md:inline">{cat.label}</span>
-                </button>
-              );
-            })}
-          </nav>
-
-          <div
-            key={activeCategory}
-            className="pm-tab-enter min-h-0 flex-1 space-y-4 overflow-y-auto px-4 pt-4 pb-[max(1.5rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] sm:space-y-5 sm:p-6"
-          >
+  const settingsSections = (
+    <>
             {/* 1. APARIENCIA Y TEMAS */}
             {activeCategory === 'apariencia' && (
               <div className="space-y-5">
@@ -1885,6 +1811,153 @@ export const SettingsModal: React.FC = () => {
                 </section>
               </div>
             )}
+    </>
+  );
+
+  if (isMobileViewport) {
+    return (
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Ajustes — ${activeCategoryMeta.label}`}
+        data-testid="settings-view"
+        className="pm-canvas pm-page-enter fixed inset-0 z-[95] flex flex-col overflow-hidden"
+      >
+        <header className="pm-mobile-glass-header sticky top-0 z-20 flex shrink-0 items-center justify-between gap-3 px-4 pt-[max(0.85rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3">
+          <button
+            type="button"
+            aria-label="Volver a Preajustes"
+            data-testid="settings-mobile-back-btn"
+            onClick={() => setSettingsOpen(false)}
+            className="pm-pressable inline-flex h-10 items-center gap-2 rounded-full px-2 text-sm font-semibold pm-text-primary hover:bg-white/[0.08]"
+          >
+            <ArrowLeft className="h-5 w-5" />
+            <span>{activeCategoryMeta.label}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setSettingsOpen(false);
+              setDevicesSheetOpen(true);
+            }}
+            className="pm-btn-secondary inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold"
+          >
+            <Laptop className="h-3.5 w-3.5 text-emerald-400" />
+            <span>{onlineDevices.length}</span>
+          </button>
+        </header>
+
+        <nav
+          role="tablist"
+          aria-label="Categorías de ajustes"
+          className="flex shrink-0 gap-1.5 overflow-x-auto border-b pm-border px-4 py-2.5 pm-no-scrollbar"
+        >
+          {CATEGORIES.map((cat) => {
+            const active = activeCategory === cat.id;
+            return (
+              <button
+                key={cat.id}
+                type="button"
+                role="tab"
+                data-testid={`settings-category-${cat.id}`}
+                aria-selected={active}
+                onClick={() => setActiveCategory(cat.id)}
+                className={`pm-pressable flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold transition-all ${
+                  active ? 'pm-btn-primary shadow-sm' : 'pm-surface-card pm-text-secondary'
+                }`}
+              >
+                {cat.icon}
+                <span className="whitespace-nowrap">{cat.shortLabel}</span>
+              </button>
+            );
+          })}
+        </nav>
+
+        <div
+          key={`mobile-${activeCategory}`}
+          className="pm-tab-enter min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-[max(2.25rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))]"
+        >
+          <div className="mx-auto max-w-lg space-y-4">
+            {settingsSections}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-5">
+      <div
+        aria-hidden="true"
+        onClick={() => setSettingsOpen(false)}
+        className="pm-spotlight-backdrop absolute inset-0 bg-black/65"
+      />
+
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Ajustes de pMusic"
+        data-testid="settings-view"
+        className="pm-glass-regular pm-modal-pop relative z-10 flex h-[92dvh] w-full flex-col overflow-hidden rounded-t-[28px] sm:h-[86dvh] sm:w-[95vw] sm:max-w-4xl sm:rounded-[24px]"
+      >
+        <header className="flex shrink-0 items-center justify-between border-b pm-border px-4 py-3 sm:px-6 sm:py-4">
+          <div className="flex items-center gap-2.5">
+            <Settings className="h-5 w-5 pm-text-primary" />
+            <div>
+              <h2 className="text-[17px] font-bold leading-tight pm-text-primary sm:text-lg">
+                Configuración de pMusic
+              </h2>
+              <p className="hidden text-[11.5px] pm-text-tertiary sm:block">
+                Temas, motor acústico DSP, Sesión DJ, Discord RPC y sincronización
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              aria-label="Cerrar ajustes"
+              onClick={() => setSettingsOpen(false)}
+              className="pm-btn-secondary inline-flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold sm:h-auto sm:w-auto sm:gap-1.5 sm:px-3.5 sm:py-1.5"
+            >
+              <X className="h-4 w-4 sm:h-3.5 sm:w-3.5" />
+              <span className="hidden sm:inline">Cerrar</span>
+            </button>
+          </div>
+        </header>
+
+        <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+          <nav
+            role="tablist"
+            aria-label="Categorías de ajustes"
+            className="flex shrink-0 gap-1.5 overflow-x-auto border-b pm-border px-3.5 py-2.5 md:w-[232px] md:flex-col md:gap-1 md:border-r md:border-b-0 md:p-3 pm-no-scrollbar"
+          >
+            {CATEGORIES.map((cat) => {
+              const active = activeCategory === cat.id;
+              return (
+                <button
+                  key={cat.id}
+                  type="button"
+                  role="tab"
+                  data-testid={`settings-category-${cat.id}`}
+                  aria-selected={active}
+                  onClick={() => setActiveCategory(cat.id)}
+                  className={`flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-left text-xs font-bold transition-all md:rounded-[12px] md:px-3 md:py-2.5 ${
+                    active ? 'pm-btn-primary shadow-sm' : 'pm-text-secondary pm-hover'
+                  }`}
+                >
+                  {cat.icon}
+                  <span className="whitespace-nowrap">{cat.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+
+          <div
+            key={activeCategory}
+            className="pm-tab-enter min-h-0 flex-1 space-y-5 overflow-y-auto p-6"
+          >
+            {settingsSections}
           </div>
         </div>
       </div>

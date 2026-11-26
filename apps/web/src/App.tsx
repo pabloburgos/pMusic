@@ -60,6 +60,8 @@ import { PMusicLogo } from './components/PMusicLogo.tsx';
 import { MarqueeText } from './components/MarqueeText.tsx';
 import { OverlayScrollbar } from './components/OverlayScrollbar.tsx';
 import { useDelayedBuffering } from './hooks/useDelayedBuffering.ts';
+import { TrackArtwork } from './components/TrackArtwork.tsx';
+import { runSplashAutoUpdateCheck } from './utils/app-updater.ts';
 import { SpotlightSearchModal } from './components/SpotlightSearchModal.tsx';
 import { AppToast, TrackContextMenu } from './components/TrackMenu.tsx';
 import { PlaylistOptionsMenu } from './components/PlaylistOptionsMenu.tsx';
@@ -717,8 +719,21 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     }
   };
 
+  const [splashUpdating, setSplashUpdating] = useState(false);
+
   useEffect(() => {
     void initApp();
+    if (
+      typeof window !== 'undefined' &&
+      !Boolean((import.meta as any).vitest) &&
+      (import.meta as any).env?.MODE !== 'test'
+    ) {
+      void runSplashAutoUpdateCheck((stUp) => {
+        if (stUp.updating) setSplashUpdating(true);
+      }).then((res) => {
+        if (!res.updating) setSplashUpdating(false);
+      });
+    }
   }, [initApp]);
 
   const bootMountMsRef = useRef<number>(
@@ -731,26 +746,26 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       Boolean((import.meta as any).vitest) || (import.meta as any).env?.MODE === 'test';
     let cancelled = false;
     const dismissSplash = () => {
-      if (cancelled) return;
+      if (cancelled || splashUpdating) return;
       const el = document.getElementById('pm-boot-splash');
       if (!el || el.classList.contains('pm-splash-hide')) return;
       el.classList.add('pm-splash-hide');
       setTimeout(() => el.remove(), 420);
     };
     const isOfflineStart = typeof navigator !== 'undefined' && navigator.onLine === false;
-    const maxCapMs = isTestEnv ? 0 : isOfflineStart ? 900 : 2200;
-    const safetyTimer = setTimeout(dismissSplash, maxCapMs);
-    if (!appReady) {
+    const maxCapMs = isTestEnv ? 0 : isOfflineStart ? 1000 : 4200;
+    const safetyTimer = splashUpdating ? null : setTimeout(dismissSplash, maxCapMs);
+    if (!appReady || splashUpdating) {
       return () => {
         cancelled = true;
-        clearTimeout(safetyTimer);
+        if (safetyTimer) clearTimeout(safetyTimer);
       };
     }
     if (isTestEnv) {
       const hideNow = setTimeout(dismissSplash, 0);
       return () => {
         cancelled = true;
-        clearTimeout(safetyTimer);
+        if (safetyTimer) clearTimeout(safetyTimer);
         clearTimeout(hideNow);
       };
     }
@@ -804,10 +819,10 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     return () => {
       cancelled = true;
       cancelAnimationFrame(rafId);
-      clearTimeout(safetyTimer);
+      if (safetyTimer) clearTimeout(safetyTimer);
       if (hideTimer) clearTimeout(hideTimer);
     };
-  }, [appReady]);
+  }, [appReady, splashUpdating]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1541,7 +1556,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                         onClick={async () => {
                           const created = await createPlaylist(
                             `Mi Playlist #${playlists.length + 1}`,
-                            'Creada en pMusic',
+                            '',
                             []
                           );
                           openLocalPlaylistDetail(created.id);
@@ -2619,11 +2634,13 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                 onClick={() => setNowPlayingOpen(true)}
                 className="group relative h-11 w-11 shrink-0 overflow-hidden rounded-[10px] shadow-md"
               >
-                <img
+                <TrackArtwork
+                  trackId={currentTrack.id}
                   src={currentTrack.thumbnailUrl}
                   alt={currentTrack.title}
+                  variant="mini"
                   draggable={false}
-                  className="pointer-events-none h-full w-full select-none object-cover transition-transform duration-200 group-hover:scale-105"
+                  imgClassName="pointer-events-none h-full w-full select-none object-cover transition-transform duration-200 group-hover:scale-105"
                 />
                 {playerBarStyle === 'minimal-wave' && isPlaying && (
                   <span
@@ -3379,10 +3396,12 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                       onClick={() => setNowPlayingOpen(true)}
                       className="relative h-11 w-11 shrink-0 overflow-hidden rounded-[8px] shadow-sm"
                     >
-                      <img
+                      <TrackArtwork
+                        trackId={currentTrack.id}
                         src={currentTrack.thumbnailUrl}
                         alt={currentTrack.title}
-                        className="h-full w-full object-cover"
+                        variant="mini"
+                        imgClassName="h-full w-full object-cover"
                       />
                     </button>
                     <div className="min-w-0 flex-1">

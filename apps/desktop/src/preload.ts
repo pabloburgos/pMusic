@@ -72,4 +72,18 @@ contextBridge.exposeInMainWorld('pmusicDesktop', {
   writePrefsFile: (jsonText: string): Promise<void> =>
     ipcRenderer.invoke('pmusic:write-prefs-file', jsonText),
   clearAuthState: (): Promise<void> => ipcRenderer.invoke('pmusic:clear-auth-state'),
+  checkAndApplyUpdate: (): Promise<{ updated: boolean; version?: string }> =>
+    ipcRenderer.invoke('pmusic:check-and-apply-update'),
+  onUpdateProgress: (
+    cb: (progress: { phase?: string; version?: string; percent?: number; message?: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: unknown,
+      progress: { phase?: string; version?: string; percent?: number; message?: string }
+    ) => cb(progress);
+    ipcRenderer.on('pmusic:update-progress', handler);
+    return () => {
+      ipcRenderer.removeListener('pmusic:update-progress', handler);
+    };
+  },
 });

@@ -47,7 +47,9 @@ export type NativeMediaActionType =
   | 'nexttrack'
   | 'previoustrack'
   | 'seekto'
-  | 'stop';
+  | 'stop'
+  | 'shuffle'
+  | 'repeat';
 
 export interface NativeMediaAction {
   type: NativeMediaActionType;
@@ -60,6 +62,8 @@ export interface NativeMediaSessionState {
   positionSec: number;
   durationSec: number;
   playbackRate?: number;
+  shuffleEnabled?: boolean;
+  repeatMode?: 'off' | 'all' | 'one';
 }
 
 export interface OfflineAudioSaveResult {

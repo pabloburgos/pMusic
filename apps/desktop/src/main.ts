@@ -1,8 +1,9 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawn } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { deflateSync } from 'node:zlib';
 import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, shell } from 'electron';
 import { createPMusicApiHandler } from '@pmusic/providers';
@@ -782,6 +783,63 @@ ipcMain.handle('pmusic:toggle-fullscreen', () => {
 ipcMain.handle('pmusic:get-fullscreen', () => {
   if (!mainWindow || mainWindow.isDestroyed()) return false;
   return mainWindow.isFullScreen();
+});
+ipcMain.handle('pmusic:check-and-apply-update', async () => {
+  if (!app.isPackaged || process.platform !== 'win32') return { updated: false };
+  try {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 1600);
+    const relRes = await fetch('https://api.github.com/repos/pabloburgos/pMusic/releases/latest', {
+      signal: ac.signal,
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'pMusic-Updater' },
+    }).finally(() => clearTimeout(t));
+    if (!relRes.ok) return { updated: false };
+    const relJson = (await relRes.json()) as {
+      tag_name?: string;
+      assets?: Array<{ name?: string; browser_download_url?: string }>;
+    };
+    const latestVer = String(relJson?.tag_name ?? '').trim().replace(/^v/i, '');
+    const clean = (v: string) =>
+      v.replace(/^v/i, '').split('-')[0]?.split('.').map((n) => parseInt(n, 10) || 0) ?? [0, 0, 0];
+    const r = clean(latestVer);
+    const l = clean('0.23.0');
+    const newer = [0, 1, 2].some((i, _a, arr) => {
+      for (let j = 0; j < i; j++) if ((r[j] ?? 0) !== (l[j] ?? 0)) return false;
+      return (r[i] ?? 0) > (l[i] ?? 0);
+    });
+    if (!latestVer || !newer) return { updated: false };
+    const exeAsset = (relJson.assets ?? []).find((a) => /pMusic-Setup.*\.exe$/i.test(a.name ?? ''));
+    if (!exeAsset?.browser_download_url) return { updated: false };
+    const dlRes = await fetch(exeAsset.browser_download_url, {
+      headers: { 'User-Agent': 'pMusic-Updater' },
+    });
+    if (!dlRes.ok || !dlRes.body) return { updated: false };
+    const installerPath = join(tmpdir(), `pMusic-Setup-Update-${latestVer}.exe`);
+    const ws = createWriteStream(installerPath);
+    const reader = dlRes.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) ws.write(Buffer.from(value));
+    }
+    await new Promise<void>((resolve, reject) => {
+      ws.end(() => resolve());
+      ws.on('error', reject);
+    });
+    if (!existsSync(installerPath) || statSync(installerPath).size < 10_000_000) {
+      return { updated: false };
+    }
+    const child = spawn(
+      installerPath,
+      ['/silent', `/dir=${dirname(process.execPath)}`, '/relaunch'],
+      { detached: true, stdio: 'ignore', windowsHide: true }
+    );
+    child.unref();
+    setTimeout(() => app.quit(), 300);
+    return { updated: true, version: latestVer };
+  } catch {
+    return { updated: false };
+  }
 });
 
 if (process.platform === 'win32') {

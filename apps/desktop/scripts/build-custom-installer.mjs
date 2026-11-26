@@ -530,11 +530,79 @@ namespace PMusicSetup {
       } catch {}
     }
 
+    public static int RunSilentUpdate(string targetDir, bool relaunch) {
+      try {
+        if (string.IsNullOrEmpty(targetDir)) {
+          targetDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "pMusic");
+        }
+        Directory.CreateDirectory(targetDir);
+        try {
+          foreach (Process proc in Process.GetProcessesByName("pmusic")) {
+            try { proc.WaitForExit(4500); } catch {}
+            if (!proc.HasExited) {
+              try { proc.Kill(); proc.WaitForExit(2500); } catch {}
+            }
+          }
+        } catch {}
+
+        using (Stream resStream = Assembly.GetExecutingAssembly().GetManifestResourceStream("pMusic.payload.zip")) {
+          if (resStream == null) return 2;
+          using (ZipArchive archive = new ZipArchive(resStream, ZipArchiveMode.Read)) {
+            foreach (ZipArchiveEntry entry in archive.Entries) {
+              string destPath = Path.GetFullPath(Path.Combine(targetDir, entry.FullName));
+              if (!destPath.StartsWith(Path.GetFullPath(targetDir), StringComparison.OrdinalIgnoreCase)) continue;
+              if (string.IsNullOrEmpty(entry.Name)) {
+                Directory.CreateDirectory(destPath);
+              } else {
+                Directory.CreateDirectory(Path.GetDirectoryName(destPath));
+                for (int retry = 0; retry < 5; retry++) {
+                  try {
+                    entry.ExtractToFile(destPath, true);
+                    break;
+                  } catch {
+                    System.Threading.Thread.Sleep(300);
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        string exePath = Path.Combine(targetDir, "pmusic.exe");
+        RegisterProtocol(exePath);
+        RegisterUninstallEntry(targetDir, exePath);
+        if (relaunch && File.Exists(exePath)) {
+          Process.Start(new ProcessStartInfo(exePath) { WorkingDirectory = targetDir });
+        }
+        return 0;
+      } catch {
+        return 1;
+      }
+    }
+
     [STAThread]
-    public static void Main() {
+    public static int Main(string[] args) {
+      bool silent = false;
+      bool relaunch = false;
+      string customDir = "";
+      if (args != null) {
+        foreach (string a in args) {
+          if (string.Equals(a, "/silent", StringComparison.OrdinalIgnoreCase) || string.Equals(a, "--silent", StringComparison.OrdinalIgnoreCase)) {
+            silent = true;
+          } else if (string.Equals(a, "/relaunch", StringComparison.OrdinalIgnoreCase) || string.Equals(a, "--relaunch", StringComparison.OrdinalIgnoreCase)) {
+            relaunch = true;
+          } else if (a != null && (a.StartsWith("/dir=", StringComparison.OrdinalIgnoreCase) || a.StartsWith("--dir=", StringComparison.OrdinalIgnoreCase))) {
+            customDir = a.Substring(a.IndexOf('=') + 1).Trim('"');
+          }
+        }
+      }
+      if (silent) {
+        return RunSilentUpdate(customDir, relaunch);
+      }
       Application.EnableVisualStyles();
       Application.SetCompatibleTextRenderingDefault(false);
       Application.Run(new ModernPMusicInstaller());
+      return 0;
     }
   }
 }

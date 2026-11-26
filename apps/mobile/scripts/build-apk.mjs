@@ -229,6 +229,73 @@ const icStatVectorXml = `<?xml version="1.0" encoding="utf-8"?>
 `;
 writeFileSync(resolve(drawableDir, 'ic_stat_pmusic.xml'), icStatVectorXml, 'utf-8');
 
+const shuffleOffVectorXml = `<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#88FFFFFF"
+        android:pathData="M10.59,9.17L5.41,4L4,5.41l5.17,5.17l1.42,-1.41zM14.5,4l2.04,2.04L4,18.59L5.41,20L17.96,7.46L20,9.5V4h-5.5zM14.83,13.41l-1.41,1.41l3.13,3.13L14.5,20H20v-5.5l-2.04,2.04l-3.13,-3.13z" />
+</vector>
+`;
+const shuffleOnVectorXml = `<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M10.59,9.17L5.41,4L4,5.41l5.17,5.17l1.42,-1.41zM14.5,4l2.04,2.04L4,18.59L5.41,20L17.96,7.46L20,9.5V4h-5.5zM14.83,13.41l-1.41,1.41l3.13,3.13L14.5,20H20v-5.5l-2.04,2.04l-3.13,-3.13z" />
+    <path
+        android:fillColor="#FF34D399"
+        android:pathData="M12,21.5m-1.5,0a1.5,1.5 0,1 1,3 0a1.5,1.5 0,1 1,-3 0" />
+</vector>
+`;
+const repeatOffVectorXml = `<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#88FFFFFF"
+        android:pathData="M7,7h10v3l4,-4l-4,-4v3H5v6h2V7zM17,17H7v-3l-4,4l4,4v-3h12v-6h-2V17z" />
+</vector>
+`;
+const repeatAllVectorXml = `<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M7,7h10v3l4,-4l-4,-4v3H5v6h2V7zM17,17H7v-3l-4,4l4,4v-3h12v-6h-2V17z" />
+    <path
+        android:fillColor="#FF34D399"
+        android:pathData="M12,21.5m-1.5,0a1.5,1.5 0,1 1,3 0a1.5,1.5 0,1 1,-3 0" />
+</vector>
+`;
+const repeatOneVectorXml = `<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M7,7h10v3l4,-4l-4,-4v3H5v6h2V7zM17,17H7v-3l-4,4l4,4v-3h12v-6h-2V17zM13,15V9h-1l-2,1v1h1.5v4H13z" />
+</vector>
+`;
+writeFileSync(resolve(drawableDir, 'ic_media_shuffle_off.xml'), shuffleOffVectorXml, 'utf-8');
+writeFileSync(resolve(drawableDir, 'ic_media_shuffle_on.xml'), shuffleOnVectorXml, 'utf-8');
+writeFileSync(resolve(drawableDir, 'ic_media_repeat_off.xml'), repeatOffVectorXml, 'utf-8');
+writeFileSync(resolve(drawableDir, 'ic_media_repeat_all.xml'), repeatAllVectorXml, 'utf-8');
+writeFileSync(resolve(drawableDir, 'ic_media_repeat_one.xml'), repeatOneVectorXml, 'utf-8');
+
 // 3. Write res/values/strings.xml & pure-black splash theme res/values/styles.xml
 writeFileSync(
   resolve(valuesDir, 'strings.xml'),
@@ -270,8 +337,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="45"
-    android:versionName="0.22.1">
+    android:versionCode="46"
+    android:versionName="0.23.0">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -282,6 +349,7 @@ writeFileSync(
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:allowBackup="true"
@@ -290,6 +358,12 @@ writeFileSync(
         android:usesCleartextTraffic="true"
         android:hardwareAccelerated="true"
         android:theme="@style/PMusicTheme">
+
+        <provider
+            android:name="es.pmusic.app.PMusicApkProvider"
+            android:authorities="es.pmusic.app.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true" />
 
         <meta-data
             android:name="com.google.android.gms.car.application"
@@ -352,10 +426,18 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.LinearGradient;
+import android.graphics.Paint;
+import android.graphics.RectF;
+import android.graphics.Shader;
+import android.graphics.Typeface;
 import android.media.AudioManager;
 import android.media.MediaMetadata;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
 import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -365,6 +447,8 @@ import android.os.PowerManager;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -376,10 +460,14 @@ import java.util.concurrent.Executors;
 public class PMusicPlaybackService extends Service {
     private static final String CHANNEL_ID = "pmusic_playback_channel";
     private static final int NOTIFICATION_ID = 1001;
+    public static final String ACTION_SHUFFLE = "es.pmusic.app.ACTION_SHUFFLE";
     public static final String ACTION_PREV = "es.pmusic.app.ACTION_PREV";
     public static final String ACTION_TOGGLE = "es.pmusic.app.ACTION_TOGGLE";
     public static final String ACTION_NEXT = "es.pmusic.app.ACTION_NEXT";
+    public static final String ACTION_REPEAT = "es.pmusic.app.ACTION_REPEAT";
     public static final String ACTION_STOP = "es.pmusic.app.ACTION_STOP";
+    public static final String CUSTOM_ACTION_SHUFFLE = "es.pmusic.app.CUSTOM_SHUFFLE";
+    public static final String CUSTOM_ACTION_REPEAT = "es.pmusic.app.CUSTOM_REPEAT";
 
     private static volatile MediaSession sMediaSession;
     private static volatile PMusicPlaybackService sServiceInstance;
@@ -391,13 +479,18 @@ public class PMusicPlaybackService extends Service {
         }
     };
 
+    private static volatile String sTrackId = "";
     private static volatile String sTitle = "pMusic";
     private static volatile String sArtist = "Listo para reproducir";
     private static volatile String sAlbum = "pMusic";
     private static volatile String sArtworkUrl = "";
+    private static volatile String sArtworkFailedUrl = "";
     private static volatile boolean sIsPlaying = false;
+    private static volatile boolean sShuffleEnabled = false;
+    private static volatile String sRepeatMode = "off";
     private static volatile long sPositionMs = 0L;
     private static volatile long sDurationMs = 200000L;
+    private static volatile Bitmap sMissingCoverBmp = null;
 
     private PowerManager.WakeLock wakeLock;
     private WifiManager.WifiLock wifiLock;
@@ -457,32 +550,166 @@ public class PMusicPlaybackService extends Service {
             public void onPlayFromMediaId(String mediaId, Bundle extras) {
                 MainActivity.dispatchCarPlayFromMediaId(appCtx, mediaId != null ? mediaId : "");
             }
+
+            @Override
+            public void onCustomAction(String action, Bundle extras) {
+                if (CUSTOM_ACTION_SHUFFLE.equals(action)) {
+                    sShuffleEnabled = !sShuffleEnabled;
+                    MainActivity.dispatchMediaAction(appCtx, "shuffle", -1);
+                    if (sServiceInstance != null) {
+                        sServiceInstance.syncMediaSessionAndNotification(true);
+                    }
+                } else if (CUSTOM_ACTION_REPEAT.equals(action)) {
+                    sRepeatMode = "off".equals(sRepeatMode) ? "all" : "all".equals(sRepeatMode) ? "one" : "off";
+                    MainActivity.dispatchMediaAction(appCtx, "repeat", -1);
+                    if (sServiceInstance != null) {
+                        sServiceInstance.syncMediaSessionAndNotification(true);
+                    }
+                }
+            }
         });
         session.setActive(true);
         sMediaSession = session;
     }
 
+    public static String sanitizeCoverFileId(String raw) {
+        if (raw == null || raw.isEmpty()) return "unknown";
+        return raw.replaceAll("[^a-zA-Z0-9._-]", "_");
+    }
+
+    public static void saveOfflineCoverBytes(Context ctx, String trackId, byte[] raw) {
+        if (ctx == null || trackId == null || trackId.isEmpty() || raw == null || raw.length < 256) return;
+        try {
+            File dir = new File(ctx.getFilesDir(), "offline_covers");
+            if (!dir.exists()) dir.mkdirs();
+            File dst = new File(dir, sanitizeCoverFileId(trackId) + ".jpg");
+            FileOutputStream fos = new FileOutputStream(dst);
+            fos.write(raw);
+            fos.close();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static Bitmap loadOfflineCoverBitmap(Context ctx, String trackId) {
+        if (ctx == null || trackId == null || trackId.isEmpty()) return null;
+        try {
+            File f = new File(new File(ctx.getFilesDir(), "offline_covers"), sanitizeCoverFileId(trackId) + ".jpg");
+            if (!f.exists() || f.length() < 128) return null;
+            Bitmap bmp = BitmapFactory.decodeFile(f.getAbsolutePath());
+            if (bmp != null && (bmp.getWidth() > 512 || bmp.getHeight() > 512)) {
+                Bitmap scaled = Bitmap.createScaledBitmap(bmp, 512, 512, true);
+                if (scaled != bmp) bmp.recycle();
+                return scaled;
+            }
+            return bmp;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static boolean isNetworkConnected(Context ctx) {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return true;
+            NetworkInfo ni = cm.getActiveNetworkInfo();
+            return ni != null && ni.isConnected();
+        } catch (Throwable ignored) {
+            return true;
+        }
+    }
+
+    private static synchronized Bitmap buildMissingCoverBitmap() {
+        if (sMissingCoverBmp != null && !sMissingCoverBmp.isRecycled()) {
+            return sMissingCoverBmp;
+        }
+        Bitmap bmp = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bmp);
+        Paint bgPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        bgPaint.setShader(new LinearGradient(0f, 0f, 512f, 512f, 0xFF1A1A22, 0xFF08080C, Shader.TileMode.CLAMP));
+        canvas.drawRect(0f, 0f, 512f, 512f, bgPaint);
+
+        Paint cardPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        cardPaint.setColor(0x14FFFFFF);
+        canvas.drawRoundRect(new RectF(32f, 32f, 480f, 480f), 44f, 44f, cardPaint);
+
+        Paint borderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        borderPaint.setStyle(Paint.Style.STROKE);
+        borderPaint.setStrokeWidth(3f);
+        borderPaint.setColor(0x28FFFFFF);
+        canvas.drawRoundRect(new RectF(32f, 32f, 480f, 480f), 44f, 44f, borderPaint);
+
+        // Minimalist pMusic 4-bar acoustic wave icon above text
+        Paint barPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        barPaint.setColor(0xEEFFFFFF);
+        canvas.drawRoundRect(new RectF(204f, 134f, 220f, 186f), 8f, 8f, barPaint);
+        barPaint.setColor(0xFFE2CCFF);
+        canvas.drawRoundRect(new RectF(230f, 114f, 246f, 206f), 8f, 8f, barPaint);
+        barPaint.setColor(0xFFFFFFFF);
+        canvas.drawRoundRect(new RectF(256f, 126f, 272f, 194f), 8f, 8f, barPaint);
+        barPaint.setColor(0xCCFFFFFF);
+        canvas.drawRoundRect(new RectF(282f, 144f, 298f, 176f), 8f, 8f, barPaint);
+
+        Paint titlePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        titlePaint.setColor(0xFFFFFFFF);
+        titlePaint.setTextSize(34f);
+        titlePaint.setTextAlign(Paint.Align.CENTER);
+        titlePaint.setTypeface(Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD));
+        canvas.drawText("Lo sentimos", 256f, 276f, titlePaint);
+
+        Paint subPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        subPaint.setColor(0xB8FFFFFF);
+        subPaint.setTextSize(25f);
+        subPaint.setTextAlign(Paint.Align.CENTER);
+        canvas.drawText("No se pudo cargar", 256f, 322f, subPaint);
+        canvas.drawText("la portada", 256f, 356f, subPaint);
+
+        Paint brandPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        brandPaint.setColor(0x66FFFFFF);
+        brandPaint.setTextSize(20f);
+        brandPaint.setTextAlign(Paint.Align.CENTER);
+        brandPaint.setTypeface(Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD));
+        canvas.drawText("pMusic", 256f, 430f, brandPaint);
+
+        sMissingCoverBmp = bmp;
+        return bmp;
+    }
+
     public static void updateFromJson(final Context ctx, final String jsonStr) {
         try {
             JSONObject obj = new JSONObject(jsonStr);
+            String nextTrackId = obj.optString("trackId", "");
             String nextTitle = obj.optString("title", "pMusic");
             String nextArtist = obj.optString("artist", "");
             String nextAlbum = obj.optString("album", "pMusic");
             String nextArt = obj.optString("artworkUrl", "");
             boolean nextPlaying = obj.optBoolean("isPlaying", false);
+            boolean nextShuffle = obj.optBoolean("shuffleEnabled", sShuffleEnabled);
+            String nextRepeat = obj.optString("repeatMode", sRepeatMode);
+            if (!"off".equals(nextRepeat) && !"all".equals(nextRepeat) && !"one".equals(nextRepeat)) {
+                nextRepeat = "off";
+            }
 
-            boolean metaChanged = !nextTitle.equals(sTitle)
+            boolean metaChanged = !nextTrackId.equals(sTrackId)
+                    || !nextTitle.equals(sTitle)
                     || !nextArtist.equals(sArtist)
                     || !nextAlbum.equals(sAlbum)
                     || !nextArt.equals(sArtworkUrl)
-                    || nextPlaying != sIsPlaying;
+                    || nextPlaying != sIsPlaying
+                    || nextShuffle != sShuffleEnabled
+                    || !nextRepeat.equals(sRepeatMode);
             boolean artChanged = !nextArt.equals(sArtworkUrl);
+            if (artChanged) {
+                sArtworkFailedUrl = "";
+            }
 
+            sTrackId = nextTrackId;
             sTitle = nextTitle;
             sArtist = nextArtist;
             sAlbum = nextAlbum;
             sArtworkUrl = nextArt;
             sIsPlaying = nextPlaying;
+            sShuffleEnabled = nextShuffle;
+            sRepeatMode = nextRepeat;
             sPositionMs = Math.max(0L, obj.optLong("positionMs", 0L));
             sDurationMs = Math.max(1000L, obj.optLong("durationMs", 200000L));
 
@@ -504,19 +731,43 @@ public class PMusicPlaybackService extends Service {
             if (artChanged && !nextArt.isEmpty()) {
                 Bitmap cached = getCachedBitmap(nextArt);
                 if (cached == null) {
-                    final String targetUrl = nextArt;
-                    ART_EXECUTOR.execute(new Runnable() {
-                        @Override
-                        public void run() {
-                            Bitmap bmp = fetchArtworkBitmap(targetUrl);
-                            if (bmp != null) {
-                                putCachedBitmap(targetUrl, bmp);
+                    Bitmap offlineBmp = loadOfflineCoverBitmap(ctx, nextTrackId);
+                    if (offlineBmp != null) {
+                        putCachedBitmap(nextArt, offlineBmp);
+                        if (sServiceInstance != null) {
+                            sServiceInstance.syncMediaSessionAndNotification(true);
+                        }
+                    } else {
+                        final String targetUrl = nextArt;
+                        final String targetTrackId = nextTrackId;
+                        final Context appCtx = ctx.getApplicationContext();
+                        ART_EXECUTOR.execute(new Runnable() {
+                            @Override
+                            public void run() {
+                                byte[] raw = fetchArtworkBytes(targetUrl);
+                                Bitmap bmp = null;
+                                if (raw != null && raw.length > 0) {
+                                    bmp = BitmapFactory.decodeByteArray(raw, 0, raw.length);
+                                    if (bmp != null && (bmp.getWidth() > 512 || bmp.getHeight() > 512)) {
+                                        Bitmap scaled = Bitmap.createScaledBitmap(bmp, 512, 512, true);
+                                        if (scaled != bmp) bmp.recycle();
+                                        bmp = scaled;
+                                    }
+                                    if (bmp != null && !targetTrackId.isEmpty()) {
+                                        saveOfflineCoverBytes(appCtx, targetTrackId, raw);
+                                    }
+                                }
+                                if (bmp != null) {
+                                    putCachedBitmap(targetUrl, bmp);
+                                } else {
+                                    sArtworkFailedUrl = targetUrl;
+                                }
                                 if (targetUrl.equals(sArtworkUrl) && sServiceInstance != null) {
                                     sServiceInstance.syncMediaSessionAndNotification(true);
                                 }
                             }
-                        }
-                    });
+                        });
+                    }
                 }
             }
         } catch (Throwable ignored) {
@@ -531,7 +782,7 @@ public class PMusicPlaybackService extends Service {
         ART_CACHE.put(url, bmp);
     }
 
-    private static Bitmap fetchArtworkBitmap(String urlStr) {
+    private static byte[] fetchArtworkBytes(String urlStr) {
         HttpURLConnection conn = null;
         try {
             URL url = new URL(urlStr);
@@ -539,7 +790,7 @@ public class PMusicPlaybackService extends Service {
             conn.setConnectTimeout(3500);
             conn.setReadTimeout(4500);
             conn.setInstanceFollowRedirects(true);
-            conn.setRequestProperty("User-Agent", "pMusic-Android/0.18.4");
+            conn.setRequestProperty("User-Agent", "pMusic-Android/0.23.0");
             if (conn.getResponseCode() >= 200 && conn.getResponseCode() < 300) {
                 InputStream in = conn.getInputStream();
                 ByteArrayOutputStream bos = new ByteArrayOutputStream();
@@ -549,14 +800,7 @@ public class PMusicPlaybackService extends Service {
                     bos.write(buf, 0, r);
                 }
                 in.close();
-                byte[] raw = bos.toByteArray();
-                Bitmap rawBmp = BitmapFactory.decodeByteArray(raw, 0, raw.length);
-                if (rawBmp != null && (rawBmp.getWidth() > 512 || rawBmp.getHeight() > 512)) {
-                    Bitmap scaled = Bitmap.createScaledBitmap(rawBmp, 512, 512, true);
-                    if (scaled != rawBmp) rawBmp.recycle();
-                    return scaled;
-                }
-                return rawBmp;
+                return bos.toByteArray();
             }
         } catch (Throwable ignored) {
         } finally {
@@ -590,9 +834,24 @@ public class PMusicPlaybackService extends Service {
                     | PlaybackState.ACTION_SEEK_TO
                     | PlaybackState.ACTION_STOP;
             int pbState = sIsPlaying ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED;
+            int shuffleIconRes = sShuffleEnabled ? R.drawable.ic_media_shuffle_on : R.drawable.ic_media_shuffle_off;
+            String shuffleLabel = sShuffleEnabled ? "Aleatorio activado" : "Aleatorio";
+            int repeatIconRes = "one".equals(sRepeatMode)
+                    ? R.drawable.ic_media_repeat_one
+                    : "all".equals(sRepeatMode)
+                            ? R.drawable.ic_media_repeat_all
+                            : R.drawable.ic_media_repeat_off;
+            String repeatLabel = "one".equals(sRepeatMode)
+                    ? "Repetir una"
+                    : "all".equals(sRepeatMode)
+                            ? "Repetir lista"
+                            : "No repetir";
+
             PlaybackState state = new PlaybackState.Builder()
                     .setActions(actions)
                     .setState(pbState, sPositionMs, sIsPlaying ? 1.0f : 0.0f)
+                    .addCustomAction(new PlaybackState.CustomAction.Builder(CUSTOM_ACTION_SHUFFLE, shuffleLabel, shuffleIconRes).build())
+                    .addCustomAction(new PlaybackState.CustomAction.Builder(CUSTOM_ACTION_REPEAT, repeatLabel, repeatIconRes).build())
                     .build();
             sMediaSession.setPlaybackState(state);
 
@@ -601,6 +860,12 @@ public class PMusicPlaybackService extends Service {
             }
 
             Bitmap artBmp = !sArtworkUrl.isEmpty() ? getCachedBitmap(sArtworkUrl) : null;
+            if (artBmp == null && !sTrackId.isEmpty()) {
+                artBmp = loadOfflineCoverBitmap(this, sTrackId);
+            }
+            if (artBmp == null && (!sArtworkFailedUrl.isEmpty() && sArtworkFailedUrl.equals(sArtworkUrl) || !isNetworkConnected(this))) {
+                artBmp = buildMissingCoverBitmap();
+            }
             if (artBmp == null) {
                 try {
                     artBmp = BitmapFactory.decodeResource(getResources(), R.drawable.ic_launcher);
@@ -646,7 +911,7 @@ public class PMusicPlaybackService extends Service {
 
             Notification.MediaStyle mediaStyle = new Notification.MediaStyle()
                     .setMediaSession(sMediaSession.getSessionToken())
-                    .setShowActionsInCompactView(0, 1, 2);
+                    .setShowActionsInCompactView(1, 2, 3);
 
             builder.setContentTitle(sTitle != null && !sTitle.isEmpty() ? sTitle : "pMusic")
                     .setContentText(sArtist != null && !sArtist.isEmpty() ? sArtist : "pMusic Audio")
@@ -657,6 +922,7 @@ public class PMusicPlaybackService extends Service {
                     .setOngoing(sIsPlaying)
                     .setOnlyAlertOnce(true)
                     .setVisibility(Notification.VISIBILITY_PUBLIC)
+                    .addAction(shuffleIconRes, shuffleLabel, makeServiceActionIntent(ACTION_SHUFFLE, 9))
                     .addAction(android.R.drawable.ic_media_previous, "Anterior", makeServiceActionIntent(ACTION_PREV, 10))
                     .addAction(
                             sIsPlaying ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play,
@@ -664,6 +930,7 @@ public class PMusicPlaybackService extends Service {
                             makeServiceActionIntent(ACTION_TOGGLE, 11)
                     )
                     .addAction(android.R.drawable.ic_media_next, "Siguiente", makeServiceActionIntent(ACTION_NEXT, 12))
+                    .addAction(repeatIconRes, repeatLabel, makeServiceActionIntent(ACTION_REPEAT, 13))
                     .setStyle(mediaStyle);
             if (Build.VERSION.SDK_INT >= 26) {
                 builder.setColorized(true);
@@ -744,12 +1011,18 @@ public class PMusicPlaybackService extends Service {
         sServiceInstance = this;
         updateLocks(sIsPlaying || intent == null || !ACTION_STOP.equals(intent.getAction()));
         String action = intent != null ? intent.getAction() : null;
-        if (ACTION_PREV.equals(action)) {
+        if (ACTION_SHUFFLE.equals(action)) {
+            sShuffleEnabled = !sShuffleEnabled;
+            MainActivity.dispatchMediaAction(this, "shuffle", -1);
+        } else if (ACTION_PREV.equals(action)) {
             MainActivity.dispatchMediaAction(this, "previoustrack", -1);
         } else if (ACTION_TOGGLE.equals(action)) {
             MainActivity.dispatchMediaAction(this, "toggle", -1);
         } else if (ACTION_NEXT.equals(action)) {
             MainActivity.dispatchMediaAction(this, "nexttrack", -1);
+        } else if (ACTION_REPEAT.equals(action)) {
+            sRepeatMode = "off".equals(sRepeatMode) ? "all" : "all".equals(sRepeatMode) ? "one" : "off";
+            MainActivity.dispatchMediaAction(this, "repeat", -1);
         } else if (ACTION_STOP.equals(action)) {
             MainActivity.dispatchMediaAction(this, "pause", -1);
         }
@@ -967,6 +1240,8 @@ import org.json.JSONObject;
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -1260,6 +1535,104 @@ public class MainActivity extends Activity {
             }
 
             @android.webkit.JavascriptInterface
+            public void saveOfflineCover(final String trackId, final String coverUrl) {
+                if (trackId == null || trackId.trim().isEmpty() || coverUrl == null || !coverUrl.startsWith("https://")) return;
+                streamExecutor.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        HttpURLConnection conn = null;
+                        try {
+                            URL u = new URL(coverUrl);
+                            conn = (HttpURLConnection) u.openConnection();
+                            conn.setConnectTimeout(5000);
+                            conn.setReadTimeout(6000);
+                            conn.setInstanceFollowRedirects(true);
+                            conn.setRequestProperty("User-Agent", "pMusic-Android/0.23.0");
+                            if (conn.getResponseCode() >= 200 && conn.getResponseCode() < 300) {
+                                InputStream in = conn.getInputStream();
+                                ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                                byte[] buf = new byte[8192];
+                                int n;
+                                while ((n = in.read(buf)) != -1) bos.write(buf, 0, n);
+                                in.close();
+                                PMusicPlaybackService.saveOfflineCoverBytes(getApplicationContext(), trackId.trim(), bos.toByteArray());
+                            }
+                        } catch (Throwable ignored) {
+                        } finally {
+                            if (conn != null) conn.disconnect();
+                        }
+                    }
+                });
+            }
+
+            @android.webkit.JavascriptInterface
+            public boolean downloadAndInstallUpdate(final String apkUrl, final String version) {
+                if (apkUrl == null || !apkUrl.startsWith("https://")) return false;
+                streamExecutor.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        HttpURLConnection conn = null;
+                        try {
+                            URL u = new URL(apkUrl);
+                            conn = (HttpURLConnection) u.openConnection();
+                            conn.setConnectTimeout(6000);
+                            conn.setReadTimeout(20000);
+                            conn.setInstanceFollowRedirects(true);
+                            conn.setRequestProperty("User-Agent", "pMusic-Updater/0.23.0");
+                            if (conn.getResponseCode() < 200 || conn.getResponseCode() >= 300) return;
+                            int total = Math.max(1024, conn.getContentLength());
+                            File outApk = new File(getCacheDir(), "pmusic-update.apk");
+                            FileOutputStream fos = new FileOutputStream(outApk);
+                            InputStream in = conn.getInputStream();
+                            byte[] buf = new byte[16384];
+                            long received = 0L;
+                            int n;
+                            long lastReport = 0L;
+                            while ((n = in.read(buf)) != -1) {
+                                fos.write(buf, 0, n);
+                                received += n;
+                                long now = System.currentTimeMillis();
+                                if (now - lastReport > 140L) {
+                                    lastReport = now;
+                                    final int pct = (int) Math.min(96L, Math.max(8L, (received * 95L) / total));
+                                    runOnUiThread(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            if (webView != null) {
+                                                webView.evaluateJavascript("window.__pmusicUpdateProgress&&window.__pmusicUpdateProgress(" + pct + ",'Actualizando pMusic…')", null);
+                                            }
+                                        }
+                                    });
+                                }
+                            }
+                            in.close();
+                            fos.close();
+                            final Uri apkUri = Uri.parse("content://es.pmusic.app.fileprovider/update/pmusic-update.apk");
+                            runOnUiThread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    if (webView != null) {
+                                        webView.evaluateJavascript("window.__pmusicUpdateProgress&&window.__pmusicUpdateProgress(100,'Abriendo instalador…')", null);
+                                    }
+                                    try {
+                                        Intent install = new Intent(Intent.ACTION_VIEW);
+                                        install.setDataAndType(apkUri, "application/vnd.android.package-archive");
+                                        install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                                        startActivity(install);
+                                    } catch (Throwable ignored) {
+                                    }
+                                }
+                            });
+                        } catch (Throwable ignored) {
+                        } finally {
+                            if (conn != null) conn.disconnect();
+                        }
+                    }
+                });
+                return true;
+            }
+
+            @android.webkit.JavascriptInterface
             public void syncCarLibrary(final String json) {
                 try {
                     SharedPreferences prefs = getSharedPreferences("pmusic_car_lib", Context.MODE_PRIVATE);
@@ -1417,6 +1790,41 @@ public class MainActivity extends Activity {
                         }
                         byte[] emptyYtm = "{}".getBytes(StandardCharsets.UTF_8);
                         return new WebResourceResponse("application/json", "UTF-8", 200, "OK", corsHeaders, new ByteArrayInputStream(emptyYtm));
+                    }
+
+                    if ("/api/cover-proxy".equals(path)) {
+                        String rawCover = uri.getQueryParameter("url");
+                        if (rawCover != null && rawCover.startsWith("https://")) {
+                            HttpURLConnection conn = null;
+                            try {
+                                URL u = new URL(rawCover);
+                                conn = (HttpURLConnection) u.openConnection();
+                                conn.setConnectTimeout(5000);
+                                conn.setReadTimeout(6000);
+                                conn.setInstanceFollowRedirects(true);
+                                conn.setRequestProperty("User-Agent", "pMusic-Android/0.23.0");
+                                if (conn.getResponseCode() >= 200 && conn.getResponseCode() < 300) {
+                                    String ctype = conn.getContentType();
+                                    if (ctype == null || !ctype.toLowerCase(Locale.ROOT).startsWith("image/")) {
+                                        ctype = "image/jpeg";
+                                    } else if (ctype.contains(";")) {
+                                        ctype = ctype.substring(0, ctype.indexOf(';')).trim();
+                                    }
+                                    InputStream in = conn.getInputStream();
+                                    ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                                    byte[] buf = new byte[8192];
+                                    int n;
+                                    while ((n = in.read(buf)) != -1) bos.write(buf, 0, n);
+                                    in.close();
+                                    return new WebResourceResponse(ctype, "binary", 200, "OK", corsHeaders, new ByteArrayInputStream(bos.toByteArray()));
+                                }
+                            } catch (Throwable ignored) {
+                            } finally {
+                                if (conn != null) conn.disconnect();
+                            }
+                        }
+                        byte[] errImg = "{}".getBytes(StandardCharsets.UTF_8);
+                        return new WebResourceResponse("application/json", "UTF-8", 502, "Bad Gateway", corsHeaders, new ByteArrayInputStream(errImg));
                     }
 
                     if (path.startsWith("/api/stream/")) {
@@ -2904,6 +3312,67 @@ public class MainActivity extends Activity {
   'utf-8'
 );
 
+writeFileSync(
+  resolve(javaSrcDir, 'PMusicApkProvider.java'),
+  `package es.pmusic.app;
+
+import android.content.ContentProvider;
+import android.content.ContentValues;
+import android.database.Cursor;
+import android.database.MatrixCursor;
+import android.net.Uri;
+import android.os.ParcelFileDescriptor;
+import android.provider.OpenableColumns;
+
+import java.io.File;
+import java.io.FileNotFoundException;
+
+public class PMusicApkProvider extends ContentProvider {
+    @Override
+    public boolean onCreate() {
+        return true;
+    }
+
+    private File resolveTarget(Uri uri) {
+        if (getContext() == null || uri == null) return null;
+        return new File(getContext().getCacheDir(), "pmusic-update.apk");
+    }
+
+    @Override
+    public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
+        File f = resolveTarget(uri);
+        if (f == null || !f.exists()) throw new FileNotFoundException("APK not found");
+        return ParcelFileDescriptor.open(f, ParcelFileDescriptor.MODE_READ_ONLY);
+    }
+
+    @Override
+    public String getType(Uri uri) {
+        return "application/vnd.android.package-archive";
+    }
+
+    @Override
+    public Cursor query(Uri uri, String[] projection, String selection, String[] selectionArgs, String sortOrder) {
+        File f = resolveTarget(uri);
+        MatrixCursor mc = new MatrixCursor(new String[]{OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE});
+        if (f != null && f.exists()) {
+            mc.addRow(new Object[]{f.getName(), f.length()});
+        }
+        return mc;
+    }
+
+    @Override
+    public Uri insert(Uri uri, ContentValues values) { return null; }
+
+    @Override
+    public int delete(Uri uri, String selection, String[] selectionArgs) { return 0; }
+
+    @Override
+    public int update(Uri uri, ContentValues values, String selection, String[] selectionArgs) { return 0; }
+}
+`,
+  'utf-8'
+);
+
 // 6. Compile resources with aapt2 compile & link (WITHOUT -A so Windows aapt2 never emits '\' ZIP entries)
 const compiledResZip = resolve(workDir, 'compiled_res.zip');
 const unalignedApk = resolve(workDir, 'unaligned.apk');
@@ -2943,6 +3412,7 @@ execFileSync(
     resolve(rJavaDir, 'es/pmusic/app/R.java'),
     resolve(javaSrcDir, 'PMusicPlaybackService.java'),
     resolve(javaSrcDir, 'PMusicMediaBrowserService.java'),
+    resolve(javaSrcDir, 'PMusicApkProvider.java'),
     resolve(javaSrcDir, 'MainActivity.java'),
   ],
   { stdio: 'inherit' }
