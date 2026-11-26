@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
   GripVertical,
@@ -15,7 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { formatDurationSec, type Track } from '@pmusic/core';
-import { usePMusicStore } from '../store/usePMusicStore.ts';
+import { getLivePlaybackPosition, usePMusicStore } from '../store/usePMusicStore.ts';
 import { ArtistLinks } from './ArtistLinks.tsx';
 import { LiquidHeartIcon } from './LiquidHeartIcon.tsx';
 import { UserAvatar } from './UserAvatar.tsx';
@@ -36,13 +36,31 @@ const QUEUE_SCROLL_STYLE: React.CSSProperties = {
 
 const DjTransitionProgressBar: React.FC = React.memo(() => {
   const isTransitioning = usePMusicStore((s) => s.isTransitioning);
-  const transitionProgress01 = usePMusicStore((s) => s.transitionProgress01);
+  const fillRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!isTransitioning || typeof requestAnimationFrame !== 'function') return;
+    let rafId = 0;
+    const tick = () => {
+      const p = Math.max(0, Math.min(1, getLivePlaybackPosition().transitionProgress01));
+      if (fillRef.current) {
+        fillRef.current.style.transform = `scaleX(${p.toFixed(4)})`;
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => {
+      if (rafId && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafId);
+    };
+  }, [isTransitioning]);
+
   if (!isTransitioning) return null;
   return (
     <div className="h-1 w-full overflow-hidden rounded-full bg-white/15">
       <div
-        className="h-full rounded-full bg-white transition-[width] duration-100"
-        style={{ width: `${Math.round(transitionProgress01 * 100)}%` }}
+        ref={fillRef}
+        className="h-full w-full origin-left rounded-full bg-white will-change-transform"
+        style={{ transform: `scaleX(${Math.max(0, Math.min(1, getLivePlaybackPosition().transitionProgress01)).toFixed(4)})` }}
       />
     </div>
   );

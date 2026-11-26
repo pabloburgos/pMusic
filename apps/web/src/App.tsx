@@ -1193,7 +1193,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     >
       {/* Unified Desktop Header & Integrated Frameless Windows Drag Bar (borderless unified canvas) */}
       {!isMobileViewport && (
-        <header className="pm-canvas relative z-30 flex h-12 w-full shrink-0 items-center gap-2 px-3">
+        <header className={`pm-canvas relative z-30 flex h-12 w-full shrink-0 items-center gap-2 px-3 ${nowPlayingOpen ? 'pm-behind-nowplaying' : ''}`}>
           <div className="pm-no-drag relative z-20 flex shrink-0 items-center gap-2">
             <button
               type="button"
@@ -1310,11 +1310,11 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       {isMobileViewport && (
         <div
           data-testid="mobile-top-header"
-          className={
+          className={`${nowPlayingOpen ? 'pm-behind-nowplaying ' : ''}${
             isFullBleedHeroView
               ? 'fixed inset-x-0 top-0 z-40 flex items-center justify-between gap-3 bg-gradient-to-b from-black/65 via-black/25 to-transparent px-4 pt-[max(0.8rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3'
               : 'pm-mobile-glass-header sticky top-0 z-40 flex shrink-0 items-center justify-between gap-3 px-4 pt-[max(0.8rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3'
-          }
+          }`}
         >
           <div className="flex items-center gap-2.5">
             {activeDetailView ? (
@@ -1359,7 +1359,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       )}
 
       <div
-        className={`relative z-10 flex min-h-0 flex-1 ${
+        className={`relative z-10 flex min-h-0 flex-1 ${nowPlayingOpen ? 'pm-behind-nowplaying ' : ''}${
           !isMobileViewport
             ? playerBarStyle === 'floating-island'
               ? 'gap-3 px-3 pt-3 pb-3'
@@ -2352,7 +2352,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
             scrubDraggingRef.current = false;
             setDockHoverPct(null);
           }}
-          className={`pm-glass-regular fixed z-40 grid select-none items-center gap-4 overflow-visible ${
+          className={`pm-glass-regular fixed z-40 grid select-none items-center gap-4 overflow-visible ${nowPlayingOpen ? 'pm-behind-nowplaying ' : ''}${
             playerBarStyle === 'floating-island'
               ? 'left-1/2 bottom-3.5 h-[72px] w-[min(880px,calc(100%-32px))] -translate-x-1/2 cursor-pointer grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] rounded-full px-5'
               : playerBarStyle === 'minimal-wave'
@@ -3296,7 +3296,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
             }}
             onPointerDown={(e) => handleMiniPlayerSwipeStart(e.clientX)}
             onPointerUp={(e) => handleMiniPlayerSwipeEnd(e.clientX)}
-            className="pm-glass-regular fixed inset-x-3 bottom-[calc(5.25rem+var(--pm-safe-bottom,env(safe-area-inset-bottom)))] z-40 overflow-hidden rounded-[18px] px-3 py-2"
+            className={`pm-glass-regular fixed inset-x-3 bottom-[calc(5.25rem+var(--pm-safe-bottom,env(safe-area-inset-bottom)))] z-40 overflow-hidden rounded-[18px] px-3 py-2 ${nowPlayingOpen ? 'pm-behind-nowplaying' : ''}`}
           >
             {remoteControlledDeviceId && (
               <button
@@ -3512,7 +3512,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
             role="tablist"
             aria-label="Navegación móvil"
             data-testid="mobile-tab-bar"
-            className="pm-glass-regular fixed inset-x-3 bottom-[max(0.75rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] z-40 grid grid-cols-5 gap-1 rounded-[22px] p-1.5"
+            className={`pm-glass-regular fixed inset-x-3 bottom-[max(0.75rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] z-40 grid grid-cols-5 gap-1 rounded-[22px] p-1.5 ${nowPlayingOpen ? 'pm-behind-nowplaying' : ''}`}
           >
             {navTabs.map((item) => {
               const active = activeTab === item.id;

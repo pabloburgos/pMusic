@@ -22,9 +22,9 @@
 [data-theme="obsidian"] {
   color-scheme: dark;
   transition:
-    --pm-ambient-1 1.6s cubic-bezier(0.22, 1, 0.36, 1),
-    --pm-ambient-2 1.6s cubic-bezier(0.22, 1, 0.36, 1),
-    --pm-ambient-3 1.6s cubic-bezier(0.22, 1, 0.36, 1);
+    --pm-ambient-1 var(--pm-ambient-transition-ms, 1.6s) cubic-bezier(0.22, 1, 0.36, 1),
+    --pm-ambient-2 var(--pm-ambient-transition-ms, 1.6s) cubic-bezier(0.22, 1, 0.36, 1),
+    --pm-ambient-3 var(--pm-ambient-transition-ms, 1.6s) cubic-bezier(0.22, 1, 0.36, 1);
   --pm-font-display: "Bricolage Grotesque", -apple-system, BlinkMacSystemFont, sans-serif;
   --pm-font-body: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --pm-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
@@ -3382,6 +3382,14 @@ html.pm-app-hidden .pm-overlay-scrollbar-track {
   opacity: 0 !important;
 }
 
+/* Pause background glass blur & animations underneath fullscreen NowPlayingSheet */
+.pm-behind-nowplaying,
+.pm-behind-nowplaying * {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  animation-play-state: paused !important;
+}
+
 /* ── pMusic Wrapped Epic Motion Graphics ── */
 @keyframes pmWrappedSlideIn {
   0% {
@@ -3534,9 +3542,14 @@ html.pm-reduced-motion .pm-heart-liquid-pop {
   color: #22242c;
 }
 
-[data-testid="now-playing-sheet"] :is(h1, p, span, button, svg, input, .pm-indicator-dot, [data-testid="nowplaying-progress-fill"]):not(.pm-hud-dark):not(.pm-hud-dark *),
+[data-testid="now-playing-sheet"] :is(h1, p, span, button, svg, .pm-indicator-dot, [data-testid="nowplaying-progress-fill"]):not(.pm-hud-dark):not(.pm-hud-dark *):not(.pm-sing-word) {
+  transition-property: color, background-color, border-color;
+  transition-duration: var(--pm-ink-transition-ms, 650ms);
+  transition-timing-function: ease;
+}
+
 [data-testid="bright-media-scrim"] {
-  transition-property: color, background-color, border-color, opacity, background;
+  transition-property: opacity, background-color;
   transition-duration: var(--pm-ink-transition-ms, 650ms);
   transition-timing-function: ease;
 }

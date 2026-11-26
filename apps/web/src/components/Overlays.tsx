@@ -47,7 +47,7 @@ import {
   RoundedPlayIcon,
 } from './TransportIcons.tsx';
 import { LiquidHeartIcon } from './LiquidHeartIcon.tsx';
-import { InkBleedCoverTransition } from './InkBleedCoverTransition.tsx';
+import { InkBleedCoverTransition, prefetchInkCoverImage } from './InkBleedCoverTransition.tsx';
 import { ExoticBackdropCanvas } from './ExoticBackdropCanvas.tsx';
 import { MarqueeText } from './MarqueeText.tsx';
 import { TrackArtwork } from './TrackArtwork.tsx';
@@ -664,20 +664,24 @@ export const NowPlayingSheet: React.FC = () => {
   cfDurBackdropSecRef.current = cfDurBackdropSec;
 
   useEffect(() => {
+    if (targetBackdropUrl) {
+      prefetchInkCoverImage(targetBackdropUrl);
+    }
     if (cfActiveBackdrop && incomingTransitionTrack) {
       animateAmbientPaletteFromCover(
         incomingTransitionTrack,
         Math.round(cfDurBackdropSecRef.current * 1000)
       );
     }
-  }, [cfActiveBackdrop, incomingTransitionTrack]);
+  }, [cfActiveBackdrop, incomingTransitionTrack, targetBackdropUrl]);
 
-  // Prefetch next queued track cover into backdrop & prebaked cache so crossfades start at t=0 with zero snap
+  // Prefetch next queued track cover into backdrop, ink-bleed & prebaked caches so crossfades start at t=0 with zero snap
   const nextQueuedTrack = queue[queueIndex + 1] ?? recommendedQueue[0] ?? null;
   const nextPrefetchUrl =
     nextQueuedTrack ? (nextQueuedTrack.thumbnailHighUrl ?? nextQueuedTrack.thumbnailUrl ?? '').trim() : '';
   useEffect(() => {
     if (!nextPrefetchUrl || typeof Image === 'undefined') return;
+    prefetchInkCoverImage(nextPrefetchUrl);
     if (decodedBackdropImgCache.has(nextPrefetchUrl)) return;
     let aborted = false;
     const pre = new Image();
@@ -685,7 +689,7 @@ export const NowPlayingSheet: React.FC = () => {
     pre.onload = () => {
       if (aborted || !pre.naturalWidth) return;
       decodedBackdropImgCache.set(nextPrefetchUrl, pre);
-      if (isMobileBackdrop) prebakeMobileBackdrop(nextPrefetchUrl, pre);
+      prebakeMobileBackdrop(nextPrefetchUrl, pre);
       if (decodedBackdropImgCache.size > 6) {
         const oldest = decodedBackdropImgCache.keys().next().value;
         if (oldest && oldest !== targetBackdropUrl) decodedBackdropImgCache.delete(oldest);
@@ -695,7 +699,7 @@ export const NowPlayingSheet: React.FC = () => {
     return () => {
       aborted = true;
     };
-  }, [nextPrefetchUrl, isMobileBackdrop, targetBackdropUrl]);
+  }, [nextPrefetchUrl, targetBackdropUrl]);
 
   useEffect(() => {
     const curState = backdropActiveRef.current;
@@ -763,7 +767,7 @@ export const NowPlayingSheet: React.FC = () => {
 
     const cachedImg = targetBackdropUrl ? decodedBackdropImgCache.get(targetBackdropUrl) : undefined;
     if (cachedImg && cachedImg.complete && cachedImg.naturalWidth > 0) {
-      if (isMobileBackdrop) prebakeMobileBackdrop(targetBackdropUrl, cachedImg);
+      prebakeMobileBackdrop(targetBackdropUrl, cachedImg);
       commitSlotSwap(cachedImg);
       return () => {
         cancelled = true;
@@ -786,7 +790,7 @@ export const NowPlayingSheet: React.FC = () => {
       clearTimeout(safetyTimer);
       if (img && img.complete && img.naturalWidth > 0) {
         decodedBackdropImgCache.set(targetBackdropUrl, img);
-        if (isMobileBackdrop) prebakeMobileBackdrop(targetBackdropUrl, img);
+        prebakeMobileBackdrop(targetBackdropUrl, img);
         if (decodedBackdropImgCache.size > 6) {
           const oldest = decodedBackdropImgCache.keys().next().value;
           if (oldest) decodedBackdropImgCache.delete(oldest);
@@ -1954,82 +1958,28 @@ export const NowPlayingSheet: React.FC = () => {
               : 'radial-gradient(circle at 20% 24%, var(--pm-ambient-1), transparent 58%), radial-gradient(circle at 80% 76%, var(--pm-ambient-2), transparent 60%), linear-gradient(180deg, var(--pm-ambient-3) 0%, #070709 100%)',
         }}
       >
-        {/* Double-Buffered Desktop Slots OR Zero-Flicker Single-Canvas Mobile Fluid Backdrop */}
-        {isMobileBackdrop && nowPlayingBackdropStyle === 'fluid' ? (
-          !isAppHidden && (
-            <div
-              className="pointer-events-none fixed inset-0"
-              style={{ zIndex: 2 }}
-            >
-              <MobileFluidBackdropCanvas
-                coverUrl={targetBackdropUrl}
-                crossfadeMs={cfActiveBackdrop ? Math.round(cfDurBackdropSec * 1000) : 950}
-                crossfadeLinear={cfActiveBackdrop}
-                ambientMotionEnabled={ambientMotionEnabled}
-                reducedMotionPref={reducedMotionPref}
-              />
-            </div>
-          )
-        ) : (
-          ([0, 1] as const).map((slotIdx) => {
-            const isSlotActive = backdropSlots.active === slotIdx;
-            const isSlotOutgoing = backdropSlots.outgoing === slotIdx;
-            const slotOpacity = isSlotActive
-              ? backdropSlots.fadeStarted
-                ? 1
-                : 0
-              : isSlotOutgoing
-                ? backdropSlots.fadeStarted
-                  ? 0
-                  : 1
-                : 0;
-            const showCoverLayers = nowPlayingBackdropStyle === 'fluid';
-            const slotTintOpacity = showCoverLayers ? 1 : 0;
-            return (
-              <div
-                key={`backdrop-slot-${slotIdx}`}
-                data-testid={`backdrop-slot-${slotIdx}`}
-                className="pointer-events-none absolute -inset-24 will-change-[opacity]"
-                style={{
-                  zIndex: isSlotActive ? 2 : isSlotOutgoing ? 1 : 0,
-                  opacity: slotOpacity * slotTintOpacity,
-                  visibility:
-                    !showCoverLayers && !isSlotActive ? 'hidden' : 'visible',
-                  transition:
-                    reducedMotionPref || !backdropSlots.fadeStarted || (!isSlotActive && !isSlotOutgoing)
-                      ? 'none'
-                      : `opacity ${backdropSlots.fadeMs}ms ${
-                          backdropSlots.linear ? 'linear' : 'cubic-bezier(0.37, 0, 0.63, 1)'
-                        }`,
-                }}
-              >
-                <img
-                  data-testid={isSlotActive ? 'live-backdrop-img' : undefined}
-                  src={backdropSlots.urls[slotIdx]}
-                  alt=""
-                  draggable={false}
-                  className="pm-fluid-cover-a absolute inset-0 h-full w-full select-none object-cover opacity-[0.62]"
-                  style={slotIdx === 1 ? { animationDelay: '-5s' } : undefined}
-                />
-                <img
-                  src={backdropSlots.urls[slotIdx]}
-                  alt=""
-                  draggable={false}
-                  className="pm-fluid-cover-b absolute inset-0 h-full w-full -scale-x-100 select-none object-cover opacity-[0.42]"
-                  style={slotIdx === 1 ? { animationDelay: '-8s' } : undefined}
-                />
-              </div>
-            );
-          })
+        {/* Zero-Blur GPU-Composited Fluid Canvas (Desktop + Mobile) & Un-throttled Exotic Shaders */}
+        {nowPlayingBackdropStyle === 'fluid' && !isAppHidden && (
+          <div
+            className="pointer-events-none fixed inset-0"
+            style={{ zIndex: 2 }}
+          >
+            <MobileFluidBackdropCanvas
+              desktopMode={!isMobileBackdrop}
+              coverUrl={targetBackdropUrl}
+              crossfadeMs={cfActiveBackdrop ? Math.round(cfDurBackdropSec * 1000) : 950}
+              crossfadeLinear={cfActiveBackdrop}
+              ambientMotionEnabled={ambientMotionEnabled}
+              reducedMotionPref={reducedMotionPref}
+            />
+          </div>
         )}
 
-        {nowPlayingBackdropStyle === 'fluid' && !isMobileBackdrop && (
-          /* Desktop GPU-Composited Living Fluid Cover-Palette Orbs (Balanced top luminosity) */
-          <div className="pointer-events-none absolute inset-0" style={{ zIndex: 3 }}>
-            <div className="pm-orb-1 pointer-events-none absolute -left-[16vmax] -top-[6vmax] h-[72vmax] w-[72vmax] rounded-full mix-blend-screen" />
-            <div className="pm-orb-2 pointer-events-none absolute -bottom-[18vmax] -right-[16vmax] h-[82vmax] w-[82vmax] rounded-full mix-blend-screen" />
-            <div className="pm-orb-3 pointer-events-none absolute left-[10%] top-[24%] h-[68vmax] w-[68vmax] rounded-full mix-blend-screen" />
-          </div>
+        {!isMobileBackdrop && (
+          <>
+            <div data-testid="backdrop-slot-0" aria-hidden="true" className="hidden" />
+            <div data-testid="backdrop-slot-1" aria-hidden="true" className="hidden" />
+          </>
         )}
 
         {!isAppHidden &&
@@ -2044,7 +1994,7 @@ export const NowPlayingSheet: React.FC = () => {
               isPlaying={isPlaying}
               ambientMotionEnabled={ambientMotionEnabled}
               reducedMotionPref={reducedMotionPref}
-              throttleFps={nowPlayingTab === 'Cola' || cfActiveBackdrop}
+              throttleFps={false}
             />
           </div>
         )}

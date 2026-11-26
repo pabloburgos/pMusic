@@ -1565,7 +1565,6 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           Math.abs(curBeforeUpdate.positionSec - safePos) >= 0.95 ||
           Math.abs(curBeforeUpdate.durationSec - safeDur) >= 0.25 ||
           (curBeforeUpdate.transitionProgress01 < 0.5 && engineState.transitionProgress01 >= 0.5) ||
-          Math.abs(curBeforeUpdate.transitionProgress01 - engineState.transitionProgress01) >= 0.08 ||
           (engineState.transitionProgress01 === 0 && curBeforeUpdate.transitionProgress01 !== 0) ||
           (engineState.transitionProgress01 === 1 && curBeforeUpdate.transitionProgress01 !== 1) ||
           curBeforeUpdate.activeLyricIndex !== activeIdx));

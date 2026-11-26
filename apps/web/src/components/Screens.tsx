@@ -126,7 +126,7 @@ const HeroIconAction: React.FC<{
     aria-pressed={pressed}
     disabled={disabled}
     onClick={onClick}
-    className={`group/act pm-pressable relative inline-flex h-10 w-10 items-center justify-center rounded-lg border-0 bg-transparent transition-transform duration-150 hover:scale-115 active:scale-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 disabled:pointer-events-none disabled:opacity-35 ${className}`}
+    className={`group/act pm-pressable relative inline-flex h-12 w-12 sm:h-14 sm:w-14 items-center justify-center rounded-lg border-0 bg-transparent transition-transform duration-150 hover:scale-115 active:scale-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 disabled:pointer-events-none disabled:opacity-35 ${className}`}
   >
     {children}
     <span
@@ -1107,12 +1107,12 @@ export const DetailViewPanel: React.FC = () => {
                 aria-label={isPlayingThisArtist && isPlaying ? 'Pausar' : 'Reproducir'}
                 onClick={handleArtistPlay}
                 disabled={isArtistLoading && topSongs.length === 0}
-                className="pm-pressable flex h-14 w-14 items-center justify-center overflow-visible bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.6)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none disabled:opacity-40 sm:h-16 sm:w-16"
+                className="pm-pressable flex h-16 w-16 items-center justify-center overflow-visible bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.6)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none disabled:opacity-40 sm:h-[72px] sm:w-[72px]"
               >
                 {isPlayingThisArtist && isPlaying ? (
-                  <RoundedPauseIcon className="h-[46px] w-[46px] sm:h-[56px] sm:w-[56px]" />
+                  <RoundedPauseIcon className="h-[56px] w-[56px] sm:h-[66px] sm:w-[66px]" />
                 ) : (
-                  <RoundedPlayIcon className="h-[46px] w-[46px] translate-x-[2px] sm:h-[56px] sm:w-[56px]" />
+                  <RoundedPlayIcon className="h-[56px] w-[56px] translate-x-[2px] sm:h-[66px] sm:w-[66px]" />
                 )}
               </button>
             </div>
@@ -1457,8 +1457,8 @@ export const DetailViewPanel: React.FC = () => {
             }}
           />
 
-          <div className="relative z-10 flex flex-col gap-5">
-            <div className="flex min-w-0 flex-row items-center gap-3.5 sm:items-end sm:gap-6">
+          <div className="relative z-10 flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+            <div className="flex min-w-0 flex-1 flex-row items-center gap-3.5 sm:items-end sm:gap-6">
               {albumHeroCover ? (
                 <div className="h-[104px] w-[104px] shrink-0 overflow-hidden rounded-[14px] shadow-[0_22px_50px_rgba(0,0,0,0.62)] ring-1 ring-white/15 sm:h-40 sm:w-40 sm:rounded-[16px]">
                   <TrackArtwork
@@ -1510,28 +1510,7 @@ export const DetailViewPanel: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
-              <button
-                type="button"
-                aria-label={isPlayingAlbum ? 'Pausar álbum' : 'Reproducir álbum'}
-                title={isPlayingAlbum ? 'Pausar' : 'Reproducir'}
-                disabled={isAlbumLoading && tracks.length === 0}
-                onClick={() => {
-                  if (isPlayingAlbum) {
-                    void togglePlayPause();
-                  } else if (tracks[0]) {
-                    void playCollection(tracks);
-                  }
-                }}
-                className="pm-pressable mr-1.5 flex h-12 w-12 items-center justify-center overflow-visible border-0 bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.65)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none disabled:opacity-40 sm:h-14 sm:w-14"
-              >
-                {isPlayingAlbum ? (
-                  <RoundedPauseIcon className="h-[44px] w-[44px] sm:h-[50px] sm:w-[50px]" />
-                ) : (
-                  <RoundedPlayIcon className="h-[44px] w-[44px] translate-x-[2px] sm:h-[50px] sm:w-[50px]" />
-                )}
-              </button>
-
+            <div className="relative flex shrink-0 flex-wrap items-center justify-end gap-2 self-end sm:gap-3 md:pb-0.5">
               <HeroIconAction
                 label="Aleatorio"
                 tooltip="Reproducir en aleatorio"
@@ -1546,7 +1525,7 @@ export const DetailViewPanel: React.FC = () => {
                 }}
                 className="text-white/85 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-white"
               >
-                <Shuffle className="h-[22px] w-[22px] sm:h-6 sm:w-6" />
+                <Shuffle className="h-6 w-6 sm:h-7 sm:w-7" />
               </HeroIconAction>
 
               <HeroIconAction
@@ -1577,14 +1556,14 @@ export const DetailViewPanel: React.FC = () => {
                 className="text-white/85 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-white"
               >
                 {isDownloadingAlbum ? (
-                  <Loader2 className="h-[22px] w-[22px] animate-spin text-emerald-300 sm:h-6 sm:w-6" />
+                  <Loader2 className="h-6 w-6 animate-spin text-emerald-300 sm:h-7 sm:w-7" />
                 ) : allAlbumDownloaded ? (
                   <Check
                     strokeWidth={2.5}
-                    className="h-[22px] w-[22px] text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.6)] sm:h-6 sm:w-6"
+                    className="h-6 w-6 text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.6)] sm:h-7 sm:w-7"
                   />
                 ) : (
-                  <Download className="h-[22px] w-[22px] sm:h-6 sm:w-6" />
+                  <Download className="h-6 w-6 sm:h-7 sm:w-7" />
                 )}
               </HeroIconAction>
 
@@ -1599,13 +1578,13 @@ export const DetailViewPanel: React.FC = () => {
                   }
                   className="text-white/85 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-white"
                 >
-                  <MoreHorizontal className="h-[22px] w-[22px] sm:h-6 sm:w-6" />
+                  <MoreHorizontal className="h-6 w-6 sm:h-7 sm:w-7" />
                 </HeroIconAction>
 
                 {heroMoreMenuId === `album:${album.id}` && (
                   <div
                     role="menu"
-                    className="pm-menu-glass pm-modal-pop absolute left-0 top-11 z-40 w-60 space-y-0.5 rounded-[14px] p-1.5"
+                    className="pm-menu-glass pm-modal-pop absolute right-0 top-14 z-40 w-60 space-y-0.5 rounded-[14px] p-1.5"
                   >
                     <button
                       type="button"
@@ -1636,6 +1615,27 @@ export const DetailViewPanel: React.FC = () => {
                   </div>
                 )}
               </div>
+
+              <button
+                type="button"
+                aria-label={isPlayingAlbum ? 'Pausar álbum' : 'Reproducir álbum'}
+                title={isPlayingAlbum ? 'Pausar' : 'Reproducir'}
+                disabled={isAlbumLoading && tracks.length === 0}
+                onClick={() => {
+                  if (isPlayingAlbum) {
+                    void togglePlayPause();
+                  } else if (tracks[0]) {
+                    void playCollection(tracks);
+                  }
+                }}
+                className="pm-pressable ml-1 flex h-[72px] w-[72px] items-center justify-center overflow-visible border-0 bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.65)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none disabled:opacity-40 sm:h-[86px] sm:w-[86px]"
+              >
+                {isPlayingAlbum ? (
+                  <RoundedPauseIcon className="h-[64px] w-[64px] sm:h-[78px] sm:w-[78px]" />
+                ) : (
+                  <RoundedPlayIcon className="h-[64px] w-[64px] translate-x-[2px] sm:h-[78px] sm:w-[78px]" />
+                )}
+              </button>
             </div>
           </div>
         </section>
@@ -1702,8 +1702,8 @@ export const DetailViewPanel: React.FC = () => {
                 'linear-gradient(180deg, color-mix(in srgb, var(--pm-bg-canvas) 22%, transparent) 0%, color-mix(in srgb, var(--pm-bg-canvas) 55%, transparent) 55%, var(--pm-bg-canvas) 100%)',
             }}
           />
-          <div className="relative z-10 flex flex-col gap-5">
-            <div className="flex min-w-0 flex-row items-center gap-3.5 sm:items-end sm:gap-6">
+          <div className="relative z-10 flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+            <div className="flex min-w-0 flex-1 flex-row items-center gap-3.5 sm:items-end sm:gap-6">
               <img
                 src={edCover}
                 alt={playlist.title}
@@ -1739,37 +1739,7 @@ export const DetailViewPanel: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
-              <button
-                type="button"
-                aria-label={
-                  isPlaying && currentTrack && tracks.some((t) => t.id === currentTrack.id)
-                    ? 'Pausar'
-                    : 'Reproducir'
-                }
-                title={
-                  isPlaying && currentTrack && tracks.some((t) => t.id === currentTrack.id)
-                    ? 'Pausar'
-                    : shuffleEnabled || alwaysShuffle
-                      ? 'Reproducir en aleatorio'
-                      : 'Reproducir'
-                }
-                onClick={() => {
-                  if (isPlaying && currentTrack && tracks.some((t) => t.id === currentTrack.id)) {
-                    void togglePlayPause();
-                  } else if (tracks.length > 0) {
-                    void playCollection(tracks, { isPlaylist: true });
-                  }
-                }}
-                className="pm-pressable mr-1.5 flex h-12 w-12 items-center justify-center overflow-visible border-0 bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.65)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none disabled:opacity-40 sm:h-14 sm:w-14"
-              >
-                {isPlaying && currentTrack && tracks.some((t) => t.id === currentTrack.id) ? (
-                  <RoundedPauseIcon className="h-[44px] w-[44px] sm:h-[50px] sm:w-[50px]" />
-                ) : (
-                  <RoundedPlayIcon className="h-[44px] w-[44px] translate-x-[2px] sm:h-[50px] sm:w-[50px]" />
-                )}
-              </button>
-
+            <div className="relative flex shrink-0 flex-wrap items-center justify-end gap-2 self-end sm:gap-3 md:pb-0.5">
               <HeroIconAction
                 label={
                   isDownloadingThis
@@ -1798,14 +1768,14 @@ export const DetailViewPanel: React.FC = () => {
                 className="text-white/85 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-white"
               >
                 {isDownloadingThis ? (
-                  <Loader2 className="h-[22px] w-[22px] animate-spin text-emerald-300 sm:h-6 sm:w-6" />
+                  <Loader2 className="h-6 w-6 animate-spin text-emerald-300 sm:h-7 sm:w-7" />
                 ) : allDownloaded ? (
                   <Check
                     strokeWidth={2.5}
-                    className="h-[22px] w-[22px] text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.6)] sm:h-6 sm:w-6"
+                    className="h-6 w-6 text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.6)] sm:h-7 sm:w-7"
                   />
                 ) : (
-                  <Download className="h-[22px] w-[22px] sm:h-6 sm:w-6" />
+                  <Download className="h-6 w-6 sm:h-7 sm:w-7" />
                 )}
               </HeroIconAction>
 
@@ -1821,13 +1791,13 @@ export const DetailViewPanel: React.FC = () => {
                   }
                   className="text-white/85 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-white"
                 >
-                  <MoreHorizontal className="h-[22px] w-[22px] sm:h-6 sm:w-6" />
+                  <MoreHorizontal className="h-6 w-6 sm:h-7 sm:w-7" />
                 </HeroIconAction>
 
                 {heroMoreMenuId === `ed:${playlist.id}` && (
                   <div
                     role="menu"
-                    className="pm-menu-glass pm-modal-pop absolute left-0 top-11 z-40 w-60 space-y-0.5 rounded-[14px] p-1.5"
+                    className="pm-menu-glass pm-modal-pop absolute right-0 top-14 z-40 w-60 space-y-0.5 rounded-[14px] p-1.5"
                   >
                     <button
                       type="button"
@@ -1858,6 +1828,36 @@ export const DetailViewPanel: React.FC = () => {
                   </div>
                 )}
               </div>
+
+              <button
+                type="button"
+                aria-label={
+                  isPlaying && currentTrack && tracks.some((t) => t.id === currentTrack.id)
+                    ? 'Pausar'
+                    : 'Reproducir'
+                }
+                title={
+                  isPlaying && currentTrack && tracks.some((t) => t.id === currentTrack.id)
+                    ? 'Pausar'
+                    : shuffleEnabled || alwaysShuffle
+                      ? 'Reproducir en aleatorio'
+                      : 'Reproducir'
+                }
+                onClick={() => {
+                  if (isPlaying && currentTrack && tracks.some((t) => t.id === currentTrack.id)) {
+                    void togglePlayPause();
+                  } else if (tracks.length > 0) {
+                    void playCollection(tracks, { isPlaylist: true });
+                  }
+                }}
+                className="pm-pressable ml-1 flex h-[72px] w-[72px] items-center justify-center overflow-visible border-0 bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.65)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none disabled:opacity-40 sm:h-[86px] sm:w-[86px]"
+              >
+                {isPlaying && currentTrack && tracks.some((t) => t.id === currentTrack.id) ? (
+                  <RoundedPauseIcon className="h-[64px] w-[64px] sm:h-[78px] sm:w-[78px]" />
+                ) : (
+                  <RoundedPlayIcon className="h-[64px] w-[64px] translate-x-[2px] sm:h-[78px] sm:w-[78px]" />
+                )}
+              </button>
             </div>
           </div>
         </section>
@@ -2138,8 +2138,8 @@ export const DetailViewPanel: React.FC = () => {
           data-testid="playlist-classic-header"
           className="pm-surface-card relative rounded-[20px] p-4 sm:p-6"
         >
-          <div className="flex flex-col gap-5">
-            <div className="flex min-w-0 flex-row items-center gap-3.5 sm:items-end sm:gap-6">
+          <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+            <div className="flex min-w-0 flex-1 flex-row items-center gap-3.5 sm:items-end sm:gap-6">
               {renderCoverButton(
                 'h-[104px] w-[104px] rounded-[14px] shadow-[0_18px_40px_rgba(0,0,0,0.45)] sm:h-40 sm:w-40 sm:rounded-[16px]'
               )}
@@ -2196,8 +2196,8 @@ export const DetailViewPanel: React.FC = () => {
           }}
         />
 
-        <div className="relative z-10 flex flex-col gap-5">
-          <div className="flex min-w-0 flex-row items-center gap-3.5 sm:items-end sm:gap-6">
+        <div className="relative z-10 flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+          <div className="flex min-w-0 flex-1 flex-row items-center gap-3.5 sm:items-end sm:gap-6">
             {renderCoverButton(
               'h-[104px] w-[104px] rounded-[14px] shadow-[0_22px_50px_rgba(0,0,0,0.62)] ring-1 ring-white/15 sm:h-40 sm:w-40 sm:rounded-[16px]'
             )}
@@ -2260,7 +2260,87 @@ export const DetailViewPanel: React.FC = () => {
             </h1>
           ),
           actionsRow: (
-            <div className="relative flex flex-wrap items-center gap-2 sm:gap-2.5">
+            <div className="relative flex shrink-0 flex-wrap items-center justify-end gap-2 self-end sm:gap-3 md:pb-0.5">
+              <HeroIconAction
+                label={
+                  isDownloadingThis
+                    ? `Descargando ${playlistDownloadProgress.completed} de ${playlistDownloadProgress.total}`
+                    : allDownloaded
+                      ? 'Descargada offline'
+                      : 'Descargar offline'
+                }
+                tooltip={
+                  isDownloadingThis
+                    ? `Descargando ${playlistDownloadProgress.completed}/${playlistDownloadProgress.total}`
+                    : allDownloaded
+                      ? 'Descargada offline'
+                      : 'Descargar para escuchar sin conexión'
+                }
+                disabled={sharedPl.tracks.length === 0}
+                badge={
+                  isDownloadingThis
+                    ? `${playlistDownloadProgress.completed}/${playlistDownloadProgress.total}`
+                    : null
+                }
+                onClick={() => {
+                  if (isDownloadingThis) cancelPlaylistDownload();
+                  else void downloadPlaylistOffline(sharedPl.id, sharedPl.tracks, sharedPl.name);
+                }}
+                className="text-white/85 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-white"
+              >
+                {isDownloadingThis ? (
+                  <Loader2 className="h-6 w-6 animate-spin text-emerald-300 sm:h-7 sm:w-7" />
+                ) : allDownloaded ? (
+                  <Check
+                    strokeWidth={2.5}
+                    className="h-6 w-6 text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.6)] sm:h-7 sm:w-7"
+                  />
+                ) : (
+                  <Download className="h-6 w-6 sm:h-7 sm:w-7" />
+                )}
+              </HeroIconAction>
+
+              <HeroIconAction
+                label="Añadir canciones"
+                tooltip={isAddOpen ? 'Ocultar buscador' : 'Añadir canciones'}
+                pressed={isAddOpen}
+                onClick={() => setAddFinderOverride(!isAddOpen)}
+                className={`drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] ${
+                  isAddOpen ? 'text-white' : 'text-white/85 hover:text-white'
+                }`}
+              >
+                <Plus
+                  strokeWidth={2.4}
+                  className={`h-6 w-6 transition-transform duration-200 sm:h-7 sm:w-7 ${
+                    isAddOpen ? 'rotate-45' : ''
+                  }`}
+                />
+              </HeroIconAction>
+
+              <HeroIconAction
+                label="Invitar colaboradores"
+                tooltip="Invitar / Compartir enlace"
+                onClick={() => setCollabModalOpen(true)}
+                className="text-emerald-300/90 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-emerald-200 hover:drop-shadow-[0_0_12px_rgba(52,211,153,0.65)]"
+              >
+                <UserPlus className="h-6 w-6 sm:h-7 sm:w-7" />
+              </HeroIconAction>
+
+              <span aria-hidden="true" className="mx-0.5 h-6 w-px bg-white/15" />
+
+              <HeroIconAction
+                dataTestId="playlist-more-actions-btn"
+                label="Más acciones de playlist"
+                tooltip="Más opciones"
+                onClick={(e) => {
+                  const r = e.currentTarget.getBoundingClientRect();
+                  openPlaylistContextMenu('shared', sharedPl.id, Math.max(12, r.right - 250), r.bottom + 8);
+                }}
+                className="text-white/75 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-white"
+              >
+                <MoreHorizontal className="h-6 w-6 sm:h-7 sm:w-7" />
+              </HeroIconAction>
+
               <button
                 type="button"
                 aria-label={
@@ -2290,96 +2370,16 @@ export const DetailViewPanel: React.FC = () => {
                     void playCollection(sharedPl.tracks, { isPlaylist: true });
                   }
                 }}
-                className="pm-pressable mr-1.5 flex h-12 w-12 items-center justify-center overflow-visible border-0 bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.65)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none sm:h-14 sm:w-14"
+                className="pm-pressable ml-1 flex h-[72px] w-[72px] items-center justify-center overflow-visible border-0 bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.65)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none sm:h-[86px] sm:w-[86px]"
               >
                 {isPlaying &&
                 currentTrack &&
                 sharedPl.tracks.some((t) => t.id === currentTrack.id) ? (
-                  <RoundedPauseIcon className="h-[44px] w-[44px] sm:h-[50px] sm:w-[50px]" />
+                  <RoundedPauseIcon className="h-[64px] w-[64px] sm:h-[78px] sm:w-[78px]" />
                 ) : (
-                  <RoundedPlayIcon className="h-[44px] w-[44px] translate-x-[2px] sm:h-[50px] sm:w-[50px]" />
+                  <RoundedPlayIcon className="h-[64px] w-[64px] translate-x-[2px] sm:h-[78px] sm:w-[78px]" />
                 )}
               </button>
-
-              <HeroIconAction
-                label={
-                  isDownloadingThis
-                    ? `Descargando ${playlistDownloadProgress.completed} de ${playlistDownloadProgress.total}`
-                    : allDownloaded
-                      ? 'Descargada offline'
-                      : 'Descargar offline'
-                }
-                tooltip={
-                  isDownloadingThis
-                    ? `Descargando ${playlistDownloadProgress.completed}/${playlistDownloadProgress.total}`
-                    : allDownloaded
-                      ? 'Descargada offline'
-                      : 'Descargar para escuchar sin conexión'
-                }
-                disabled={sharedPl.tracks.length === 0}
-                badge={
-                  isDownloadingThis
-                    ? `${playlistDownloadProgress.completed}/${playlistDownloadProgress.total}`
-                    : null
-                }
-                onClick={() => {
-                  if (isDownloadingThis) cancelPlaylistDownload();
-                  else void downloadPlaylistOffline(sharedPl.id, sharedPl.tracks, sharedPl.name);
-                }}
-                className="text-white/85 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-white"
-              >
-                {isDownloadingThis ? (
-                  <Loader2 className="h-[22px] w-[22px] animate-spin text-emerald-300 sm:h-6 sm:w-6" />
-                ) : allDownloaded ? (
-                  <Check
-                    strokeWidth={2.5}
-                    className="h-[22px] w-[22px] text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.6)] sm:h-6 sm:w-6"
-                  />
-                ) : (
-                  <Download className="h-[22px] w-[22px] sm:h-6 sm:w-6" />
-                )}
-              </HeroIconAction>
-
-              <HeroIconAction
-                label="Añadir canciones"
-                tooltip={isAddOpen ? 'Ocultar buscador' : 'Añadir canciones'}
-                pressed={isAddOpen}
-                onClick={() => setAddFinderOverride(!isAddOpen)}
-                className={`drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] ${
-                  isAddOpen ? 'text-white' : 'text-white/85 hover:text-white'
-                }`}
-              >
-                <Plus
-                  strokeWidth={2.4}
-                  className={`h-[22px] w-[22px] transition-transform duration-200 sm:h-6 sm:w-6 ${
-                    isAddOpen ? 'rotate-45' : ''
-                  }`}
-                />
-              </HeroIconAction>
-
-              <HeroIconAction
-                label="Invitar colaboradores"
-                tooltip="Invitar / Compartir enlace"
-                onClick={() => setCollabModalOpen(true)}
-                className="text-emerald-300/90 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-emerald-200 hover:drop-shadow-[0_0_12px_rgba(52,211,153,0.65)]"
-              >
-                <UserPlus className="h-[22px] w-[22px] sm:h-6 sm:w-6" />
-              </HeroIconAction>
-
-              <span aria-hidden="true" className="mx-0.5 h-5 w-px bg-white/15" />
-
-              <HeroIconAction
-                dataTestId="playlist-more-actions-btn"
-                label="Más acciones de playlist"
-                tooltip="Más opciones"
-                onClick={(e) => {
-                  const r = e.currentTarget.getBoundingClientRect();
-                  openPlaylistContextMenu('shared', sharedPl.id, r.left, r.bottom + 8);
-                }}
-                className="text-white/60 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-white"
-              >
-                <MoreHorizontal className="h-5 w-5" />
-              </HeroIconAction>
             </div>
           ),
         })}
@@ -2633,7 +2633,90 @@ export const DetailViewPanel: React.FC = () => {
           </div>
         ),
         actionsRow: (
-          <div className="relative flex flex-wrap items-center gap-2 sm:gap-2.5">
+          <div className="relative flex shrink-0 flex-wrap items-center justify-end gap-2 self-end sm:gap-3 md:pb-0.5">
+            <HeroIconAction
+              label={
+                isDownloadingThis
+                  ? `Descargando ${playlistDownloadProgress.completed} de ${playlistDownloadProgress.total}`
+                  : allDownloaded
+                    ? 'Descargada offline'
+                    : 'Descargar offline'
+              }
+              tooltip={
+                isDownloadingThis
+                  ? `Descargando ${playlistDownloadProgress.completed}/${playlistDownloadProgress.total}`
+                  : allDownloaded
+                    ? 'Descargada offline'
+                    : 'Descargar para escuchar sin conexión'
+              }
+              disabled={localPl.tracks.length === 0}
+              badge={
+                isDownloadingThis
+                  ? `${playlistDownloadProgress.completed}/${playlistDownloadProgress.total}`
+                  : null
+              }
+              onClick={() => {
+                if (isDownloadingThis) cancelPlaylistDownload();
+                else void downloadPlaylistOffline(localPl.id, localPl.tracks, localPl.name);
+              }}
+              className="text-white/85 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-white"
+            >
+              {isDownloadingThis ? (
+                <Loader2 className="h-6 w-6 animate-spin text-emerald-300 sm:h-7 sm:w-7" />
+              ) : allDownloaded ? (
+                <Check
+                  strokeWidth={2.5}
+                  className="h-6 w-6 text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.6)] sm:h-7 sm:w-7"
+                />
+              ) : (
+                <Download className="h-6 w-6 sm:h-7 sm:w-7" />
+              )}
+            </HeroIconAction>
+
+            <HeroIconAction
+              dataTestId="playlist-add-songs-btn"
+              label="Añadir canciones"
+              tooltip={isAddFinderOpen ? 'Ocultar buscador' : 'Añadir canciones'}
+              pressed={isAddFinderOpen}
+              onClick={() => setAddFinderOverride(!isAddFinderOpen)}
+              className={`drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] ${
+                isAddFinderOpen ? 'text-white' : 'text-white/85 hover:text-white'
+              }`}
+            >
+              <Plus
+                strokeWidth={2.4}
+                className={`h-6 w-6 transition-transform duration-200 sm:h-7 sm:w-7 ${
+                  isAddFinderOpen ? 'rotate-45' : ''
+                }`}
+              />
+            </HeroIconAction>
+
+            {localPl.isCollaborative && (
+              <HeroIconAction
+                label="Colaborativa · Invitar"
+                tooltip="Invitar colaboradores"
+                onClick={() => setCollabModalOpen(true)}
+                className="text-emerald-300/90 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-emerald-200 hover:drop-shadow-[0_0_12px_rgba(52,211,153,0.65)]"
+              >
+                <Users className="h-6 w-6 sm:h-7 sm:w-7" />
+              </HeroIconAction>
+            )}
+
+            <span aria-hidden="true" className="mx-0.5 h-6 w-px bg-white/15" />
+
+            <HeroIconAction
+              dataTestId="playlist-more-actions-btn"
+              label="Más acciones de playlist"
+              tooltip="Más opciones"
+              onClick={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                openPlaylistContextMenu('local', localPl.id, Math.max(12, r.right - 250), r.bottom + 8);
+              }}
+              className="text-white/75 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-white"
+            >
+              <MoreHorizontal className="h-6 w-6 sm:h-7 sm:w-7" />
+            </HeroIconAction>
+
             <button
               type="button"
               aria-label={
@@ -2664,99 +2747,16 @@ export const DetailViewPanel: React.FC = () => {
                   void playCollection(localPl.tracks, { isPlaylist: true });
                 }
               }}
-              className="pm-pressable mr-1.5 flex h-12 w-12 items-center justify-center overflow-visible border-0 bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.65)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none sm:h-14 sm:w-14"
+              className="pm-pressable ml-1 flex h-[72px] w-[72px] items-center justify-center overflow-visible border-0 bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.65)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none sm:h-[86px] sm:w-[86px]"
             >
               {isPlaying &&
               currentTrack &&
               localPl.tracks.some((t) => t.id === currentTrack.id) ? (
-                <RoundedPauseIcon className="h-[44px] w-[44px] sm:h-[50px] sm:w-[50px]" />
+                <RoundedPauseIcon className="h-[64px] w-[64px] sm:h-[78px] sm:w-[78px]" />
               ) : (
-                <RoundedPlayIcon className="h-[44px] w-[44px] translate-x-[2px] sm:h-[50px] sm:w-[50px]" />
+                <RoundedPlayIcon className="h-[64px] w-[64px] translate-x-[2px] sm:h-[78px] sm:w-[78px]" />
               )}
             </button>
-
-            <HeroIconAction
-              label={
-                isDownloadingThis
-                  ? `Descargando ${playlistDownloadProgress.completed} de ${playlistDownloadProgress.total}`
-                  : allDownloaded
-                    ? 'Descargada offline'
-                    : 'Descargar offline'
-              }
-              tooltip={
-                isDownloadingThis
-                  ? `Descargando ${playlistDownloadProgress.completed}/${playlistDownloadProgress.total}`
-                  : allDownloaded
-                    ? 'Descargada offline'
-                    : 'Descargar para escuchar sin conexión'
-              }
-              disabled={localPl.tracks.length === 0}
-              badge={
-                isDownloadingThis
-                  ? `${playlistDownloadProgress.completed}/${playlistDownloadProgress.total}`
-                  : null
-              }
-              onClick={() => {
-                if (isDownloadingThis) cancelPlaylistDownload();
-                else void downloadPlaylistOffline(localPl.id, localPl.tracks, localPl.name);
-              }}
-              className="text-white/85 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-white"
-            >
-              {isDownloadingThis ? (
-                <Loader2 className="h-[22px] w-[22px] animate-spin text-emerald-300 sm:h-6 sm:w-6" />
-              ) : allDownloaded ? (
-                <Check
-                  strokeWidth={2.5}
-                  className="h-[22px] w-[22px] text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.6)] sm:h-6 sm:w-6"
-                />
-              ) : (
-                <Download className="h-[22px] w-[22px] sm:h-6 sm:w-6" />
-              )}
-            </HeroIconAction>
-
-            <HeroIconAction
-              dataTestId="playlist-add-songs-btn"
-              label="Añadir canciones"
-              tooltip={isAddFinderOpen ? 'Ocultar buscador' : 'Añadir canciones'}
-              pressed={isAddFinderOpen}
-              onClick={() => setAddFinderOverride(!isAddFinderOpen)}
-              className={`drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] ${
-                isAddFinderOpen ? 'text-white' : 'text-white/85 hover:text-white'
-              }`}
-            >
-              <Plus
-                strokeWidth={2.4}
-                className={`h-[22px] w-[22px] transition-transform duration-200 sm:h-6 sm:w-6 ${
-                  isAddFinderOpen ? 'rotate-45' : ''
-                }`}
-              />
-            </HeroIconAction>
-
-            {localPl.isCollaborative && (
-              <HeroIconAction
-                label="Colaborativa · Invitar"
-                tooltip="Invitar colaboradores"
-                onClick={() => setCollabModalOpen(true)}
-                className="text-emerald-300/90 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-emerald-200 hover:drop-shadow-[0_0_12px_rgba(52,211,153,0.65)]"
-              >
-                <Users className="h-[22px] w-[22px] sm:h-6 sm:w-6" />
-              </HeroIconAction>
-            )}
-
-            <span aria-hidden="true" className="mx-0.5 h-5 w-px bg-white/15" />
-
-            <HeroIconAction
-              dataTestId="playlist-more-actions-btn"
-              label="Más acciones de playlist"
-              tooltip="Más opciones"
-              onClick={(e) => {
-                const r = e.currentTarget.getBoundingClientRect();
-                openPlaylistContextMenu('local', localPl.id, r.left, r.bottom + 8);
-              }}
-              className="text-white/60 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-white"
-            >
-              <MoreHorizontal className="h-5 w-5" />
-            </HeroIconAction>
           </div>
         ),
       })}

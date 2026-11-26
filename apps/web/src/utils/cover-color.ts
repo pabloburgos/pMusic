@@ -119,14 +119,13 @@ function rgbCss(rgb: RgbTriple): string {
   return `rgb(${Math.round(rgb[0])}, ${Math.round(rgb[1])}, ${Math.round(rgb[2])})`;
 }
 
-function applyRgbTripletToRoot(p: PaletteTriplet): void {
-  liveRgb = [
-    [p[0][0], p[0][1], p[0][2]],
-    [p[1][0], p[1][1], p[1][2]],
-    [p[2][0], p[2][1], p[2][2]],
-  ];
+function applyCssPaletteToRoot(p: PaletteTriplet, transitionMs?: number): void {
   if (typeof document === 'undefined') return;
   const root = document.documentElement;
+  if (typeof transitionMs === 'number' && Number.isFinite(transitionMs)) {
+    const clampedMs = transitionMs <= 0 ? 0 : Math.max(250, Math.round(transitionMs));
+    root.style.setProperty('--pm-ambient-transition-ms', `${clampedMs}ms`);
+  }
   const nextCss: [string, string, string] = [rgbCss(p[0]), rgbCss(p[1]), rgbCss(p[2])];
   if (nextCss[0] !== lastAppliedCss[0]) {
     lastAppliedCss[0] = nextCss[0];
@@ -140,6 +139,15 @@ function applyRgbTripletToRoot(p: PaletteTriplet): void {
     lastAppliedCss[2] = nextCss[2];
     root.style.setProperty('--pm-ambient-3', nextCss[2]);
   }
+}
+
+function applyRgbTripletToRoot(p: PaletteTriplet, transitionMs?: number): void {
+  liveRgb = [
+    [p[0][0], p[0][1], p[0][2]],
+    [p[1][0], p[1][1], p[1][2]],
+    [p[2][0], p[2][1], p[2][2]],
+  ];
+  applyCssPaletteToRoot(p, transitionMs);
 }
 
 function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
@@ -230,7 +238,7 @@ function transitionToPalette(
       [...resolvedTargetQuad[2]],
       [...resolvedTargetQuad[3]],
     ];
-    applyRgbTripletToRoot(target);
+    applyRgbTripletToRoot(target, 0);
     return;
   }
 
@@ -246,43 +254,43 @@ function transitionToPalette(
     [liveQuad[2][0], liveQuad[2][1], liveQuad[2][2]],
     [liveQuad[3][0], liveQuad[3][1], liveQuad[3][2]],
   ];
+
+  // Trigger native CSS @property GPU transition ONCE instead of mutating :root every 60ms
+  applyCssPaletteToRoot(target, durationMs);
+
   const startMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
-  let lastPaintMs = -Infinity;
 
   const step = (now: number) => {
     const rawT = Math.max(0, Math.min(1, (now - startMs) / durationMs));
-    if (now - lastPaintMs >= 60 || rawT >= 1) {
-      lastPaintMs = now;
-      const lerp = (a: number, b: number) => a + (b - a) * rawT;
-      liveLuminance = lerp(fromLuma, nextLuma);
-      liveQuad = [
-        [
-          lerp(fromQuad[0][0], resolvedTargetQuad[0][0]),
-          lerp(fromQuad[0][1], resolvedTargetQuad[0][1]),
-          lerp(fromQuad[0][2], resolvedTargetQuad[0][2]),
-        ],
-        [
-          lerp(fromQuad[1][0], resolvedTargetQuad[1][0]),
-          lerp(fromQuad[1][1], resolvedTargetQuad[1][1]),
-          lerp(fromQuad[1][2], resolvedTargetQuad[1][2]),
-        ],
-        [
-          lerp(fromQuad[2][0], resolvedTargetQuad[2][0]),
-          lerp(fromQuad[2][1], resolvedTargetQuad[2][1]),
-          lerp(fromQuad[2][2], resolvedTargetQuad[2][2]),
-        ],
-        [
-          lerp(fromQuad[3][0], resolvedTargetQuad[3][0]),
-          lerp(fromQuad[3][1], resolvedTargetQuad[3][1]),
-          lerp(fromQuad[3][2], resolvedTargetQuad[3][2]),
-        ],
-      ];
-      applyRgbTripletToRoot([
-        [lerp(from[0][0], target[0][0]), lerp(from[0][1], target[0][1]), lerp(from[0][2], target[0][2])],
-        [lerp(from[1][0], target[1][0]), lerp(from[1][1], target[1][1]), lerp(from[1][2], target[1][2])],
-        [lerp(from[2][0], target[2][0]), lerp(from[2][1], target[2][1]), lerp(from[2][2], target[2][2])],
-      ]);
-    }
+    const lerp = (a: number, b: number) => a + (b - a) * rawT;
+    liveLuminance = lerp(fromLuma, nextLuma);
+    liveQuad = [
+      [
+        lerp(fromQuad[0][0], resolvedTargetQuad[0][0]),
+        lerp(fromQuad[0][1], resolvedTargetQuad[0][1]),
+        lerp(fromQuad[0][2], resolvedTargetQuad[0][2]),
+      ],
+      [
+        lerp(fromQuad[1][0], resolvedTargetQuad[1][0]),
+        lerp(fromQuad[1][1], resolvedTargetQuad[1][1]),
+        lerp(fromQuad[1][2], resolvedTargetQuad[1][2]),
+      ],
+      [
+        lerp(fromQuad[2][0], resolvedTargetQuad[2][0]),
+        lerp(fromQuad[2][1], resolvedTargetQuad[2][1]),
+        lerp(fromQuad[2][2], resolvedTargetQuad[2][2]),
+      ],
+      [
+        lerp(fromQuad[3][0], resolvedTargetQuad[3][0]),
+        lerp(fromQuad[3][1], resolvedTargetQuad[3][1]),
+        lerp(fromQuad[3][2], resolvedTargetQuad[3][2]),
+      ],
+    ];
+    liveRgb = [
+      [lerp(from[0][0], target[0][0]), lerp(from[0][1], target[0][1]), lerp(from[0][2], target[0][2])],
+      [lerp(from[1][0], target[1][0]), lerp(from[1][1], target[1][1]), lerp(from[1][2], target[1][2])],
+      [lerp(from[2][0], target[2][0]), lerp(from[2][1], target[2][1]), lerp(from[2][2], target[2][2])],
+    ];
     if (rawT < 1) {
       paletteAnimRafId = requestAnimationFrame(step);
     } else {

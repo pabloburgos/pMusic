@@ -485,9 +485,9 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = ({
       const baseW = Math.max(240, rect.width || (typeof window !== 'undefined' ? window.innerWidth : 640));
       const baseH = Math.max(240, rect.height || (typeof window !== 'undefined' ? window.innerHeight : 640));
       if (glProg) {
-        const scale = isMobileLike ? 0.42 : 0.55;
-        canvas.width = Math.min(560, Math.round(baseW * scale));
-        canvas.height = Math.min(560, Math.round(baseH * scale));
+        const scale = isMobileLike ? 0.34 : 0.42;
+        canvas.width = Math.min(440, Math.round(baseW * scale));
+        canvas.height = Math.min(440, Math.round(baseH * scale));
       } else {
         const scale = isMobileLike ? 0.55 : 0.78;
         canvas.width = Math.min(960, Math.round(baseW * scale));
@@ -516,11 +516,11 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = ({
       const frameBudgetMs = staticMode
         ? 120
         : isMobileLike
-          ? 30
+          ? 14
           : throttleFpsRef.current
-            ? 42
-            : 16;
-      if (now - lastDrawMs < frameBudgetMs && lastDrawMs > 0) {
+            ? 30
+            : 0;
+      if (frameBudgetMs > 0 && now - lastDrawMs < frameBudgetMs && lastDrawMs > 0) {
         if (!staticMode && typeof requestAnimationFrame === 'function') {
           rafId = requestAnimationFrame(renderFrame);
         }

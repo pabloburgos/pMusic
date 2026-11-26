@@ -6,7 +6,7 @@
 
 **Cross-platform OLED Liquid Glass music player for Windows & Android featuring a Dual-Deck Web Audio DJ AutoMix engine, multi-source 15-day release radar, in-splash OTA updates, and zero-cost real-time Supabase sync.**
 
-[![Release v0.23.8](https://img.shields.io/badge/Release-v0.23.8-0A84FF?style=for-the-badge)](https://github.com/pabloburgos/pMusic/releases/latest)
+[![Release v0.23.9](https://img.shields.io/badge/Release-v0.23.9-0A84FF?style=for-the-badge)](https://github.com/pabloburgos/pMusic/releases/latest)
 [![Windows x64](https://img.shields.io/badge/Windows-x64_Setup_.exe-0051D5?style=for-the-badge&logo=windows)](https://github.com/pabloburgos/pMusic/releases/latest)
 [![Android APK](https://img.shields.io/badge/Android-Native_APK-30D158?style=for-the-badge&logo=android)](https://github.com/pabloburgos/pMusic/releases/latest)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9_Strict-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](tsconfig.base.json)
@@ -18,13 +18,13 @@
 
 ---
 
-## Downloads (`v0.23.8`)
+## Downloads (`v0.23.9`)
 
-Ready-to-install binaries are published under [**GitHub Releases (`v0.23.8`)**](https://github.com/pabloburgos/pMusic/releases/latest):
+Ready-to-install binaries are published under [**GitHub Releases (`v0.23.9`)**](https://github.com/pabloburgos/pMusic/releases/latest):
 
 | Platform | Asset | Notes |
 | :--- | :--- | :--- |
-| **Windows (64-bit)** | **`pMusic-Setup-0.23.8.exe`** | Custom standalone installer bundling Electron 45, Discord Rich Presence, loopback stream server, and automatic **in-splash OTA web updates**. |
+| **Windows (64-bit)** | **`pMusic-Setup-0.23.9.exe`** | Custom standalone installer bundling Electron 45, Discord Rich Presence, loopback stream server, and automatic **in-splash OTA web updates**. |
 | **Android** | **`pMusic-Android.apk`** | Signed APK built with native foreground playback service, notification transport controls, offline audio/cover vault, and **in-splash OTA bundle updater**. |
 | **Database Schema** | **`supabase-schema.sql`** | Idempotent PostgreSQL schema with RLS policies and Realtime publications for free cross-device cloud sync (`$0/month` on Supabase Free Tier). |
 

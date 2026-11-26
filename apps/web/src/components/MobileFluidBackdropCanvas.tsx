@@ -11,14 +11,15 @@ interface MobileFluidBackdropCanvasProps {
   crossfadeLinear: boolean;
   ambientMotionEnabled: boolean;
   reducedMotionPref: boolean;
+  desktopMode?: boolean;
 }
 
 const decodedCoverImgCache = new Map<string, HTMLImageElement>();
 
 /**
- * Single-canvas hardware-composited mobile fluid backdrop.
+ * Single-canvas hardware-composited fluid backdrop.
  * Blends outgoing & incoming pre-baked 48x48 covers and live ambient orbs in ONE draw pass
- * with an unbroken phase clock — eliminating Android WebView z-index / mix-blend flicker.
+ * with an unbroken phase clock — eliminating blur/mix-blend eviction and flicker.
  */
 export const MobileFluidBackdropCanvas: React.FC<MobileFluidBackdropCanvasProps> = ({
   coverUrl,
@@ -26,7 +27,10 @@ export const MobileFluidBackdropCanvas: React.FC<MobileFluidBackdropCanvasProps>
   crossfadeLinear,
   ambientMotionEnabled,
   reducedMotionPref,
+  desktopMode = false,
 }) => {
+  const desktopModeRef = useRef<boolean>(desktopMode);
+  desktopModeRef.current = desktopMode;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const activeUrlRef = useRef<string>(coverUrl);
   const outgoingUrlRef = useRef<string | null>(null);
@@ -273,7 +277,8 @@ export const MobileFluidBackdropCanvas: React.FC<MobileFluidBackdropCanvasProps>
         rafId = 0;
         return;
       }
-      if (now - lastDraw >= 30 || blendActiveRef.current) {
+      const frameBudget = desktopModeRef.current ? 0 : 14;
+      if (frameBudget === 0 || now - lastDraw >= frameBudget) {
         lastDraw = now;
         drawFrame(now);
       }
@@ -314,13 +319,13 @@ export const MobileFluidBackdropCanvas: React.FC<MobileFluidBackdropCanvasProps>
       canvas.width = 0;
       canvas.height = 0;
     };
-  }, [ambientMotionEnabled, reducedMotionPref, coverUrl]);
+  }, [ambientMotionEnabled, reducedMotionPref]);
 
   return (
     <canvas
       ref={canvasRef}
-      width={160}
-      height={280}
+      width={desktopMode ? 240 : 160}
+      height={desktopMode ? 144 : 280}
       data-testid="live-backdrop-img"
       aria-hidden="true"
       className="pointer-events-none absolute inset-0 h-full w-full select-none"

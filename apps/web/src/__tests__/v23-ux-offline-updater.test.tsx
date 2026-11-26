@@ -7,8 +7,17 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { App } from '../App.tsx';
 import { SettingsModal } from '../components/SettingsModal.tsx';
 import { TrackArtwork } from '../components/TrackArtwork.tsx';
+import {
+  InkBleedCoverTransition,
+  prefetchInkCoverImage,
+} from '../components/InkBleedCoverTransition.tsx';
+import { MobileFluidBackdropCanvas } from '../components/MobileFluidBackdropCanvas.tsx';
+import { DetailViewPanel } from '../components/Screens.tsx';
 import { compareSemver } from '../utils/app-updater.ts';
-import { shouldUseDarkInkOnBackdrop } from '../utils/cover-color.ts';
+import {
+  animateAmbientPaletteFromCover,
+  shouldUseDarkInkOnBackdrop,
+} from '../utils/cover-color.ts';
 import { optimizeArtworkUrl } from '../utils/image-opt.ts';
 import {
   evolveDailyPlaylistForNewDay,
@@ -633,5 +642,106 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
       relatedArtists: [],
     });
     expect(readPersistedArtistCache('artist:6705223')?.data.artist.name).toBe('Quevedo');
+  });
+
+  it('v0.23.9 restores GPU WebGL ink-bleed crossfade, avoids :root RAF DOM storms, supports desktopMode backdrop, and sizes playlist play larger than artist play on the right', () => {
+    expect(typeof prefetchInkCoverImage).toBe('function');
+    prefetchInkCoverImage('https://example.com/ink-prefetch.jpg');
+
+    render(
+      <InkBleedCoverTransition
+        outgoingUrl="https://example.com/out.jpg"
+        outgoingTitle="Outgoing Song"
+        incomingUrl="https://example.com/in.jpg"
+        incomingTitle="Incoming Song"
+        seedKey="out:in"
+        durationSec={4}
+      />
+    );
+    const inkWrap = screen.getByTestId('ink-bleed-cover');
+    expect(inkWrap.querySelector('canvas')).toBeTruthy();
+    const inImg = screen.getByAltText('Incoming Song') as HTMLImageElement;
+    expect(inImg.style.transform).toContain('scale(1.035');
+    cleanup();
+
+    // MobileFluidBackdropCanvas supports desktopMode without restarting RAF on coverUrl updates
+    const { rerender } = render(
+      <MobileFluidBackdropCanvas
+        desktopMode
+        coverUrl="https://example.com/a.jpg"
+        crossfadeMs={950}
+        crossfadeLinear={false}
+        ambientMotionEnabled
+        reducedMotionPref={false}
+      />
+    );
+    const canvasEl = screen.getByTestId('live-backdrop-img') as HTMLCanvasElement;
+    expect(canvasEl.width).toBe(240);
+    expect(canvasEl.height).toBe(144);
+    rerender(
+      <MobileFluidBackdropCanvas
+        desktopMode
+        coverUrl="https://example.com/b.jpg"
+        crossfadeMs={950}
+        crossfadeLinear={false}
+        ambientMotionEnabled
+        reducedMotionPref={false}
+      />
+    );
+    expect(screen.getByTestId('live-backdrop-img')).toBe(canvasEl);
+    cleanup();
+
+    // cover-color triggers single CSS @property update on :root without per-frame style.setProperty spam
+    const spySetProp = vi.spyOn(document.documentElement.style, 'setProperty');
+    animateAmbientPaletteFromCover({ ...makeTrack(501), thumbnailUrl: '' }, 1400);
+    expect(spySetProp.mock.calls.some(([prop]) => prop === '--pm-ambient-transition-ms')).toBe(true);
+    expect(spySetProp.mock.calls.some(([prop]) => prop === '--pm-ambient-1')).toBe(true);
+    spySetProp.mockRestore();
+
+    // Artist profile Play button uses larger size (h-16 / sm:h-[72px])
+    const artistTrack = makeTrack(701);
+    act(() => {
+      usePMusicStore.setState({
+        activeDetailView: {
+          kind: 'artist',
+          data: {
+            artist: { id: 'ar-hero', name: 'Quevedo', thumbnailUrl: 'https://example.com/q.jpg' },
+            topSongs: [artistTrack],
+            albums: [],
+            singles: [],
+            relatedArtists: [],
+          },
+        },
+      });
+    });
+    render(<DetailViewPanel />);
+    const artistPlayBtn = screen.getByTestId('artist-play-btn');
+    expect(artistPlayBtn.className).toContain('h-16');
+    expect(artistPlayBtn.className).toContain('sm:h-[72px]');
+    cleanup();
+
+    // Playlist detail places right-aligned actions with Play button larger than artist profile (h-[72px] / sm:h-[86px])
+    const pl: PlaylistRecord = {
+      id: 'pl-hero-right',
+      name: 'LaPanera',
+      description: '',
+      source: 'local',
+      tracks: [artistTrack],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    act(() => {
+      usePMusicStore.setState({
+        playlists: [pl],
+        activeDetailView: { kind: 'local_playlist', playlistId: pl.id },
+      });
+    });
+    render(<DetailViewPanel />);
+    const playlistPlayBtn = screen.getByRole('button', { name: /^Reproducir$/i });
+    const moreBtn = screen.getByTestId('playlist-more-actions-btn');
+    expect(playlistPlayBtn.className).toContain('h-[72px]');
+    expect(playlistPlayBtn.className).toContain('sm:h-[86px]');
+    expect(moreBtn.parentElement?.className).toContain('justify-end');
+    cleanup();
   });
 });
