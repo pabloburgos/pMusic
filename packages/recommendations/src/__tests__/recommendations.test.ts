@@ -592,4 +592,96 @@ describe('@pmusic/recommendations', () => {
     expect(ids).not.toContain('cc_me_muevo_01');
     expect((descubreMix?.tracks ?? []).some((t) => t.title.includes('SUIATSU'))).toBe(false);
   });
+
+  it('includes Tier 3 Spanish urban radar releases for ES profiles while rejecting unrelated pop and stale PEGAO hits', async () => {
+    const now = new Date();
+    const twoDaysAgo = getDailyMixDateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 2));
+    const sixtyDaysAgo = getDailyMixDateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 60));
+
+    const trackMyke: Track = {
+      id: 'dz:myke_new_1',
+      title: 'Tremendo Desastre',
+      artists: [
+        { id: 'mk1', name: 'Myke Towers' },
+        { id: 'rw1', name: 'Rauw Alejandro' },
+      ],
+      durationSec: 204,
+      thumbnailUrl: 'https://example.com/myke.jpg',
+      source: 'ytmusic',
+      releaseYear: Number(twoDaysAgo.slice(0, 4)),
+      releaseDate: twoDaysAgo,
+    };
+    const trackOldPegao: Track = {
+      id: 'dz:old_pegao_1',
+      title: 'Old Hit Pegao',
+      artists: [{ id: 'mk1', name: 'Myke Towers' }],
+      durationSec: 185,
+      thumbnailUrl: 'https://example.com/old_pegao.jpg',
+      source: 'ytmusic',
+      releaseYear: Number(sixtyDaysAgo.slice(0, 4)),
+      releaseDate: sixtyDaysAgo,
+    };
+
+    const mockProvider = {
+      search: async (query: string) => {
+        if (query.toLowerCase().includes('tremendo')) {
+          return { query, songs: [trackMyke], videos: [], artists: [], albums: [], playlists: [] };
+        }
+        if (query.toLowerCase().includes('old hit')) {
+          return { query, songs: [trackOldPegao], videos: [], artists: [], albums: [], playlists: [] };
+        }
+        return { query, songs: [], videos: [], artists: [], albums: [], playlists: [] };
+      },
+      getHomeFeed: async () => ({ shelves: [], moods: [] }),
+      getUpNext: async () => [],
+      getRelated: async () => ({ tracks: [], artists: [], playlists: [] }),
+      getArtist: async (idOrName: string) => ({
+        artist: { id: idOrName, name: idOrName, thumbnailUrl: 'https://example.com/a.jpg' },
+        topSongs: [],
+        appearances: [],
+        albums: [],
+        singles: [],
+        relatedArtists: [],
+      }),
+      getReleaseRadar: async () => [
+        {
+          title: 'Tremendo Desastre',
+          artists: ['Myke Towers', 'Rauw Alejandro'],
+          releaseDate: twoDaysAgo,
+          kind: 'track' as const,
+          source: 'spotify_novedades_es' as const,
+          priority: 95,
+        },
+        {
+          title: 'Old Hit Pegao',
+          artists: ['Myke Towers'],
+          kind: 'track' as const,
+          source: 'spotify_pegao' as const,
+          priority: 85,
+        },
+        {
+          title: 'Go Easy',
+          artists: ['Dua Lipa'],
+          releaseDate: twoDaysAgo,
+          kind: 'track' as const,
+          source: 'spotify_novedades_es' as const,
+          priority: 95,
+        },
+      ],
+    };
+
+    const engine = new RecommendationEngine({ musicProvider: mockProvider });
+    engine.setFavoriteArtists([
+      { artistId: '7524936', artistName: 'La Pantera', likedAt: '2026-11-20T10:00:00Z' },
+    ]);
+
+    const shelves = await engine.buildHomeShelves();
+    const dln = shelves
+      .find((s) => s.kind === 'mixes_for_you')
+      ?.mixes?.find((m) => m.id === 'mix_descubre_lo_nuevo');
+    const ids = (dln?.tracks ?? []).map((t) => t.id);
+    expect(ids).toContain('dz:myke_new_1');
+    expect(ids).not.toContain('dz:old_pegao_1');
+    expect((dln?.tracks ?? []).some((t) => t.title === 'Go Easy')).toBe(false);
+  });
 });

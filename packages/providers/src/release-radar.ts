@@ -4,10 +4,11 @@ export const SPOTIFY_RELEASE_RADAR_PLAYLISTS: ReadonlyArray<{
   id: string;
   source: 'spotify_novedades_es' | 'spotify_pegao' | 'spotify_nmf';
   priority: number;
+  stampEstimatedFridayDate: boolean;
 }> = [
-  { id: '37i9dQZF1DX6PYajiT4pAf', source: 'spotify_novedades_es', priority: 95 },
-  { id: '37i9dQZF1DX1HCSfq0nSal', source: 'spotify_pegao', priority: 85 },
-  { id: '37i9dQZF1DX4JAvHpjipBk', source: 'spotify_nmf', priority: 75 },
+  { id: '37i9dQZF1DX6PYajiT4pAf', source: 'spotify_novedades_es', priority: 95, stampEstimatedFridayDate: true },
+  { id: '37i9dQZF1DX1HCSfq0nSal', source: 'spotify_pegao', priority: 85, stampEstimatedFridayDate: false },
+  { id: '37i9dQZF1DX4JAvHpjipBk', source: 'spotify_nmf', priority: 75, stampEstimatedFridayDate: true },
 ];
 
 export const LAHIGUERA_NOVEDADES_URL = 'https://www.lahiguera.net/musicalia/novedades.php';
@@ -133,7 +134,7 @@ export function parseLaHigueraNovedadesHtml(
 export function parseSpotifyEmbedPlaylistHtml(
   html: string,
   source: 'spotify_novedades_es' | 'spotify_pegao' | 'spotify_nmf',
-  estimatedReleaseDate: string
+  estimatedReleaseDate?: string
 ): ExternalReleaseCandidate[] {
   if (!html) return [];
   const nextDataMatch = html.match(/<script\b[^>]*id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i);
@@ -162,7 +163,7 @@ export function parseSpotifyEmbedPlaylistHtml(
     out.push({
       title,
       artists,
-      releaseDate: estimatedReleaseDate,
+      ...(estimatedReleaseDate ? { releaseDate: estimatedReleaseDate } : {}),
       kind: 'track',
       source,
       priority,
@@ -174,7 +175,7 @@ export function parseSpotifyEmbedPlaylistHtml(
 async function fetchTextWithTimeout(
   url: string,
   fetchFn: typeof fetch,
-  timeoutMs = 3200,
+  timeoutMs = 4000,
   signal?: AbortSignal
 ): Promise<string | null> {
   const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
@@ -221,24 +222,33 @@ export async function fetchExternalReleaseRadar(
   const cutoffDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30, 0, 0, 0, 0);
   const cutoffIso = toLocalIsoDate(cutoffDate);
 
-  const [spResults, lhNovHtml, lhCancHtml] = await Promise.all([
-    Promise.allSettled(
-      SPOTIFY_RELEASE_RADAR_PLAYLISTS.map(async (pl) => {
-        const html = await fetchTextWithTimeout(
-          `https://open.spotify.com/embed/playlist/${pl.id}`,
-          fetchImpl,
-          3200,
-          options.signal
-        );
-        return html ? parseSpotifyEmbedPlaylistHtml(html, pl.source, fridayIso) : [];
-      })
-    ),
-    fetchTextWithTimeout(LAHIGUERA_NOVEDADES_URL, fetchImpl, 3200, options.signal),
-    fetchTextWithTimeout(LAHIGUERA_CANCIONES_URL, fetchImpl, 3200, options.signal),
+  const fetchSpotifyEntry = async (pl: (typeof SPOTIFY_RELEASE_RADAR_PLAYLISTS)[number]) => {
+    const html = await fetchTextWithTimeout(
+      `https://open.spotify.com/embed/playlist/${pl.id}`,
+      fetchImpl,
+      4000,
+      options.signal
+    );
+    return html
+      ? parseSpotifyEmbedPlaylistHtml(html, pl.source, pl.stampEstimatedFridayDate ? fridayIso : undefined)
+      : [];
+  };
+
+  // Wave A: primary Spanish editorial & LaHiguera sources
+  const primaryPl = SPOTIFY_RELEASE_RADAR_PLAYLISTS[0]!;
+  const [spPrimary, lhNovHtml, lhCancHtml] = await Promise.all([
+    fetchSpotifyEntry(primaryPl),
+    fetchTextWithTimeout(LAHIGUERA_NOVEDADES_URL, fetchImpl, 4000, options.signal),
+    fetchTextWithTimeout(LAHIGUERA_CANCIONES_URL, fetchImpl, 4000, options.signal),
   ]);
 
-  const raw: ExternalReleaseCandidate[] = [];
-  for (const r of spResults) {
+  // Wave B: PEGAO + New Music Friday (slightly staggered to avoid concurrent Spotify embed throttling)
+  const spSecondaryRes = await Promise.allSettled(
+    SPOTIFY_RELEASE_RADAR_PLAYLISTS.slice(1).map(fetchSpotifyEntry)
+  );
+
+  const raw: ExternalReleaseCandidate[] = [...spPrimary];
+  for (const r of spSecondaryRes) {
     if (r.status === 'fulfilled' && Array.isArray(r.value)) {
       raw.push(...r.value);
     }

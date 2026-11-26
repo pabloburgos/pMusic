@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AudioStreamResolver,
   DeezerCatalog,
+  HttpProxyMusicProvider,
   LrcParser,
   LrclibLyricsProvider,
   PlaylistImporter,
@@ -1734,5 +1735,66 @@ describe('@pmusic/providers', () => {
     expect(payload.releases.some((r) => r.title === 'Tremendo Desastre' && r.source === 'spotify_novedades_es')).toBe(
       true
     );
+  });
+
+  it('retries once when Deezer returns error code 4 (Quota limit exceeded) and falls back cleanly on /api/import/spotify', async () => {
+    let calls = 0;
+    const quotaFetch = (async () => {
+      calls++;
+      if (calls === 1) {
+        return new Response(JSON.stringify({ error: { type: 'Exception', message: 'Quota limit exceeded', code: 4 } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: 4428059631,
+              title: 'SOY MEJOR 2.0',
+              duration: 198,
+              artist: { id: 1, name: 'Kristina' },
+              contributors: [
+                { id: 1, name: 'Kristina' },
+                { id: 6705223, name: 'Quevedo' },
+              ],
+              album: { id: 888, title: 'SOY MEJOR 2.0', release_date: '2026-11-21', cover_medium: 'https://x.com/c.jpg' },
+            },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    }) as typeof fetch;
+
+    const catalog = new DeezerCatalog(quotaFetch);
+    const searchRes = await catalog.search('Quevedo SOY MEJOR 2.0', 'song');
+    expect(calls).toBeGreaterThanOrEqual(2);
+    expect(searchRes.songs.some((s) => s.title === 'SOY MEJOR 2.0')).toBe(true);
+
+    // HttpProxyMusicProvider OTA fallback when /api/release-radar returns 404 (old Electron host)
+    const proxyFetch = (async (input: RequestInfo | URL) => {
+      const u = String(input);
+      if (u.endsWith('/api/release-radar')) {
+        return new Response('{"error":"not_found"}', { status: 404 });
+      }
+      if (u.includes('/api/import/spotify') && u.includes('37i9dQZF1DX6PYajiT4pAf')) {
+        return new Response(
+          JSON.stringify({
+            name: 'Novedades Viernes España',
+            tracks: [{ title: 'Tremendo Desastre', artists: ['Myke Towers', 'Rauw Alejandro'] }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      return new Response(JSON.stringify({ name: 'PEGAO', tracks: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    const proxy = new HttpProxyMusicProvider({ fetchFn: proxyFetch, baseUrl: 'http://127.0.0.1:47820' });
+    const radar = await proxy.getReleaseRadar();
+    expect(radar.some((r) => r.title === 'Tremendo Desastre' && r.source === 'spotify_novedades_es')).toBe(true);
   });
 });

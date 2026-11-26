@@ -75,8 +75,15 @@ const KNOWN_ES_SCENE_ARTISTS = new Set([
   'rusowsky', 'judeline', 'ralphie choo', 'rvfv', 'omar montes', 'kidd keo', 'recycled j',
   'kable', 'pablete', 'gonzalo moreno', 'miky woodz', 'eladio carrion', 'myke towers',
   'rauw alejandro', 'rosalia', 'ctangana', 'c tangana', 'alizzz', 'natos y waor', 'ayax',
-  'kaze', 'hard gz', 'delao', 'hoke', 'ill pekeño', 'ill pequeno', 'ergo pro', 'disobey',
-  'yunq beef', 'yung beef', 'sticky ma', 'rojuu', 'claudia', 'maikel delacalle',
+  'kaze', 'hard gz', 'delao', 'delaossa', 'hoke', 'ill pekeño', 'ill pequeno', 'ergo pro',
+  'disobey', 'yung beef', 'sticky ma', 'rojuu', 'maikel delacalle',
+  'anuel aa', 'jhayco', 'jhay cortez', 'nicki nicole', 'lia kali', 'la zowi', 'kapo',
+  'dei v', 'gonzy', 'sech', 'bad gyal', 'omar courtz', 'jc reyes', 'mora', 'clarent',
+  'ryan castro', 'j balvin', 'sfdk', 'nemzzz', 'alvaro diaz', 'tini', 'duki', 'ysy a',
+  'emilia', 'young miko', 'bryant myers', 'ozuna', 'arcangel', 'el alfa', 'tokischa',
+  'trueno', 'tiago pzk', 'lit killah', 'khea', 'bizarrap', 'tainy', 'kidd voodoo',
+  'soge culebra', 'raul clyde', 'kristina', 'ptazeta', 'lola indigo', 'aitana',
+  'sen senra', 'ca7riel', 'paco amoroso', 'milo j', 'blessd', 'karol g',
 ]);
 
 function collapseNormalized(input: string): string {
@@ -1226,35 +1233,55 @@ export class RecommendationEngine implements IRecommendationEngine {
           new Promise<null>((resolveTimeout) => setTimeout(() => resolveTimeout(null), ms)),
         ]);
 
-      const coreBatch = userCoreArtists.slice(0, 8);
+      const runBoundedBatch = async <TItem, TOut>(
+        items: readonly TItem[],
+        concurrency: number,
+        perItemMs: number,
+        fn: (item: TItem, idx: number) => Promise<TOut>
+      ): Promise<Array<TOut | null>> => {
+        if (items.length === 0) return [];
+        const results: Array<TOut | null> = new Array(items.length).fill(null);
+        let cursor = 0;
+        const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+          while (cursor < items.length) {
+            if (signal?.aborted) break;
+            const myIdx = cursor++;
+            if (myIdx >= items.length) break;
+            results[myIdx] = await withTimeout(fn(items[myIdx]!, myIdx), perItemMs);
+          }
+        });
+        await Promise.all(workers);
+        return results;
+      };
+
+      const coreBatch = userCoreArtists.slice(0, 6);
       const seedTrackCandidates = seededShuffle(userOwnedTracks, `seeds:${dailyKey}`).slice(0, 4);
 
-      // Wave 1: Fast parallel fetch of user's core artists, track radios, and external release radar
-      const [artistDetails, relatedTrackRes, externalRadarRaw] = await Promise.all([
-        withTimeout<PromiseSettledResult<unknown>[]>(
-          typeof this.musicProvider.getArtist === 'function'
-            ? Promise.allSettled(
-                coreBatch.map((a) =>
-                  this.musicProvider!.getArtist!(a.id || a.displayName, signal, { name: a.displayName })
-                )
-              )
-            : Promise.allSettled(
-                coreBatch.map((a) => this.musicProvider!.search(a.displayName, 'song', signal))
-              ),
-          2800
-        ).then((r) => r ?? []),
-        seedTrackCandidates.length > 0
-          ? withTimeout(
-              Promise.allSettled(
-                seedTrackCandidates.map((t) => this.musicProvider!.getRelated(t.id, signal))
-              ),
-              2500
-            ).then((r) => r ?? [])
-          : Promise.resolve([] as PromiseSettledResult<any>[]),
+      // Wave 1: Bounded parallel fetch of core artists (avoids Deezer 50req/5s quota bursts), track radios, and external radar
+      const [artistDetailsRaw, relatedTrackRaw, externalRadarRaw] = await Promise.all([
+        runBoundedBatch(coreBatch, 3, 4500, (a): Promise<unknown> =>
+          typeof this.musicProvider!.getArtist === 'function'
+            ? this.musicProvider!.getArtist!(a.id || a.displayName, signal, { name: a.displayName })
+            : this.musicProvider!.search(a.displayName, 'song', signal)
+        ),
+        runBoundedBatch(seedTrackCandidates, 4, 2600, (t) =>
+          this.musicProvider!.getRelated(t.id, signal)
+        ),
         typeof this.musicProvider.getReleaseRadar === 'function'
-          ? withTimeout(this.musicProvider.getReleaseRadar(signal), 2800).then((r) => r ?? [])
+          ? withTimeout(this.musicProvider.getReleaseRadar(signal), 4500).then((r) => r ?? [])
           : Promise.resolve([] as ExternalReleaseCandidate[]),
       ]);
+
+      const artistDetails = artistDetailsRaw.map((val) =>
+        val
+          ? ({ status: 'fulfilled', value: val } as PromiseFulfilledResult<any>)
+          : ({ status: 'rejected', reason: null } as PromiseRejectedResult)
+      );
+      const relatedTrackRes = relatedTrackRaw.map((val) =>
+        val
+          ? ({ status: 'fulfilled', value: val } as PromiseFulfilledResult<any>)
+          : ({ status: 'rejected', reason: null } as PromiseRejectedResult)
+      );
 
       const recentAlbumCandidates: AlbumSummary[] = [];
 
@@ -1310,9 +1337,11 @@ export class RecommendationEngine implements IRecommendationEngine {
         }
       }
 
-      // Score and filter external release radar (Spotify Novedades ES / PEGAO / LaHiguera) strictly against user taste
+      // Score and filter external release radar (Spotify Novedades ES / PEGAO / LaHiguera) with 3-tier taste relevance
       const existingRecentKeys = new Set(
-        Array.from(recentReleasesMap.values()).map((t) => makeTrackKey(t))
+        Array.from(recentReleasesMap.values())
+          .filter((t) => isReleaseDateInWindow(t.releaseDate, rollingWin.startIso, rollingWin.endIso))
+          .map((t) => makeTrackKey(t))
       );
       const favArtistNorms = new Set(
         Array.from(this.favoriteArtists.values()).map((fa) => normalizeArtistKey(fa.artistName))
@@ -1325,6 +1354,16 @@ export class RecommendationEngine implements IRecommendationEngine {
         }
         return false;
       };
+      const isSpanishUrbanUser =
+        !hasRealUserTaste ||
+        Array.from(seenCoreKeys).some(
+          (k) => KNOWN_ES_SCENE_ARTISTS.has(k) || (k === 'cruzzi' && KNOWN_ES_SCENE_ARTISTS.has('cruz cafune'))
+        ) ||
+        Array.from(favArtistNorms).some(
+          (k) => KNOWN_ES_SCENE_ARTISTS.has(k) || (k === 'cruzzi' && KNOWN_ES_SCENE_ARTISTS.has('cruz cafune'))
+        ) ||
+        userOwnedTracks.some((t) => this.scoreTrackSceneFit(t) >= 30);
+
       const matchedRadarCandidates = (Array.isArray(externalRadarRaw) ? externalRadarRaw : [])
         .map((cand) => {
           if (!cand?.title || !Array.isArray(cand.artists) || cand.artists.length === 0) return null;
@@ -1333,32 +1372,65 @@ export class RecommendationEngine implements IRecommendationEngine {
           if (existingRecentKeys.has(candKey)) return null;
 
           let tasteScore = 0;
+          let matchedArtistName: string | undefined;
+          let bestTierWeight = 0;
           for (const aName of cand.artists) {
             const ak = normalizeArtistKey(aName);
             if (!ak) continue;
             if (isArtistInSet(ak, favArtistNorms) || isArtistInSet(ak, seenCoreKeys)) {
               tasteScore += 100;
+              if (100 > bestTierWeight) {
+                bestTierWeight = 100;
+                matchedArtistName = aName;
+              }
             } else if (isArtistInSet(ak, allowedTasteKeys) || emergingArtistsPool.has(ak)) {
-              tasteScore += 52;
+              tasteScore += 58;
+              if (58 > bestTierWeight) {
+                bestTierWeight = 58;
+                matchedArtistName = aName;
+              }
+            } else if (
+              isSpanishUrbanUser &&
+              cand.source !== 'spotify_nmf' &&
+              (KNOWN_ES_SCENE_ARTISTS.has(ak) ||
+                Array.from(KNOWN_ES_SCENE_ARTISTS).some((sk) => isSameArtistAlias(ak, sk)))
+            ) {
+              tasteScore += 32;
+              if (32 > bestTierWeight) {
+                bestTierWeight = 32;
+                matchedArtistName = aName;
+              }
             }
           }
           if (tasteScore <= 0) return null;
+          // Prioritize fresh-dated editorial drops (Novedades Viernes ES / LaHiguera) above undated chart tracks (PEGAO)
+          const datedFreshBonus = cand.releaseDate ? 120 : -80;
           return {
             cand,
             candKey,
-            score: tasteScore + cand.priority * 0.4,
+            matchedArtistName: matchedArtistName ?? cand.artists[0]!,
+            score: tasteScore + datedFreshBonus + cand.priority * 0.4,
           };
         })
-        .filter((x): x is { cand: ExternalReleaseCandidate; candKey: string; score: number } => Boolean(x))
+        .filter(
+          (
+            x
+          ): x is {
+            cand: ExternalReleaseCandidate;
+            candKey: string;
+            matchedArtistName: string;
+            score: number;
+          } => Boolean(x)
+        )
         .sort((a, b) => b.score - a.score);
 
-      const dedupedRadarTargets: ExternalReleaseCandidate[] = [];
+      const dedupedRadarTargets: Array<{ cand: ExternalReleaseCandidate; queryArtist: string }> = [];
       const seenRadarTargetKeys = new Set<string>();
       for (const item of matchedRadarCandidates) {
         if (seenRadarTargetKeys.has(item.candKey)) continue;
         seenRadarTargetKeys.add(item.candKey);
-        dedupedRadarTargets.push(item.cand);
-        if (dedupedRadarTargets.length >= 14) break;
+        dedupedRadarTargets.push({ cand: item.cand, queryArtist: item.matchedArtistName });
+        if (dedupedRadarTargets.length >= 18) break;
       }
 
       // Wave 2: Prioritize rolling 15-day (then 30-day) releases, resolve taste-matched radar drops, and emerging artists
@@ -1401,36 +1473,43 @@ export class RecommendationEngine implements IRecommendationEngine {
           ? emergingTargets
           : coreBatch.slice(0, 4).map((a) => ({ id: a.id, name: a.displayName, score: 10 }));
 
-      const [albumDetailRes, emergingRes, radarResolveRes] = await Promise.all([
+      const [albumDetailRaw, emergingRaw, radarResolveRaw] = await Promise.all([
         typeof this.musicProvider.getAlbum === 'function' && newestReleaseTargets.length > 0
-          ? withTimeout(
-              Promise.allSettled(
-                newestReleaseTargets.map((al) => this.musicProvider!.getAlbum!(al.id, signal))
-              ),
-              2600
-            ).then((r) => r ?? [])
-          : Promise.resolve([] as PromiseSettledResult<any>[]),
-        withTimeout(
-          Promise.allSettled(
-            extraTargets.map((a) =>
-              typeof this.musicProvider!.getArtist === 'function'
-                ? this.musicProvider!.getArtist!(a.id || a.name, signal, { name: a.name })
-                : this.musicProvider!.search(a.name, 'song', signal)
+          ? runBoundedBatch(newestReleaseTargets, 4, 2800, (al) =>
+              this.musicProvider!.getAlbum!(al.id, signal)
             )
-          ),
-          2200
-        ).then((r) => r ?? []),
+          : Promise.resolve([]),
+        runBoundedBatch(extraTargets, 3, 2600, (a): Promise<unknown> =>
+          typeof this.musicProvider!.getArtist === 'function'
+            ? this.musicProvider!.getArtist!(a.id || a.name, signal, { name: a.name })
+            : this.musicProvider!.search(a.name, 'song', signal)
+        ),
         dedupedRadarTargets.length > 0
-          ? withTimeout(
-              Promise.allSettled(
-                dedupedRadarTargets.map((cand) =>
-                  this.musicProvider!.search(`${cand.artists[0] ?? ''} ${cand.title}`.trim(), 'song', signal)
-                )
-              ),
-              2400
-            ).then((r) => r ?? [])
-          : Promise.resolve([] as PromiseSettledResult<SearchResultBundle>[]),
+          ? runBoundedBatch(dedupedRadarTargets, 5, 4200, (target) =>
+              this.musicProvider!.search(
+                `${target.queryArtist} ${target.cand.title}`.trim(),
+                'song',
+                signal
+              )
+            )
+          : Promise.resolve([]),
       ]);
+
+      const albumDetailRes = albumDetailRaw.map((val) =>
+        val
+          ? ({ status: 'fulfilled', value: val } as PromiseFulfilledResult<any>)
+          : ({ status: 'rejected', reason: null } as PromiseRejectedResult)
+      );
+      const emergingRes = emergingRaw.map((val) =>
+        val
+          ? ({ status: 'fulfilled', value: val } as PromiseFulfilledResult<any>)
+          : ({ status: 'rejected', reason: null } as PromiseRejectedResult)
+      );
+      const radarResolveRes = radarResolveRaw.map((val) =>
+        val
+          ? ({ status: 'fulfilled', value: val } as PromiseFulfilledResult<SearchResultBundle>)
+          : ({ status: 'rejected', reason: null } as PromiseRejectedResult)
+      );
 
       const stampAlbumTracks = (resVal: any, fallbackMeta?: AlbumSummary) => {
         if (!Array.isArray(resVal?.tracks)) return;
@@ -1475,11 +1554,15 @@ export class RecommendationEngine implements IRecommendationEngine {
         stampAlbumTracks(res.value, newestReleaseTargets[i]);
       }
 
-      // Resolve taste-matched external radar releases into playable catalog tracks
+      // Resolve taste-matched external radar releases into playable catalog tracks with strict date validation
+      const seventyFiveDaysAgoIso = getDailyMixDateKey(
+        new Date(now.getFullYear(), now.getMonth(), now.getDate() - 75, 0, 0, 0, 0)
+      );
       for (let i = 0; i < radarResolveRes.length; i++) {
         const res = radarResolveRes[i];
-        const cand = dedupedRadarTargets[i];
-        if (!cand || !res || res.status !== 'fulfilled' || !res.value) continue;
+        const target = dedupedRadarTargets[i];
+        if (!target || !res || res.status !== 'fulfilled' || !res.value) continue;
+        const { cand } = target;
         const candTitleTokens = new Set(tokenizeNormalized(cand.title));
         const candTitleNorm = normalizeSearchText(cand.title);
         const candArtistNorms = cand.artists.map((a) => normalizeArtistKey(a)).filter(Boolean);
@@ -1487,15 +1570,19 @@ export class RecommendationEngine implements IRecommendationEngine {
           if (isBrokenOrSyntheticTrack(song)) return false;
           const sTitleNorm = normalizeSearchText(song.title);
           if (!sTitleNorm) return false;
-          const titleContains =
-            sTitleNorm === candTitleNorm ||
-            sTitleNorm.includes(candTitleNorm) ||
-            candTitleNorm.includes(sTitleNorm);
-          if (!titleContains) {
-            const sTokens = tokenizeNormalized(song.title);
-            const overlapCount = sTokens.filter((tok) => candTitleTokens.has(tok)).length;
-            const ratio = candTitleTokens.size > 0 ? overlapCount / candTitleTokens.size : 0;
-            if (ratio < 0.6) return false;
+          if (candTitleNorm.length <= 2) {
+            if (sTitleNorm !== candTitleNorm) return false;
+          } else {
+            const titleContains =
+              sTitleNorm === candTitleNorm ||
+              sTitleNorm.includes(candTitleNorm) ||
+              candTitleNorm.includes(sTitleNorm);
+            if (!titleContains) {
+              const sTokens = tokenizeNormalized(song.title);
+              const overlapCount = sTokens.filter((tok) => candTitleTokens.has(tok)).length;
+              const ratio = candTitleTokens.size > 0 ? overlapCount / candTitleTokens.size : 0;
+              if (ratio < 0.6) return false;
+            }
           }
           return song.artists.some((sa) => {
             const sak = normalizeArtistKey(sa.name);
@@ -1514,11 +1601,26 @@ export class RecommendationEngine implements IRecommendationEngine {
           rollingWin.startIso,
           rollingWin.endIso
         );
-        const resolvedDate = songHasWindowDate
-          ? matchedSong.releaseDate
-          : candHasWindowDate && (!matchedSong.releaseYear || matchedSong.releaseYear >= currentYear - 1)
-            ? cand.releaseDate
-            : matchedSong.releaseDate;
+
+        let resolvedDate: string | undefined;
+        if (songHasWindowDate) {
+          resolvedDate = matchedSong.releaseDate;
+        } else if (matchedSong.releaseDate) {
+          if (cand.source === 'spotify_pegao') continue;
+          if (matchedSong.releaseDate >= seventyFiveDaysAgoIso && candHasWindowDate) {
+            resolvedDate = cand.releaseDate;
+          } else {
+            continue;
+          }
+        } else if (
+          candHasWindowDate &&
+          (!matchedSong.releaseYear || matchedSong.releaseYear >= currentYear - 1)
+        ) {
+          resolvedDate = cand.releaseDate;
+        } else {
+          continue;
+        }
+
         const resolvedTrack: Track = {
           ...matchedSong,
           ...(resolvedDate

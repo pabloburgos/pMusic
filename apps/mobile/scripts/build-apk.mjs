@@ -436,8 +436,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="48"
-    android:versionName="0.23.2">
+    android:versionCode="49"
+    android:versionName="0.23.5">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -2078,6 +2078,35 @@ public class MainActivity extends Activity {
                         }
                         byte[] emptyYtm = "{}".getBytes(StandardCharsets.UTF_8);
                         return new WebResourceResponse("application/json", "UTF-8", 200, "OK", corsHeaders, new ByteArrayInputStream(emptyYtm));
+                    }
+
+                    if ("/api/radar-proxy".equals(path)) {
+                        String targetUrl = uri.getQueryParameter("url");
+                        if (targetUrl != null && (targetUrl.startsWith("https://open.spotify.com/embed/playlist/") || targetUrl.startsWith("https://www.lahiguera.net/musicalia/"))) {
+                            HttpURLConnection conn = null;
+                            try {
+                                URL u = new URL(targetUrl);
+                                conn = (HttpURLConnection) u.openConnection();
+                                conn.setConnectTimeout(4000);
+                                conn.setReadTimeout(4500);
+                                conn.setInstanceFollowRedirects(true);
+                                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36");
+                                if (conn.getResponseCode() >= 200 && conn.getResponseCode() < 300) {
+                                    InputStream in = conn.getInputStream();
+                                    ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                                    byte[] buf = new byte[8192];
+                                    int n;
+                                    while ((n = in.read(buf)) != -1) bos.write(buf, 0, n);
+                                    in.close();
+                                    return new WebResourceResponse("text/html", "UTF-8", 200, "OK", corsHeaders, new ByteArrayInputStream(bos.toByteArray()));
+                                }
+                            } catch (Throwable ignored) {
+                            } finally {
+                                if (conn != null) conn.disconnect();
+                            }
+                        }
+                        byte[] emptyHtml = "".getBytes(StandardCharsets.UTF_8);
+                        return new WebResourceResponse("text/html", "UTF-8", 404, "Not Found", corsHeaders, new ByteArrayInputStream(emptyHtml));
                     }
 
                     if ("/api/cover-proxy".equals(path)) {

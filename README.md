@@ -1,145 +1,146 @@
 <div align="center">
 
-<img src="docs/assets/pmusic-cover.jpg" alt="pMusic — Reproductor de Música OLED Liquid Glass para Windows PC y Android" width="100%" />
+<img src="docs/assets/pmusic-cover.jpg" alt="pMusic — Cross-Platform OLED Liquid Glass Music Player for Windows and Android" width="100%" />
 
 # pMusic
 
-**Reproductor de música multiplataforma (Windows PC `.exe` + Móvil Android `.apk`) con estética OLED Liquid Glass, Modo Sesión DJ (AutoMix en Web Audio API), algoritmo de recomendaciones enfocado en la escena urbana española y sincronización gratuita en tiempo real (`pMusic Connect`).**
+**Cross-platform OLED Liquid Glass music player for Windows & Android featuring a Dual-Deck Web Audio DJ AutoMix engine, multi-source 15-day release radar, in-splash OTA updates, and zero-cost real-time Supabase sync.**
 
-[![Release v0.2.0](https://img.shields.io/badge/Release-v0.2.0-0A84FF?style=for-the-badge)](https://github.com/pabloburgos/pMusic/releases/tag/v0.2.0)
-[![Windows PC](https://img.shields.io/badge/Windows_PC-x64_.exe-0051D5?style=for-the-badge&logo=windows)](https://github.com/pabloburgos/pMusic/releases/tag/v0.2.0)
-[![Android Mobile](https://img.shields.io/badge/Android-APK_Nativo-30D158?style=for-the-badge&logo=android)](https://github.com/pabloburgos/pMusic/releases/tag/v0.2.0)
-[![Modo Sesión DJ](https://img.shields.io/badge/Web_Audio-Dual--Deck_DJ_AutoMix-BF5AF2?style=for-the-badge)](#modo-sesión-dj-automix-inteligente)
-[![Supabase Connect](https://img.shields.io/badge/Supabase-Realtime_Sync_$0-3ECF8E?style=for-the-badge&logo=supabase)](docs/GUIA_SUPABASE.md)
+[![Release v0.23.5](https://img.shields.io/badge/Release-v0.23.5-0A84FF?style=for-the-badge)](https://github.com/pabloburgos/pMusic/releases/latest)
+[![Windows x64](https://img.shields.io/badge/Windows-x64_Setup_.exe-0051D5?style=for-the-badge&logo=windows)](https://github.com/pabloburgos/pMusic/releases/latest)
+[![Android APK](https://img.shields.io/badge/Android-Native_APK-30D158?style=for-the-badge&logo=android)](https://github.com/pabloburgos/pMusic/releases/latest)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9_Strict-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](tsconfig.base.json)
+[![License: MIT](https://img.shields.io/badge/License-MIT-BF5AF2?style=for-the-badge)](LICENSE)
 
-[**Descargar para Windows PC & Android (Releases)**](https://github.com/pabloburgos/pMusic/releases/tag/v0.2.0) • [**Guía Supabase Gratis**](docs/GUIA_SUPABASE.md) • [**Guía Windows**](docs/GUIA_WINDOWS.md) • [**Guía Android**](docs/GUIA_ANDROID.md)
+[**Latest Release (Windows & Android)**](https://github.com/pabloburgos/pMusic/releases/latest) · [**Web Player**](https://pmusic-olive.vercel.app) · [**Supabase Sync Guide**](docs/GUIA_SUPABASE.md) · [**Windows Guide**](docs/GUIA_WINDOWS.md) · [**Android Guide**](docs/GUIA_ANDROID.md)
 
 </div>
 
 ---
 
-## Descarga Directa (Release `v0.2.0`)
+## Downloads (`v0.23.5`)
 
-En la sección [**Releases de GitHub (`v0.2.0`)**](https://github.com/pabloburgos/pMusic/releases/tag/v0.2.0) tienes listos para descargar a tu carpeta `Downloads`:
+Ready-to-install binaries are published under [**GitHub Releases (`v0.23.5`)**](https://github.com/pabloburgos/pMusic/releases/latest):
 
-| Plataforma | Archivo en la Release | Cómo usarlo |
+| Platform | Asset | Notes |
 | :--- | :--- | :--- |
-| **Windows PC (64-bit)** | **`pMusic-0.2.0-Windows-x64.zip`** *(151 MB, portable completo con `pmusic.exe`)* y **`pMusic-Setup-0.2.0.exe`** | Descomprime el `.zip` y haz doble clic en **`pmusic.exe`** (o ejecuta el instalador). Ya incluye tu proyecto de Supabase conectado. |
-| **Android (Móvil)** | **`pMusic-Android-0.2.0.apk`** | Descárgalo en tu móvil Android, ábrelo e instálalo. Incluye reproducción en segundo plano y caché offline. |
-| **Base de Datos SQL** | **`supabase-schema.sql`** | Script SQL idempotente con las 6 tablas, políticas RLS y publicación en tiempo real para el SQL Editor de Supabase. |
+| **Windows (64-bit)** | **`pMusic-Setup-0.23.5.exe`** | Custom standalone installer bundling Electron 45, Discord Rich Presence, loopback stream server, and automatic **in-splash OTA web updates**. |
+| **Android** | **`pMusic-Android.apk`** | Signed APK built with native foreground playback service, notification transport controls, offline audio/cover vault, and **in-splash OTA bundle updater**. |
+| **Database Schema** | **`supabase-schema.sql`** | Idempotent PostgreSQL schema with RLS policies and Realtime publications for free cross-device cloud sync (`$0/month` on Supabase Free Tier). |
+
+> **Zero-Reinstall OTA Updates:** Once you install Desktop `v0.23.2+` or Android `v0.23.2+`, UI and engine releases ship automatically via `ota/latest.json` directly inside the startup splash screen without requiring manual installer downloads.
 
 ---
 
-## Capturas de Pantalla Reales
+## Screenshots
 
-### Escritorio Windows (OLED Liquid Glass + Inicio Editorial)
-<img src="docs/assets/desktop-home.png" alt="pMusic Escritorio Windows — Inicio Editorial" width="100%" />
+### Windows Desktop — OLED Liquid Glass & Personalized Home
+<img src="docs/assets/desktop-home.png" alt="pMusic Windows Desktop Home" width="100%" />
 
-### Reproduciendo Ahora (Now Playing + Malla Ambiental Dinámica) & Modo Sesión DJ (AutoMix)
-| Reproduciendo Ahora (Portada & Letras) | Cola & Panel Modo Sesión DJ (AutoMix) |
+### Now Playing (Dynamic Ambient Mesh + Synced Lyrics) & Live DJ AutoMix Deck
+| Now Playing & Synced Lyrics | Queue & Dual-Deck DJ AutoMix Studio |
 | :---: | :---: |
-| <img src="docs/assets/desktop-now-playing.png" alt="pMusic Now Playing" width="100%" /> | <img src="docs/assets/desktop-dj-mode.png" alt="pMusic Modo Sesión DJ" width="100%" /> |
+| <img src="docs/assets/desktop-now-playing.png" alt="pMusic Now Playing" width="100%" /> | <img src="docs/assets/desktop-dj-mode.png" alt="pMusic DJ AutoMix Studio" width="100%" /> |
 
-### Móvil Android (Barra Flotante Liquid Glass de 3 Pestañas + Mini-Player con Gestos)
+### Android Mobile — Floating Navigation Pill & Gesture Mini-Player
 <div align="center">
-  <img src="docs/assets/mobile-home.png" alt="pMusic Móvil Android" width="340" />
+  <img src="docs/assets/mobile-home.png" alt="pMusic Android Mobile UI" width="340" />
 </div>
 
 ---
 
-## Características Principales
+## Core Engineering Features
 
-### 1. Diseño OLED Liquid Glass (Auditado con Apple HIG)
-* **Tema oscuro profundo OLED (`#06060A`)** con superficies translúcidas **Liquid Glass** (`backdrop-filter: blur(24px) saturate(180%)`) aplicadas exclusivamente al cromo funcional, respetando contraste **WCAG 2.1 AA/AAA** (`>= 4.5:1`) y scrim protector del `38%` sobre portadas brillantes.
-* **Adaptativo Móvil y PC:**
-  * **Android:** cápsula inferior flotante de 3 pestañas (*Inicio*, *Buscar*, *Biblioteca*) + mini-reproductor flotante con gestos swipe horizontal para cambiar de canción.
-  * **Windows PC:** barra lateral izquierda colapsable (`248 px` / `72 px`) + barra de reproducción inferior fija de `80 px` + atajos de teclado globales.
-* **Letras Sincronizadas Interactivas (`LRCLIB`):** verso activo en gran formato, desenfoque suave en líneas inactivas y salto instantáneo al segundo exacto al tocar cualquier frase.
+### 1. OLED Liquid Glass Design System
+- **True Obsidian Canvas (`#06060A`)** paired with hardware-accelerated translucent glass chrome (`backdrop-filter: blur(24px) saturate(180%)`), adaptive scrim contrast guards (`>= 4.5:1`), and zero layout-thrashing marquee/backdrop animations.
+- **Responsive Across Form Factors:**
+  - **Windows PC:** collapsible left sidebar, smooth GPU-composited Now Playing queue with drag-and-drop reordering, Spotlight search (`Ctrl+K`), global media shortcuts, and native **Discord Rich Presence**.
+  - **Android Mobile:** native foreground `MediaStyle` notification controls with custom vector transport icons, lock-screen metadata, swipeable mini-player, and edge-to-edge full-screen overlays.
 
-### 2. Modo Sesión DJ (AutoMix Inteligente en Web Audio API)
-A diferencia de un crossfade convencional, **pMusic** monta una mesa de mezclas virtual con **dos decks independientes (`Deck A` y `Deck B`)**:
-* **Análisis DSP de cada pista:** detección automática de **BPM (65–175 BPM)**, envolvente de energía **RMS** y puntos estructurales (*intro*, *drop/estribillo principal* y *outro*).
-* **Reordenación armónica 2-opt de la cola:** ordena automáticamente la playlist minimizando saltos de BPM, energía y clave Camelot.
-* **Dos modos de sesión en vivo:**
-  * **Sesión rápida (45–90 s por tema):** entra justo antes del drop/estribillo y lanza la mezcla al siguiente tema al terminar la parte más fuerte.
-  * **Sesión completa:** respeta la duración completa del tema y realiza la mezcla de DJ en el outro.
-* **3 Coreografías de Transición con Efectos en Tiempo Real:**
-  * **EQ Swap (`200 Hz`):** intercambia progresivamente los subgraves del tema saliente con los del tema entrante sin saturar.
-  * **Filtro Resonante (`HPF / LPF`):** barrido de filtro paso-alto/bajo con resonancia suave.
-  * **Echo Out Sincronizado al BPM:** cola de eco en pre-fader sincronizada al compás de salida.
-* **Crossfade seguro (`0–12 s`) + Ecualizador gráfico de 5 bandas** (`60 Hz`, `230 Hz`, `910 Hz`, `3.6 kHz`, `14 kHz`) con 6 preajustes en español (*Plano*, *Urbano / Graves*, *Vocal*, *Electrónica*, *Acústico*, *Personalizado*).
+### 2. Dual-Deck Web Audio DJ Engine (`AutoMix`)
+- **Two Independent Playback Decks (`Deck A` & `Deck B`)** powered by Web Audio API DSP analysis:
+  - Automatic **BPM detection (65–175 BPM)**, RMS energy envelopes, and structural transition markers (*intro*, *drop*, *outro*).
+  - **2-opt harmonic queue ordering** to minimize BPM and energy jumps between consecutive tracks.
+  - **Three Real-Time Transition Choreographies:** `EQ Swap (200 Hz)` bass cross-modulation, resonant `HPF/LPF` filter sweeps, and BPM-synced `Echo Out` tails.
+  - **5-Band Parametric Graphic EQ** (`60 Hz`, `230 Hz`, `910 Hz`, `3.6 kHz`, `14 kHz`) + configurable safe crossfade (`0–12 s`).
 
-### 3. Algoritmo de Recomendaciones y Búsqueda (Escena Urbana Española)
-* **Semillas preconfiguradas y editables:** **Bad Bunny**, **La Pantera**, **Cruz Cafuné**, **Quevedo**, **Saiko**, **Morad**, **Dellafuente**, **Rels B**, **Mora**, **Feid**, **Eladio Carrión**, **Myke Towers**, **JC Reyes** y **Dei V**.
-* **Aprendizaje implícito estilo YouTube con decaimiento temporal (semivida de 14 días):**
-  * Salto antes de `20 s` → `-1.0`
-  * Escucha completa (`> 80%`) → `+2.0`
-  * Repetición / Bucle → `+3.5`
-  * *Me gusta* / Añadir a playlist → `+5.0`
-* **Inicio Editorial Personalizado:** genera dinámicamente *Escuchar de nuevo*, *Mixes para ti* (con botón directo de *Sesión DJ*), *Porque escuchaste a [Artista]* y *Novedades de tus artistas favoritos*.
+### 3. Multi-Source 15-Day Release Radar & Taste Engine (`@pmusic/recommendations`)
+- **15-Day Rolling New Releases (`Descubre lo Nuevo`):** aggregates live release signals across **Spotify** (*Novedades Viernes España*, *PEGAO*, *New Music Friday*), **LaHiguera** (*Novedades* & *Canciones*), **iTunes Search ES**, and artist discographies/guest appearances — strictly filtered through your library, liked artists, collaborators, and scene affinity.
+- **Deliberate Deluxe-Date Resolution:** preserves single/track-level release dates even when later packaged into deluxe albums or compilations, and surfaces recent guest collaborations on **Última aparición** inside artist profiles.
+- **Daily Editorial Mixes:** daily 100-track **Daily Mix** (familiar + fresh balance) and 100-track **Daily Discover** (strictly unheard discoveries).
+- **14-Day Half-Life Implicit Learning:** weights early skips (`-1.0`), full listens (`+2.0`), loops (`+3.5`), and explicit likes/library additions (`+5.0`).
 
-### 4. Interconexión PC ↔ Móvil Gratuita (`pMusic Connect` con Supabase)
-* **Sincronización en la nube 100% gratis (\$0/mes)** usando **Supabase Free Tier** (PostgreSQL + Auth + Realtime Presence/Broadcast/Postgres Changes).
-* **Control remoto en vivo:** pausa, pasa de canción o controla el otro dispositivo desde el panel **Dispositivos**.
-* **Transferencia en el segundo exacto:** pasa la canción actual, la cola y el estado del **Modo Sesión DJ** del ordenador al móvil (o viceversa) en 1 toque con compensación automática de latencia.
-
-### 5. Extras Integrados
-* **Importador de Playlists sin claves API:** pega cualquier enlace público de playlist o álbum de **Spotify** o **YouTube Music** para importarlo a tu biblioteca.
-* **Modo Offline / Caché de Canciones:** descarga pistas para escucharlas sin conexión de datos en el móvil.
-* **Discord Rich Presence en Windows:** muestra lo que estás escuchando en tu perfil de Discord.
+### 4. Real-Time Cloud Sync, Social & Offline Mode
+- **`pMusic Connect` (`@pmusic/sync`):** millisecond-accurate remote playback transfer and live device control via Supabase Realtime Presence & Broadcast.
+- **Social Features:** live **Jam Sessions**, shared collaborative playlists, friend profiles, and yearly **Wrapped** listening stories.
+- **Offline Vault & Synced Lyrics:** offline audio + cover caching in IndexedDB / Android Storage and word/line-synced lyrics via **LRCLIB** with Musixmatch fallback.
+- **No-Key Playlist Importer:** paste public **Spotify** or **YouTube Music** playlist/album links to import tracks straight into your library.
 
 ---
 
-## Arquitectura del Monorepo
+## Monorepo Architecture
 
 ```text
 pMusic/
 ├── packages/
-│   ├── core/               # Tipos de dominio, contratos congelados, semillas ES y tokens WCAG/HIG
-│   ├── providers/          # Adaptador YouTube Music (gl=ES), LRCLIB, parser LRC, importador Spotify/YT y proxy Range 206
-│   ├── audio-engine/       # Motor Web Audio Dual-Deck, analizador DSP BPM/RMS/Drop, planificador DJ y EQ de 5 bandas
-│   ├── recommendations/    # Motor de señales implícitas, decaimiento de 14 días, autocompletado y estantes editoriales
-│   └── sync/               # Motor Supabase Auth + Realtime (Presence/Broadcast/Postgres) + almacén local con Outbox offline
+│   ├── core/               # Domain models, provider/platform contracts, normalization utilities & design tokens
+│   ├── providers/          # Deezer/YouTube catalog adapters, multi-source release radar, HTTP stream Range proxy, LRCLIB & Spotify importer
+│   ├── audio-engine/       # Dual-deck Web Audio DJ AutoMix engine, DSP analyzer, transitions & 5-band EQ
+│   ├── recommendations/    # 15-day release radar scoring, implicit taste decay, Daily Mix/Discover & search reranking
+│   └── sync/               # Supabase Auth + Realtime Connect + offline-first IndexedDB outbox store
 ├── apps/
-│   ├── web/                # Interfaz compartida React 19 + Tailwind CSS v4 + Framer Motion + Zustand
-│   ├── desktop/            # App Windows PC (Electron 45 + servidor loopback 127.0.0.1 + Discord RPC + NSIS/ZIP)
-│   └── mobile/             # App Android (Capacitor 8 + PMusicPlaybackService + PMusicStreamProxy + Gradle APK)
-├── supabase/
-│   ├── schema.sql          # Esquema PostgreSQL completo e idempotente con RLS y publicación Realtime
-│   └── seed_optional.sql   # Función SQL opcional para precargar semillas urbanas españolas
-└── docs/                   # Guías detalladas en español (Supabase, Windows y Android)
+│   ├── web/                # Shared React 19 + TypeScript + Tailwind CSS v4 + Zustand UI
+│   ├── desktop/            # Windows Electron 45 host (127.0.0.1 loopback server, Discord RPC, OTA updater, custom NSIS/C# setup)
+│   └── mobile/             # Android native container (WebView asset loader, foreground service, Gradle/d8/apksigner pipeline & OTA)
+├── scripts/                # Cross-platform OTA bundle builder & release automation
+├── supabase/               # PostgreSQL schema with RLS policies & Realtime setup
+└── ota/                    # Latest web OTA manifest (latest.json) & compressed web bundle
 ```
 
 ---
 
-## Desarrollo y Compilación Local
+## Tech Stack
+
+- **Frontend:** React 19, TypeScript 5.9, Vite 7, Tailwind CSS v4, Zustand, Lucide Icons
+- **Desktop:** Electron 45, `@xhayper/discord-rpc`, Node HTTP loopback Range server
+- **Mobile:** Native Android WebView + `MediaSession` foreground playback service
+- **Backend / Sync:** Supabase (Auth, PostgreSQL + RLS, Realtime Presence/Broadcast/Postgres Changes), Vercel Serverless API
+- **Testing:** Vitest 4 + React Testing Library (`15` suites, `150+` unit/component tests), Playwright E2E
+
+---
+
+## Local Development & Build
 
 ```bash
-# 1. Instalar dependencias
+# 1. Install workspace dependencies (Node >= 22.12 required)
 npm install
 
-# 2. Verificar tipos y ejecutar tests unitarios (63 tests)
+# 2. Type-check all workspaces and run full unit test suite
 npm run typecheck
 npm run test
 
-# 3. Compilar interfaz web compartida
+# 3. Build shared web UI & generate OTA bundle
 npm run build:web
+npm run build:ota
 
-# 4. Compilar aplicación de escritorio Windows
+# 4. Build Windows Desktop app & standalone Setup .exe
 npm run build:desktop
 npm run dist:win
 
-# 5. Compilar paquete APK para Android
-npm run build:apk
-
-# 6. Ejecutar suite E2E con Playwright y auditoría Apple HIG
-npm run test:e2e
+# 5. Build signed Android APK (requires Android SDK Build-Tools)
+node apps/mobile/scripts/build-apk.mjs
 ```
 
 ---
 
-## Documentación Paso a Paso
+## Documentation & Community
 
-* [**Guía de Base de Datos y Sincronización Gratuita (Supabase)**](docs/GUIA_SUPABASE.md)
-* [**Guía de Instalación y Compilación en Windows PC (`.exe`)**](docs/GUIA_WINDOWS.md)
-* [**Guía de Instalación y Compilación en Android (`.apk`)**](docs/GUIA_ANDROID.md)
+- [**Contributing Guide**](CONTRIBUTING.md)
+- [**Security Policy**](SECURITY.md)
+- [**Supabase Setup Guide**](docs/GUIA_SUPABASE.md)
+- [**Windows Build Guide**](docs/GUIA_WINDOWS.md)
+- [**Android Build Guide**](docs/GUIA_ANDROID.md)
+
+## License
+
+Released under the [**MIT License**](LICENSE). Copyright © 2026 Pablo Burgos & pMusic Contributors.

@@ -565,9 +565,28 @@ export class DeezerCatalog {
     Promise<{ avatarUrl: string; bannerUrl: string } | null>
   >();
   private mbNextAllowedAtMs = 0;
+  private activeDeezerReqs = 0;
+  private readonly deezerQueue: Array<() => void> = [];
 
   public constructor(fetchFn?: typeof fetch) {
     this.fetchFn = fetchFn ?? globalThis.fetch.bind(globalThis);
+  }
+
+  private async acquireDeezerSlot(): Promise<void> {
+    if (this.activeDeezerReqs < 12) {
+      this.activeDeezerReqs++;
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      this.deezerQueue.push(resolve);
+    });
+    this.activeDeezerReqs++;
+  }
+
+  private releaseDeezerSlot(): void {
+    this.activeDeezerReqs = Math.max(0, this.activeDeezerReqs - 1);
+    const next = this.deezerQueue.shift();
+    if (next) next();
   }
 
   private async get(path: string, signal?: AbortSignal): Promise<Json> {
@@ -578,13 +597,50 @@ export class DeezerCatalog {
       if (pending) return pending;
     }
     const exec = (async () => {
-      const res = await this.fetchFn(`${API}${path}`, { signal });
-      if (!res.ok) throw new Error(`Deezer ${res.status}`);
-      const data = (await res.json()) as Json;
-      if (data?.error) throw new Error(String(data.error?.message ?? 'Deezer error'));
-      this.cache.set(path, { at: Date.now(), data });
-      if (this.cache.size > 120) this.cache.delete(this.cache.keys().next().value as string);
-      return data;
+      const backoffMs = [0, 380, 900];
+      for (let attempt = 0; attempt < backoffMs.length; attempt++) {
+        if (signal?.aborted) throw new Error('Aborted');
+        if (backoffMs[attempt]! > 0) {
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, backoffMs[attempt]!);
+            signal?.addEventListener(
+              'abort',
+              () => {
+                clearTimeout(timer);
+                resolve();
+              },
+              { once: true }
+            );
+          });
+          if (signal?.aborted) throw new Error('Aborted');
+        }
+        await this.acquireDeezerSlot();
+        let shouldRetry = false;
+        try {
+          const res = await this.fetchFn(`${API}${path}`, { signal });
+          if (res.status === 429 && attempt < backoffMs.length - 1) {
+            shouldRetry = true;
+          } else {
+            if (!res.ok) throw new Error(`Deezer ${res.status}`);
+            const data = (await res.json()) as Json;
+            if (data?.error) {
+              if (Number(data.error?.code) === 4 && attempt < backoffMs.length - 1) {
+                shouldRetry = true;
+              } else {
+                throw new Error(String(data.error?.message ?? 'Deezer error'));
+              }
+            } else {
+              this.cache.set(path, { at: Date.now(), data });
+              if (this.cache.size > 120) this.cache.delete(this.cache.keys().next().value as string);
+              return data;
+            }
+          }
+        } finally {
+          this.releaseDeezerSlot();
+        }
+        if (shouldRetry) continue;
+      }
+      throw new Error('Deezer quota exceeded');
     })();
     if (!signal) {
       this.inFlight.set(path, exec);
@@ -886,10 +942,11 @@ export class DeezerCatalog {
       }
     };
 
+    const isFastSongQuery = filter === 'song' && tokens.length >= 2;
     const [songs, artists, albums, playlists] = await Promise.all([
-      want('song') || want('video') ? this.get(`/search?q=${q}&limit=25`, signal) : null,
+      want('song') || want('video') ? this.get(`/search?q=${q}&limit=${isFastSongQuery ? 12 : 25}`, signal) : null,
       want('artist') ? this.get(`/search/artist?q=${q}&limit=35`, signal) : null,
-      want('album') || ((want('song') || want('video')) && tokens.length >= 2)
+      want('album') || (!isFastSongQuery && (want('song') || want('video')) && tokens.length >= 2)
         ? this.get(`/search/album?q=${q}&limit=10`, signal).catch(() => ({ data: [] }))
         : null,
       want('playlist') ? this.get(`/search/playlist?q=${q}&limit=8`, signal) : null,
@@ -1055,7 +1112,7 @@ export class DeezerCatalog {
     const enrichedList = await this.enrichTracks(
       mergedRaw,
       mergedRaw.map((t: Json) => this.mapTrack(t)),
-      16,
+      isFastSongQuery ? 4 : 16,
       signal
     );
 
@@ -1928,9 +1985,9 @@ export class DeezerCatalog {
         return this.enrichTracks(
           mergedRawTop,
           mergedRawTop.map((t: Json) => this.mapTrack(t)),
-          10,
+          6,
           signal,
-          650
+          1000
         );
       });
 
@@ -2105,16 +2162,16 @@ export class DeezerCatalog {
               );
             })
             .sort((x, y) => Number(y?.id ?? 0) - Number(x?.id ?? 0))
-            .slice(0, 14);
+            .slice(0, 8);
 
           if (candidates.length === 0) return [];
 
           const enriched = await this.enrichTracks(
             candidates,
             candidates.map((t) => this.mapTrack(t)),
-            14,
+            8,
             signal,
-            2200
+            2000
           );
 
           const itunesDateByTitle = new Map<string, string>();

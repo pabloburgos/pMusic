@@ -24,7 +24,7 @@ import {
   searchFallbackCatalog,
 } from './catalog-fallback.ts';
 import { DeezerCatalog, isDeezerTrackId } from './deezer-catalog.ts';
-import { fetchExternalReleaseRadar } from './release-radar.ts';
+import { fetchExternalReleaseRadar, getMostRecentFridayIso } from './release-radar.ts';
 
 export interface YouTubeMusicProviderOptions {
   lang?: string;
@@ -649,13 +649,86 @@ export class HttpProxyMusicProvider implements IMusicProvider {
   public async getReleaseRadar(signal?: AbortSignal): Promise<ExternalReleaseCandidate[]> {
     const mobileDirect = this.getMobileDirectProvider();
     if (mobileDirect) {
-      return [];
+      const origin =
+        typeof window !== 'undefined' && window.location?.origin
+          ? window.location.origin
+          : 'https://appassets.pmusic.local';
+      const proxyFetch: typeof fetch = (input, init) => {
+        const target = String(input);
+        if (
+          target.startsWith('https://open.spotify.com/embed/playlist/') ||
+          target.startsWith('https://www.lahiguera.net/musicalia/')
+        ) {
+          return this.fetchFn(
+            `${origin}/api/radar-proxy?url=${encodeURIComponent(target)}`,
+            init
+          );
+        }
+        return this.fetchFn(input, init);
+      };
+      try {
+        return await fetchExternalReleaseRadar({ fetchFn: proxyFetch, signal });
+      } catch {
+        return [];
+      }
     }
+
     const remote = await this.fetchApiJson<{ releases?: ExternalReleaseCandidate[] }>(
       '/api/release-radar',
       signal
     );
-    return Array.isArray(remote?.releases) ? remote.releases : [];
+    if (Array.isArray(remote?.releases) && remote.releases.length > 0) {
+      return remote.releases;
+    }
+
+    // Backwards-compatible fallback for older desktop OTA hosts (e.g. Electron v0.23.3):
+    // reuse existing /api/import/spotify endpoint for Novedades Viernes España & PEGAO.
+    const fridayIso = getMostRecentFridayIso();
+    const importTargets: Array<{
+      url: string;
+      source: 'spotify_novedades_es' | 'spotify_pegao';
+      priority: number;
+      releaseDate?: string;
+    }> = [
+      {
+        url: 'https://open.spotify.com/playlist/37i9dQZF1DX6PYajiT4pAf',
+        source: 'spotify_novedades_es',
+        priority: 95,
+        releaseDate: fridayIso,
+      },
+      {
+        url: 'https://open.spotify.com/playlist/37i9dQZF1DX1HCSfq0nSal',
+        source: 'spotify_pegao',
+        priority: 85,
+      },
+    ];
+    const settled = await Promise.allSettled(
+      importTargets.map(async (target) => {
+        const res = await this.fetchApiJson<{
+          name?: string;
+          tracks?: Array<{ title?: string; artists?: string[]; thumbnailUrl?: string }>;
+        }>(`/api/import/spotify?url=${encodeURIComponent(target.url)}`, signal);
+        if (!res || !Array.isArray(res.tracks) || res.name === 'Éxitos Urbano España (Spotify Import)') {
+          return [] as ExternalReleaseCandidate[];
+        }
+        return res.tracks
+          .filter((t) => Boolean(t?.title) && Array.isArray(t?.artists) && t.artists.length > 0)
+          .map((t) => ({
+            title: String(t.title),
+            artists: t.artists!.map((a) => String(a)),
+            ...(target.releaseDate ? { releaseDate: target.releaseDate } : {}),
+            kind: 'track' as const,
+            source: target.source,
+            priority: target.priority,
+            ...(t.thumbnailUrl ? { thumbnailUrl: t.thumbnailUrl } : {}),
+          }));
+      })
+    );
+    const out: ExternalReleaseCandidate[] = [];
+    for (const r of settled) {
+      if (r.status === 'fulfilled') out.push(...r.value);
+    }
+    return out;
   }
 
   public async resolveAudioStream(
