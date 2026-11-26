@@ -1089,7 +1089,7 @@ ipcMain.handle('pmusic:check-and-apply-update', async (_event, runningWebVersion
   // 1. Instant In-Splash OTA web bundle update (zero Setup.exe reinstall needed)
   try {
     const acOta = new AbortController();
-    const tOta = setTimeout(() => acOta.abort(), 1800);
+    const tOta = setTimeout(() => acOta.abort(), 3200);
     const otaRes = await fetch(
       'https://raw.githubusercontent.com/pabloburgos/pMusic/main/ota/latest.json?t=' + Date.now(),
       { signal: acOta.signal, headers: { 'User-Agent': 'pMusic-Updater' } }

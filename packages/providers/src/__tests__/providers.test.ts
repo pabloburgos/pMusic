@@ -11,7 +11,9 @@ import {
   getFallbackArtistDetail,
   isAuthenticLyricsText,
   parseFeaturedArtistsFromTitle,
+  parseLaHigueraNovedadesHtml,
   parseSpotifyEmbedHtml,
+  parseSpotifyEmbedPlaylistHtml,
   parseYouTubeDescriptionCredits,
   parseYtmAudienceCount,
   sanitizeArtistImageUrl,
@@ -1589,5 +1591,148 @@ describe('@pmusic/providers', () => {
     });
 
     expect(searchFallbackCatalog('superestrella').artists).toEqual([]);
+  });
+
+  it('parses LaHiguera novedades, Spotify editorial embed releases, and prefers newer track release_date over older deluxe album dates', async () => {
+    const lhHtml = `
+      <article>
+        <img src="https://www.lahiguera.net/musicalia/artistas/quevedo/disco/15600/portada-p.jpg">
+        <div class=cont><div class=fecha>21/11/2026</div>
+        <h3><a href="https://www.lahiguera.net/musicalia/artistas/quevedo/disco/15600">Quevedo: EL BAIFO &amp; SOY MEJOR</a></h3>
+        <div class=intro>Nuevo lanzamiento urbano</div></div>
+      </article>
+      <article>
+        <div class=cont><div class=fecha>25/11/2026</div>
+        <h3><a href="#">Stray Kids: SUIATSU</a></h3>
+        <div class=intro>EP de siete pistas</div></div>
+      </article>
+    `;
+    const parsedLh = parseLaHigueraNovedadesHtml(lhHtml, 'novedades');
+    expect(parsedLh).toHaveLength(2);
+    expect(parsedLh[0]).toMatchObject({
+      title: 'EL BAIFO & SOY MEJOR',
+      artists: ['Quevedo'],
+      releaseDate: '2026-11-21',
+      kind: 'album',
+      source: 'lahiguera_novedades',
+    });
+    expect(parsedLh[1]?.kind).toBe('ep');
+    expect(parsedLh[1]?.releaseDate).toBe('2026-11-25');
+
+    const spEmbedHtml = `<script id="__NEXT_DATA__" type="application/json">${JSON.stringify({
+      props: {
+        pageProps: {
+          state: {
+            data: {
+              entity: {
+                name: 'Novedades Viernes España',
+                trackList: [
+                  {
+                    title: 'SOY MEJOR 2.0',
+                    subtitle: 'Kristina,\u00A0Quevedo,\u00A0Came Beats',
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+    })}</script>`;
+    const parsedSp = parseSpotifyEmbedPlaylistHtml(
+      spEmbedHtml,
+      'spotify_novedades_es',
+      '2026-11-20'
+    );
+    expect(parsedSp).toEqual([
+      {
+        title: 'SOY MEJOR 2.0',
+        artists: ['Kristina', 'Quevedo', 'Came Beats'],
+        releaseDate: '2026-11-20',
+        kind: 'track',
+        source: 'spotify_novedades_es',
+        priority: 95,
+      },
+    ]);
+
+    const catalog = new DeezerCatalog();
+    const mappedDeluxeTrack = catalog.mapTrack({
+      id: 4396919801,
+      title: 'LAMINE YAMAL (feat. La Pantera)',
+      title_short: 'LAMINE YAMAL (feat. La Pantera)',
+      duration: 165,
+      release_date: '2026-11-06',
+      artist: { id: 50619722, name: 'Nemzzz' },
+      contributors: [
+        { id: 50619722, name: 'Nemzzz' },
+        { id: 7524936, name: 'La Pantera' },
+      ],
+      album: {
+        id: 8888,
+        title: 'LOCKED IN (EUROLUXE)',
+        release_date: '2026-09-04',
+        cover_medium: 'https://example.com/lamine.jpg',
+      },
+    });
+    expect(mappedDeluxeTrack.releaseDate).toBe('2026-11-06');
+    expect(mappedDeluxeTrack.releaseYear).toBe(2026);
+  });
+
+  it('serves parsed external releases on GET /api/release-radar', async () => {
+    const mockFetch = (async (input: RequestInfo | URL) => {
+      const u = String(input);
+      if (u.includes('open.spotify.com/embed/playlist/37i9dQZF1DX6PYajiT4pAf')) {
+        return new Response(
+          `<script id="__NEXT_DATA__" type="application/json">${JSON.stringify({
+            props: {
+              pageProps: {
+                state: {
+                  data: {
+                    entity: {
+                      trackList: [{ title: 'Tremendo Desastre', subtitle: 'Myke Towers,\u00A0Rauw Alejandro' }],
+                    },
+                  },
+                },
+              },
+            },
+          })}</script>`,
+          { status: 200, headers: { 'content-type': 'text/html' } }
+        );
+      }
+      if (u.includes('lahiguera.net/musicalia/novedades.php')) {
+        return new Response(
+          `<article><div class=cont><div class=fecha>25/11/2026</div><h3><a href="#">Mvrk: Nueva Ola</a></h3><div class=intro>Álbum</div></div></article>`,
+          { status: 200, headers: { 'content-type': 'text/html' } }
+        );
+      }
+      return new Response('', { status: 404 });
+    }) as typeof fetch;
+
+    const handler = createPMusicApiHandler({ fetchFn: mockFetch });
+    let statusCode = 0;
+    let bodyText = '';
+    const fakeRes = {
+      statusCode: 200,
+      setHeader: () => {},
+      end: (chunk?: unknown) => {
+        statusCode = fakeRes.statusCode;
+        bodyText =
+          chunk instanceof Uint8Array
+            ? Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength).toString('utf-8')
+            : String(chunk ?? '');
+      },
+    } as any;
+
+    const handled = await handler(
+      { url: '/api/release-radar', method: 'GET', headers: {} } as any,
+      fakeRes
+    );
+    expect(handled).toBe(true);
+    expect(statusCode).toBe(200);
+    const payload = JSON.parse(bodyText) as {
+      releases: Array<{ title: string; artists: string[]; source: string }>;
+    };
+    expect(payload.releases.some((r) => r.title === 'Tremendo Desastre' && r.source === 'spotify_novedades_es')).toBe(
+      true
+    );
   });
 });

@@ -258,17 +258,17 @@ describe('@pmusic/recommendations', () => {
     };
 
     const now = new Date();
-    const rollingWin = getRollingDaysWindow(now, 10);
+    const rollingWin = getRollingDaysWindow(now, 15);
     const thuNov26 = new Date(2026, 10, 26, 0, 23, 0);
-    const thuRolling = getRollingDaysWindow(thuNov26, 10);
-    expect(thuRolling.startIso).toBe('2026-11-16');
+    const thuRolling = getRollingDaysWindow(thuNov26, 15);
+    expect(thuRolling.startIso).toBe('2026-11-11');
     expect(thuRolling.endIso).toBe('2026-11-27');
-    expect(isReleaseDateInWindow('2026-11-19', thuRolling.startIso, thuRolling.endIso)).toBe(true); // Thursday 7 days ago
+    expect(isReleaseDateInWindow('2026-11-19', thuRolling.startIso, thuRolling.endIso)).toBe(true); // 7 days ago
     expect(isReleaseDateInWindow('2026-11-26', thuRolling.startIso, thuRolling.endIso)).toBe(true); // Today
-    expect(isReleaseDateInWindow('2026-11-10', thuRolling.startIso, thuRolling.endIso)).toBe(false); // Older than 10 days
+    expect(isReleaseDateInWindow('2026-11-05', thuRolling.startIso, thuRolling.endIso)).toBe(false); // Older than 15 days
 
     const sevenDaysAgo = getDailyMixDateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7));
-    const fifteenDaysAgo = getDailyMixDateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 15));
+    const sixteenDaysAgo = getDailyMixDateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 16));
     const weekWin = getMondayWeekWindow(now);
     void weekWin;
 
@@ -356,8 +356,8 @@ describe('@pmusic/recommendations', () => {
               title: `Disco Viejo ${artistName}`,
               artists: [{ name: artistName }],
               thumbnailUrl: 'https://example.com/al_old.jpg',
-              year: Number(fifteenDaysAgo.slice(0, 4)),
-              releaseDate: fifteenDaysAgo,
+              year: Number(sixteenDaysAgo.slice(0, 4)),
+              releaseDate: sixteenDaysAgo,
             },
           ],
           singles: [],
@@ -377,20 +377,20 @@ describe('@pmusic/recommendations', () => {
             artists: [{ name: 'Cruzzi' }],
             thumbnailUrl: 'https://example.com/al.jpg',
             year: Number(sevenDaysAgo.slice(0, 4)),
-            releaseDate: isOld ? fifteenDaysAgo : sevenDaysAgo,
+            releaseDate: isOld ? sixteenDaysAgo : sevenDaysAgo,
           },
           tracks: isOld
             ? [
                 {
                   id: `old_track_${albumId}`,
-                  title: 'Canción Antiguo 15d',
+                  title: 'Canción Antiguo 16d',
                   artists: [{ id: 'art_0', name: 'Cruzzi' }],
                   album: { id: albumId, name: 'Disco Viejo' },
                   durationSec: 190,
                   thumbnailUrl: 'https://example.com/old.jpg',
                   source: 'ytmusic' as const,
-                  releaseYear: Number(fifteenDaysAgo.slice(0, 4)),
-                  releaseDate: fifteenDaysAgo,
+                  releaseYear: Number(sixteenDaysAgo.slice(0, 4)),
+                  releaseDate: sixteenDaysAgo,
                 },
               ]
             : poolTracks.filter((t) => t.releaseDate === sevenDaysAgo),
@@ -457,5 +457,139 @@ describe('@pmusic/recommendations', () => {
       expect(t.id).not.toBe(poolTracks[12]!.id);
       expect(dailyMixIds.has(t.id)).toBe(false);
     }
+  });
+
+  it('uses rolling 15-day radar with taste-matched external releases and never leaks stamped 2023 fallback tracks', async () => {
+    const now = new Date();
+    const fiveDaysAgo = getDailyMixDateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 5));
+    const twoDaysAgo = getDailyMixDateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 2));
+
+    const lamineTrack: Track = {
+      id: 'dz:4396919801',
+      title: 'LAMINE YAMAL (feat. La Pantera)',
+      artists: [
+        { id: '50619722', name: 'Nemzzz' },
+        { id: '7524936', name: 'La Pantera' },
+      ],
+      album: { id: '999', name: 'LOCKED IN (EUROLUXE)' },
+      durationSec: 165,
+      thumbnailUrl: 'https://example.com/lamine.jpg',
+      source: 'ytmusic',
+      releaseYear: Number(fiveDaysAgo.slice(0, 4)),
+      releaseDate: fiveDaysAgo,
+    };
+    const quevedoNewTrack: Track = {
+      id: 'dz:99001122',
+      title: 'SOY MEJOR 2.0',
+      artists: [
+        { id: '1', name: 'Kristina' },
+        { id: '6705223', name: 'Quevedo' },
+        { id: '3', name: 'Came Beats' },
+      ],
+      album: { id: '888', name: 'SOY MEJOR 2.0' },
+      durationSec: 198,
+      thumbnailUrl: 'https://example.com/soy_mejor.jpg',
+      source: 'ytmusic',
+      releaseYear: Number(twoDaysAgo.slice(0, 4)),
+    };
+    const syntheticLeakTrack: Track = {
+      id: 'cc_me_muevo_01',
+      title: 'Me Muevo Con Dios',
+      artists: [{ id: '73148212', name: 'Cruzzi' }],
+      album: { id: '442746907', name: 'Me Muevo Con Dios' },
+      durationSec: 388,
+      thumbnailUrl: 'https://example.com/cc.jpg',
+      source: 'ytmusic',
+      releaseYear: 2023,
+    };
+
+    const mockProvider = {
+      search: async (query: string) => {
+        if (query.toLowerCase().includes('soy mejor')) {
+          return {
+            query,
+            songs: [quevedoNewTrack],
+            videos: [],
+            artists: [],
+            albums: [],
+            playlists: [],
+          };
+        }
+        return { query, songs: [], videos: [], artists: [], albums: [], playlists: [] };
+      },
+      getHomeFeed: async () => ({ shelves: [], moods: [] }),
+      getUpNext: async () => [],
+      getRelated: async () => ({ tracks: [], artists: [], playlists: [] }),
+      getReleaseRadar: async () => [
+        {
+          title: 'SOY MEJOR 2.0',
+          artists: ['Kristina', 'Quevedo', 'Came Beats'],
+          releaseDate: twoDaysAgo,
+          kind: 'track' as const,
+          source: 'spotify_novedades_es' as const,
+          priority: 95,
+        },
+        {
+          title: 'SUIATSU',
+          artists: ['Stray Kids'],
+          releaseDate: twoDaysAgo,
+          kind: 'ep' as const,
+          source: 'lahiguera_novedades' as const,
+          priority: 68,
+        },
+      ],
+      getArtist: async (idOrName: string, _signal?: AbortSignal, hint?: { name?: string }) => {
+        const effectiveName = hint?.name ?? idOrName;
+        const isLaPantera =
+          idOrName === '7524936' || effectiveName.toLowerCase().includes('pantera');
+        return {
+          artist: { id: idOrName, name: effectiveName, thumbnailUrl: 'https://example.com/a.jpg' },
+          topSongs: [],
+          appearances: isLaPantera ? [lamineTrack] : [],
+          albums: [
+            {
+              id: 'real_recent_album_1',
+              title: 'FILIPENSES',
+              artists: [{ name: 'La Pantera' }],
+              thumbnailUrl: 'https://example.com/fili.jpg',
+              year: Number(fiveDaysAgo.slice(0, 4)),
+              releaseDate: fiveDaysAgo,
+            },
+          ],
+          singles: [],
+          relatedArtists: [],
+        };
+      },
+      // Simulates fallback album detail returning synthetic tracks (cc_me_muevo_01)
+      getAlbum: async () => ({
+        album: {
+          id: '442746907',
+          title: 'Me Muevo Con Dios',
+          artists: [{ name: 'Cruzzi' }],
+          thumbnailUrl: 'https://example.com/cc.jpg',
+          year: 2023,
+        },
+        tracks: [syntheticLeakTrack],
+      }),
+    };
+
+    const engine = new RecommendationEngine({ musicProvider: mockProvider });
+    engine.setFavoriteArtists([
+      { artistId: '7524936', artistName: 'La Pantera', likedAt: '2026-11-20T10:00:00Z' },
+      { artistId: '6705223', artistName: 'Quevedo', likedAt: '2026-11-20T10:00:00Z' },
+    ]);
+
+    const shelves = await engine.buildHomeShelves();
+    const mixesShelf = shelves.find((s) => s.kind === 'mixes_for_you');
+    const descubreMix = mixesShelf?.mixes?.find((m) => m.id === 'mix_descubre_lo_nuevo');
+    expect(descubreMix).toBeTruthy();
+    expect(descubreMix?.badge).toBe('ÚLTIMOS 15 DÍAS');
+    expect(descubreMix?.subtitle).toContain('últimos 15 días');
+
+    const ids = (descubreMix?.tracks ?? []).map((t) => t.id);
+    expect(ids).toContain('dz:4396919801');
+    expect(ids).toContain('dz:99001122');
+    expect(ids).not.toContain('cc_me_muevo_01');
+    expect((descubreMix?.tracks ?? []).some((t) => t.title.includes('SUIATSU'))).toBe(false);
   });
 });

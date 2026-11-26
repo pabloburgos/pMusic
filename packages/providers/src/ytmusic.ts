@@ -2,6 +2,7 @@ import type {
   AlbumDetail,
   ArtistDetail,
   AudioStreamQuality,
+  ExternalReleaseCandidate,
   HomeFeedResult,
   IMusicProvider,
   IPlatformBridge,
@@ -23,6 +24,7 @@ import {
   searchFallbackCatalog,
 } from './catalog-fallback.ts';
 import { DeezerCatalog, isDeezerTrackId } from './deezer-catalog.ts';
+import { fetchExternalReleaseRadar } from './release-radar.ts';
 
 export interface YouTubeMusicProviderOptions {
   lang?: string;
@@ -317,6 +319,15 @@ export class YouTubeMusicProvider implements IMusicProvider {
       }
     }
     return null;
+  }
+
+  public async getReleaseRadar(signal?: AbortSignal): Promise<ExternalReleaseCandidate[]> {
+    if (!this.enableLiveNetwork) return [];
+    try {
+      return await fetchExternalReleaseRadar({ signal });
+    } catch {
+      return [];
+    }
   }
 
   public async resolveAudioStream(
@@ -633,6 +644,18 @@ export class HttpProxyMusicProvider implements IMusicProvider {
       signal
     );
     return remote?.credits ?? null;
+  }
+
+  public async getReleaseRadar(signal?: AbortSignal): Promise<ExternalReleaseCandidate[]> {
+    const mobileDirect = this.getMobileDirectProvider();
+    if (mobileDirect) {
+      return [];
+    }
+    const remote = await this.fetchApiJson<{ releases?: ExternalReleaseCandidate[] }>(
+      '/api/release-radar',
+      signal
+    );
+    return Array.isArray(remote?.releases) ? remote.releases : [];
   }
 
   public async resolveAudioStream(

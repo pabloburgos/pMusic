@@ -829,31 +829,34 @@ export const DetailViewPanel: React.FC = () => {
     });
     const latestRelease = allReleases[0] ?? null;
     const artistKeyNorm = artist.name.trim().toLowerCase();
-    const sortedAppearances = [...appearances].sort((a, b) => {
-      const da = a.releaseDate ?? `${a.releaseYear ?? 0}-01-01`;
-      const db = b.releaseDate ?? `${b.releaseYear ?? 0}-01-01`;
-      return db.localeCompare(da);
-    });
+    const isRealAppearanceTrack = (t: Track): boolean =>
+      t.artists.length > 1 || (t.artists[0]?.name ?? '').trim().toLowerCase() !== artistKeyNorm;
+    const isFromLatestRelease = (t: Track): boolean => {
+      if (!latestRelease) return false;
+      const tTitle = t.title.trim().toLowerCase();
+      const tAlbum = (t.album?.name ?? '').trim().toLowerCase();
+      const relTitle = latestRelease.title.trim().toLowerCase();
+      return tTitle === relTitle || (Boolean(tAlbum) && tAlbum === relTitle);
+    };
+    const mergedAppearancePool = Array.from(
+      new Map<string, Track>([...appearances, ...topSongs].map((t) => [t.id, t])).values()
+    )
+      .filter(isRealAppearanceTrack)
+      .sort((a, b) => {
+        const da = a.releaseDate ?? `${a.releaseYear ?? 0}-01-01`;
+        const db = b.releaseDate ?? `${b.releaseYear ?? 0}-01-01`;
+        const cmp = db.localeCompare(da);
+        if (cmp !== 0) return cmp;
+        const na = Number.parseInt(a.id.replace(/\D/g, ''), 10) || 0;
+        const nb = Number.parseInt(b.id.replace(/\D/g, ''), 10) || 0;
+        return nb - na;
+      });
     const latestAppearance: Track | null =
-      sortedAppearances[0] ??
-      [...topSongs]
-        .filter(
-          (t) =>
-            t.artists.length > 1 ||
-            (t.artists[0]?.name ?? '').trim().toLowerCase() !== artistKeyNorm
-        )
-        .sort((a, b) => {
-          const da = a.releaseDate ?? `${a.releaseYear ?? 0}-01-01`;
-          const db = b.releaseDate ?? `${b.releaseYear ?? 0}-01-01`;
-          return db.localeCompare(da);
-        })[0] ??
+      mergedAppearancePool.find((t) => !isFromLatestRelease(t)) ??
+      mergedAppearancePool[0] ??
       null;
     const isDistinctAppearance = Boolean(
-      latestAppearance &&
-        (!latestRelease ||
-          (latestAppearance.title.trim().toLowerCase() !== latestRelease.title.trim().toLowerCase() &&
-            (latestAppearance.album?.name ?? '').trim().toLowerCase() !==
-              latestRelease.title.trim().toLowerCase()))
+      latestAppearance && (!latestRelease || !isFromLatestRelease(latestAppearance))
     );
     const filteredDiscography =
       artistDiscoTab === 'albums'

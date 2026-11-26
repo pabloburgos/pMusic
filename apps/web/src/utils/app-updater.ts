@@ -1,4 +1,4 @@
-export const APP_VERSION = '0.23.3';
+export const APP_VERSION = '0.23.4';
 
 const OTA_MANIFEST_URL =
   'https://raw.githubusercontent.com/pabloburgos/pMusic/main/ota/latest.json';
@@ -34,7 +34,7 @@ export function compareSemver(remoteRaw: string, localRaw: string): number {
   return 0;
 }
 
-async function fetchLatestReleaseInfo(timeoutMs = 1800): Promise<{
+async function fetchLatestReleaseInfo(timeoutMs = 3200): Promise<{
   version: string;
   minNativeVersion?: string;
   bundleUrl?: string;
@@ -194,7 +194,7 @@ export async function runSplashAutoUpdateCheck(
   }
 
   // 2. Android / Web fast release & OTA check
-  const remote = await fetchLatestReleaseInfo(1800);
+  const remote = await fetchLatestReleaseInfo(3200);
   if (!remote || compareSemver(remote.version, APP_VERSION) <= 0) {
     return { updating: false };
   }

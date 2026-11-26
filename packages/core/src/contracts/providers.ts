@@ -80,6 +80,22 @@ export interface PlaylistDetail {
   tracks: Track[];
 }
 
+export interface ExternalReleaseCandidate {
+  title: string;
+  artists: string[];
+  releaseDate?: string;
+  kind?: 'track' | 'album' | 'ep';
+  source:
+    | 'spotify_novedades_es'
+    | 'spotify_pegao'
+    | 'spotify_nmf'
+    | 'lahiguera_novedades'
+    | 'lahiguera_canciones'
+    | 'itunes_es';
+  priority: number;
+  thumbnailUrl?: string;
+}
+
 export interface IMusicProvider {
   search(query: string, filter?: SearchFilter, signal?: AbortSignal): Promise<SearchResultBundle>;
   getSearchSuggestions(input: string, signal?: AbortSignal): Promise<string[]>;
@@ -99,6 +115,7 @@ export interface IMusicProvider {
     hint?: { title?: string; artist?: string },
     signal?: AbortSignal
   ): Promise<TrackCredits | null>;
+  getReleaseRadar?(signal?: AbortSignal): Promise<ExternalReleaseCandidate[]>;
   resolveAudioStream(
     videoId: string,
     quality?: AudioStreamQuality,

@@ -6,3 +6,4 @@ export * from './ytmusic.ts';
 export * from './api-handler.ts';
 export * from './deezer-catalog.ts';
 export * from './yt-stream.ts';
+export * from './release-radar.ts';

@@ -10,6 +10,7 @@ import {
 import { YouTubeMusicProvider } from './ytmusic.ts';
 import { DeezerCatalog } from './deezer-catalog.ts';
 import { AudioStreamResolver } from './yt-stream.ts';
+import { fetchExternalReleaseRadar } from './release-radar.ts';
 
 export interface PMusicApiHandlerOptions {
   musicProvider?: IMusicProvider;
@@ -249,6 +250,12 @@ export function createPMusicApiHandler(options: PMusicApiHandlerOptions = {}) {
         const mood = urlObj.searchParams.get('mood') ?? undefined;
         const feed = await provider.getHomeFeed(mood);
         sendJson(res, 200, feed);
+        return true;
+      }
+
+      if (pathname === '/api/release-radar') {
+        const releases = await fetchExternalReleaseRadar({ fetchFn });
+        sendJson(res, 200, { releases, fetchedAt: new Date().toISOString() });
         return true;
       }
 
