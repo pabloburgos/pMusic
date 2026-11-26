@@ -3528,3 +3528,84 @@ html.pm-reduced-motion .pm-heart-liquid-pop {
     animation: none !important;
   }
 }
+
+/* ── Adaptive Dark Ink Surface for White / Very Bright Cover Backdrops ── */
+.pm-np-light-surface {
+  color: #0b0c10;
+}
+
+.pm-np-light-surface :is(h1, h2, h3, button, a, span, p, div):not(.pm-hud-dark):not(.pm-hud-dark *):not([data-testid="audio-studio-sheet"] *):not([data-testid="lyrics-style-switcher"] *):not([data-testid="devices-sheet"] *):not([data-testid="jam-invite-modal"] *) {
+  --tw-drop-shadow: none;
+}
+
+.pm-np-light-surface header button,
+.pm-np-light-surface nav button,
+.pm-np-light-surface h1,
+.pm-np-light-surface [data-testid="nowplaying-play-btn"],
+.pm-np-light-surface [data-testid="focus-lyrics-stage"] {
+  color: #0b0c10;
+}
+
+.pm-np-light-surface :is(.text-white, .text-white\/95, .text-white\/92, .text-white\/90, .text-white\/85, .text-white\/80, .text-\[\#F5F5F7\], .text-\[\#E5E5EA\]):not(.pm-hud-dark *):not([aria-pressed="true"].bg-white) {
+  color: #0b0c10 !important;
+}
+
+.pm-np-light-surface :is(.text-white\/75, .text-white\/70, .text-white\/65, .text-white\/60, .text-\[\#D4D4E0\], .text-\[\#D1D1DC\]):not(.pm-hud-dark *) {
+  color: rgba(11, 12, 16, 0.72) !important;
+}
+
+.pm-np-light-surface :is(.text-white\/55, .text-white\/50, .text-white\/40, .text-white\/35, .text-\[\#B4B4BE\], .text-\[\#A1A1AE\]):not(.pm-hud-dark *) {
+  color: rgba(11, 12, 16, 0.56) !important;
+}
+
+.pm-np-light-surface [data-testid="nowplaying-bottom-nav"] button[aria-pressed="true"] {
+  background-color: #0b0c10 !important;
+  color: #ffffff !important;
+}
+
+.pm-np-light-surface [data-testid="nowplaying-bottom-nav"] button[aria-pressed="true"] * {
+  color: #ffffff !important;
+}
+
+.pm-np-light-surface :is(.bg-white\/\[0\.06\], .bg-white\/\[0\.08\], .bg-white\/\[0\.10\], .bg-white\/\[0\.12\], .bg-white\/\[0\.16\], .bg-white\/\[0\.18\], .bg-white\/10, .bg-white\/15, .bg-white\/18, .bg-white\/35):not(.pm-hud-dark *):not([data-testid="nowplaying-progress-fill"]) {
+  background-color: rgba(11, 12, 16, 0.12) !important;
+}
+
+.pm-np-light-surface [data-testid="nowplaying-progress-fill"],
+.pm-np-light-surface .pm-lyric-dot {
+  background-color: #0b0c10 !important;
+}
+
+.pm-np-light-surface [data-lyric-state="active"] {
+  color: #0b0c10 !important;
+}
+
+.pm-np-light-surface [data-lyric-state="inactive"] {
+  color: rgba(11, 12, 16, 0.45) !important;
+}
+
+.pm-np-light-surface .pm-sing-word {
+  color: rgba(11, 12, 16, 0.34);
+  background-image: linear-gradient(90deg, #0b0c10 0%, #0b0c10 50%, rgba(11, 12, 16, 0.32) 50.5%, rgba(11, 12, 16, 0.32) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+.pm-np-light-surface .pm-kinetic-rhyme,
+.pm-np-light-surface .pm-kinetic-punch,
+.pm-np-light-surface .pm-poster-accent {
+  color: #111827 !important;
+  text-shadow: 0 1px 10px rgba(255, 255, 255, 0.45);
+}
+
+.pm-np-light-surface input[type="range"]:not(.pm-hud-dark *) {
+  color: #0b0c10;
+}
+
+.pm-np-light-surface .text-\[\#FB7185\] {
+  color: #e11d48 !important;
+}
+
+.pm-np-light-surface .text-\[\#34D399\] {
+  color: #059669 !important;
+}

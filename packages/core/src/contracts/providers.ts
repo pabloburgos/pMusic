@@ -86,6 +86,9 @@ export interface ExternalReleaseCandidate {
   releaseDate?: string;
   kind?: 'track' | 'album' | 'ep';
   source:
+    | 'apple_es_top'
+    | 'deezer_novedades_es'
+    | 'deezer_radar_weekly'
     | 'spotify_novedades_es'
     | 'spotify_pegao'
     | 'spotify_nmf'
@@ -94,6 +97,7 @@ export interface ExternalReleaseCandidate {
     | 'itunes_es';
   priority: number;
   thumbnailUrl?: string;
+  track?: Track;
 }
 
 export interface IMusicProvider {

@@ -1870,8 +1870,87 @@ describe('@pmusic/providers', () => {
       expect(radarFromDz.some((r) => r.title === 'GRACIAS X TODO' && r.releaseDate === '2026-11-26')).toBe(
         true
       );
+      expect(radarFromDz.find((r) => r.title === 'GRACIAS X TODO')?.track?.id).toBe('dz_4437886881');
+
+      // Also verify mobileDirect calls Vercel /api/lyrics for lyrics fallback
+      const mobileLyricsFetch = (async (input: RequestInfo | URL) => {
+        const u = String(input);
+        if (u.includes('pmusic-olive.vercel.app/api/lyrics')) {
+          return new Response(
+            JSON.stringify({ plainLyrics: 'No hallé otro sitio pa vivirla que en Las Palmas', source: 'letras' }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        return new Response('{}', { status: 404 });
+      }) as typeof fetch;
+      const mobileLyricsProv = new HttpProxyMusicProvider({ fetchFn: mobileLyricsFetch });
+      const mobLyr = await mobileLyricsProv.getMusixmatchLyrics('Lugares Comunes', 'SFDK');
+      expect(mobLyr?.plainLyrics).toContain('Las Palmas');
     } finally {
       (globalThis as any).window = origWindow;
     }
+  });
+
+  it('rejects Musixmatch honeypot tokens, cascades to Letras.com plain lyrics, and matches stripped/multi-artist LRCLIB entries', async () => {
+    const mxmHoneypotFetch = (async (input: RequestInfo | URL) => {
+      const u = String(input);
+      if (u.includes('apic-desktop.musixmatch.com/ws/1.1/token.get')) {
+        return new Response(
+          JSON.stringify({
+            message: { header: { status_code: 200 }, body: { user_token: '00000000000000000000' } },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('letras.com/sfdk/lugares-comunes')) {
+        return new Response(
+          '<div class="lyric-original"><p>No hallé otro sitio<br>que me llene el alma de verdad</p></div>',
+          { status: 200, headers: { 'content-type': 'text/html' } }
+        );
+      }
+      return new Response('', { status: 404 });
+    }) as typeof fetch;
+
+    const apiHandler = createPMusicApiHandler({ fetchFn: mxmHoneypotFetch });
+    let capturedBody = '';
+    const mockRes = {
+      statusCode: 200,
+      setHeader: () => {},
+      end: (chunk: Uint8Array | string) => {
+        capturedBody = typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+      },
+    } as any;
+    await apiHandler({ url: '/api/lyrics/musixmatch?title=Lugares+Comunes&artist=SFDK', method: 'GET', headers: {} } as any, mockRes);
+    const parsedMxm = JSON.parse(capturedBody);
+    expect(parsedMxm.plainLyrics).toContain('No hallé otro sitio');
+
+    const lrcFetch = (async (input: RequestInfo | URL) => {
+      const u = String(input);
+      if (u.includes('/api/get')) return new Response('', { status: 404 });
+      if (u.includes('/api/search?q=')) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 777,
+              trackName: 'SOY MEJOR 2.0 (Videoclip Oficial)',
+              artistName: 'Kristina',
+              duration: 198,
+              plainLyrics: 'Soy mejor desde que te fuiste de aqui',
+            },
+          ]),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      return new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+
+    const lrcProvider = new LrclibLyricsProvider({ fetchFn: lrcFetch });
+    const lrcDoc = await lrcProvider.getLyrics({
+      trackId: 'tr-soy-mejor',
+      title: 'SOY MEJOR 2.0',
+      artist: 'Kristina, Quevedo',
+    });
+    expect(lrcDoc.status).toBe('plain');
+    expect(lrcDoc.plainLines[0]).toContain('Soy mejor');
   });
 });

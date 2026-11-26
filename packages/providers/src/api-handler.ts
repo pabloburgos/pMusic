@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { normalizeSearchText, type IMusicProvider, type SearchFilter } from '@pmusic/core';
+import { normalizeSearchText, stripTrackTitleNoise, type IMusicProvider, type SearchFilter } from '@pmusic/core';
 import { FALLBACK_TRACKS } from './catalog-fallback.ts';
 import { isAuthenticLyricsText } from './lrclib.ts';
 import {
@@ -69,7 +69,13 @@ export function createPMusicApiHandler(options: PMusicApiHandlerOptions = {}) {
       };
       const code = json?.message?.header?.status_code;
       const tok = json?.message?.body?.user_token;
-      if (code === 200 && tok && tok !== 'UpgradeOnlyUpgradeOnlyUpgradeOnlyUpgradeOnly') {
+      if (
+        code === 200 &&
+        tok &&
+        !/^0+$/.test(tok) &&
+        !tok.startsWith('00000000') &&
+        tok !== 'UpgradeOnlyUpgradeOnlyUpgradeOnlyUpgradeOnly'
+      ) {
         mxmToken = tok;
         mxmTokenExpiresAt = Date.now() + 20 * 60_000;
         return tok;
@@ -78,6 +84,114 @@ export function createPMusicApiHandler(options: PMusicApiHandlerOptions = {}) {
     } catch {
       return null;
     }
+  }
+
+  function decodeHtmlSimple(raw: string): string {
+    return raw
+      .replace(/\u00A0/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;|&apos;/gi, "'")
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&#(\d+);/g, (_m, dec) => {
+        const code = Number.parseInt(dec, 10);
+        return Number.isFinite(code) ? String.fromCodePoint(code) : '';
+      });
+  }
+
+  function slugifyForLyrics(raw: string): string {
+    return raw
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/['’]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+  }
+
+  async function fetchPlainFromLetrasAndOvh(
+    title: string,
+    artist: string
+  ): Promise<string | null> {
+    const cleanTitle = stripTrackTitleNoise(title) || title;
+    const titleVariants = Array.from(new Set([cleanTitle, title].filter(Boolean)));
+    const artistParts = artist
+      .split(/\s*(?:,|&|\bfeat\.?\b|\bft\.?\b|\bcon\b)\s*/i)
+      .map((p) => p.trim())
+      .filter(Boolean);
+    const artistVariants = Array.from(
+      new Set([
+        ...artistParts,
+        ...artistParts.flatMap((a) =>
+          /cruz\s*cafun[eé]/i.test(a) ? ['Cruzzi'] : /cruzzi/i.test(a) ? ['Cruz Cafune'] : []
+        ),
+      ])
+    );
+
+    for (const ar of artistVariants.slice(0, 3)) {
+      const aSlug = slugifyForLyrics(ar);
+      if (!aSlug) continue;
+      for (const tv of titleVariants) {
+        const tSlug = slugifyForLyrics(tv);
+        if (!tSlug) continue;
+        try {
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), 3800);
+          const lRes = await fetchFn(`https://www.letras.com/${aSlug}/${tSlug}/`, {
+            method: 'GET',
+            signal: ctrl.signal,
+            headers: {
+              Accept: 'text/html,application/xhtml+xml',
+              'Accept-Language': 'es-ES,es;q=0.9',
+              'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            },
+          }).finally(() => clearTimeout(timer));
+          if (!lRes.ok) continue;
+          const html = await lRes.text();
+          const m =
+            html.match(/<div class="lyric-original[^>]*>([\s\S]*?)<\/div>/i) ||
+            html.match(/<div class="cnt-letra[^>]*>([\s\S]*?)<\/div>/i);
+          if (!m?.[1]) continue;
+          const plain = decodeHtmlSimple(
+            m[1]
+              .replace(/<br\s*\/?>/gi, '\n')
+              .replace(/<\/p>/gi, '\n\n')
+              .replace(/<[^>]+>/g, '')
+          )
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+          if (plain.length >= 25 && isAuthenticLyricsText(plain)) {
+            return plain;
+          }
+        } catch {
+          // try next variant
+        }
+      }
+    }
+
+    for (const ar of artistVariants.slice(0, 2)) {
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 3800);
+        const oRes = await fetchFn(
+          `https://api.lyrics.ovh/v1/${encodeURIComponent(ar)}/${encodeURIComponent(cleanTitle)}`,
+          { method: 'GET', signal: ctrl.signal, headers: { Accept: 'application/json' } }
+        ).finally(() => clearTimeout(timer));
+        if (!oRes.ok) continue;
+        const json = (await oRes.json()) as { lyrics?: string };
+        const plain = typeof json?.lyrics === 'string' ? json.lyrics.trim() : '';
+        if (plain.length >= 25 && isAuthenticLyricsText(plain)) {
+          return plain;
+        }
+      } catch {
+        // try next variant
+      }
+    }
+
+    return null;
   }
 
   async function fetchMusixmatchLyrics(
@@ -168,7 +282,7 @@ export function createPMusicApiHandler(options: PMusicApiHandlerOptions = {}) {
             reqArtist.includes(gotArtist) ||
             (reqArtist.includes('cruz cafune') && gotArtist.includes('cruzzi'));
           if (!titleOk || !artistOk) {
-            return { syncedLyrics: null, plainLyrics: null };
+            break;
           }
         }
         const subRaw =
@@ -183,15 +297,19 @@ export function createPMusicApiHandler(options: PMusicApiHandlerOptions = {}) {
           rawSynced && isAuthenticLyricsText(rawSynced) ? rawSynced : null;
         const cleanedPlain =
           rawPlain.length > 0 && isAuthenticLyricsText(rawPlain) ? rawPlain : '';
-        return {
-          syncedLyrics,
-          plainLyrics: cleanedPlain.length > 0 ? cleanedPlain : null,
-        };
+        if (syncedLyrics || cleanedPlain) {
+          return {
+            syncedLyrics,
+            plainLyrics: cleanedPlain.length > 0 ? cleanedPlain : null,
+          };
+        }
       } catch {
         break;
       }
     }
-    return { syncedLyrics: null, plainLyrics: null };
+
+    const fallbackPlain = await fetchPlainFromLetrasAndOvh(title, artist);
+    return { syncedLyrics: null, plainLyrics: fallbackPlain };
   }
 
   return async function handleApiRequest(

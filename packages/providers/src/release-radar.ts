@@ -1,4 +1,4 @@
-import { normalizeSearchText, type ExternalReleaseCandidate } from '@pmusic/core';
+import { normalizeSearchText, type ExternalReleaseCandidate, type Track } from '@pmusic/core';
 
 export const SPOTIFY_RELEASE_RADAR_PLAYLISTS: ReadonlyArray<{
   id: string;
@@ -11,6 +11,12 @@ export const SPOTIFY_RELEASE_RADAR_PLAYLISTS: ReadonlyArray<{
   { id: '37i9dQZF1DX4JAvHpjipBk', source: 'spotify_nmf', priority: 75, stampEstimatedFridayDate: true },
 ];
 
+export const APPLE_MUSIC_ES_SONGS_URL =
+  'https://rss.marketingtools.apple.com/api/v2/es/music/most-played/50/songs.json';
+export const DEEZER_NOVEDADES_ES_SEARCH_URL =
+  'https://api.deezer.com/search/playlist?q=Novedades+Viernes+Espa%C3%B1a&limit=6';
+export const DEEZER_RADAR_WEEKLY_TRACKS_URL =
+  'https://api.deezer.com/playlist/1282495565/tracks?limit=60';
 export const LAHIGUERA_NOVEDADES_URL = 'https://www.lahiguera.net/musicalia/novedades.php';
 export const LAHIGUERA_CANCIONES_URL = 'https://www.lahiguera.net/musicalia/canciones.php';
 
@@ -176,7 +182,8 @@ async function fetchTextWithTimeout(
   url: string,
   fetchFn: typeof fetch,
   timeoutMs = 4000,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  accept = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
 ): Promise<string | null> {
   const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
@@ -189,7 +196,7 @@ async function fetchTextWithTimeout(
       headers: {
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        Accept: accept,
       },
     });
     if (!res.ok) return null;
@@ -200,6 +207,94 @@ async function fetchTextWithTimeout(
     if (timer) clearTimeout(timer);
     signal?.removeEventListener('abort', onOuter);
   }
+}
+
+async function fetchJsonWithTimeout<T>(
+  url: string,
+  fetchFn: typeof fetch,
+  timeoutMs = 4000,
+  signal?: AbortSignal
+): Promise<T | null> {
+  const raw = await fetchTextWithTimeout(url, fetchFn, timeoutMs, signal, 'application/json');
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+function parseDdMmYyToIso(title?: string): string | undefined {
+  if (!title) return undefined;
+  const m = title.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/);
+  if (!m?.[1] || !m[2] || !m[3]) return undefined;
+  const dd = m[1].padStart(2, '0');
+  const mm = m[2].padStart(2, '0');
+  const yyyy = m[3].length === 2 ? `20${m[3]}` : m[3];
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function deezerRawToCandidate(
+  t: any,
+  source: 'deezer_novedades_es' | 'deezer_radar_weekly',
+  priority: number,
+  fallbackDate: string
+): ExternalReleaseCandidate | null {
+  const dzId = String(t?.id ?? '').trim();
+  const title = decodeHtmlEntities(String(t?.title ?? t?.title_short ?? '')).trim();
+  const mainArtistName = decodeHtmlEntities(String(t?.artist?.name ?? '')).trim();
+  if (!dzId || !title || !mainArtistName) return null;
+
+  const artists = splitCandidateArtists(mainArtistName);
+  if (artists.length === 0) return null;
+  const releaseDate =
+    typeof t?.release_date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(t.release_date)
+      ? t.release_date.slice(0, 10)
+      : fallbackDate;
+  const releaseYear = Number.parseInt(releaseDate.slice(0, 4), 10) || new Date().getFullYear();
+  const thumbMed =
+    typeof t?.album?.cover_medium === 'string' && t.album.cover_medium
+      ? t.album.cover_medium
+      : typeof t?.album?.cover === 'string' && t.album.cover
+        ? t.album.cover
+        : '';
+  const thumbHigh =
+    typeof t?.album?.cover_big === 'string' && t.album.cover_big
+      ? t.album.cover_big
+      : typeof t?.album?.cover_xl === 'string' && t.album.cover_xl
+        ? t.album.cover_xl
+        : thumbMed;
+  const durationSec =
+    typeof t?.duration === 'number' && Number.isFinite(t.duration) && t.duration > 0
+      ? Math.round(t.duration)
+      : 180;
+
+  const track: Track = {
+    id: `dz_${dzId}`,
+    title,
+    artists: [{ id: t?.artist?.id ? `dz_ar_${t.artist.id}` : undefined, name: mainArtistName }],
+    ...(t?.album?.title
+      ? { album: { id: t?.album?.id ? `dz_al_${t.album.id}` : undefined, name: String(t.album.title) } }
+      : {}),
+    durationSec,
+    thumbnailUrl: thumbMed,
+    ...(thumbHigh ? { thumbnailHighUrl: thumbHigh } : {}),
+    releaseYear,
+    releaseDate,
+    isExplicit: Boolean(t?.explicit_lyrics),
+    source: 'ytmusic',
+  };
+
+  return {
+    title,
+    artists,
+    releaseDate,
+    kind: 'track',
+    source,
+    priority,
+    ...(thumbMed ? { thumbnailUrl: thumbMed } : {}),
+    track,
+  };
 }
 
 export async function fetchExternalReleaseRadar(
@@ -219,6 +314,7 @@ export async function fetchExternalReleaseRadar(
 
   const fetchImpl = options.fetchFn ?? globalThis.fetch.bind(globalThis);
   const fridayIso = getMostRecentFridayIso(now);
+  const cutoff15Iso = toLocalIsoDate(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 15, 0, 0, 0, 0));
   const cutoffDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30, 0, 0, 0, 0);
   const cutoffIso = toLocalIsoDate(cutoffDate);
 
@@ -234,9 +330,82 @@ export async function fetchExternalReleaseRadar(
       : [];
   };
 
-  // Wave A: primary Spanish editorial & LaHiguera sources
+  const fetchAppleEsSongs = async (): Promise<ExternalReleaseCandidate[]> => {
+    const data = await fetchJsonWithTimeout<{
+      feed?: { results?: Array<{ name?: string; artistName?: string; releaseDate?: string; artworkUrl100?: string }> };
+    }>(APPLE_MUSIC_ES_SONGS_URL, fetchImpl, 4000, options.signal);
+    const items = data?.feed?.results;
+    if (!Array.isArray(items)) return [];
+    const out: ExternalReleaseCandidate[] = [];
+    for (const item of items) {
+      const title = decodeHtmlEntities(String(item?.name ?? '')).trim();
+      const artistName = decodeHtmlEntities(String(item?.artistName ?? '')).trim();
+      const releaseDate = typeof item?.releaseDate === 'string' ? item.releaseDate.slice(0, 10) : '';
+      if (!title || !artistName || !releaseDate || releaseDate < cutoff15Iso) continue;
+      const artists = splitCandidateArtists(artistName);
+      if (artists.length === 0) continue;
+      out.push({
+        title,
+        artists,
+        releaseDate,
+        kind: 'track',
+        source: 'apple_es_top',
+        priority: 98,
+        ...(item.artworkUrl100 ? { thumbnailUrl: item.artworkUrl100 } : {}),
+      });
+    }
+    return out;
+  };
+
+  const fetchDeezerPlaylists = async (): Promise<ExternalReleaseCandidate[]> => {
+    const searchData = await fetchJsonWithTimeout<{
+      data?: Array<{ id?: number | string; title?: string }>;
+    }>(DEEZER_NOVEDADES_ES_SEARCH_URL, fetchImpl, 4000, options.signal);
+    const pls = Array.isArray(searchData?.data) ? searchData.data : [];
+    const datedPls = pls
+      .map((p) => ({
+        id: String(p?.id ?? '').trim(),
+        date: parseDdMmYyToIso(p?.title),
+      }))
+      .filter((p) => Boolean(p.id));
+    const recentPls = datedPls.filter((p) => p.date && p.date >= cutoff15Iso).slice(0, 2);
+    const chosenNovPls = recentPls.length > 0 ? recentPls : datedPls.slice(0, 1);
+
+    const [radarWeeklyData, ...novDatas] = await Promise.all([
+      fetchJsonWithTimeout<{ data?: unknown[] }>(DEEZER_RADAR_WEEKLY_TRACKS_URL, fetchImpl, 4000, options.signal),
+      ...chosenNovPls.map((pl) =>
+        fetchJsonWithTimeout<{ data?: unknown[] }>(
+          `https://api.deezer.com/playlist/${encodeURIComponent(pl.id)}/tracks?limit=80`,
+          fetchImpl,
+          4000,
+          options.signal
+        )
+      ),
+    ]);
+
+    const out: ExternalReleaseCandidate[] = [];
+    for (let i = 0; i < chosenNovPls.length; i++) {
+      const plMeta = chosenNovPls[i]!;
+      const plRes = novDatas[i];
+      const tracks = Array.isArray(plRes?.data) ? plRes.data : [];
+      for (const rawT of tracks) {
+        const cand = deezerRawToCandidate(rawT, 'deezer_novedades_es', 96, plMeta.date ?? fridayIso);
+        if (cand) out.push(cand);
+      }
+    }
+    const rwTracks = Array.isArray(radarWeeklyData?.data) ? radarWeeklyData.data : [];
+    for (const rawT of rwTracks.slice(0, 60)) {
+      const cand = deezerRawToCandidate(rawT, 'deezer_radar_weekly', 78, fridayIso);
+      if (cand) out.push(cand);
+    }
+    return out;
+  };
+
+  // Wave A: Apple Music ES, Deezer Novedades ES / Radar Weekly, Spotify Novedades ES, LaHiguera
   const primaryPl = SPOTIFY_RELEASE_RADAR_PLAYLISTS[0]!;
-  const [spPrimary, lhNovHtml, lhCancHtml] = await Promise.all([
+  const [appleItems, deezerItems, spPrimary, lhNovHtml, lhCancHtml] = await Promise.all([
+    fetchAppleEsSongs(),
+    fetchDeezerPlaylists(),
     fetchSpotifyEntry(primaryPl),
     fetchTextWithTimeout(LAHIGUERA_NOVEDADES_URL, fetchImpl, 4000, options.signal),
     fetchTextWithTimeout(LAHIGUERA_CANCIONES_URL, fetchImpl, 4000, options.signal),
@@ -247,7 +416,7 @@ export async function fetchExternalReleaseRadar(
     SPOTIFY_RELEASE_RADAR_PLAYLISTS.slice(1).map(fetchSpotifyEntry)
   );
 
-  const raw: ExternalReleaseCandidate[] = [...spPrimary];
+  const raw: ExternalReleaseCandidate[] = [...appleItems, ...deezerItems, ...spPrimary];
   for (const r of spSecondaryRes) {
     if (r.status === 'fulfilled' && Array.isArray(r.value)) {
       raw.push(...r.value);
@@ -264,7 +433,7 @@ export async function fetchExternalReleaseRadar(
     raw.push(...parseLaHigueraNovedadesHtml(lhCancHtml, 'canciones', fridayIso));
   }
 
-  // Deduplicate by normalized title::primaryArtist while preserving highest priority & explicit date
+  // Deduplicate by normalized title::primaryArtist while preserving highest priority, explicit date & pre-built track
   const dedup = new Map<string, ExternalReleaseCandidate>();
   for (const item of raw) {
     const key = `${normalizeSearchText(item.title)}::${normalizeSearchText(item.artists[0] ?? '')}`;
@@ -283,22 +452,26 @@ export async function fetchExternalReleaseRadar(
         mergedArtists.push(a);
       }
     }
-    const prevHasExplicitLhDate = prev.source === 'lahiguera_novedades' && Boolean(prev.releaseDate);
-    const currHasExplicitLhDate = item.source === 'lahiguera_novedades' && Boolean(item.releaseDate);
-    const chosenDate = currHasExplicitLhDate
+    const prevHasExplicitDate =
+      (prev.source === 'lahiguera_novedades' || prev.source === 'apple_es_top') && Boolean(prev.releaseDate);
+    const currHasExplicitDate =
+      (item.source === 'lahiguera_novedades' || item.source === 'apple_es_top') && Boolean(item.releaseDate);
+    const chosenDate = currHasExplicitDate
       ? item.releaseDate
-      : prevHasExplicitLhDate
+      : prevHasExplicitDate
         ? prev.releaseDate
         : item.releaseDate && (!prev.releaseDate || item.releaseDate > prev.releaseDate)
           ? item.releaseDate
           : prev.releaseDate;
 
     const winner = item.priority > prev.priority ? item : prev;
+    const mergedTrack = winner.track ?? prev.track ?? item.track;
     dedup.set(key, {
       ...winner,
       artists: mergedArtists,
       ...(chosenDate ? { releaseDate: chosenDate } : {}),
       thumbnailUrl: winner.thumbnailUrl ?? prev.thumbnailUrl ?? item.thumbnailUrl,
+      ...(mergedTrack ? { track: mergedTrack } : {}),
     });
   }
 

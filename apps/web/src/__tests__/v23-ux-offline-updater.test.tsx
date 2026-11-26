@@ -8,6 +8,7 @@ import { App } from '../App.tsx';
 import { SettingsModal } from '../components/SettingsModal.tsx';
 import { TrackArtwork } from '../components/TrackArtwork.tsx';
 import { compareSemver } from '../utils/app-updater.ts';
+import { shouldUseDarkInkOnBackdrop } from '../utils/cover-color.ts';
 import { usePMusicStore } from '../store/usePMusicStore.ts';
 import type { PlaylistRecord, Track } from '@pmusic/core';
 
@@ -406,8 +407,54 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
       resolve(__dirname, '../components/Overlays.tsx'),
       'utf-8'
     );
-    expect(overlaysSrc).toContain('h-[38px] w-[38px]');
-    expect(overlaysSrc).toContain('h-[22px] w-[22px] md:h-8 md:w-8');
-    expect(overlaysSrc).toContain('h-[15px] w-[15px] md:h-[18px] md:w-[18px]');
+    // Shuffle & Repeat icons are compact on mobile while Play/Pause and Prev/Next keep desktop proportions
+    expect(overlaysSrc).toContain('h-[14px] w-[14px] md:h-[18px] md:w-[18px]');
+    expect(overlaysSrc).toContain('h-[52px] w-[52px]');
+    expect(overlaysSrc).toContain('h-8 w-8');
+
+    const screensSrc = readFileSync(
+      resolve(__dirname, '../components/Screens.tsx'),
+      'utf-8'
+    );
+    expect(screensSrc).toContain('data-testid="artist-like-btn"');
+    expect(screensSrc).not.toContain("<span>{isLikedArtist ? 'Favorito' : 'Me gusta'}</span>");
+  });
+
+  it('enables adaptive dark ink only for genuinely white or very bright covers while keeping normal vibrant fluid backdrops white-ink', () => {
+    // Pure white minimalist cover (e.g. Salto de Fe / FILIPENSES) -> Dark ink ON
+    expect(
+      shouldUseDarkInkOnBackdrop({
+        perceptualLuma: 0.78,
+        brightFraction: 0.72,
+        backdropStyle: 'fluid',
+      })
+    ).toBe(true);
+
+    // Rich colorful or medium-bright fluid artwork -> Keep white ink
+    expect(
+      shouldUseDarkInkOnBackdrop({
+        perceptualLuma: 0.42,
+        brightFraction: 0.25,
+        backdropStyle: 'fluid',
+      })
+    ).toBe(false);
+
+    // Minimal mode always stays dark glass -> Keep white ink even on white covers
+    expect(
+      shouldUseDarkInkOnBackdrop({
+        perceptualLuma: 0.9,
+        brightFraction: 0.95,
+        backdropStyle: 'minimal',
+      })
+    ).toBe(false);
+
+    // Bright pulse/paint canvases also switch to dark ink when >52% perceptual luma
+    expect(
+      shouldUseDarkInkOnBackdrop({
+        perceptualLuma: 0.6,
+        brightFraction: 0.52,
+        backdropStyle: 'pulse',
+      })
+    ).toBe(true);
   });
 });

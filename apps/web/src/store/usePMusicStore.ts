@@ -3781,11 +3781,26 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     const ownerKey = restoredAuth.connected ? restoredAuth.userId : null;
     const cachedHomeEntry = readCachedHomeShelves(ownerKey);
     const cachedHome = cachedHomeEntry?.shelves ?? null;
+    const cachedRadarMix = cachedHome
+      ?.flatMap((s) => s.mixes ?? [])
+      .find((m) => m.id === 'mix_descubre_lo_nuevo');
+    const todayLocalIso = (() => {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    })();
+    const cachedDayIso = cachedHomeEntry?.savedAt
+      ? (() => {
+          const d = new Date(cachedHomeEntry.savedAt);
+          return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        })()
+      : '';
     const hasWarmHome = Boolean(cachedHome && cachedHome.length > 0);
     const hasFreshHomeCache = Boolean(
       cachedHomeEntry &&
         cachedHomeEntry.shelves.length >= 2 &&
-        Date.now() - cachedHomeEntry.savedAt < HOME_SHELVES_CACHE_TTL_MS
+        Date.now() - cachedHomeEntry.savedAt < HOME_SHELVES_CACHE_TTL_MS &&
+        cachedDayIso === todayLocalIso &&
+        (cachedRadarMix?.tracks?.length ?? 0) >= 30
     );
     const hasWarmAccount =
       !restoredAuth.connected ||
@@ -3900,11 +3915,26 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       if (hasFreshHomeCache && cachedHome) {
         await commitShelvesAndSeedPlayer(cachedHome);
         if (isOnline && isLiveRuntime()) {
-          // Silently warm cache for next launch without mid-screen feed flash/swap
+          // Silently refresh cache and upgrade homeShelves mixes in-place if Descubre lo Nuevo grew or updated
           void recommendationEngine
             .buildHomeShelves()
             .then((fresh) => {
-              saveCachedHomeShelves(fresh, ownerKey);
+              const canonicalFresh = canonicalizeShelves(fresh);
+              saveCachedHomeShelves(canonicalFresh, ownerKey);
+              const freshRadar = canonicalFresh
+                .flatMap((s) => s.mixes ?? [])
+                .find((m) => m.id === 'mix_descubre_lo_nuevo');
+              const curRadar = get()
+                .homeShelves.flatMap((s) => s.mixes ?? [])
+                .find((m) => m.id === 'mix_descubre_lo_nuevo');
+              if (
+                freshRadar &&
+                (!curRadar ||
+                  freshRadar.tracks.length > curRadar.tracks.length ||
+                  freshRadar.tracks[0]?.id !== curRadar.tracks[0]?.id)
+              ) {
+                set({ homeShelves: canonicalFresh, homeFeedReady: true });
+              }
             })
             .catch(() => {});
         }

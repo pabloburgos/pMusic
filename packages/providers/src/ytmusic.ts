@@ -609,6 +609,30 @@ export class HttpProxyMusicProvider implements IMusicProvider {
     if (durationSec && Number.isFinite(durationSec) && durationSec > 0) {
       params.set('duration', String(Math.round(durationSec)));
     }
+    if (this.getMobileDirectProvider()) {
+      const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timer = ctrl ? setTimeout(() => ctrl.abort(), 5000) : null;
+      const onOuter = () => ctrl?.abort();
+      signal?.addEventListener('abort', onOuter, { once: true });
+      try {
+        const res = await this.fetchFn(
+          `https://pmusic-olive.vercel.app/api/lyrics?${params.toString()}`,
+          { signal: ctrl?.signal ?? signal }
+        );
+        if (res.ok) {
+          return (await res.json()) as {
+            syncedLyrics?: string | null;
+            plainLyrics?: string | null;
+          };
+        }
+      } catch {
+        // ignore network error and allow remaining fallbacks
+      } finally {
+        if (timer) clearTimeout(timer);
+        signal?.removeEventListener('abort', onOuter);
+      }
+      return null;
+    }
     return this.fetchApiJson<{ syncedLyrics?: string | null; plainLyrics?: string | null }>(
       `/api/lyrics/musixmatch?${params.toString()}`,
       signal
@@ -649,6 +673,31 @@ export class HttpProxyMusicProvider implements IMusicProvider {
   public async getReleaseRadar(signal?: AbortSignal): Promise<ExternalReleaseCandidate[]> {
     const mobileDirect = this.getMobileDirectProvider();
     if (mobileDirect) {
+      // 1. Fast Vercel Release Radar endpoint FIRST (returns 150+ pre-built playable tracks in 1 request across all APK versions)
+      try {
+        const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timer = ctrl ? setTimeout(() => ctrl.abort(), 5000) : null;
+        const onOuter = () => ctrl?.abort();
+        signal?.addEventListener('abort', onOuter, { once: true });
+        try {
+          const vRes = await this.fetchFn('https://pmusic-olive.vercel.app/api/release-radar', {
+            signal: ctrl?.signal ?? signal,
+          });
+          if (vRes.ok) {
+            const vData = (await vRes.json()) as { releases?: ExternalReleaseCandidate[] };
+            if (Array.isArray(vData?.releases) && vData.releases.length > 0) {
+              return vData.releases;
+            }
+          }
+        } finally {
+          if (timer) clearTimeout(timer);
+          signal?.removeEventListener('abort', onOuter);
+        }
+      } catch {
+        // Fall through to native /api/radar-proxy and Deezer proxy below
+      }
+
+      // 2. Native /api/radar-proxy fallback
       const origin =
         typeof window !== 'undefined' && window.location?.origin
           ? window.location.origin
@@ -670,34 +719,10 @@ export class HttpProxyMusicProvider implements IMusicProvider {
         const directItems = await fetchExternalReleaseRadar({ fetchFn: proxyFetch, signal });
         if (directItems.length > 0) return directItems;
       } catch {
-        // Older APK (< 0.23.5) without /api/radar-proxy: cascade to Vercel & Deezer proxy below
+        // Cascade to Deezer editorial playlists via /api/dz-proxy below
       }
 
-      // 2. Public Vercel Release Radar endpoint (CORS-enabled, works on any Android APK version)
-      try {
-        const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-        const timer = ctrl ? setTimeout(() => ctrl.abort(), 3800) : null;
-        const onOuter = () => ctrl?.abort();
-        signal?.addEventListener('abort', onOuter, { once: true });
-        try {
-          const vRes = await this.fetchFn('https://pmusic-olive.vercel.app/api/release-radar', {
-            signal: ctrl?.signal ?? signal,
-          });
-          if (vRes.ok) {
-            const vData = (await vRes.json()) as { releases?: ExternalReleaseCandidate[] };
-            if (Array.isArray(vData?.releases) && vData.releases.length > 0) {
-              return vData.releases;
-            }
-          }
-        } finally {
-          if (timer) clearTimeout(timer);
-          signal?.removeEventListener('abort', onOuter);
-        }
-      } catch {
-        // Fall through to Deezer editorial playlists via /api/dz-proxy
-      }
-
-      // 3. Resilient Android fallback via /api/dz-proxy editorial playlists (no new native route needed)
+      // 3. Resilient Android fallback via /api/dz-proxy editorial playlists with full playable tracks
       try {
         const fridayIso = getMostRecentFridayIso();
         const searchPl = await this.fetchApiJson<{ data?: Array<{ id?: number | string }> }>(
@@ -705,7 +730,9 @@ export class HttpProxyMusicProvider implements IMusicProvider {
           signal
         );
         const playlistIds = [
-          ...(Array.isArray(searchPl?.data) ? searchPl.data.map((p) => String(p?.id ?? '')).filter(Boolean).slice(0, 2) : []),
+          ...(Array.isArray(searchPl?.data)
+            ? searchPl.data.map((p) => String(p?.id ?? '')).filter(Boolean).slice(0, 2)
+            : []),
           '1282495565',
         ];
         const uniqueIds = Array.from(new Set(playlistIds));
@@ -713,13 +740,22 @@ export class HttpProxyMusicProvider implements IMusicProvider {
           uniqueIds.map((id) =>
             this.fetchApiJson<{
               data?: Array<{
+                id?: number | string;
                 title?: string;
                 title_short?: string;
-                artist?: { name?: string };
-                album?: { cover_medium?: string };
+                duration?: number;
+                explicit_lyrics?: boolean;
+                artist?: { id?: number | string; name?: string };
+                album?: {
+                  id?: number | string;
+                  title?: string;
+                  cover?: string;
+                  cover_medium?: string;
+                  cover_big?: string;
+                };
                 release_date?: string;
               }>;
-            }>(`/api/dz-proxy?path=${encodeURIComponent(`/playlist/${id}/tracks?limit=45`)}`, signal)
+            }>(`/api/dz-proxy?path=${encodeURIComponent(`/playlist/${id}/tracks?limit=60`)}`, signal)
           )
         );
         const out: ExternalReleaseCandidate[] = [];
@@ -733,17 +769,50 @@ export class HttpProxyMusicProvider implements IMusicProvider {
             const k = `${title.toLowerCase()}::${artist.toLowerCase()}`;
             if (seen.has(k)) continue;
             seen.add(k);
+            const relDate =
+              typeof t.release_date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(t.release_date)
+                ? t.release_date.slice(0, 10)
+                : fridayIso;
+            const dzId = String(t?.id ?? '').trim();
+            const coverMed = t.album?.cover_medium ?? t.album?.cover ?? '';
+            const coverHigh = t.album?.cover_big ?? coverMed;
             out.push({
               title,
               artists: [artist],
-              releaseDate:
-                typeof t.release_date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(t.release_date)
-                  ? t.release_date.slice(0, 10)
-                  : fridayIso,
+              releaseDate: relDate,
               kind: 'track',
-              source: 'spotify_novedades_es',
-              priority: 90,
-              ...(t.album?.cover_medium ? { thumbnailUrl: t.album.cover_medium } : {}),
+              source: 'deezer_novedades_es',
+              priority: 92,
+              ...(coverMed ? { thumbnailUrl: coverMed } : {}),
+              ...(dzId
+                ? {
+                    track: {
+                      id: `dz_${dzId}`,
+                      title,
+                      artists: [
+                        { id: t.artist?.id ? `dz_ar_${t.artist.id}` : undefined, name: artist },
+                      ],
+                      ...(t.album?.title
+                        ? {
+                            album: {
+                              id: t.album.id ? `dz_al_${t.album.id}` : undefined,
+                              name: t.album.title,
+                            },
+                          }
+                        : {}),
+                      durationSec:
+                        typeof t.duration === 'number' && t.duration > 0
+                          ? Math.round(t.duration)
+                          : 180,
+                      thumbnailUrl: coverMed,
+                      ...(coverHigh ? { thumbnailHighUrl: coverHigh } : {}),
+                      releaseYear: Number.parseInt(relDate.slice(0, 4), 10) || undefined,
+                      releaseDate: relDate,
+                      isExplicit: Boolean(t.explicit_lyrics),
+                      source: 'ytmusic',
+                    },
+                  }
+                : {}),
             });
           }
         }

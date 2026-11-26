@@ -770,4 +770,62 @@ describe('@pmusic/recommendations', () => {
     expect(dln?.tracks.length).toBeGreaterThanOrEqual(18);
     expect(dln?.tracks[0]?.id).toBe('dz:fav_la_pantera');
   });
+
+  it('fills Descubre lo Nuevo up to 50 tracks via zero-search playable radar tracks while keeping favorite artists ranked first', async () => {
+    const now = new Date();
+    const pad2 = (n: number) => String(n).padStart(2, '0');
+    const todayIso = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+
+    const prebuiltItems = Array.from({ length: 55 }, (_, i) => {
+      const isFavCollab = i === 42;
+      const artistName = isFavCollab ? 'Kristina, Quevedo' : `Fresh Artist ${i + 1}`;
+      const title = isFavCollab ? 'SOY MEJOR 2.0' : `Fresh Track ${String(i + 1).padStart(2, '0')}`;
+      return {
+        title,
+        artists: isFavCollab ? ['Kristina', 'Quevedo'] : [artistName],
+        releaseDate: todayIso,
+        kind: 'track' as const,
+        source: 'deezer_novedades_es' as const,
+        priority: 96,
+        track: {
+          id: `dz_${9000 + i}`,
+          title,
+          artists: [{ id: `ar_${i}`, name: artistName }],
+          durationSec: 185,
+          thumbnailUrl: 'https://example.com/fresh.jpg',
+          source: 'ytmusic' as const,
+          releaseYear: now.getFullYear(),
+          releaseDate: todayIso,
+        },
+      };
+    });
+
+    const mockProvider = {
+      search: async () => ({ query: '', songs: [], videos: [], artists: [], albums: [], playlists: [] }),
+      getHomeFeed: async () => ({ shelves: [], moods: [] }),
+      getUpNext: async () => [],
+      getRelated: async () => ({ tracks: [], artists: [], playlists: [] }),
+      getArtist: async (idOrName: string) => ({
+        artist: { id: idOrName, name: idOrName, thumbnailUrl: 'https://example.com/a.jpg' },
+        topSongs: [],
+        appearances: [],
+        albums: [],
+        singles: [],
+        relatedArtists: [],
+      }),
+      getReleaseRadar: async () => prebuiltItems,
+    };
+
+    const engine = new RecommendationEngine({ musicProvider: mockProvider });
+    engine.setFavoriteArtists([
+      { artistId: '6705223', artistName: 'Quevedo', likedAt: '2026-11-20T10:00:00Z' },
+    ]);
+
+    const shelves = await engine.buildHomeShelves();
+    const dln = shelves
+      .find((s) => s.kind === 'mixes_for_you')
+      ?.mixes?.find((m) => m.id === 'mix_descubre_lo_nuevo');
+    expect(dln?.tracks.length).toBe(50);
+    expect(dln?.tracks[0]?.title).toBe('SOY MEJOR 2.0');
+  });
 });

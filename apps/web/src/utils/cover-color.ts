@@ -34,7 +34,13 @@ const FALLBACK_PALETTES_RGB: readonly PaletteTriplet[] = [
 
 const paletteCache = new Map<
   string,
-  { triplet: PaletteTriplet; quad: PaletteQuad; luma: number }
+  {
+    triplet: PaletteTriplet;
+    quad: PaletteQuad;
+    luma: number;
+    perceptualLuma: number;
+    brightFraction: number;
+  }
 >();
 
 let liveRgb: PaletteTriplet = [
@@ -49,6 +55,61 @@ let liveQuad: PaletteQuad = [
   [18, 18, 22],
 ];
 let liveLuminance = 0.45;
+export interface CoverBrightnessMetrics {
+  perceptualLuma: number;
+  brightFraction: number;
+}
+let liveCoverBrightness: CoverBrightnessMetrics = {
+  perceptualLuma: 0.22,
+  brightFraction: 0.1,
+};
+const coverBrightnessListeners = new Set<(metrics: CoverBrightnessMetrics) => void>();
+
+function updateLiveCoverBrightness(perceptualLuma: number, brightFraction: number): void {
+  const nextLuma = Math.max(0, Math.min(1, Number.isFinite(perceptualLuma) ? perceptualLuma : 0.22));
+  const nextFrac = Math.max(0, Math.min(1, Number.isFinite(brightFraction) ? brightFraction : 0.1));
+  if (
+    Math.abs(nextLuma - liveCoverBrightness.perceptualLuma) < 0.005 &&
+    Math.abs(nextFrac - liveCoverBrightness.brightFraction) < 0.005
+  ) {
+    return;
+  }
+  liveCoverBrightness = { perceptualLuma: nextLuma, brightFraction: nextFrac };
+  for (const listener of coverBrightnessListeners) {
+    try {
+      listener(liveCoverBrightness);
+    } catch {
+      // ignore subscriber errors
+    }
+  }
+}
+
+export function getLiveCoverBrightness(): CoverBrightnessMetrics {
+  return liveCoverBrightness;
+}
+
+export function subscribeCoverBrightness(
+  listener: (metrics: CoverBrightnessMetrics) => void
+): () => void {
+  coverBrightnessListeners.add(listener);
+  return () => {
+    coverBrightnessListeners.delete(listener);
+  };
+}
+
+export function shouldUseDarkInkOnBackdrop(params: {
+  perceptualLuma: number;
+  brightFraction: number;
+  backdropStyle: 'fluid' | 'paint' | 'pulse' | 'minimal';
+  currentlyLight?: boolean;
+}): boolean {
+  if (params.backdropStyle === 'minimal') return false;
+  const h = params.currentlyLight ? 0.05 : 0;
+  if (params.backdropStyle === 'fluid') {
+    return params.perceptualLuma >= 0.58 - h && params.brightFraction >= 0.48 - h;
+  }
+  return params.perceptualLuma >= 0.52 - h && params.brightFraction >= 0.44 - h;
+}
 let paletteAnimRafId = 0;
 let activeExtractToken = 0;
 let activePaletteTrackKey = '';
@@ -426,6 +487,11 @@ function rgbDist(a: RgbTriple, b: RgbTriple): number {
   return Math.sqrt(dr * dr + dg * dg + db * db);
 }
 
+function srgbChannelToLinear(c: number): number {
+  const n = c / 255;
+  return n <= 0.03928 ? n / 12.92 : Math.pow((n + 0.055) / 1.055, 2.4);
+}
+
 /**
  * Quantizes the cover into a 5x5x5 color space to extract up to 4 real tones
  * proportional to cover area + visual identity, never inflating pastel/neutral covers into neon.
@@ -433,6 +499,8 @@ function rgbDist(a: RgbTriple, b: RgbTriple): number {
 function extractCoverEssenceQuad(data: Uint8ClampedArray): {
   quad: PaletteQuad;
   avgL: number;
+  perceptualLuma: number;
+  brightFraction: number;
 } {
   const buckets = new Map<
     number,
@@ -441,6 +509,8 @@ function extractCoverEssenceQuad(data: Uint8ClampedArray): {
   let totalR = 0;
   let totalG = 0;
   let totalB = 0;
+  let totalPerceptualLuma = 0;
+  let brightPixels = 0;
   let totalCount = 0;
 
   for (let i = 0; i < data.length; i += 4) {
@@ -452,6 +522,12 @@ function extractCoverEssenceQuad(data: Uint8ClampedArray): {
     totalR += r;
     totalG += g;
     totalB += b;
+    const relLuma =
+      0.2126 * srgbChannelToLinear(r) +
+      0.7152 * srgbChannelToLinear(g) +
+      0.0722 * srgbChannelToLinear(b);
+    totalPerceptualLuma += relLuma;
+    if (relLuma >= 0.55) brightPixels++;
     totalCount++;
 
     const qr = Math.min(4, Math.floor(r / 51));
@@ -478,11 +554,15 @@ function extractCoverEssenceQuad(data: Uint8ClampedArray): {
         [18, 18, 22],
       ],
       avgL: 0.45,
+      perceptualLuma: 0.22,
+      brightFraction: 0.1,
     };
   }
 
   const avgRgb: RgbTriple = [totalR / totalCount, totalG / totalCount, totalB / totalCount];
   const [, , avgL] = rgbToHsl(avgRgb[0], avgRgb[1], avgRgb[2]);
+  const perceptualLuma = totalPerceptualLuma / totalCount;
+  const brightFraction = brightPixels / totalCount;
 
   const ranked = Array.from(buckets.values())
     .map((b) => {
@@ -548,7 +628,7 @@ function extractCoverEssenceQuad(data: Uint8ClampedArray): {
     others[2] ?? others[1] ?? others[0] ?? baseTone,
     deepest,
   ];
-  return { quad, avgL };
+  return { quad, avgL, perceptualLuma, brightFraction };
 }
 
 /**
@@ -562,62 +642,87 @@ export function animateAmbientPaletteFromCover(track: Track | null, durationMs =
   activePaletteTrackKey = track ? `${track.id}::${imgUrl}` : '';
 
   if (!imgUrl) {
+    updateLiveCoverBrightness(0.22, 0.1);
     transitionToPalette(fallback, durationMs);
     return;
   }
 
   const cached = paletteCache.get(imgUrl);
   if (cached) {
+    updateLiveCoverBrightness(cached.perceptualLuma, cached.brightFraction);
     transitionToPalette(cached.triplet, durationMs, cached.luma, cached.quad);
     return;
   }
 
   if (typeof Image === 'undefined') {
+    updateLiveCoverBrightness(0.22, 0.1);
     transitionToPalette(fallback, durationMs);
     return;
   }
 
   const startedAtMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const token = ++activeExtractToken;
-  try {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      if (token !== activeExtractToken) return;
-      const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAtMs;
-      const remainingMs = durationMs <= 0 ? 0 : Math.max(280, durationMs - elapsed);
-      try {
-        const canvas = document.createElement('canvas');
-        canvas.width = 24;
-        canvas.height = 24;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        ctx.drawImage(img, 0, 0, 24, 24);
-        const { data } = ctx.getImageData(0, 0, 24, 24);
-
-        const { quad, avgL } = extractCoverEssenceQuad(data);
-        const extracted: PaletteTriplet = [quad[0], quad[1], quad[3]];
-        paletteCache.set(imgUrl, { triplet: extracted, quad, luma: avgL });
-        if (paletteCache.size > 32) {
-          const oldest = paletteCache.keys().next().value;
-          if (oldest) paletteCache.delete(oldest);
-        }
-        transitionToPalette(extracted, remainingMs, avgL, quad);
-      } catch {
-        transitionToPalette(fallback, remainingMs);
-      }
-    };
-    img.onerror = () => {
-      if (token === activeExtractToken) {
+  const loadSample = (srcUrl: string, allowProxyRetry: boolean) => {
+    try {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        if (token !== activeExtractToken) return;
         const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAtMs;
         const remainingMs = durationMs <= 0 ? 0 : Math.max(280, durationMs - elapsed);
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = 24;
+          canvas.height = 24;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return;
+          ctx.drawImage(img, 0, 0, 24, 24);
+          const { data } = ctx.getImageData(0, 0, 24, 24);
+
+          const { quad, avgL, perceptualLuma, brightFraction } = extractCoverEssenceQuad(data);
+          const extracted: PaletteTriplet = [quad[0], quad[1], quad[3]];
+          paletteCache.set(imgUrl, {
+            triplet: extracted,
+            quad,
+            luma: avgL,
+            perceptualLuma,
+            brightFraction,
+          });
+          if (paletteCache.size > 32) {
+            const oldest = paletteCache.keys().next().value;
+            if (oldest) paletteCache.delete(oldest);
+          }
+          updateLiveCoverBrightness(perceptualLuma, brightFraction);
+          transitionToPalette(extracted, remainingMs, avgL, quad);
+        } catch {
+          updateLiveCoverBrightness(0.22, 0.1);
+          transitionToPalette(fallback, remainingMs);
+        }
+      };
+      img.onerror = () => {
+        if (token !== activeExtractToken) return;
+        const isProxyEligible =
+          allowProxyRetry &&
+          srcUrl.startsWith('https://') &&
+          typeof window !== 'undefined' &&
+          window.location?.hostname !== 'appassets.pmusic.local' &&
+          (window.location?.protocol === 'http:' || window.location?.protocol === 'https:');
+        if (isProxyEligible) {
+          loadSample(`/api/cover-proxy?url=${encodeURIComponent(srcUrl)}`, false);
+          return;
+        }
+        const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAtMs;
+        const remainingMs = durationMs <= 0 ? 0 : Math.max(280, durationMs - elapsed);
+        updateLiveCoverBrightness(0.22, 0.1);
         transitionToPalette(fallback, remainingMs);
-      }
-    };
-    img.src = imgUrl;
-  } catch {
-    transitionToPalette(fallback, durationMs);
-  }
+      };
+      img.src = srcUrl;
+    } catch {
+      updateLiveCoverBrightness(0.22, 0.1);
+      transitionToPalette(fallback, durationMs);
+    }
+  };
+  loadSample(imgUrl, true);
 }
 
 export function applyAmbientPaletteFromCover(track: Track | null, durationMs = 1100): void {

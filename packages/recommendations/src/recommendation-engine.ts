@@ -1254,7 +1254,7 @@ export class RecommendationEngine implements IRecommendationEngine {
         return results;
       };
 
-      const coreBatch = userCoreArtists.slice(0, 6);
+      const coreBatch = userCoreArtists.slice(0, 8);
       const seedTrackCandidates = seededShuffle(userOwnedTracks, `seeds:${dailyKey}`).slice(0, 4);
 
       // Wave 1: Bounded parallel fetch of core artists (avoids Deezer 50req/5s quota bursts), track radios, and external radar
@@ -1268,7 +1268,7 @@ export class RecommendationEngine implements IRecommendationEngine {
           this.musicProvider!.getRelated(t.id, signal)
         ),
         typeof this.musicProvider.getReleaseRadar === 'function'
-          ? withTimeout(this.musicProvider.getReleaseRadar(signal), 4500).then((r) => r ?? [])
+          ? withTimeout(this.musicProvider.getReleaseRadar(signal), 8000).then((r) => r ?? [])
           : Promise.resolve([] as ExternalReleaseCandidate[]),
       ]);
 
@@ -1337,7 +1337,7 @@ export class RecommendationEngine implements IRecommendationEngine {
         }
       }
 
-      // Score and filter external release radar (Spotify Novedades ES / PEGAO / LaHiguera) with 3-tier taste relevance
+      // Score and filter external release radar (Apple ES / Deezer Novedades ES / Spotify / LaHiguera) with instant zero-search fast path for pre-built tracks
       const existingRecentKeys = new Set(
         Array.from(recentReleasesMap.values())
           .filter((t) => isReleaseDateInWindow(t.releaseDate, rollingWin.startIso, rollingWin.endIso))
@@ -1365,10 +1365,54 @@ export class RecommendationEngine implements IRecommendationEngine {
         userOwnedTracks.some((t) => this.scoreTrackSceneFit(t) >= 30);
 
       const rawRadarList = Array.isArray(externalRadarRaw) ? externalRadarRaw : [];
+
+      // Zero-search fast path: pre-built playable tracks within the 15-day window go straight into recentReleasesMap
+      for (const cand of rawRadarList) {
+        const preTrack = cand?.track;
+        if (!preTrack || isBrokenOrSyntheticTrack(preTrack)) continue;
+        const effectiveDate =
+          preTrack.releaseDate && isReleaseDateInWindow(preTrack.releaseDate, rollingWin.startIso, rollingWin.endIso)
+            ? preTrack.releaseDate
+            : cand.releaseDate && isReleaseDateInWindow(cand.releaseDate, rollingWin.startIso, rollingWin.endIso)
+              ? cand.releaseDate
+              : undefined;
+        if (!effectiveDate) continue;
+        const mergedTrackArtists = [...(preTrack.artists ?? [])];
+        const existingArtistKeys = new Set(
+          mergedTrackArtists.flatMap((a) =>
+            a.name
+              .split(/\s*(?:,|&|\bfeat\.?\b|\bft\.?\b|\bcon\b)\s*/i)
+              .map((p) => normalizeArtistKey(p))
+              .filter(Boolean)
+          )
+        );
+        for (const candArtistName of cand.artists ?? []) {
+          const ck = normalizeArtistKey(candArtistName);
+          if (ck && !existingArtistKeys.has(ck)) {
+            existingArtistKeys.add(ck);
+            mergedTrackArtists.push({ name: candArtistName });
+          }
+        }
+        const resolvedTrack: Track = {
+          ...preTrack,
+          artists: mergedTrackArtists,
+          releaseDate: effectiveDate,
+          releaseYear: Number.parseInt(effectiveDate.slice(0, 4), 10) || preTrack.releaseYear || currentYear,
+        };
+        for (const a of resolvedTrack.artists) addAllowedArtist(a.name);
+        const candKey = `${normalizeSearchText(resolvedTrack.title)}::${normalizeArtistKey(resolvedTrack.artists[0]?.name ?? cand.artists?.[0] ?? '')}`;
+        if (candKey !== '::') existingRecentKeys.add(candKey);
+        if (!recentReleasesMap.has(resolvedTrack.id)) {
+          recentReleasesMap.set(resolvedTrack.id, resolvedTrack);
+        }
+        pushTrack(resolvedTrack, true);
+      }
+
       const allowEditorialFill = rawRadarList.length >= 12;
       const matchedRadarCandidates = rawRadarList
         .map((cand) => {
           if (!cand?.title || !Array.isArray(cand.artists) || cand.artists.length === 0) return null;
+          if (cand.track && !isBrokenOrSyntheticTrack(cand.track)) return null;
           if (cand.releaseDate && cand.releaseDate < rollingWin.startIso) return null;
           const candKey = `${normalizeSearchText(cand.title)}::${normalizeArtistKey(cand.artists[0] ?? '')}`;
           if (existingRecentKeys.has(candKey)) return null;
@@ -1404,25 +1448,28 @@ export class RecommendationEngine implements IRecommendationEngine {
               }
             }
           }
-          // Tier 4 broad fresh editorial fill when live feed has >=12 candidates so Descubre lo Nuevo stays 25-35+ songs rich
+          // Tier 4 broad fresh editorial fill so Descubre lo Nuevo reaches up to 50 tracks cleanly
           if (
             tasteScore <= 0 &&
             allowEditorialFill &&
             cand.releaseDate &&
-            (cand.source === 'spotify_novedades_es' ||
+            (cand.source === 'apple_es_top' ||
+              cand.source === 'deezer_novedades_es' ||
+              cand.source === 'spotify_novedades_es' ||
               cand.source === 'lahiguera_canciones' ||
+              cand.source === 'deezer_radar_weekly' ||
               cand.source === 'spotify_nmf')
           ) {
-            tasteScore = 16;
+            tasteScore = cand.source === 'apple_es_top' || cand.source === 'spotify_novedades_es' ? 24 : 16;
             matchedArtistName = cand.artists[0]!;
           }
           if (tasteScore <= 0) return null;
-          // Prioritize fresh-dated editorial drops (Novedades Viernes ES / LaHiguera) above undated chart tracks (PEGAO)
+          // Prioritize fresh-dated editorial drops (Apple ES / Novedades Viernes ES / LaHiguera) above undated chart tracks (PEGAO)
           const datedFreshBonus = cand.releaseDate ? 120 : -80;
           return {
             cand,
             candKey,
-            matchedArtistName: matchedArtistName ?? cand.artists[0]!,
+            matchedArtistName: cand.artists[0] ?? matchedArtistName!,
             score: tasteScore + datedFreshBonus + cand.priority * 0.4,
           };
         })
@@ -1444,7 +1491,7 @@ export class RecommendationEngine implements IRecommendationEngine {
         if (seenRadarTargetKeys.has(item.candKey)) continue;
         seenRadarTargetKeys.add(item.candKey);
         dedupedRadarTargets.push({ cand: item.cand, queryArtist: item.matchedArtistName });
-        if (dedupedRadarTargets.length >= 34) break;
+        if (dedupedRadarTargets.length >= 22) break;
       }
 
       // Wave 2: Prioritize rolling 15-day (then 30-day) releases, resolve taste-matched radar drops, and emerging artists
@@ -1499,7 +1546,7 @@ export class RecommendationEngine implements IRecommendationEngine {
             : this.musicProvider!.search(a.name, 'song', signal)
         ),
         dedupedRadarTargets.length > 0
-          ? runBoundedBatch(dedupedRadarTargets, 6, 3800, (target) =>
+          ? runBoundedBatch(dedupedRadarTargets, 4, 4000, (target) =>
               this.musicProvider!.search(
                 `${target.queryArtist} ${target.cand.title}`.trim(),
                 'song',
@@ -1895,13 +1942,16 @@ export class RecommendationEngine implements IRecommendationEngine {
       return false;
     };
 
-    const allDatedPool = Array.from(
-      new Map<string, Track>(
-        [...Array.from(recentReleasesMap.values()), ...catalogSongs]
-          .filter((t) => !isBrokenOrSyntheticTrack(t) && (!hasRealUserTaste || isAllowedTrack(t)))
-          .map((t) => [t.id, t])
-      ).values()
-    );
+    const recentPoolMap = new Map<string, Track>();
+    for (const t of recentReleasesMap.values()) {
+      if (!isBrokenOrSyntheticTrack(t)) recentPoolMap.set(t.id, t);
+    }
+    for (const t of catalogSongs) {
+      if (!isBrokenOrSyntheticTrack(t) && (!hasRealUserTaste || isAllowedTrack(t)) && !recentPoolMap.has(t.id)) {
+        recentPoolMap.set(t.id, t);
+      }
+    }
+    const allDatedPool = Array.from(recentPoolMap.values());
     const rolling15Tracks = allDatedPool.filter((t) =>
       isReleaseDateInWindow(t.releaseDate, rollingWin.startIso, rollingWin.endIso)
     );
@@ -1919,28 +1969,35 @@ export class RecommendationEngine implements IRecommendationEngine {
       let hasFav = false;
       let hasTier2 = false;
       let hasScene = false;
+      let isAllowedEditorial = isAllowedTrack(t);
       for (const a of t.artists) {
-        const ak = normalizeArtistKey(a.name);
-        if (!ak) continue;
-        if (hasKeyInSet(ak, favArtistKeysForScoring)) {
-          hasFav = true;
-          hasTier1 = true;
-        } else if (hasKeyInSet(ak, seenCoreKeys)) {
-          hasTier1 = true;
-        } else if (hasKeyInSet(ak, allowedTasteKeys)) {
-          hasTier2 = true;
-        }
-        if (
-          KNOWN_ES_SCENE_ARTISTS.has(ak) ||
-          Array.from(KNOWN_ES_SCENE_ARTISTS).some((sk) => isSameArtistAlias(ak, sk))
-        ) {
-          hasScene = true;
+        const subNames = a.name.split(/\s*(?:,|&|\bfeat\.?\b|\bft\.?\b|\bcon\b)\s*/i);
+        const candidatesForArtist = subNames.length > 1 ? [a.name, ...subNames] : [a.name];
+        for (const candName of candidatesForArtist) {
+          const ak = normalizeArtistKey(candName);
+          if (!ak) continue;
+          if (hasKeyInSet(ak, favArtistKeysForScoring)) {
+            hasFav = true;
+            hasTier1 = true;
+          } else if (hasKeyInSet(ak, seenCoreKeys)) {
+            hasTier1 = true;
+          } else if (hasKeyInSet(ak, allowedTasteKeys)) {
+            hasTier2 = true;
+          }
+          if (
+            KNOWN_ES_SCENE_ARTISTS.has(ak) ||
+            Array.from(KNOWN_ES_SCENE_ARTISTS).some((sk) => isSameArtistAlias(ak, sk))
+          ) {
+            hasScene = true;
+          }
         }
       }
       if (hasTier1) sc += 45;
       if (hasFav) sc += 15;
       else if (!hasTier1 && hasTier2) sc += 20;
       else if (!hasTier1 && !hasTier2 && hasScene) sc += 12;
+      else if (!hasTier1 && !hasTier2 && !hasScene && isAllowedEditorial) sc += 8;
+      else if (!hasTier1 && !hasTier2 && !hasScene) sc += 2;
       if (isUnheard(t)) sc += 14;
       const primaryKey = normalizeArtistKey(t.artists[0]?.name ?? '');
       if (t.artists.length > 1 || (hasTier1 && !hasKeyInSet(primaryKey, seenCoreKeys))) {
@@ -1975,7 +2032,7 @@ export class RecommendationEngine implements IRecommendationEngine {
       if (tk !== '::') seenRecentKeys.add(tk);
       if (pArtist) recentArtistCounts.set(pArtist, (recentArtistCounts.get(pArtist) ?? 0) + 1);
       radarTracks.push(t);
-      if (radarTracks.length >= 40) break;
+      if (radarTracks.length >= 50) break;
     }
 
     // 2. Daily Mix (100 songs: ~40 from user's playlists/likes/history + ~60 personalized recommendations)

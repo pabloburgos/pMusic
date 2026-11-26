@@ -933,11 +933,11 @@ export const DetailViewPanel: React.FC = () => {
             aria-label={isLikedArtist ? `Quitar ${artist.name} de favoritos` : `Dar me gusta a ${artist.name}`}
             aria-pressed={isLikedArtist}
             onClick={handleToggleArtistLike}
-            className={`pm-pressable flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 transition-transform duration-150 hover:scale-110 hover:bg-white/20 active:scale-90 ${
-              isLikedArtist ? 'text-rose-400' : 'text-white'
+            className={`pm-pressable flex h-10 w-10 shrink-0 items-center justify-center bg-transparent transition-transform duration-150 hover:scale-110 active:scale-90 focus:outline-none ${
+              isLikedArtist ? 'text-rose-400' : 'text-white/85 hover:text-white'
             }`}
           >
-            <LiquidHeartIcon liked={isLikedArtist} className="h-4 w-4" />
+            <LiquidHeartIcon liked={isLikedArtist} className="h-5 w-5" />
           </button>
           <button
             type="button"
@@ -1055,17 +1055,11 @@ export const DetailViewPanel: React.FC = () => {
                 aria-label={isLikedArtist ? `Quitar ${artist.name} de favoritos` : `Dar me gusta a ${artist.name}`}
                 aria-pressed={isLikedArtist}
                 onClick={handleToggleArtistLike}
-                className={`pm-pressable inline-flex items-center gap-1.5 rounded-full border px-4 py-2 text-xs font-bold shadow-lg backdrop-blur-md transition-all ${
-                  isLikedArtist
-                    ? 'border-rose-400/50 bg-rose-500/25 text-white'
-                    : 'border-white/20 bg-white/10 text-white/90 hover:bg-white/20'
+                className={`pm-pressable relative flex h-12 w-12 items-center justify-center bg-transparent drop-shadow-[0_4px_14px_rgba(0,0,0,0.55)] transition-transform duration-150 hover:scale-110 active:scale-90 focus:outline-none sm:h-14 sm:w-14 ${
+                  isLikedArtist ? 'text-rose-400' : 'text-white/85 hover:text-white'
                 }`}
               >
-                <LiquidHeartIcon
-                  liked={isLikedArtist}
-                  className={`h-4 w-4 ${isLikedArtist ? 'text-rose-300' : ''}`}
-                />
-                <span className="hidden sm:inline">{isLikedArtist ? 'Favorito' : 'Me gusta'}</span>
+                <LiquidHeartIcon liked={isLikedArtist} className="h-6 w-6 sm:h-7 sm:w-7" />
               </button>
 
               <button

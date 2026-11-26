@@ -154,7 +154,19 @@ export class LrclibLyricsProvider implements ILyricsProvider {
     }
 
     const cleanTitle = stripTrackTitleNoise(query.title) || query.title.trim();
-    const cleanArtist = (query.artist.split(/,|&|\bfeat\.?\b|\bft\.?\b/i)[0] ?? query.artist).trim();
+    const artistTokens = query.artist
+      .split(/\s*(?:,|&|\bfeat\.?\b|\bft\.?\b|\bcon\b)\s*/i)
+      .map((a) => a.trim())
+      .filter(Boolean);
+    const cleanArtist = artistTokens[0] ?? query.artist.trim();
+    const artistVariants = Array.from(
+      new Set(
+        artistTokens.flatMap((a) => {
+          const n = normalizeSearchText(a);
+          return [n, ...(LYRIC_ARTIST_ALIASES[n] ?? [])].filter(Boolean);
+        })
+      )
+    );
 
     // 1. Try /api/get exact match
     const exactRecord = await this.fetchExactRecord(cleanTitle, cleanArtist, query.album, query.durationSec, signal);
@@ -166,8 +178,15 @@ export class LrclibLyricsProvider implements ILyricsProvider {
       }
     }
 
-    // 2. Fallback to /api/search
-    const searchRecord = await this.fetchSearchBestMatch(cleanTitle, cleanArtist, query.durationSec, signal);
+    // 2. Fallback to /api/search (across multi-artist & stripped title variants)
+    const searchRecord = await this.fetchSearchBestMatch(
+      cleanTitle,
+      cleanArtist,
+      query.durationSec,
+      signal,
+      artistVariants,
+      artistTokens
+    );
     if (searchRecord) {
       const doc = this.recordToDocument(query.trackId, searchRecord);
       if (doc.status !== 'not_found') {
@@ -176,11 +195,11 @@ export class LrclibLyricsProvider implements ILyricsProvider {
       }
     }
 
-    // 3. Fallback to Musixmatch (synced LRC or plain lyrics via local backend proxy)
+    // 3. Fallback to Musixmatch / Letras.com / Lyrics.ovh (pass full artist string so multi-artist slugs also resolve)
     const mxmDoc = await this.fetchMusixmatchDocument(
       query.trackId,
       cleanTitle,
-      cleanArtist,
+      query.artist.trim() || cleanArtist,
       query.durationSec,
       signal
     );
@@ -318,66 +337,85 @@ export class LrclibLyricsProvider implements ILyricsProvider {
     title: string,
     artist: string,
     durationSec?: number,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    explicitArtistVariants?: string[],
+    rawArtistTokens?: string[]
   ): Promise<LrclibApiRecord | null> {
-    const params = new URLSearchParams({
-      q: `${title} ${artist}`.trim(),
-    });
-    const list = await this.fetchJsonSafe<LrclibApiRecord[]>(`${this.baseUrl}/api/search?${params.toString()}`, signal);
-    if (!Array.isArray(list) || list.length === 0) return null;
-
     const normTitle = normalizeSearchText(title);
     const normArtist = normalizeSearchText(artist);
-    const artistVariants = [
-      normArtist,
-      ...(LYRIC_ARTIST_ALIASES[normArtist] ?? []),
-    ].filter(Boolean);
+    const artistVariants =
+      explicitArtistVariants && explicitArtistVariants.length > 0
+        ? explicitArtistVariants
+        : [normArtist, ...(LYRIC_ARTIST_ALIASES[normArtist] ?? [])].filter(Boolean);
 
-    let best: LrclibApiRecord | null = null;
-    let bestScore = -Infinity;
+    const scoreList = (list: LrclibApiRecord[] | null): LrclibApiRecord | null => {
+      if (!Array.isArray(list) || list.length === 0) return null;
+      let best: LrclibApiRecord | null = null;
+      let bestScore = -Infinity;
 
-    for (const candidate of list) {
-      const candTitle = normalizeSearchText(candidate.trackName ?? '');
-      const candArtist = normalizeSearchText(candidate.artistName ?? '');
-      if (!candTitle || !candArtist) continue;
+      for (const candidate of list) {
+        const rawCandTitle = normalizeSearchText(candidate.trackName ?? '');
+        const cleanCandTitle = normalizeSearchText(stripTrackTitleNoise(candidate.trackName ?? '') || '');
+        const candArtist = normalizeSearchText(candidate.artistName ?? '');
+        if ((!rawCandTitle && !cleanCandTitle) || !candArtist) continue;
 
-      let titleScore = 0;
-      if (candTitle === normTitle) titleScore = 5;
-      else if (candTitle.includes(normTitle) || normTitle.includes(candTitle)) titleScore = 3;
+        let titleScore = 0;
+        for (const ct of [cleanCandTitle, rawCandTitle]) {
+          if (!ct) continue;
+          if (ct === normTitle) titleScore = Math.max(titleScore, 5);
+          else if (ct.includes(normTitle) || normTitle.includes(ct)) titleScore = Math.max(titleScore, 3);
+        }
 
-      let artistScore = 0;
-      if (artistVariants.some((v) => candArtist === v)) artistScore = 4;
-      else if (artistVariants.some((v) => candArtist.includes(v) || v.includes(candArtist))) {
-        artistScore = 2.5;
+        let artistScore = 0;
+        if (artistVariants.some((v) => candArtist === v)) artistScore = 4;
+        else if (artistVariants.some((v) => candArtist.includes(v) || v.includes(candArtist))) {
+          artistScore = 2.5;
+        }
+
+        // Require BOTH title and artist match so we never show unrelated foreign song lyrics
+        if (titleScore === 0 || artistScore === 0) {
+          continue;
+        }
+
+        let score = titleScore + artistScore;
+        if (typeof candidate.syncedLyrics === 'string' && candidate.syncedLyrics.trim().length > 0) {
+          score += 3;
+        } else if (typeof candidate.plainLyrics === 'string' && candidate.plainLyrics.trim().length > 0) {
+          score += 1;
+        }
+        if (durationSec && durationSec > 0 && typeof candidate.duration === 'number') {
+          const diff = Math.abs(candidate.duration - durationSec);
+          if (diff <= 2) score += 3;
+          else if (diff <= 6) score += 1.5;
+          else if (diff > 20) score -= 4;
+        }
+        if (score > bestScore) {
+          bestScore = score;
+          best = candidate;
+        }
       }
 
-      // Require BOTH title and artist match so we never show unrelated foreign song lyrics
-      if (titleScore === 0 || artistScore === 0) {
-        continue;
-      }
+      return bestScore >= 5 ? best : null;
+    };
 
-      let score = titleScore + artistScore;
+    const qPrimary = new URLSearchParams({ q: `${title} ${artist}`.trim() });
+    const primaryMatch = scoreList(
+      await this.fetchJsonSafe<LrclibApiRecord[]>(`${this.baseUrl}/api/search?${qPrimary.toString()}`, signal)
+    );
+    if (primaryMatch) return primaryMatch;
 
-      if (typeof candidate.syncedLyrics === 'string' && candidate.syncedLyrics.trim().length > 0) {
-        score += 3;
-      } else if (typeof candidate.plainLyrics === 'string' && candidate.plainLyrics.trim().length > 0) {
-        score += 1;
-      }
-
-      if (durationSec && durationSec > 0 && typeof candidate.duration === 'number') {
-        const diff = Math.abs(candidate.duration - durationSec);
-        if (diff <= 2) score += 3;
-        else if (diff <= 6) score += 1.5;
-        else if (diff > 20) score -= 4;
-      }
-
-      if (score > bestScore) {
-        bestScore = score;
-        best = candidate;
-      }
+    if (rawArtistTokens && rawArtistTokens.length > 1) {
+      const qSecondary = new URLSearchParams({ q: `${title} ${rawArtistTokens[1]}`.trim() });
+      const secondaryMatch = scoreList(
+        await this.fetchJsonSafe<LrclibApiRecord[]>(`${this.baseUrl}/api/search?${qSecondary.toString()}`, signal)
+      );
+      if (secondaryMatch) return secondaryMatch;
     }
 
-    return bestScore >= 5 ? best : null;
+    const qByTrackName = new URLSearchParams({ track_name: title });
+    return scoreList(
+      await this.fetchJsonSafe<LrclibApiRecord[]>(`${this.baseUrl}/api/search?${qByTrackName.toString()}`, signal)
+    );
   }
 
   private async fetchMusixmatchDocument(

@@ -79,9 +79,12 @@ import {
 import { getThemeDefinition } from '../utils/themes.ts';
 import {
   getCachedPaletteCss,
+  getLiveCoverBrightness,
   getPrebakedMobileBackdrop,
   prebakeMobileBackdrop,
   registerBackdropCleanupHook,
+  shouldUseDarkInkOnBackdrop,
+  subscribeCoverBrightness,
 } from '../utils/cover-color.ts';
 import { ArtistLinks } from './ArtistLinks.tsx';
 import { PMusicSwitch } from './PMusicSwitch.tsx';
@@ -344,6 +347,26 @@ export const NowPlayingSheet: React.FC = () => {
   const [smoothPosSec, setSmoothPosSec] = useState(positionSec);
   const [sheetDisplayDurSec, setSheetDisplayDurSec] = useState(durationSec);
   const [isRealFullscreen, setIsRealFullscreen] = useState(false);
+  const [coverBrightness, setCoverBrightness] = useState(getLiveCoverBrightness);
+  const [isLightBackdrop, setIsLightBackdrop] = useState(() =>
+    shouldUseDarkInkOnBackdrop({
+      ...getLiveCoverBrightness(),
+      backdropStyle: nowPlayingBackdropStyle,
+    })
+  );
+
+  useEffect(() => subscribeCoverBrightness(setCoverBrightness), []);
+
+  useEffect(() => {
+    setIsLightBackdrop((prev) =>
+      shouldUseDarkInkOnBackdrop({
+        perceptualLuma: coverBrightness.perceptualLuma,
+        brightFraction: coverBrightness.brightFraction,
+        backdropStyle: nowPlayingBackdropStyle,
+        currentlyLight: prev,
+      })
+    );
+  }, [coverBrightness, nowPlayingBackdropStyle]);
 
   useEffect(() => {
     let active = true;
@@ -1388,7 +1411,7 @@ export const NowPlayingSheet: React.FC = () => {
                     isLiked ? 'text-[#FB7185]' : 'text-white/85 hover:text-white'
                   }`}
                 >
-                  <LiquidHeartIcon liked={isLiked} className="h-[18px] w-[18px] md:h-5 md:w-5" />
+                  <LiquidHeartIcon liked={isLiked} className="h-5 w-5" />
                 </button>
                 <button
                   type="button"
@@ -1417,7 +1440,7 @@ export const NowPlayingSheet: React.FC = () => {
                   }}
                   className="pm-pressable flex h-8 w-8 items-center justify-center rounded-full text-white/85 transition-colors hover:bg-white/[0.10] hover:text-white"
                 >
-                  <MoreHorizontal className="h-[18px] w-[18px] md:h-5 md:w-5" />
+                  <MoreHorizontal className="h-5 w-5" />
                 </button>
               </div>
             </div>
@@ -1497,7 +1520,7 @@ export const NowPlayingSheet: React.FC = () => {
                   <LiquidHeartIcon
                     key={`deck-heart-${heartBurstKey}-${isLiked}`}
                     liked={isLiked}
-                    className={`h-[18px] w-[18px] md:h-5 md:w-5 ${
+                    className={`h-5 w-5 ${
                       isLiked && heartBurstKey > 0 && !reducedMotionPref ? 'pm-heart-burst-epic' : ''
                     }`}
                   />
@@ -1555,7 +1578,7 @@ export const NowPlayingSheet: React.FC = () => {
                   }}
                   className="pm-pressable flex h-8 w-8 items-center justify-center rounded-full text-white/85 transition-colors hover:bg-white/[0.10] hover:text-white"
                 >
-                  <MoreHorizontal className="h-[18px] w-[18px] md:h-5 md:w-5" />
+                  <MoreHorizontal className="h-5 w-5" />
                 </button>
               </div>
             </div>
@@ -1725,7 +1748,7 @@ export const NowPlayingSheet: React.FC = () => {
       </div>
 
       {/* Pure Minimalist Centered Borderless Transport Row (Exact 5 icons matching desktop) */}
-      <div className="mx-auto grid w-full max-w-[264px] grid-cols-5 place-items-center py-0 sm:max-w-[340px]">
+      <div className="mx-auto grid w-full max-w-[340px] grid-cols-5 place-items-center py-0">
         <button
           type="button"
           aria-label={
@@ -1738,14 +1761,14 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('shuffle');
             toggleShuffle();
           }}
-          className={`pm-pressable relative flex h-8 w-8 items-center justify-center overflow-visible bg-transparent transition-transform duration-150 hover:scale-110 focus:outline-none md:h-9 md:w-9 ${
+          className={`pm-pressable relative flex h-7 w-7 items-center justify-center overflow-visible bg-transparent transition-transform duration-150 hover:scale-110 focus:outline-none md:h-9 md:w-9 ${
             shuffleEnabled
               ? 'text-white'
               : 'text-white/55 hover:text-white'
           }`}
         >
           <AnimatedShuffleIcon
-            className="h-[15px] w-[15px] md:h-[18px] md:w-[18px]"
+            className="h-[14px] w-[14px] md:h-[18px] md:w-[18px]"
             animate={transportAnim === 'shuffle' && !reducedMotionPref}
           />
           {shuffleEnabled && (
@@ -1763,10 +1786,10 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('prev');
             void prevTrack();
           }}
-          className="pm-pressable relative flex h-10 w-10 items-center justify-center overflow-visible bg-transparent text-white/90 transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none md:h-12 md:w-12"
+          className="pm-pressable relative flex h-12 w-12 items-center justify-center overflow-visible bg-transparent text-white/90 transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none"
         >
           <AnimatedSkipBackIcon
-            className="h-[22px] w-[22px] md:h-8 md:w-8"
+            className="h-8 w-8"
             filled
             animate={transportAnim === 'prev' && !reducedMotionPref}
           />
@@ -1780,21 +1803,21 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('play');
             void togglePlayPause();
           }}
-          className="pm-pressable relative flex h-12 w-12 items-center justify-center overflow-visible bg-transparent text-white outline-none ring-0 transition-transform duration-200 hover:scale-105 active:scale-90 focus:outline-none md:h-16 md:w-16"
+          className="pm-pressable relative flex h-16 w-16 items-center justify-center overflow-visible bg-transparent text-white outline-none ring-0 transition-transform duration-200 hover:scale-105 active:scale-90 focus:outline-none"
         >
           {showBuffering ? (
-            <Loader2 data-testid="nowplaying-play-loader" className="h-7 w-7 animate-spin text-white/95 md:h-10 md:w-10" />
+            <Loader2 data-testid="nowplaying-play-loader" className="h-10 w-10 animate-spin text-white/95" />
           ) : (
             <>
               <RoundedPauseIcon
-                className={`absolute h-[38px] w-[38px] drop-shadow-[0_4px_14px_rgba(0,0,0,0.34)] transition-all duration-200 ease-out md:h-[52px] md:w-[52px] ${
+                className={`absolute h-[52px] w-[52px] drop-shadow-[0_4px_14px_rgba(0,0,0,0.34)] transition-all duration-200 ease-out ${
                   isPlaying
                     ? 'scale-100 rotate-0 opacity-100 blur-0'
                     : 'scale-50 rotate-90 opacity-0 blur-[1px]'
                 }`}
               />
               <RoundedPlayIcon
-                className={`absolute h-[38px] w-[38px] translate-x-[2px] drop-shadow-[0_4px_14px_rgba(0,0,0,0.34)] transition-all duration-200 ease-out md:h-[52px] md:w-[52px] ${
+                className={`absolute h-[52px] w-[52px] translate-x-[2px] drop-shadow-[0_4px_14px_rgba(0,0,0,0.34)] transition-all duration-200 ease-out ${
                   !isPlaying
                     ? 'scale-100 rotate-0 opacity-100 blur-0'
                     : 'scale-50 -rotate-90 opacity-0 blur-[1px]'
@@ -1811,10 +1834,10 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('next');
             void nextTrack();
           }}
-          className="pm-pressable relative flex h-10 w-10 items-center justify-center overflow-visible bg-transparent text-white/90 transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none md:h-12 md:w-12"
+          className="pm-pressable relative flex h-12 w-12 items-center justify-center overflow-visible bg-transparent text-white/90 transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none"
         >
           <AnimatedSkipForwardIcon
-            className="h-[22px] w-[22px] md:h-8 md:w-8"
+            className="h-8 w-8"
             filled
             animate={transportAnim === 'next' && !reducedMotionPref}
           />
@@ -1828,7 +1851,7 @@ export const NowPlayingSheet: React.FC = () => {
             triggerTransportAnim('repeat');
             cycleRepeatMode();
           }}
-          className={`pm-pressable relative flex h-8 w-8 items-center justify-center bg-transparent transition-transform duration-150 hover:scale-110 focus:outline-none md:h-9 md:w-9 ${
+          className={`pm-pressable relative flex h-7 w-7 items-center justify-center bg-transparent transition-transform duration-150 hover:scale-110 focus:outline-none md:h-9 md:w-9 ${
             repeatMode !== 'off'
               ? 'text-white'
               : 'text-white/55 hover:text-white'
@@ -1840,9 +1863,9 @@ export const NowPlayingSheet: React.FC = () => {
             }`}
           >
             {repeatMode === 'one' ? (
-              <Repeat1 className="h-[15px] w-[15px] md:h-[18px] md:w-[18px]" />
+              <Repeat1 className="h-[14px] w-[14px] md:h-[18px] md:w-[18px]" />
             ) : (
-              <Repeat className="h-[15px] w-[15px] md:h-[18px] md:w-[18px]" />
+              <Repeat className="h-[14px] w-[14px] md:h-[18px] md:w-[18px]" />
             )}
           </span>
           {repeatMode !== 'off' && (
@@ -1893,11 +1916,14 @@ export const NowPlayingSheet: React.FC = () => {
       aria-modal="true"
       aria-label="Reproduciendo ahora"
       data-testid="now-playing-sheet"
+      data-light-backdrop={isLightBackdrop ? 'true' : 'false'}
       onScroll={(e) => {
         if (e.currentTarget.scrollTop !== 0) e.currentTarget.scrollTop = 0;
         if (e.currentTarget.scrollLeft !== 0) e.currentTarget.scrollLeft = 0;
       }}
-      className="pm-sheet-spring-in pm-dark-sliders fixed inset-0 z-50 flex h-dvh w-screen flex-col overflow-hidden bg-[#070709] text-[#F5F5F7]"
+      className={`pm-sheet-spring-in pm-dark-sliders fixed inset-0 z-50 flex h-dvh w-screen flex-col overflow-hidden bg-[#070709] text-[#F5F5F7] transition-colors duration-500 ${
+        isLightBackdrop ? 'pm-np-light-surface' : ''
+      }`}
     >
       {/* Dynamic Selectable Fullscreen Backdrop (Smooth Motion, Non-Audio-Reactive) */}
       <div
@@ -2010,19 +2036,22 @@ export const NowPlayingSheet: React.FC = () => {
         )}
       </div>
 
-      {/* Apple HIG Bright Media Scrim (Balanced over real cover art for Pulse/Paint) */}
+      {/* Apple HIG Bright Media Scrim (Adaptive frosted veil when cover backdrop is white/very bright) */}
       <div
         data-testid="bright-media-scrim"
         data-scrim="true"
         data-scrim-alpha={
-          nowPlayingBackdropStyle === 'pulse' || nowPlayingBackdropStyle === 'paint'
-            ? '0.22'
-            : '0.34'
+          isLightBackdrop
+            ? '0.18'
+            : nowPlayingBackdropStyle === 'pulse' || nowPlayingBackdropStyle === 'paint'
+              ? '0.22'
+              : '0.34'
         }
-        className="pointer-events-none fixed inset-0 z-0"
+        className="pointer-events-none fixed inset-0 z-0 transition-[background] duration-500"
         style={{
-          background:
-            nowPlayingBackdropStyle === 'pulse' || nowPlayingBackdropStyle === 'paint'
+          background: isLightBackdrop
+            ? 'linear-gradient(180deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.10) 36%, rgba(255, 255, 255, 0.24) 100%)'
+            : nowPlayingBackdropStyle === 'pulse' || nowPlayingBackdropStyle === 'paint'
               ? 'linear-gradient(180deg, rgba(8, 8, 12, 0.24) 0%, rgba(8, 8, 12, 0.16) 28%, rgba(8, 8, 12, 0.22) 100%)'
               : 'linear-gradient(180deg, rgba(8, 8, 12, 0.44) 0%, rgba(8, 8, 12, 0.31) 24%, rgba(8, 8, 12, 0.34) 100%)',
         }}
@@ -2727,13 +2756,13 @@ export const NowPlayingSheet: React.FC = () => {
                 setNowPlayingTab('Letras');
               }
             }}
-            className={`pm-pressable inline-flex h-9 w-9 items-center justify-center gap-1.5 rounded-full transition-colors md:h-9 md:w-auto md:px-3.5 md:text-xs md:font-semibold ${
+            className={`pm-pressable inline-flex h-10 w-10 items-center justify-center gap-1.5 rounded-full transition-colors md:h-9 md:w-auto md:px-3.5 md:text-xs md:font-semibold ${
               nowPlayingTab === 'Letras'
                 ? 'bg-white/[0.22] text-white md:bg-white md:text-[#070709] md:shadow-sm'
                 : 'text-white/70 hover:bg-white/[0.10] hover:text-white'
             }`}
           >
-            <MessageSquareQuote className="h-[17px] w-[17px] md:h-3.5 md:w-3.5" />
+            <MessageSquareQuote className="h-5 w-5 md:h-3.5 md:w-3.5" />
             <span className="hidden md:inline">Letras</span>
           </button>
 
@@ -2744,13 +2773,13 @@ export const NowPlayingSheet: React.FC = () => {
             onClick={() =>
               setNowPlayingTab(nowPlayingTab === 'Cola' ? 'Portada' : 'Cola')
             }
-            className={`pm-pressable inline-flex h-9 w-9 items-center justify-center gap-1.5 rounded-full transition-colors md:h-9 md:w-auto md:px-3.5 md:text-xs md:font-semibold ${
+            className={`pm-pressable inline-flex h-10 w-10 items-center justify-center gap-1.5 rounded-full transition-colors md:h-9 md:w-auto md:px-3.5 md:text-xs md:font-semibold ${
               nowPlayingTab === 'Cola'
                 ? 'bg-white/[0.22] text-white md:bg-white md:text-[#070709] md:shadow-sm'
                 : 'text-white/70 hover:bg-white/[0.10] hover:text-white'
             }`}
           >
-            <ListMusic className="h-[17px] w-[17px] md:h-3.5 md:w-3.5" />
+            <ListMusic className="h-5 w-5 md:h-3.5 md:w-3.5" />
             <span className="hidden md:inline">Cola</span>
           </button>
 
@@ -2772,14 +2801,14 @@ export const NowPlayingSheet: React.FC = () => {
                 setDjPopoverOpen(true);
               }
             }}
-            className={`pm-pressable inline-flex h-9 w-9 items-center justify-center gap-1.5 rounded-full transition-colors md:h-9 md:w-auto md:px-3.5 md:text-xs md:font-semibold ${
+            className={`pm-pressable inline-flex h-10 w-10 items-center justify-center gap-1.5 rounded-full transition-colors md:h-9 md:w-auto md:px-3.5 md:text-xs md:font-semibold ${
               djMode.enabled || djPopoverOpen || eqSheetOpen
                 ? 'bg-white/[0.2] text-white'
                 : 'text-white/70 hover:bg-white/[0.10] hover:text-white'
             }`}
           >
             <SlidersHorizontal
-              className={`h-[17px] w-[17px] md:h-3.5 md:w-3.5 ${
+              className={`h-5 w-5 md:h-3.5 md:w-3.5 ${
                 djMode.enabled ? 'text-purple-300' : ''
               }`}
             />

@@ -64,6 +64,16 @@ function splitCandidateArtists(rawArtists) {
   return out;
 }
 
+function parseDdMmYyToIso(title) {
+  if (!title) return undefined;
+  const m = title.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/);
+  if (!m?.[1] || !m[2] || !m[3]) return undefined;
+  const dd = m[1].padStart(2, '0');
+  const mm = m[2].padStart(2, '0');
+  const yyyy = m[3].length === 2 ? `20${m[3]}` : m[3];
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 function parseSpotifyEmbed(html, source, estimatedReleaseDate) {
   if (!html) return [];
   const match = html.match(/<script\b[^>]*id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i);
@@ -144,7 +154,67 @@ function parseLaHiguera(html, kind, fallbackDate) {
   return out;
 }
 
-async function fetchText(url, timeoutMs = 4500) {
+function deezerRawToCandidate(t, source, priority, fallbackDate) {
+  const dzId = String(t?.id ?? '').trim();
+  const title = decodeHtmlEntities(String(t?.title ?? t?.title_short ?? '')).trim();
+  const mainArtistName = decodeHtmlEntities(String(t?.artist?.name ?? '')).trim();
+  if (!dzId || !title || !mainArtistName) return null;
+
+  const artists = splitCandidateArtists(mainArtistName);
+  if (artists.length === 0) return null;
+  const releaseDate =
+    typeof t?.release_date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(t.release_date)
+      ? t.release_date.slice(0, 10)
+      : fallbackDate;
+  const releaseYear = Number.parseInt(releaseDate.slice(0, 4), 10) || new Date().getUTCFullYear();
+  const thumbMed =
+    typeof t?.album?.cover_medium === 'string' && t.album.cover_medium
+      ? t.album.cover_medium
+      : typeof t?.album?.cover === 'string' && t.album.cover
+        ? t.album.cover
+        : '';
+  const thumbHigh =
+    typeof t?.album?.cover_big === 'string' && t.album.cover_big
+      ? t.album.cover_big
+      : typeof t?.album?.cover_xl === 'string' && t.album.cover_xl
+        ? t.album.cover_xl
+        : thumbMed;
+  const durationSec =
+    typeof t?.duration === 'number' && Number.isFinite(t.duration) && t.duration > 0
+      ? Math.round(t.duration)
+      : 180;
+
+  return {
+    title,
+    artists,
+    releaseDate,
+    kind: 'track',
+    source,
+    priority,
+    ...(thumbMed ? { thumbnailUrl: thumbMed } : {}),
+    track: {
+      id: `dz_${dzId}`,
+      title,
+      artists: [{ id: t?.artist?.id ? `dz_ar_${t.artist.id}` : undefined, name: mainArtistName }],
+      ...(t?.album?.title
+        ? { album: { id: t?.album?.id ? `dz_al_${t.album.id}` : undefined, name: String(t.album.title) } }
+        : {}),
+      durationSec,
+      thumbnailUrl: thumbMed,
+      ...(thumbHigh ? { thumbnailHighUrl: thumbHigh } : {}),
+      releaseYear,
+      releaseDate,
+      isExplicit: Boolean(t?.explicit_lyrics),
+      source: 'ytmusic',
+    },
+  };
+}
+
+async function fetchText(
+  url,
+  timeoutMs = 4500,
+  accept = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -153,7 +223,7 @@ async function fetchText(url, timeoutMs = 4500) {
       headers: {
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        Accept: accept,
       },
     });
     if (!res.ok) return null;
@@ -162,6 +232,16 @@ async function fetchText(url, timeoutMs = 4500) {
     return null;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+async function fetchJson(url, timeoutMs = 4500) {
+  const text = await fetchText(url, timeoutMs, 'application/json');
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
   }
 }
 
@@ -175,11 +255,80 @@ export default async function handler(req, res) {
   try {
     const now = new Date();
     const fridayIso = getMostRecentFridayIso(now);
+    const cutoff15Iso = toLocalIsoDate(
+      new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 15))
+    );
     const cutoffIso = toLocalIsoDate(
       new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 30))
     );
 
-    const [spNovHtml, lhNovHtml, lhCancHtml] = await Promise.all([
+    const fetchAppleEsSongs = async () => {
+      const data = await fetchJson(
+        'https://rss.marketingtools.apple.com/api/v2/es/music/most-played/50/songs.json',
+        4500
+      );
+      const results = Array.isArray(data?.feed?.results) ? data.feed.results : [];
+      const out = [];
+      for (const item of results) {
+        const title = decodeHtmlEntities(String(item?.name ?? '')).trim();
+        const artistName = decodeHtmlEntities(String(item?.artistName ?? '')).trim();
+        const releaseDate =
+          typeof item?.releaseDate === 'string' ? item.releaseDate.slice(0, 10) : '';
+        if (!title || !artistName || !releaseDate || releaseDate < cutoff15Iso) continue;
+        const artists = splitCandidateArtists(artistName);
+        if (artists.length === 0) continue;
+        out.push({
+          title,
+          artists,
+          releaseDate,
+          kind: 'track',
+          source: 'apple_es_top',
+          priority: 98,
+          ...(item.artworkUrl100 ? { thumbnailUrl: item.artworkUrl100 } : {}),
+        });
+      }
+      return out;
+    };
+
+    const fetchDeezerPlaylists = async () => {
+      const searchData = await fetchJson(
+        'https://api.deezer.com/search/playlist?q=Novedades+Viernes+Espa%C3%B1a&limit=6',
+        4500
+      );
+      const pls = Array.isArray(searchData?.data) ? searchData.data : [];
+      const datedPls = pls
+        .map((p) => ({ id: String(p?.id ?? '').trim(), date: parseDdMmYyToIso(p?.title) }))
+        .filter((p) => Boolean(p.id));
+      const recentPls = datedPls.filter((p) => p.date && p.date >= cutoff15Iso).slice(0, 2);
+      const chosenNovPls = recentPls.length > 0 ? recentPls : datedPls.slice(0, 1);
+
+      const [radarWeeklyData, ...novDatas] = await Promise.all([
+        fetchJson('https://api.deezer.com/playlist/1282495565/tracks?limit=60', 4500),
+        ...chosenNovPls.map((pl) =>
+          fetchJson(`https://api.deezer.com/playlist/${encodeURIComponent(pl.id)}/tracks?limit=80`, 4500)
+        ),
+      ]);
+
+      const out = [];
+      for (let i = 0; i < chosenNovPls.length; i++) {
+        const plMeta = chosenNovPls[i];
+        const tracks = Array.isArray(novDatas[i]?.data) ? novDatas[i].data : [];
+        for (const t of tracks) {
+          const cand = deezerRawToCandidate(t, 'deezer_novedades_es', 96, plMeta.date ?? fridayIso);
+          if (cand) out.push(cand);
+        }
+      }
+      const rwTracks = Array.isArray(radarWeeklyData?.data) ? radarWeeklyData.data : [];
+      for (const t of rwTracks.slice(0, 60)) {
+        const cand = deezerRawToCandidate(t, 'deezer_radar_weekly', 78, fridayIso);
+        if (cand) out.push(cand);
+      }
+      return out;
+    };
+
+    const [appleItems, deezerItems, spNovHtml, lhNovHtml, lhCancHtml] = await Promise.all([
+      fetchAppleEsSongs(),
+      fetchDeezerPlaylists(),
       fetchText('https://open.spotify.com/embed/playlist/37i9dQZF1DX6PYajiT4pAf', 4500),
       fetchText('https://www.lahiguera.net/musicalia/novedades.php', 4500),
       fetchText('https://www.lahiguera.net/musicalia/canciones.php', 4500),
@@ -190,6 +339,8 @@ export default async function handler(req, res) {
     ]);
 
     const raw = [
+      ...appleItems,
+      ...deezerItems,
       ...parseSpotifyEmbed(spNovHtml, 'spotify_novedades_es', fridayIso),
       ...parseSpotifyEmbed(spPegaoHtml, 'spotify_pegao', undefined),
       ...parseSpotifyEmbed(spNmfHtml, 'spotify_nmf', fridayIso),
@@ -208,16 +359,35 @@ export default async function handler(req, res) {
         dedup.set(key, item);
         continue;
       }
+      const mergedArtists = [...prev.artists];
+      const seenArt = new Set(mergedArtists.map((a) => normStr(a)));
+      for (const a of item.artists) {
+        const na = normStr(a);
+        if (na && !seenArt.has(na)) {
+          seenArt.add(na);
+          mergedArtists.push(a);
+        }
+      }
+      const prevHasExplicit =
+        (prev.source === 'lahiguera_novedades' || prev.source === 'apple_es_top') && Boolean(prev.releaseDate);
+      const currHasExplicit =
+        (item.source === 'lahiguera_novedades' || item.source === 'apple_es_top') && Boolean(item.releaseDate);
+      const chosenDate = currHasExplicit
+        ? item.releaseDate
+        : prevHasExplicit
+          ? prev.releaseDate
+          : item.releaseDate && (!prev.releaseDate || item.releaseDate > prev.releaseDate)
+            ? item.releaseDate
+            : prev.releaseDate;
+
       const winner = item.priority > prev.priority ? item : prev;
+      const mergedTrack = winner.track ?? prev.track ?? item.track;
       dedup.set(key, {
         ...winner,
-        releaseDate:
-          item.source === 'lahiguera_novedades' && item.releaseDate
-            ? item.releaseDate
-            : prev.source === 'lahiguera_novedades' && prev.releaseDate
-              ? prev.releaseDate
-              : winner.releaseDate ?? prev.releaseDate ?? item.releaseDate,
+        artists: mergedArtists,
+        ...(chosenDate ? { releaseDate: chosenDate } : {}),
         thumbnailUrl: winner.thumbnailUrl ?? prev.thumbnailUrl ?? item.thumbnailUrl,
+        ...(mergedTrack ? { track: mergedTrack } : {}),
       });
     }
 
