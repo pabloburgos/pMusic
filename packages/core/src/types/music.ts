@@ -87,6 +87,9 @@ export interface PlaylistRecord {
   name: string;
   description: string;
   coverUrl?: string;
+  bannerUrl?: string | null;
+  bannerEnabled?: boolean;
+  coverStyleSeed?: number;
   source: PlaylistRecordSource;
   sourceUrl?: string;
   tracks: Track[];

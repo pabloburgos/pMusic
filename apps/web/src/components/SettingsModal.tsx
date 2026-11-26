@@ -90,6 +90,10 @@ export const SettingsModal: React.FC = () => {
     surfaceStyle,
     liquidGlassMode,
     ambientMotionEnabled,
+    alwaysShuffle,
+    marqueeTextEnabled,
+    skipSameAlbumCoverTransition,
+    showRemainingTime,
     visualizerEnabled,
     graphicSaverMode,
     reducedMotionPref,
@@ -127,6 +131,10 @@ export const SettingsModal: React.FC = () => {
     setSurfaceStyle,
     setLiquidGlassMode,
     setAmbientMotionEnabled,
+    setAlwaysShuffle,
+    setMarqueeTextEnabled,
+    setSkipSameAlbumCoverTransition,
+    setShowRemainingTime,
     setVisualizerEnabled,
     setGraphicSaverMode,
     setReducedMotionPref,
@@ -757,6 +765,34 @@ export const SettingsModal: React.FC = () => {
                     description="Muestra barras animadas reactivas al audio en la vista de canción"
                     checked={visualizerEnabled}
                     onToggle={() => setVisualizerEnabled(!visualizerEnabled)}
+                  />
+                  <SwitchRow
+                    testId="settings-always-shuffle-switch"
+                    title="Aleatorio siempre activo"
+                    description="Mantiene el modo aleatorio al abrir playlists y colas nuevas"
+                    checked={alwaysShuffle}
+                    onToggle={() => setAlwaysShuffle(!alwaysShuffle)}
+                  />
+                  <SwitchRow
+                    testId="settings-marquee-switch"
+                    title="Texto deslizante si no cabe"
+                    description="Desplaza títulos y artistas largos en la barra inferior y el reproductor"
+                    checked={marqueeTextEnabled}
+                    onToggle={() => setMarqueeTextEnabled(!marqueeTextEnabled)}
+                  />
+                  <SwitchRow
+                    testId="settings-same-album-skip-switch"
+                    title="Omitir transición en mismo álbum"
+                    description="Deja fija la portada si coincide entre canciones seguidas"
+                    checked={skipSameAlbumCoverTransition}
+                    onToggle={() => setSkipSameAlbumCoverTransition(!skipSameAlbumCoverTransition)}
+                  />
+                  <SwitchRow
+                    testId="settings-remaining-time-switch"
+                    title="Mostrar tiempo restante"
+                    description="Cuenta regresiva en lugar de duración total en la barra de tiempo"
+                    checked={showRemainingTime}
+                    onToggle={() => setShowRemainingTime(!showRemainingTime)}
                   />
                   <SwitchRow
                     title="Modo ahorro gráfico (Reducir transparencias)"

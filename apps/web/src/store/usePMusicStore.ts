@@ -85,6 +85,7 @@ import {
   computeBlendScoreAndTracks,
   createJamSession,
   createSharedPlaylist,
+  deleteOrLeaveSharedPlaylist,
   ensureOwnProfileExists,
   fetchActiveHostJamSession,
   fetchJamRequests,
@@ -439,6 +440,14 @@ const processedJamRequestIds = new Set<string>();
 const decodedAudioAnalyzedIds = new Set<string>();
 const decodedAudioInFlightIds = new Set<string>();
 const hydratedContributorIds = new Set<string>();
+let activePlaylistDownloadCancelled = false;
+
+export interface PlaylistAppearanceEntry {
+  coverUrl?: string | null;
+  bannerUrl?: string | null;
+  bannerEnabled?: boolean;
+  coverStyleSeed?: number;
+}
 
 export type LyricsVisualStyle =
   | 'classic'
@@ -708,6 +717,7 @@ let toastTimer: ReturnType<typeof setTimeout> | null = null;
 let cloudPrefsSaveTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingCloudPrefsPayload: Record<string, unknown> | null = null;
 let cloudLibrarySyncTimer: ReturnType<typeof setTimeout> | null = null;
+let prefsUnloadBound = false;
 
 function scheduleLibraryCloudSync(): void {
   if (cloudLibrarySyncTimer) clearTimeout(cloudLibrarySyncTimer);
@@ -906,6 +916,10 @@ export interface PMusicStoreState {
   playlists: PlaylistRecord[];
   playlistPlayCounts: Record<string, PlaylistPlayStat>;
   dismissedPlaylistRecs: Record<string, string[]>;
+  playlistAppearances: Record<string, PlaylistAppearanceEntry>;
+  playlistContextMenu: { kind: 'local' | 'shared'; playlistId: string; x: number; y: number } | null;
+  playlistAppearanceModal: { kind: 'local' | 'shared'; playlistId: string } | null;
+  playlistDownloadProgress: { playlistId: string; completed: number; total: number } | null;
   likedTracks: LikedTrackRecord[];
   playHistory: PlayHistoryRecord[];
   offlineDownloads: Record<string, OfflineDownloadStatus>;
@@ -1129,7 +1143,28 @@ export interface PMusicStoreState {
   createPlaylist: (name: string, description?: string, tracks?: Track[]) => Promise<PlaylistRecord>;
   renamePlaylist: (playlistId: string, name: string) => Promise<void>;
   deletePlaylist: (playlistId: string) => Promise<void>;
+  deleteOrLeaveSharedPlaylistById: (sharedId: string) => Promise<void>;
   duplicatePlaylist: (playlistId: string) => Promise<PlaylistRecord | null>;
+  openPlaylistContextMenu: (
+    kind: 'local' | 'shared',
+    playlistId: string,
+    x: number,
+    y: number
+  ) => void;
+  closePlaylistContextMenu: () => void;
+  openPlaylistAppearanceModal: (kind: 'local' | 'shared', playlistId: string) => void;
+  closePlaylistAppearanceModal: () => void;
+  updatePlaylistAppearance: (
+    kind: 'local' | 'shared',
+    playlistId: string,
+    patch: PlaylistAppearanceEntry
+  ) => Promise<void>;
+  downloadPlaylistOffline: (
+    playlistId: string,
+    tracks: Track[],
+    playlistName?: string
+  ) => Promise<void>;
+  cancelPlaylistDownload: () => void;
   copyPlaylistTracksTo: (sourcePlaylistId: string, targetPlaylistId: string) => Promise<number>;
   addTrackToPlaylist: (playlistId: string, track: Track) => Promise<void>;
   removeTrackFromPlaylist: (playlistId: string, trackId: string) => Promise<void>;
@@ -2534,6 +2569,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       playlistPlayCounts: st.playlistPlayCounts,
     });
     const payload = {
+      savedAt: Date.now(),
       ownerUserId: st.authState.userId ?? null,
       themeId: st.themeId,
       playerBarStyle: st.playerBarStyle,
@@ -2572,6 +2608,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       djMode: st.djMode,
       favoriteArtists: st.favoriteArtists,
       dismissedPlaylistRecs: st.dismissedPlaylistRecs,
+      playlistAppearances: st.playlistAppearances,
       playlistPlayCounts: st.playlistPlayCounts,
       tasteProfile,
     };
@@ -2733,6 +2770,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         prefs.dismissedPlaylistRecs && typeof prefs.dismissedPlaylistRecs === 'object'
           ? (prefs.dismissedPlaylistRecs as Record<string, string[]>)
           : prev.dismissedPlaylistRecs,
+      playlistAppearances:
+        prefs.playlistAppearances && typeof prefs.playlistAppearances === 'object'
+          ? (prefs.playlistAppearances as Record<string, PlaylistAppearanceEntry>)
+          : prev.playlistAppearances,
       playlistPlayCounts:
         prefs.playlistPlayCounts && typeof prefs.playlistPlayCounts === 'object'
           ? (prefs.playlistPlayCounts as Record<string, PlaylistPlayStat>)
@@ -2991,6 +3032,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   playlists: [],
   playlistPlayCounts: {},
   dismissedPlaylistRecs: {},
+  playlistAppearances: {},
+  playlistContextMenu: null,
+  playlistAppearanceModal: null,
+  playlistDownloadProgress: null,
   likedTracks: [],
   playHistory: [],
   offlineDownloads: {},
@@ -3415,19 +3460,30 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
               typeof hydratedPrefs.dismissedPlaylistRecs === 'object'
                 ? (hydratedPrefs.dismissedPlaylistRecs as Record<string, string[]>)
                 : prev.dismissedPlaylistRecs,
+            playlistAppearances:
+              hydratedPrefs.playlistAppearances &&
+              typeof hydratedPrefs.playlistAppearances === 'object'
+                ? (hydratedPrefs.playlistAppearances as Record<string, PlaylistAppearanceEntry>)
+                : prev.playlistAppearances,
           }
         : {}),
     }));
 
+    const localSavedAt = Number(hydratedPrefs?.savedAt ?? 0);
     let cloudTasteMerged = false;
     if (restoredAuth.connected) {
       try {
         const cloudPrefs = await syncEngine.loadAccountPreferences?.();
         if (cloudPrefs) {
-          applyPreferencesPayload(cloudPrefs);
-          void defaultPlatformBridge.preferencesStorage
-            .setItem(USER_PREFS_STORAGE_KEY, JSON.stringify(cloudPrefs))
-            .catch(() => {});
+          const cloudSavedAt = Number(cloudPrefs.savedAt ?? 0);
+          if (!hydratedPrefs || cloudSavedAt >= localSavedAt) {
+            applyPreferencesPayload(cloudPrefs);
+            void defaultPlatformBridge.preferencesStorage
+              .setItem(USER_PREFS_STORAGE_KEY, JSON.stringify(cloudPrefs))
+              .catch(() => {});
+          } else {
+            persistPrefsFromStore(true);
+          }
           await hydrateAndMergeCloudTaste(cloudPrefs);
           cloudTasteMerged = true;
         }
@@ -3441,13 +3497,17 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       void get().hydrateSocialAndSubscribe();
     }
 
-    if (typeof window !== 'undefined') {
-      window.addEventListener('pagehide', () => flushCloudPrefsNow());
-    }
-    if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', () => {
-        if (document.hidden) flushCloudPrefsNow();
-      });
+    if (!prefsUnloadBound) {
+      prefsUnloadBound = true;
+      if (typeof window !== 'undefined') {
+        window.addEventListener('beforeunload', () => flushCloudPrefsNow());
+        window.addEventListener('pagehide', () => flushCloudPrefsNow());
+      }
+      if (typeof document !== 'undefined') {
+        document.addEventListener('visibilitychange', () => {
+          if (document.hidden) flushCloudPrefsNow();
+        });
+      }
     }
 
     const activeShelves = cloudTasteMerged ? get().homeShelves : shelves;
@@ -5158,7 +5218,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     } else {
       set({ safeCrossfade: next });
     }
-    persistPrefsFromStore();
+    persistPrefsFromStore(true);
   },
 
   setEqPreset: (presetId) => {
@@ -6063,18 +6123,227 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   },
 
   deletePlaylist: async (playlistId) => {
+    const st = get();
+    const existing = st.playlists.find((p) => p.id === playlistId);
+    const linkedShared = existing?.shareCode
+      ? st.sharedPlaylists.find(
+          (s) => s.shareCode?.toUpperCase() === existing.shareCode?.toUpperCase()
+        )
+      : undefined;
+
     await libraryStore.deletePlaylist(playlistId);
-    set((prev) => ({
-      ...(isMobileHardwareVolumeRuntime() ? { volume: 1.0 } : {}),
-      playlists: libraryStore.getPlaylists(),
-      activeDetailView:
+
+    const sb = getSyncSupabaseClient();
+    if (sb && linkedShared && st.authState.connected && st.authState.userId) {
+      await deleteOrLeaveSharedPlaylist(sb, linkedShared, st.authState.userId).catch(() => {});
+    }
+
+    set((prev) => {
+      const nextApps = { ...prev.playlistAppearances };
+      delete nextApps[playlistId];
+      if (linkedShared) delete nextApps[linkedShared.id];
+
+      const isViewingDeletedLocal =
         prev.activeDetailView?.kind === 'local_playlist' &&
-        prev.activeDetailView.playlistId === playlistId
-          ? null
-          : prev.activeDetailView,
-    }));
+        prev.activeDetailView.playlistId === playlistId;
+      const isViewingDeletedShared =
+        Boolean(linkedShared) &&
+        prev.activeDetailView?.kind === 'shared_playlist' &&
+        prev.activeDetailView.sharedId === linkedShared!.id;
+
+      return {
+        ...(isMobileHardwareVolumeRuntime() ? { volume: 1.0 } : {}),
+        playlists: libraryStore.getPlaylists(),
+        sharedPlaylists: linkedShared
+          ? prev.sharedPlaylists.filter((s) => s.id !== linkedShared.id)
+          : prev.sharedPlaylists,
+        playlistAppearances: nextApps,
+        activeDetailView:
+          isViewingDeletedLocal || isViewingDeletedShared ? null : prev.activeDetailView,
+        detailViewHistory: prev.detailViewHistory.filter(
+          (v) =>
+            !(v.kind === 'local_playlist' && v.playlistId === playlistId) &&
+            !(linkedShared && v.kind === 'shared_playlist' && v.sharedId === linkedShared.id)
+        ),
+        playlistContextMenu:
+          prev.playlistContextMenu?.playlistId === playlistId ? null : prev.playlistContextMenu,
+      };
+    });
     syncUserLibraryContextToEngine();
     scheduleLibraryCloudSync();
+    persistPrefsFromStore();
+    get().showToast('Playlist eliminada');
+  },
+
+  deleteOrLeaveSharedPlaylistById: async (sharedId) => {
+    const st = get();
+    const target = st.sharedPlaylists.find((s) => s.id === sharedId);
+    if (!target) return;
+
+    const sb = getSyncSupabaseClient();
+    let action: 'deleted' | 'left' =
+      target.ownerId === st.authState.userId ? 'deleted' : 'left';
+    if (sb && st.authState.connected && st.authState.userId) {
+      action = await deleteOrLeaveSharedPlaylist(sb, target, st.authState.userId).catch(
+        () => action
+      );
+    }
+
+    const mirroredLocal = target.shareCode
+      ? st.playlists.find(
+          (p) => p.shareCode?.toUpperCase() === target.shareCode?.toUpperCase()
+        )
+      : undefined;
+    if (mirroredLocal) {
+      await libraryStore.deletePlaylist(mirroredLocal.id);
+    }
+
+    set((prev) => {
+      const nextApps = { ...prev.playlistAppearances };
+      delete nextApps[sharedId];
+      if (mirroredLocal) delete nextApps[mirroredLocal.id];
+      const isViewingDeleted =
+        (prev.activeDetailView?.kind === 'shared_playlist' &&
+          prev.activeDetailView.sharedId === sharedId) ||
+        (Boolean(mirroredLocal) &&
+          prev.activeDetailView?.kind === 'local_playlist' &&
+          prev.activeDetailView.playlistId === mirroredLocal!.id);
+      return {
+        sharedPlaylists: prev.sharedPlaylists.filter((s) => s.id !== sharedId),
+        playlists: libraryStore.getPlaylists(),
+        playlistAppearances: nextApps,
+        activeDetailView: isViewingDeleted ? null : prev.activeDetailView,
+        detailViewHistory: prev.detailViewHistory.filter(
+          (v) =>
+            !(v.kind === 'shared_playlist' && v.sharedId === sharedId) &&
+            !(mirroredLocal && v.kind === 'local_playlist' && v.playlistId === mirroredLocal.id)
+        ),
+        playlistContextMenu:
+          prev.playlistContextMenu?.playlistId === sharedId ? null : prev.playlistContextMenu,
+      };
+    });
+    syncUserLibraryContextToEngine();
+    scheduleLibraryCloudSync();
+    persistPrefsFromStore();
+    get().showToast(
+      action === 'deleted' ? 'Playlist eliminada' : 'Has salido de la lista colaborativa'
+    );
+  },
+
+  openPlaylistContextMenu: (kind, playlistId, x, y) => {
+    set({ playlistContextMenu: { kind, playlistId, x, y }, trackMenu: null });
+  },
+
+  closePlaylistContextMenu: () => set({ playlistContextMenu: null }),
+
+  openPlaylistAppearanceModal: (kind, playlistId) => {
+    set({ playlistAppearanceModal: { kind, playlistId }, playlistContextMenu: null });
+  },
+
+  closePlaylistAppearanceModal: () => set({ playlistAppearanceModal: null }),
+
+  updatePlaylistAppearance: async (kind, playlistId, patch) => {
+    const prevApp = get().playlistAppearances[playlistId] ?? {};
+    const nextApp: PlaylistAppearanceEntry = {
+      ...prevApp,
+      ...(patch.coverUrl !== undefined ? { coverUrl: patch.coverUrl || null } : {}),
+      ...(patch.bannerUrl !== undefined ? { bannerUrl: patch.bannerUrl || null } : {}),
+      ...(patch.bannerEnabled !== undefined ? { bannerEnabled: patch.bannerEnabled } : {}),
+      ...(patch.coverStyleSeed !== undefined ? { coverStyleSeed: patch.coverStyleSeed } : {}),
+    };
+
+    if (kind === 'local') {
+      await libraryStore.updatePlaylist(playlistId, {
+        ...(patch.coverUrl !== undefined ? { coverUrl: patch.coverUrl ?? '' } : {}),
+        ...(patch.bannerUrl !== undefined ? { bannerUrl: patch.bannerUrl } : {}),
+        ...(patch.bannerEnabled !== undefined ? { bannerEnabled: patch.bannerEnabled } : {}),
+        ...(patch.coverStyleSeed !== undefined ? { coverStyleSeed: patch.coverStyleSeed } : {}),
+      });
+      set((prev) => ({
+        playlists: libraryStore.getPlaylists(),
+        playlistAppearances: {
+          ...prev.playlistAppearances,
+          [playlistId]: nextApp,
+        },
+      }));
+      scheduleLibraryCloudSync();
+    } else {
+      set((prev) => ({
+        playlistAppearances: {
+          ...prev.playlistAppearances,
+          [playlistId]: nextApp,
+        },
+      }));
+    }
+    persistPrefsFromStore();
+  },
+
+  downloadPlaylistOffline: async (playlistId, tracks, playlistName) => {
+    const st = get();
+    const pending = tracks.filter(
+      (t) => Boolean(t?.id) && st.offlineDownloads[t.id] !== 'downloaded'
+    );
+    if (pending.length === 0) {
+      st.showToast(
+        playlistName
+          ? `«${playlistName}» ya está descargada offline`
+          : 'Playlist ya descargada offline'
+      );
+      return;
+    }
+
+    activePlaylistDownloadCancelled = false;
+    set({
+      playlistDownloadProgress: { playlistId, completed: 0, total: pending.length },
+    });
+
+    let completed = 0;
+    let nextIdx = 0;
+    const concurrency = 2;
+
+    const worker = async () => {
+      while (!activePlaylistDownloadCancelled) {
+        const idx = nextIdx++;
+        if (idx >= pending.length) break;
+        const track = pending[idx]!;
+        try {
+          await get().downloadTrackOffline(track);
+        } catch {
+          // downloadTrackOffline records per-track error state safely
+        }
+        completed++;
+        if (!activePlaylistDownloadCancelled) {
+          set({
+            playlistDownloadProgress: {
+              playlistId,
+              completed,
+              total: pending.length,
+            },
+          });
+        }
+      }
+    };
+
+    await Promise.all(
+      Array.from({ length: Math.min(concurrency, pending.length) }, () => worker())
+    );
+
+    const wasCancelled = activePlaylistDownloadCancelled;
+    activePlaylistDownloadCancelled = false;
+    set({ playlistDownloadProgress: null });
+    if (!wasCancelled) {
+      get().showToast(
+        playlistName
+          ? `Playlist «${playlistName}» descargada offline`
+          : 'Playlist descargada offline'
+      );
+    }
+  },
+
+  cancelPlaylistDownload: () => {
+    activePlaylistDownloadCancelled = true;
+    set({ playlistDownloadProgress: null });
+    get().showToast('Descarga de playlist cancelada');
   },
 
   duplicatePlaylist: async (playlistId) => {
@@ -6354,6 +6623,23 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         if (ak) albumUsed.set(ak, usedInOut + 1);
         primaryPass.push(cand);
       }
+    }
+
+    // When a new seedTrack was just added, prioritize fresh related discoveries near the front so suggestions visibly adapt
+    if (options?.seedTrack) {
+      const seedRelRes = relRes[0];
+      const seedRelIds = new Set<string>(
+        seedRelRes && seedRelRes.status === 'fulfilled'
+          ? (seedRelRes.value.tracks ?? []).map((t) => t.id)
+          : []
+      );
+      const seedFirst: Track[] = [];
+      const restPrimary: Track[] = [];
+      for (const cand of primaryPass) {
+        if (seedRelIds.has(cand.id)) seedFirst.push(cand);
+        else restPrimary.push(cand);
+      }
+      return [...seedFirst, ...restPrimary, ...overflowPass].slice(0, 24);
     }
 
     return [...primaryPass, ...overflowPass].slice(0, 24);
@@ -7015,7 +7301,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       liquidGlassMode: style === 'liquid-glass',
       graphicSaverMode: simple,
     });
-    persistPrefsFromStore();
+    persistPrefsFromStore(true);
   },
 
   setLiquidGlassMode: (enabled) => {
@@ -7025,7 +7311,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   setAmbientMotionEnabled: (enabled) => {
     set({ ambientMotionEnabled: enabled });
-    persistPrefsFromStore();
+    persistPrefsFromStore(true);
   },
 
   setGraphicSaverMode: (enabled) => {
@@ -7041,51 +7327,51 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       );
     }
     set({ reducedMotionPref: enabled });
-    persistPrefsFromStore();
+    persistPrefsFromStore(true);
   },
 
   setTheme: (themeId) => {
     applyPMusicTheme(themeId);
     applyAccentOverride(get().accentPreset, themeId);
     set({ themeId });
-    persistPrefsFromStore();
+    persistPrefsFromStore(true);
   },
 
   setPlayerBarStyle: (playerBarStyle) => {
     set({ playerBarStyle });
-    persistPrefsFromStore();
+    persistPrefsFromStore(true);
   },
 
   setAccentPreset: (accentPreset) => {
     applyAccentOverride(accentPreset, get().themeId);
     set({ accentPreset });
-    persistPrefsFromStore();
+    persistPrefsFromStore(true);
   },
 
   setVisualizerEnabled: (enabled) => {
     set({ visualizerEnabled: enabled });
-    persistPrefsFromStore();
+    persistPrefsFromStore(true);
   },
 
   setLyricsSize: (size) => {
     set({ lyricsSize: size });
-    persistPrefsFromStore();
+    persistPrefsFromStore(true);
   },
 
   setLyricsBlurEnabled: (enabled) => {
     set({ lyricsBlurEnabled: enabled });
-    persistPrefsFromStore();
+    persistPrefsFromStore(true);
   },
 
   setLyricsStyle: (style) => {
     set({ lyricsStyle: style });
-    persistPrefsFromStore();
+    persistPrefsFromStore(true);
   },
 
   setNowPlayingBackdropStyle: (style) => {
     const valid = parseNowPlayingBackdropStyle(style, get().nowPlayingBackdropStyle);
     set({ nowPlayingBackdropStyle: valid });
-    persistPrefsFromStore();
+    persistPrefsFromStore(true);
   },
 
   setAlwaysShuffle: (enabled) => {
@@ -7093,35 +7379,35 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     if (enabled && !get().shuffleEnabled) {
       get().toggleShuffle();
     }
-    persistPrefsFromStore();
+    persistPrefsFromStore(true);
   },
 
   setSkipSameAlbumCoverTransition: (enabled) => {
     set({ skipSameAlbumCoverTransition: enabled });
-    persistPrefsFromStore();
+    persistPrefsFromStore(true);
   },
 
   setMarqueeTextEnabled: (enabled) => {
     set({ marqueeTextEnabled: enabled });
-    persistPrefsFromStore();
+    persistPrefsFromStore(true);
   },
 
   setShowRemainingTime: (enabled) => {
     set({ showRemainingTime: enabled });
-    persistPrefsFromStore();
+    persistPrefsFromStore(true);
   },
 
   setPlaybackRate: (rate) => {
     const safeRate = Math.max(0.5, Math.min(2.0, rate));
     audioEngine.setPlaybackRate(safeRate, get().preservesPitch);
     set({ playbackRate: safeRate });
-    persistPrefsFromStore();
+    persistPrefsFromStore(true);
   },
 
   setPreservesPitch: (preserves) => {
     audioEngine.setPlaybackRate(get().playbackRate, preserves);
     set({ preservesPitch: preserves });
-    persistPrefsFromStore();
+    persistPrefsFromStore(true);
   },
 
   setAudioNormalization: (enabled) => {
@@ -7133,7 +7419,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       curAna?.loudnessDb
     );
     set({ audioNormalization: enabled });
-    persistPrefsFromStore();
+    persistPrefsFromStore(true);
   },
 
   setNormalizationTarget: (target) => {
@@ -7145,7 +7431,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       curAna?.loudnessDb
     );
     set({ normalizationTarget: target });
-    persistPrefsFromStore();
+    persistPrefsFromStore(true);
   },
 
   setStereoBalance: (pan) => {
@@ -7158,13 +7444,13 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   setMonoAudio: (enabled) => {
     audioEngine.setMonoAudio(enabled);
     set({ monoAudio: enabled });
-    persistPrefsFromStore();
+    persistPrefsFromStore(true);
   },
 
   setStreamQuality: (quality) => {
     currentStreamQualityPref = quality;
     set({ streamQuality: quality });
-    persistPrefsFromStore();
+    persistPrefsFromStore(true);
     get().showToast(
       `Calidad de audio: ${
         quality === 'high' ? 'Alta' : quality === 'medium' ? 'Equilibrada' : 'Ahorro'

@@ -62,6 +62,10 @@ import { OverlayScrollbar } from './components/OverlayScrollbar.tsx';
 import { useDelayedBuffering } from './hooks/useDelayedBuffering.ts';
 import { SpotlightSearchModal } from './components/SpotlightSearchModal.tsx';
 import { AppToast, TrackContextMenu } from './components/TrackMenu.tsx';
+import { PlaylistOptionsMenu } from './components/PlaylistOptionsMenu.tsx';
+import { PlaylistAppearanceModal } from './components/PlaylistAppearanceModal.tsx';
+import { LiquidHeartIcon } from './components/LiquidHeartIcon.tsx';
+import { generatePlaylistCoverDataUrl } from './utils/playlist-artwork.ts';
 import { ArtistLinks } from './components/ArtistLinks.tsx';
 import { SettingsModal } from './components/SettingsModal.tsx';
 import { CarModeView } from './components/CarModeView.tsx';
@@ -157,6 +161,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     offlineDownloads,
     offlineEntries,
     playlists,
+    playlistAppearances,
     nowPlayingOpen,
     eqSheetOpen,
     djPopoverOpen,
@@ -198,6 +203,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     setLibraryCategory,
     openLocalPlaylistDetail,
     openSharedPlaylistDetail,
+    openPlaylistContextMenu,
     closeDetailView,
     playTrack,
     togglePlayPause,
@@ -313,6 +319,12 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
   const islandMenuRef = useRef<HTMLDivElement | null>(null);
   const scrubDraggingRef = useRef(false);
   const manualSeekAtMsRef = useRef<number>(0);
+  const dockDurationSecRef = useRef<number>(durationSec);
+  dockDurationSecRef.current = durationSec;
+  const dockIsPlayingRef = useRef<boolean>(isPlaying);
+  dockIsPlayingRef.current = isPlaying;
+  const dockReducedMotionRef = useRef<boolean>(reducedMotionPref);
+  dockReducedMotionRef.current = reducedMotionPref;
   const dockDisplayDurSecRef = useRef<number>(durationSec);
   const lastRenderedPctRef = useRef<number>(0);
   const dockRecedeRef = useRef<{ fromPct: number; startMs: number; durationMs: number } | null>(
@@ -496,7 +508,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
         dockRecedeRef.current = {
           fromPct: lastRenderedPctRef.current,
           startMs: now,
-          durationMs: 1150,
+          durationMs: 850,
         };
         setIsDockReceding(true);
         dockClockRef.current.renderedPosSec = clampedPos;
@@ -527,7 +539,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
   }, [positionSec, currentTrack.id, isPlaying, isMobileViewport, durationSec, reducedMotionPref]);
 
   useEffect(() => {
-    if ((!isPlaying && !isDockReceding) || isMobileViewport || isAppHidden || typeof requestAnimationFrame !== 'function') {
+    if ((!isPlaying && !dockRecedeRef.current) || isMobileViewport || isAppHidden || typeof requestAnimationFrame !== 'function') {
       return;
     }
     let rafId = 0;
@@ -547,7 +559,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       );
       const effDur = useIncoming
         ? live.incomingDurationSec!
-        : Math.max(1, live.durationSec || durationSec);
+        : Math.max(1, live.durationSec || dockDurationSecRef.current);
       const rawPos = useIncoming
         ? live.incomingPositionSec!
         : Number.isFinite(live.positionSec)
@@ -560,7 +572,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       const dEx = dockExtrapRef.current;
 
       let extrapolatedPos: number;
-      if (!isPlaying) {
+      if (!dockIsPlayingRef.current) {
         extrapolatedPos = rawPos;
         dEx.lastRawPos = rawPos;
         dEx.lastWallMs = now;
@@ -595,7 +607,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
 
       const liveTargetPct = Math.max(0, Math.min(100, (rendered / effDur) * 100));
       if (
-        !reducedMotionPref &&
+        !dockReducedMotionRef.current &&
         !scrubDraggingRef.current &&
         now - manualSeekAtMsRef.current > 350 &&
         !dockRecedeRef.current &&
@@ -604,7 +616,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
         dockRecedeRef.current = {
           fromPct: lastRenderedPctRef.current,
           startMs: now,
-          durationMs: 1150,
+          durationMs: 850,
         };
         setIsDockReceding(true);
       }
@@ -613,7 +625,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       if (dockRecedeRef.current) {
         const elapsed = now - dockRecedeRef.current.startMs;
         const t = Math.max(0, Math.min(1, elapsed / dockRecedeRef.current.durationMs));
-        const ease = 1 - Math.pow(1 - t, 3.2);
+        const ease = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
         visualPct =
           dockRecedeRef.current.fromPct +
           (liveTargetPct - dockRecedeRef.current.fromPct) * ease;
@@ -649,24 +661,26 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
         classicDurRef.current.textContent = durLabel;
       }
 
-      const rangeVal = String(Number(Math.min(effDur, Math.round(rendered * 10) / 10).toFixed(1)));
-      const rangeMax = String(Math.max(1, Math.round(effDur)));
-      if (classicRangeRef.current) {
-        if (classicRangeRef.current.max !== rangeMax) classicRangeRef.current.max = rangeMax;
-        classicRangeRef.current.value = rangeVal;
-      }
-      if (dockSrRangeRef.current) {
-        if (dockSrRangeRef.current.max !== rangeMax) dockSrRangeRef.current.max = rangeMax;
-        dockSrRangeRef.current.value = rangeVal;
+      if (!dockRecedeRef.current) {
+        const rangeVal = String(Number(Math.min(effDur, Math.round(rendered * 10) / 10).toFixed(1)));
+        const rangeMax = String(Math.max(1, Math.round(effDur)));
+        if (classicRangeRef.current) {
+          if (classicRangeRef.current.max !== rangeMax) classicRangeRef.current.max = rangeMax;
+          classicRangeRef.current.value = rangeVal;
+        }
+        if (dockSrRangeRef.current) {
+          if (dockSrRangeRef.current.max !== rangeMax) dockSrRangeRef.current.max = rangeMax;
+          dockSrRangeRef.current.value = rangeVal;
+        }
       }
 
-      if (isPlaying || dockRecedeRef.current) {
+      if (dockIsPlayingRef.current || dockRecedeRef.current) {
         rafId = requestAnimationFrame(step);
       }
     };
     rafId = requestAnimationFrame(step);
     return () => cancelAnimationFrame(rafId);
-  }, [isPlaying, isDockReceding, isMobileViewport, isAppHidden, durationSec, reducedMotionPref]);
+  }, [isPlaying, isMobileViewport, isAppHidden]);
 
   const triggerDockTransportAnim = (
     kind: 'prev' | 'next' | 'play' | 'shuffle' | 'repeat'
@@ -996,6 +1010,18 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
         ? 'Repetir cola o playlist (siguiente: repetir una)'
         : 'Activar repetición de playlist';
 
+  const isFullBleedHeroView = Boolean(
+    activeDetailView &&
+      (activeDetailView.kind === 'artist' ||
+        activeDetailView.kind === 'playlist' ||
+        (activeDetailView.kind === 'local_playlist' &&
+          (playlistAppearances[activeDetailView.playlistId]?.bannerEnabled ??
+            playlists.find((p) => p.id === activeDetailView.playlistId)?.bannerEnabled ??
+            true)) ||
+        (activeDetailView.kind === 'shared_playlist' &&
+          (playlistAppearances[activeDetailView.sharedId]?.bannerEnabled ?? true)))
+  );
+
   const viewTransitionKey = activeDetailView
     ? activeDetailView.kind === 'artist'
       ? `artist:${activeDetailView.transitionKey ?? activeDetailView.data.artist.id}`
@@ -1202,7 +1228,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
         <div
           data-testid="mobile-top-header"
           className={
-            activeDetailView?.kind === 'artist'
+            isFullBleedHeroView
               ? 'fixed inset-x-0 top-0 z-40 flex items-center justify-between gap-3 bg-gradient-to-b from-black/65 via-black/25 to-transparent px-4 pt-[max(0.8rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3'
               : 'pm-mobile-glass-header relative z-40 flex shrink-0 items-center justify-between gap-3 px-4 pt-[max(0.8rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3'
           }
@@ -1565,12 +1591,18 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                   </button>
 
                   {playlists.slice(0, 12).map((pl) => {
-                    const thumb = pl.coverUrl ?? pl.tracks[0]?.thumbnailUrl;
+                    const app = playlistAppearances[pl.id];
+                    const thumb =
+                      app?.coverUrl ??
+                      pl.coverUrl ??
+                      pl.tracks[0]?.thumbnailUrl ??
+                      generatePlaylistCoverDataUrl(pl.name, app?.coverStyleSeed ?? pl.coverStyleSeed ?? 0);
                     const isDropActive = sidebarDropTargetId === pl.id;
                     return (
                       <button
                         key={pl.id}
                         type="button"
+                        data-testid={`sidebar-playlist-${pl.id}`}
                         onDragOver={(e) => {
                           e.preventDefault();
                           e.dataTransfer.dropEffect = 'copy';
@@ -1585,6 +1617,11 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                           const dropped = readTrackFromDropEvent(e);
                           if (dropped) void addTrackToPlaylist(pl.id, dropped);
                         }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          openPlaylistContextMenu('local', pl.id, e.clientX, e.clientY);
+                        }}
                         onClick={() => openLocalPlaylistDetail(pl.id)}
                         className={`flex w-full items-center gap-3 rounded-[10px] px-2 py-1.5 text-left transition-all ${
                           isDropActive
@@ -1592,17 +1629,11 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                             : 'pm-hover'
                         }`}
                       >
-                        {thumb ? (
-                          <img
-                            src={thumb}
-                            alt=""
-                            className="h-8 w-8 shrink-0 rounded-[7px] object-cover"
-                          />
-                        ) : (
-                          <div className="pm-elevated flex h-8 w-8 shrink-0 items-center justify-center rounded-[7px] text-xs font-bold pm-text-secondary">
-                            {pl.name.slice(0, 1).toUpperCase()}
-                          </div>
-                        )}
+                        <img
+                          src={thumb}
+                          alt=""
+                          className="h-8 w-8 shrink-0 rounded-[7px] object-cover"
+                        />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5">
                             <span className="truncate text-[13px] pm-text-primary">
@@ -1629,24 +1660,31 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                         )
                     )
                     .slice(0, 8)
-                    .map((sp) => (
+                    .map((sp) => {
+                      const spApp = playlistAppearances[sp.id];
+                      const spThumb =
+                        spApp?.coverUrl ??
+                        sp.coverUrl ??
+                        sp.tracks[0]?.thumbnailUrl ??
+                        generatePlaylistCoverDataUrl(sp.name, spApp?.coverStyleSeed ?? 0);
+                      return (
                       <button
                         key={`sb-sp-${sp.id}`}
                         type="button"
+                        data-testid={`sidebar-shared-${sp.id}`}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          openPlaylistContextMenu('shared', sp.id, e.clientX, e.clientY);
+                        }}
                         onClick={() => openSharedPlaylistDetail(sp.id)}
                         className="pm-hover flex w-full items-center gap-3 rounded-[10px] px-2 py-1.5 text-left transition-all"
                       >
-                        {sp.coverUrl ?? sp.tracks[0]?.thumbnailUrl ? (
-                          <img
-                            src={sp.coverUrl ?? sp.tracks[0]?.thumbnailUrl}
-                            alt=""
-                            className="h-8 w-8 shrink-0 rounded-[7px] object-cover"
-                          />
-                        ) : (
-                          <div className="pm-elevated flex h-8 w-8 shrink-0 items-center justify-center rounded-[7px] text-xs font-bold pm-text-secondary">
-                            {sp.name.slice(0, 1).toUpperCase()}
-                          </div>
-                        )}
+                        <img
+                          src={spThumb}
+                          alt=""
+                          className="h-8 w-8 shrink-0 rounded-[7px] object-cover"
+                        />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5">
                             <span className="truncate text-[13px] pm-text-primary">{sp.name}</span>
@@ -1657,7 +1695,8 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                           </div>
                         </div>
                       </button>
-                    ))}
+                      );
+                    })}
                 </div>
               )}
             </div>
@@ -1724,7 +1763,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
             data-surface="content"
             data-testid="main-content-frame"
             className={`min-w-0 flex-1 overflow-y-auto px-4 pb-48 ${
-              activeDetailView?.kind === 'artist' ? 'pt-0' : 'pt-3'
+              isFullBleedHeroView ? 'pt-0' : 'pt-3'
             }`}
           >
             <div key={viewTransitionKey} className="pm-view-transition">
@@ -1750,7 +1789,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
               ref={mainScrollRef}
               data-surface="content"
               className={`pm-canvas pm-no-scrollbar h-full w-full overflow-y-auto overflow-x-hidden px-7 ${
-                activeDetailView?.kind === 'artist' ? 'pt-0' : 'pt-5'
+                isFullBleedHeroView ? 'pt-0' : 'pt-5'
               } ${playerBarStyle === 'floating-island' ? 'pb-28' : 'pb-8'}`}
             >
               <div key={viewTransitionKey} className="pm-view-transition">
@@ -1848,19 +1887,30 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                   onDragEnd={() => clearDraggedTrack()}
                   className="min-w-0 flex-1 cursor-grab active:cursor-grabbing"
                 >
-                  <button
-                    type="button"
-                    onClick={() => setNowPlayingOpen(true)}
-                    className="block max-w-full truncate text-left text-[17px] font-bold pm-text-primary hover:underline"
+                  <MarqueeText
+                    disabled={!marqueeTextEnabled || reducedMotionPref || crossfadePairActive}
+                    testId="right-title-marquee"
+                    className="w-full"
                   >
-                    {currentTrack.title}
-                  </button>
-                  <div className="truncate text-[13px] pm-text-secondary">
+                    <button
+                      type="button"
+                      onClick={() => setNowPlayingOpen(true)}
+                      className="block text-left text-[17px] font-bold pm-text-primary hover:underline"
+                    >
+                      {currentTrack.title}
+                    </button>
+                  </MarqueeText>
+                  <MarqueeText
+                    disabled={!marqueeTextEnabled || reducedMotionPref || crossfadePairActive}
+                    testId="right-artist-marquee"
+                    className="mt-0.5 w-full text-[13px] pm-text-secondary"
+                  >
                     <ArtistLinks
                       artists={currentTrack.artists}
+                      className="inline-flex whitespace-nowrap !py-0"
                       linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
                     />
-                  </div>
+                  </MarqueeText>
                 </div>
 
                 <div className="flex items-center gap-0.5">
@@ -1874,7 +1924,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                         : 'pm-text-tertiary hover:text-[var(--pm-text-primary)]'
                     }`}
                   >
-                    <Heart className={`h-4 w-4 ${isLiked ? 'fill-current' : ''}`} />
+                    <LiquidHeartIcon liked={isLiked} className="h-4 w-4" />
                   </button>
                   <button
                     type="button"
@@ -2498,7 +2548,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                                 faceLiked ? 'text-rose-500' : 'pm-text-secondary'
                               } pm-dock-heart-out`}
                             >
-                              <Heart className={`h-4 w-4 ${faceLiked ? 'fill-current' : ''}`} />
+                              <LiquidHeartIcon liked={faceLiked} className="h-4 w-4" />
                             </span>
                           ) : (
                             <span aria-hidden="true" className="inline-block h-8 w-8 shrink-0" />
@@ -2619,7 +2669,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                     : 'pm-text-secondary hover:text-[var(--pm-text-primary)]'
                 }`}
               >
-                <Heart className={`h-4 w-4 ${isLiked ? 'fill-current' : ''}`} />
+                <LiquidHeartIcon liked={isLiked} className="h-4 w-4" />
                 {isLiked &&
                   dockHeartBurstKey > 0 &&
                   !reducedMotionPref &&
@@ -3265,7 +3315,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                                 faceLiked ? 'text-rose-500' : 'pm-text-secondary'
                               } pm-dock-heart-out`}
                             >
-                              <Heart className={`h-4 w-4 ${faceLiked ? 'fill-current' : ''}`} />
+                              <LiquidHeartIcon liked={faceLiked} className="h-4 w-4" />
                             </span>
                           )}
                           {isIncoming ? (
@@ -3340,7 +3390,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                       isLiked ? 'text-rose-500' : 'pm-text-secondary'
                     }`}
                   >
-                    <Heart className={`h-4 w-4 ${isLiked ? 'fill-current' : ''}`} />
+                    <LiquidHeartIcon liked={isLiked} className="h-4 w-4" />
                   </button>
                 </>
               )}
@@ -3465,6 +3515,8 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       />
       <TrackInfoModal />
       <TrackContextMenu />
+      <PlaylistOptionsMenu />
+      <PlaylistAppearanceModal />
       <AppToast />
     </div>
   );

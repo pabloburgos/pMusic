@@ -8,7 +8,6 @@ import {
   Download,
   Eye,
   GripVertical,
-  Heart,
   Image as ImageIcon,
   Laptop,
   ListMusic,
@@ -50,6 +49,7 @@ import {
   RoundedPauseIcon,
   RoundedPlayIcon,
 } from './TransportIcons.tsx';
+import { LiquidHeartIcon } from './LiquidHeartIcon.tsx';
 import { InkBleedCoverTransition } from './InkBleedCoverTransition.tsx';
 import { ExoticBackdropCanvas } from './ExoticBackdropCanvas.tsx';
 import { MarqueeText } from './MarqueeText.tsx';
@@ -323,6 +323,14 @@ export const NowPlayingSheet: React.FC = () => {
   const progressTimeRef = useRef<HTMLSpanElement | null>(null);
   const progressRemainRef = useRef<HTMLSpanElement | null>(null);
   const showRemainingTimeRef = useRef(showRemainingTime);
+  const sheetDurationSecRef = useRef(durationSec);
+  sheetDurationSecRef.current = durationSec;
+  const sheetTrackIdRef = useRef(currentTrack.id);
+  sheetTrackIdRef.current = currentTrack.id;
+  const nowPlayingTabRef = useRef(nowPlayingTab);
+  nowPlayingTabRef.current = nowPlayingTab;
+  const reducedMotionPrefRef = useRef(reducedMotionPref);
+  reducedMotionPrefRef.current = reducedMotionPref;
   const coverSwipeStartRef = useRef<{ x: number; y: number } | null>(null);
   const sheetSwipeDownRef = useRef<{ y: number; x: number } | null>(null);
   const lastWholeSecRef = useRef<number>(Math.floor(positionSec));
@@ -890,7 +898,7 @@ export const NowPlayingSheet: React.FC = () => {
         sheetBarRewindRef.current = {
           fromPct: lastSheetBarPctRef.current,
           startMs: now,
-          durationMs: 900,
+          durationMs: 850,
         };
         if (sheetRewindGlowRef.current) {
           sheetRewindGlowRef.current.style.opacity = '1';
@@ -957,7 +965,7 @@ export const NowPlayingSheet: React.FC = () => {
       );
       const effDur = useIncoming
         ? live.incomingDurationSec!
-        : Math.max(1, live.durationSec || durationSec);
+        : Math.max(1, live.durationSec || sheetDurationSecRef.current);
       if (Math.abs(sheetDisplayDurSecRef.current - effDur) > 0.5) {
         sheetDisplayDurSecRef.current = effDur;
         setSheetDisplayDurSec(effDur);
@@ -968,9 +976,10 @@ export const NowPlayingSheet: React.FC = () => {
           ? live.positionSec
           : syncClockRef.current.posSec;
       const rate = usePMusicStore.getState().playbackRate || 1.0;
+      const activeTrackId = sheetTrackIdRef.current;
       const lClock = lyricClockRef.current;
-      if (lClock.trackId !== currentTrack.id || Math.abs(rawPos - lClock.smoothedPos) > 0.75) {
-        lClock.trackId = currentTrack.id;
+      if (lClock.trackId !== activeTrackId || Math.abs(rawPos - lClock.smoothedPos) > 0.75) {
+        lClock.trackId = activeTrackId;
         lClock.lastRawPos = rawPos;
         lClock.lastWallMs = now;
         lClock.smoothedPos = rawPos;
@@ -990,7 +999,7 @@ export const NowPlayingSheet: React.FC = () => {
       syncClockRef.current.renderedPosSec = rendered;
       const livePct = Math.min(100, Math.max(0, (rendered / effDur) * 100));
       if (
-        !reducedMotionPref &&
+        !reducedMotionPrefRef.current &&
         now - sheetManualSeekAtMsRef.current > 350 &&
         now - lastSheetRewindAtMsRef.current > 900 &&
         !sheetBarRewindRef.current &&
@@ -1000,7 +1009,7 @@ export const NowPlayingSheet: React.FC = () => {
         sheetBarRewindRef.current = {
           fromPct: lastSheetBarPctRef.current,
           startMs: now,
-          durationMs: 900,
+          durationMs: 850,
         };
         if (sheetRewindGlowRef.current) {
           sheetRewindGlowRef.current.style.opacity = '1';
@@ -1011,7 +1020,7 @@ export const NowPlayingSheet: React.FC = () => {
       if (sheetBarRewindRef.current) {
         const elapsed = now - sheetBarRewindRef.current.startMs;
         const t = Math.max(0, Math.min(1, elapsed / sheetBarRewindRef.current.durationMs));
-        const ease = 1 - Math.pow(1 - t, 3.2);
+        const ease = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
         visualPct =
           sheetBarRewindRef.current.fromPct +
           (livePct - sheetBarRewindRef.current.fromPct) * ease;
@@ -1035,7 +1044,7 @@ export const NowPlayingSheet: React.FC = () => {
       if (sheetFillRef.current) {
         sheetFillRef.current.style.transform = `translate3d(${(visualPct - 100).toFixed(4)}%, 0, 0)`;
       }
-      if (progressInputRef.current) {
+      if (progressInputRef.current && !sheetBarRewindRef.current) {
         const roundedMax = String(Math.max(1, Math.round(effDur)));
         if (progressInputRef.current.max !== roundedMax) {
           progressInputRef.current.max = roundedMax;
@@ -1059,7 +1068,7 @@ export const NowPlayingSheet: React.FC = () => {
         }
       }
 
-      if (nowPlayingTab === 'Letras') {
+      if (nowPlayingTabRef.current === 'Letras') {
         const docs = currentLyricsRef.current;
         let curLineIdx = -1;
         if (docs && docs.status === 'synced' && docs.lines.length > 0) {
@@ -1151,7 +1160,7 @@ export const NowPlayingSheet: React.FC = () => {
     };
     rafId = requestAnimationFrame(step);
     return () => cancelAnimationFrame(rafId);
-  }, [nowPlayingOpen, isPlaying, isAppHidden, durationSec, nowPlayingTab, currentTrack.id, reducedMotionPref]);
+  }, [nowPlayingOpen, isPlaying, isAppHidden]);
 
   useEffect(() => {
     if (!isElectronDesktop) return;
@@ -1402,7 +1411,7 @@ export const NowPlayingSheet: React.FC = () => {
                     isLiked ? 'text-[#FB7185]' : 'text-white/85 hover:text-white'
                   }`}
                 >
-                  <Heart className={`h-5 w-5 ${isLiked ? 'fill-current' : ''}`} />
+                  <LiquidHeartIcon liked={isLiked} className="h-5 w-5" />
                 </button>
                 <button
                   type="button"
@@ -1508,9 +1517,10 @@ export const NowPlayingSheet: React.FC = () => {
                     isLiked ? 'text-[#FB7185]' : 'text-white/85 hover:text-white'
                   }`}
                 >
-                  <Heart
+                  <LiquidHeartIcon
                     key={`deck-heart-${heartBurstKey}-${isLiked}`}
-                    className={`h-5 w-5 ${isLiked ? 'fill-current' : ''} ${
+                    liked={isLiked}
+                    className={`h-5 w-5 ${
                       isLiked && heartBurstKey > 0 && !reducedMotionPref ? 'pm-heart-burst-epic' : ''
                     }`}
                   />
@@ -2097,12 +2107,20 @@ export const NowPlayingSheet: React.FC = () => {
                 className="h-10 w-10 shrink-0 rounded-[8px] object-cover shadow-md"
               />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-[14px] font-bold leading-tight text-white">
-                  {currentTrack.title}
-                </div>
-                <div className="truncate text-xs text-white/65">
-                  {currentTrack.artists.map((a) => a.name).join(', ')}
-                </div>
+                <MarqueeText
+                  disabled={!marqueeTextEnabled || reducedMotionPref || cfActive}
+                  className="w-full"
+                >
+                  <span className="text-[14px] font-bold leading-tight text-white">
+                    {currentTrack.title}
+                  </span>
+                </MarqueeText>
+                <MarqueeText
+                  disabled={!marqueeTextEnabled || reducedMotionPref || cfActive}
+                  className="w-full text-xs text-white/65"
+                >
+                  <span>{currentTrack.artists.map((a) => a.name).join(', ')}</span>
+                </MarqueeText>
               </div>
             </button>
             <button
@@ -3069,7 +3087,7 @@ export const NowPlayingSheet: React.FC = () => {
                             : 'text-[#D4D4E0] hover:bg-white/[0.12] hover:text-white'
                         }`}
                       >
-                        <Heart className={`h-3.5 w-3.5 ${activeLiked ? 'fill-current' : ''}`} />
+                        <LiquidHeartIcon liked={activeLiked} className="h-3.5 w-3.5" />
                       </button>
                       <button
                         type="button"
@@ -3253,8 +3271,9 @@ export const NowPlayingSheet: React.FC = () => {
                                     : 'text-[#D4D4E0] hover:bg-white/[0.12] hover:text-white'
                                 }`}
                               >
-                                <Heart
-                                  className={`h-3.5 w-3.5 ${trackLiked ? 'fill-current' : ''}`}
+                                <LiquidHeartIcon
+                                  liked={trackLiked}
+                                  className="h-3.5 w-3.5"
                                 />
                               </button>
 
@@ -3402,7 +3421,7 @@ export const NowPlayingSheet: React.FC = () => {
                                   : 'text-[#D4D4E0] hover:bg-white/[0.12] hover:text-white'
                               }`}
                             >
-                              <Heart className={`h-3.5 w-3.5 ${recLiked ? 'fill-current' : ''}`} />
+                              <LiquidHeartIcon liked={recLiked} className="h-3.5 w-3.5" />
                             </button>
 
                             <button
@@ -4172,6 +4191,57 @@ export const AudioStudioSheet: React.FC = () => {
                 );
               })}
             </div>
+
+            <div className="mt-3.5 space-y-2.5 border-t border-white/10 pt-3">
+              {[
+                {
+                  testId: 'dock-pref-always-shuffle-switch',
+                  label: 'Aleatorio siempre activo',
+                  desc: 'Mantiene el modo aleatorio al abrir playlists',
+                  checked: alwaysShuffle,
+                  onToggle: () => setAlwaysShuffle(!alwaysShuffle),
+                },
+                {
+                  testId: 'dock-pref-marquee-switch',
+                  label: 'Texto deslizante si no cabe',
+                  desc: 'Desplaza títulos y artistas largos',
+                  checked: marqueeTextEnabled,
+                  onToggle: () => setMarqueeTextEnabled(!marqueeTextEnabled),
+                },
+                {
+                  testId: 'dock-pref-same-album-skip-switch',
+                  label: 'Omitir transición en mismo álbum',
+                  desc: 'Deja fija la portada si coincide',
+                  checked: skipSameAlbumCoverTransition,
+                  onToggle: () => setSkipSameAlbumCoverTransition(!skipSameAlbumCoverTransition),
+                },
+                {
+                  testId: 'dock-pref-remaining-time-switch',
+                  label: 'Mostrar tiempo restante',
+                  desc: 'Cuenta regresiva en lugar de duración total',
+                  checked: showRemainingTime,
+                  onToggle: () => setShowRemainingTime(!showRemainingTime),
+                },
+              ].map((sw) => (
+                <div
+                  key={sw.testId}
+                  onClick={sw.onToggle}
+                  className="flex cursor-pointer items-center justify-between gap-3"
+                >
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold leading-tight">{sw.label}</div>
+                    <div className="text-[10.5px] leading-tight opacity-65">{sw.desc}</div>
+                  </div>
+                  <PMusicSwitch
+                    variant="hud"
+                    testId={sw.testId}
+                    checked={sw.checked}
+                    ariaLabel={sw.label}
+                    onChange={sw.onToggle}
+                  />
+                </div>
+              ))}
+            </div>
           </div>
         ) : (
           <div data-testid="nowplaying-display-panel" className="space-y-3.5">
@@ -4293,7 +4363,7 @@ export const AudioStudioSheet: React.FC = () => {
                 {
                   testId: 'pref-marquee-switch',
                   label: 'Texto deslizante si no cabe',
-                  desc: 'Desplaza títulos largos y pausa en crossfade',
+                  desc: 'Desplaza títulos y artistas largos y pausa en crossfade',
                   checked: marqueeTextEnabled,
                   onToggle: () => setMarqueeTextEnabled(!marqueeTextEnabled),
                 },

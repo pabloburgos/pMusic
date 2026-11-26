@@ -86,41 +86,43 @@ vec3 sampleCover(vec2 uv) {
 }
 
 void main() {
-  vec2 uv = (v_uv - 0.5) * vec2(u_res.x / max(1.0, u_res.y), 1.0) * 2.15;
-  float t = u_time * 0.28;
+  float minDim = max(1.0, min(u_res.x, u_res.y));
+  vec2 aspect = u_res / minDim;
+  float isPortrait = step(u_res.x, u_res.y);
+  vec2 centered = (v_uv - 0.5) * aspect;
+  vec2 uv = centered * mix(1.38, 1.08, isPortrait);
+  float t = u_time * 0.22;
 
   vec2 q = vec2(
-    fbm(uv + vec2(t * 0.68, -t * 0.44)),
-    fbm(uv + vec2(-t * 0.52, t * 0.74) + vec2(5.2, 1.3))
+    fbm(uv + vec2(t * 0.62, -t * 0.4)),
+    fbm(uv + vec2(-t * 0.46, t * 0.68) + vec2(5.2, 1.3))
   );
   vec2 r = vec2(
-    fbm(uv + 2.35 * q + vec2(1.7, 9.2) + 0.42 * t),
-    fbm(uv + 2.35 * q + vec2(8.3, 2.8) - 0.38 * t)
+    fbm(uv + 1.95 * q + vec2(1.7, 9.2) + 0.34 * t),
+    fbm(uv + 1.95 * q + vec2(8.3, 2.8) - 0.31 * t)
   );
-  vec2 w = vec2(
-    fbm(uv * 1.45 + 2.15 * r + vec2(3.1, 6.7) - 0.28 * t),
-    fbm(uv * 1.45 + 2.15 * r + vec2(7.4, 2.1) + 0.31 * t)
-  );
-  float f = fbm(uv + 2.25 * w);
+  float f = fbm(uv + 1.8 * r);
 
-  vec2 swirled = rot2(v_uv - 0.5, (f - 0.45) * 4.2 + sin(t * 0.32 + f * 3.1) * 0.85);
-  vec2 coverUv1 = swirled * 0.82 + 0.5 + (q - 0.5) * 0.94 + (r - 0.5) * 0.98 + (w - 0.5) * 0.58;
-  vec2 coverUv2 = rot2(vec2(0.5 - v_uv.x, v_uv.y - 0.5), -w.x * 3.1 - t * 0.18) * 0.78 + 0.5 + (r.yx - 0.5) * 1.04;
-  vec2 coverUv3 = rot2(v_uv.yx - 0.5, q.y * 3.8 + t * 0.24) * 0.72 + 0.5 + (w - 0.5) * 0.96;
+  // Calm painterly flow with displaced/rotated square cover regions so portrait phones never stretch
+  vec2 baseSample = centered * mix(0.62, 0.44, isPortrait);
+  vec2 flow = (q - 0.5) * 0.44 + (r - 0.5) * 0.36;
+  vec2 coverUv1 = rot2(baseSample, 0.92 + t * 0.08) + vec2(0.28, 0.74) + flow;
+  vec2 coverUv2 = rot2(vec2(-baseSample.x, baseSample.y), -1.48 - t * 0.07) * 0.94 + vec2(0.76, 0.26) + (r - 0.5) * 0.46;
+  vec2 coverUv3 = rot2(baseSample, 2.35 + t * 0.10) * 0.88 + vec2(0.68, 0.78) + (q.yx - 0.5) * 0.38;
 
   vec3 s1 = sampleCover(coverUv1);
   vec3 s2 = sampleCover(coverUv2);
   vec3 s3 = sampleCover(coverUv3);
 
   vec3 col = mix(s1, s2, smoothstep(0.18, 0.82, f));
-  col = mix(col, s3, smoothstep(0.24, 0.86, length(w) * 0.78) * 0.72);
-  col *= 0.94 + 0.12 * smoothstep(0.32, 0.84, f);
+  col = mix(col, s3, smoothstep(0.26, 0.84, length(q) * 0.76) * 0.68);
 
   float l = dot(col, vec3(0.299, 0.587, 0.114));
-  col = mix(vec3(l), col, 1.14);
+  col = mix(vec3(l), col, 1.09);
 
-  float vig = 1.0 - smoothstep(0.45, 1.26, length(v_uv - 0.5) * 1.1);
-  col *= mix(0.78, 1.02, vig);
+  float vigDist = length(centered / mix(1.0, 1.24, isPortrait));
+  float vig = 1.0 - smoothstep(0.42, 1.24, vigDist * 0.95);
+  col *= mix(0.76, 1.02, vig);
   gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }
 `;
@@ -179,8 +181,10 @@ vec3 sampleCover(vec2 uv) {
 }
 
 void main() {
-  float aspect = u_res.x / max(1.0, u_res.y);
-  vec2 p = (v_uv - 0.5) * vec2(aspect, 1.0);
+  float minDim = max(1.0, min(u_res.x, u_res.y));
+  vec2 norm = u_res / minDim;
+  float isPortrait = step(u_res.x, u_res.y);
+  vec2 p = (v_uv - 0.5) * norm * mix(1.0, 0.78, isPortrait);
   float t = u_time * 0.28;
 
   float r = length(p);
@@ -206,10 +210,10 @@ void main() {
 
   float l = dot(col, vec3(0.299, 0.587, 0.114));
   col = mix(vec3(l), col, 1.08);
-  float halo = exp(-r * r * 1.35) * (0.14 + 0.10 * sin(t * 1.25));
+  float halo = exp(-r * r * mix(1.35, 1.05, isPortrait)) * (0.14 + 0.10 * sin(t * 1.25));
   col = col * (0.86 + 0.24 * ringGlow) + halo * mix(u_c1, u_c2, wave) * 0.45;
 
-  float coreSoft = 1.0 - smoothstep(0.22, 1.22, r);
+  float coreSoft = 1.0 - smoothstep(0.22, mix(1.22, 1.48, isPortrait), r);
   col *= mix(0.74, 1.02, coreSoft);
   gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }
@@ -240,7 +244,7 @@ function buildSoftCoverCanvas(
     const sx = (iw - side) * 0.5;
     const sy = (ih - side) * 0.5;
 
-    const pass2Dim = style === 'paint' ? 30 : 18;
+    const pass2Dim = style === 'paint' ? 22 : 18;
 
     const pass1 = document.createElement('canvas');
     pass1.width = 96;
@@ -560,6 +564,8 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = ({
           const drawCoverSet = (source: HTMLCanvasElement, alpha: number) => {
             if (alpha <= 0.005) return;
             const curStyle = styleRef.current;
+            const minDim2d = Math.max(1, Math.min(w, h));
+            const coverDim2d = Math.max(w, h) * 1.12;
             ctx2d!.save();
             ctx2d!.globalCompositeOperation = 'source-over';
             ctx2d!.globalAlpha = alpha;
@@ -567,44 +573,44 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = ({
               ctx2d!.save();
               ctx2d!.translate(w * 0.5, h * 0.5);
               ctx2d!.rotate(0.75 + Math.sin(t * 0.24) * 0.35);
-              ctx2d!.scale(1.65, -1.65);
-              ctx2d!.drawImage(source, -w * 0.5, -h * 0.5, w, h);
+              ctx2d!.scale(1.42, -1.42);
+              ctx2d!.drawImage(source, -coverDim2d * 0.5, -coverDim2d * 0.5, coverDim2d, coverDim2d);
               ctx2d!.restore();
 
               ctx2d!.save();
               ctx2d!.globalAlpha = alpha * 0.58;
-              ctx2d!.translate(w * (0.5 + 0.14 * Math.cos(t * 0.36)), h * (0.5 + 0.14 * Math.sin(t * 0.32)));
+              ctx2d!.translate(w * 0.5 + minDim2d * 0.14 * Math.cos(t * 0.36), h * 0.5 + minDim2d * 0.14 * Math.sin(t * 0.32));
               ctx2d!.rotate(-1.1 + t * 0.22);
-              ctx2d!.scale(-1.5, 1.5);
-              ctx2d!.drawImage(source, -w * 0.5, -h * 0.5, w, h);
+              ctx2d!.scale(-1.32, 1.32);
+              ctx2d!.drawImage(source, -coverDim2d * 0.5, -coverDim2d * 0.5, coverDim2d, coverDim2d);
               ctx2d!.restore();
 
               ctx2d!.save();
               ctx2d!.globalAlpha = alpha * 0.42;
-              ctx2d!.translate(w * (0.5 - 0.12 * Math.sin(t * 0.29)), h * (0.5 + 0.12 * Math.cos(t * 0.34)));
+              ctx2d!.translate(w * 0.5 - minDim2d * 0.12 * Math.sin(t * 0.29), h * 0.5 + minDim2d * 0.12 * Math.cos(t * 0.34));
               ctx2d!.rotate(2.2 - t * 0.18);
-              ctx2d!.scale(1.72, 1.72);
-              ctx2d!.drawImage(source, -w * 0.5, -h * 0.5, w, h);
+              ctx2d!.scale(1.48, 1.48);
+              ctx2d!.drawImage(source, -coverDim2d * 0.5, -coverDim2d * 0.5, coverDim2d, coverDim2d);
               ctx2d!.restore();
             } else {
               const cx = w * 0.5;
               const cy = h * 0.5;
-              const breathScale = 1.25 + 0.08 * Math.sin(t * 1.15);
+              const breathScale = 1.18 + 0.08 * Math.sin(t * 1.15);
               ctx2d!.save();
               ctx2d!.translate(cx, cy);
               ctx2d!.rotate(t * 0.12);
               ctx2d!.scale(breathScale, breathScale);
-              ctx2d!.drawImage(source, -w * 0.5, -h * 0.5, w, h);
+              ctx2d!.drawImage(source, -coverDim2d * 0.5, -coverDim2d * 0.5, coverDim2d, coverDim2d);
               ctx2d!.restore();
 
               const ringWave = 0.5 + 0.5 * Math.sin(t * 1.8);
               const pulseGrad = ctx2d!.createRadialGradient(
                 cx,
                 cy,
-                Math.min(w, h) * 0.08,
+                minDim2d * 0.08,
                 cx,
                 cy,
-                Math.max(w, h) * (0.52 + 0.14 * ringWave)
+                Math.hypot(w, h) * (0.48 + 0.12 * ringWave)
               );
               pulseGrad.addColorStop(0, rgbStr(c1Raw, 0.22 * alpha));
               pulseGrad.addColorStop(0.5, rgbStr(c2Raw, 0.16 * alpha));

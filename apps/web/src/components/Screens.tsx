@@ -15,6 +15,7 @@ import {
   ListPlus,
   Loader2,
   MoreHorizontal,
+  Palette,
   Pause,
   Pencil,
   Play,
@@ -43,6 +44,12 @@ import {
   searchProfilesByUsername,
 } from '../services/social-service.ts';
 import { UserAvatar } from './UserAvatar.tsx';
+import { LiquidHeartIcon } from './LiquidHeartIcon.tsx';
+import {
+  formatPlaylistDuration,
+  generatePlaylistBannerDataUrl,
+  generatePlaylistCoverDataUrl,
+} from '../utils/playlist-artwork.ts';
 import { extractCharacteristicImageColor, type RgbTriple } from '../utils/cover-color.ts';
 import {
   clearDraggedTrack,
@@ -284,7 +291,7 @@ export const TrackListRow: React.FC<{
               : 'pm-text-tertiary hover:bg-[var(--pm-hover-tint)] hover:text-[var(--pm-text-primary)]'
           }`}
         >
-          <Heart className={`h-4 w-4 ${isLiked ? 'fill-current' : ''}`} />
+          <LiquidHeartIcon liked={isLiked} className="h-4 w-4" />
         </button>
 
         <button
@@ -506,6 +513,9 @@ export const DetailViewPanel: React.FC = () => {
     likedTracks,
     favoriteArtists,
     dismissedPlaylistRecs,
+    playlistAppearances,
+    offlineDownloads,
+    playlistDownloadProgress,
     searchResults,
     authState,
     userProfile,
@@ -523,9 +533,10 @@ export const DetailViewPanel: React.FC = () => {
     toggleDjMode,
     startTrackRadio,
     renamePlaylist,
-    deletePlaylist,
-    duplicatePlaylist,
-    copyPlaylistTracksTo,
+    openPlaylistContextMenu,
+    openPlaylistAppearanceModal,
+    downloadPlaylistOffline,
+    cancelPlaylistDownload,
     addTrackToPlaylist,
     reorderPlaylistTrack,
     searchTracksForPlaylist,
@@ -540,9 +551,6 @@ export const DetailViewPanel: React.FC = () => {
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [editingName, setEditingName] = useState('');
-  const [plMenuOpen, setPlMenuOpen] = useState(false);
-  const [showCopyTargetMenu, setShowCopyTargetMenu] = useState(false);
-  const [confirmDeletePl, setConfirmDeletePl] = useState(false);
   const [collabModalOpen, setCollabModalOpen] = useState(false);
   const [collabUserQuery, setCollabUserQuery] = useState('');
   const [collabUserHits, setCollabUserHits] = useState<UserProfile[]>([]);
@@ -561,6 +569,10 @@ export const DetailViewPanel: React.FC = () => {
   const [artistStickyVisible, setArtistStickyVisible] = useState(false);
   const [artistHeaderRgb, setArtistHeaderRgb] = useState<RgbTriple | null>(null);
   const [heroCandidateIdx, setHeroCandidateIdx] = useState(0);
+  const recTrackIdsRef = useRef<{ plId: string; ids: Set<string> }>({
+    plId: '',
+    ids: new Set(),
+  });
 
   const activeArtistDetailId =
     activeDetailView?.kind === 'artist' ? activeDetailView.data.artist.id : null;
@@ -622,23 +634,84 @@ export const DetailViewPanel: React.FC = () => {
 
   const activeLocalPlaylistId =
     activeDetailView?.kind === 'local_playlist' ? activeDetailView.playlistId : null;
+  const activeSharedPlaylistId =
+    activeDetailView?.kind === 'shared_playlist' ? activeDetailView.sharedId : null;
+  const activeLocalPlaylist = activeLocalPlaylistId
+    ? playlists.find((p) => p.id === activeLocalPlaylistId)
+    : undefined;
+  const activeLocalTrackIdsKey = (activeLocalPlaylist?.tracks ?? []).map((t) => t.id).join('|');
 
   useEffect(() => {
-    setRecPool([]);
+    setAddFinderOverride(null);
+    setAddSearchQuery('');
+    setAddSearchResults([]);
+    setIsEditingName(false);
     setSessionSkippedIds([]);
-    if (!activeLocalPlaylistId) return;
+    setRecPool([]);
+  }, [activeLocalPlaylistId, activeSharedPlaylistId]);
+
+  useEffect(() => {
+    if (!activeLocalPlaylistId || !activeLocalPlaylist) {
+      recTrackIdsRef.current = { plId: '', ids: new Set() };
+      setRecPool([]);
+      setIsLoadingRecs(false);
+      return;
+    }
+
+    const currentIds = new Set(activeLocalPlaylist.tracks.map((t) => t.id));
+    if (activeLocalPlaylist.tracks.length < 10) {
+      recTrackIdsRef.current = { plId: activeLocalPlaylistId, ids: currentIds };
+      setRecPool([]);
+      setIsLoadingRecs(false);
+      return;
+    }
+
+    const prevSnap = recTrackIdsRef.current;
+    const isSamePlaylist = prevSnap.plId === activeLocalPlaylistId;
+    const addedTracks = isSamePlaylist
+      ? activeLocalPlaylist.tracks.filter((t) => !prevSnap.ids.has(t.id))
+      : [];
+    const crossedThreshold = isSamePlaylist && prevSnap.ids.size < 10;
+    const shouldFetch = !isSamePlaylist || crossedThreshold || addedTracks.length > 0;
+    recTrackIdsRef.current = { plId: activeLocalPlaylistId, ids: currentIds };
+
+    if (!shouldFetch) return;
+
     let cancelled = false;
     setIsLoadingRecs(true);
-    void fetchPlaylistRecommendations(activeLocalPlaylistId).then((tracks) => {
-      if (!cancelled) {
-        setRecPool(tracks);
-        setIsLoadingRecs(false);
+    const seedTrack =
+      addedTracks.length > 0 ? addedTracks[addedTracks.length - 1] : undefined;
+
+    void fetchPlaylistRecommendations(activeLocalPlaylistId, {
+      ...(seedTrack ? { seedTrack } : {}),
+    }).then((fresh) => {
+      if (cancelled) return;
+      if (seedTrack && isSamePlaylist && !crossedThreshold) {
+        setRecPool((prev) => {
+          const freshIds = new Set(fresh.map((f) => f.id));
+          const keptPrev = prev
+            .filter(
+              (p) =>
+                !currentIds.has(p.id) &&
+                !freshIds.has(p.id)
+            )
+            .slice(0, 2);
+          return [...fresh.slice(0, 4), ...keptPrev, ...fresh.slice(4)];
+        });
+      } else {
+        setRecPool(fresh);
       }
+      setIsLoadingRecs(false);
     });
+
     return () => {
       cancelled = true;
     };
-  }, [activeLocalPlaylistId, fetchPlaylistRecommendations]);
+  }, [
+    activeLocalPlaylistId,
+    activeLocalTrackIdsKey,
+    fetchPlaylistRecommendations,
+  ]);
 
   if (!activeDetailView) return null;
 
@@ -740,9 +813,11 @@ export const DetailViewPanel: React.FC = () => {
             aria-label={isLikedArtist ? `Quitar ${artist.name} de favoritos` : `Dar me gusta a ${artist.name}`}
             aria-pressed={isLikedArtist}
             onClick={handleToggleArtistLike}
-            className="pm-pressable flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-white transition-transform duration-150 hover:scale-110 hover:bg-white/20 active:scale-90"
+            className={`pm-pressable flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 transition-transform duration-150 hover:scale-110 hover:bg-white/20 active:scale-90 ${
+              isLikedArtist ? 'text-rose-400' : 'text-white'
+            }`}
           >
-            <Heart className={`h-4 w-4 ${isLikedArtist ? 'fill-rose-500 text-rose-400' : ''}`} />
+            <LiquidHeartIcon liked={isLikedArtist} className="h-4 w-4" />
           </button>
           <button
             type="button"
@@ -866,7 +941,10 @@ export const DetailViewPanel: React.FC = () => {
                     : 'border-white/20 bg-white/10 text-white/90 hover:bg-white/20'
                 }`}
               >
-                <Heart className={`h-4 w-4 ${isLikedArtist ? 'fill-rose-400 text-rose-300' : ''}`} />
+                <LiquidHeartIcon
+                  liked={isLikedArtist}
+                  className={`h-4 w-4 ${isLikedArtist ? 'text-rose-300' : ''}`}
+                />
                 <span className="hidden sm:inline">{isLikedArtist ? 'Favorito' : 'Me gusta'}</span>
               </button>
 
@@ -1190,28 +1268,64 @@ export const DetailViewPanel: React.FC = () => {
 
   if (activeDetailView.kind === 'playlist') {
     const { playlist, tracks } = activeDetailView.data;
+    const totalDurText = formatPlaylistDuration(
+      tracks.reduce((acc, t) => acc + (t.durationSec || 0), 0)
+    );
+    const edCover =
+      playlist.thumbnailUrl || generatePlaylistCoverDataUrl(playlist.title, 0);
+    const isDownloadingThis = playlistDownloadProgress?.playlistId === playlist.id;
+    const allDownloaded =
+      tracks.length > 0 && tracks.every((t) => offlineDownloads[t.id] === 'downloaded');
     return (
-      <div className="pm-page-enter space-y-7">
+      <div className="pm-page-enter space-y-6">
         <section
           data-surface="content"
-          className="pm-surface-card flex flex-col gap-6 rounded-[18px] p-6 sm:flex-row sm:items-end"
+          data-testid="playlist-hero-banner"
+          className="relative -mx-4 flex min-h-[290px] flex-col justify-end overflow-hidden bg-[var(--pm-bg-canvas)] px-5 pt-[calc(5rem+var(--pm-safe-top,env(safe-area-inset-top)))] pb-6 sm:-mx-7 sm:min-h-[330px] sm:px-7 sm:pt-10 sm:pb-7"
         >
           <img
-            src={playlist.thumbnailUrl}
-            alt={playlist.title}
-            className="h-40 w-40 shrink-0 rounded-[12px] object-cover shadow-[0_18px_48px_rgba(0,0,0,0.45)] sm:h-44 sm:w-44"
+            src={edCover}
+            alt=""
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover blur-2xl brightness-75 saturate-125"
           />
-          <div className="min-w-0 flex-1 space-y-2">
-            <span className="pm-elevated inline-block rounded-md border pm-border px-2.5 py-1 text-[11px] font-semibold pm-text-secondary">
-              PLAYLIST · {tracks.length} CANCIONES
-            </span>
-            <h1 className="truncate text-3xl font-bold tracking-tight pm-text-primary md:text-4xl">
-              {playlist.title}
-            </h1>
-            <p className="text-sm pm-text-secondary">
-              {playlist.author ?? 'pMusic'}
-            </p>
-            <div className="flex flex-wrap gap-2.5 pt-2">
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0"
+            style={{
+              background:
+                'linear-gradient(180deg, color-mix(in srgb, var(--pm-bg-canvas) 22%, transparent) 0%, color-mix(in srgb, var(--pm-bg-canvas) 55%, transparent) 55%, var(--pm-bg-canvas) 100%)',
+            }}
+          />
+          <div className="relative z-10 flex flex-col gap-5">
+            <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-end sm:gap-5">
+              <img
+                src={edCover}
+                alt={playlist.title}
+                className="h-32 w-32 shrink-0 rounded-[16px] object-cover shadow-[0_22px_50px_rgba(0,0,0,0.6)] ring-1 ring-white/15 sm:h-40 sm:w-40"
+              />
+              <div className="min-w-0 flex-1 space-y-2">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-black/35 px-3 py-1 text-[11px] font-semibold text-white/90 backdrop-blur-md">
+                  <span>PLAYLIST pMUSIC</span>
+                  <span aria-hidden="true">·</span>
+                  <span>{tracks.length} PISTAS</span>
+                  {totalDurText && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <span>{totalDurText}</span>
+                    </>
+                  )}
+                </span>
+                <h1 className="truncate text-3xl font-black tracking-tight text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.6)] sm:text-4xl md:text-5xl">
+                  {playlist.title}
+                </h1>
+                <p className="text-xs font-medium text-white/75 sm:text-sm">
+                  {playlist.author ?? 'pMusic Mixes'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => {
@@ -1224,14 +1338,50 @@ export const DetailViewPanel: React.FC = () => {
               </button>
               <button
                 type="button"
+                onClick={() => {
+                  if (tracks.length > 0) {
+                    void playCollection(tracks, { isPlaylist: true, forceShuffle: true });
+                  }
+                }}
+                className="pm-btn-secondary inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold"
+              >
+                <Shuffle className="h-3.5 w-3.5" />
+                <span>Aleatorio</span>
+              </button>
+              <button
+                type="button"
                 onClick={async () => {
                   await toggleDjMode(true);
                   if (tracks.length > 0) await playCollection(tracks, { isPlaylist: true });
                 }}
-                className="pm-btn-secondary inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-xs font-semibold"
+                className="pm-btn-secondary inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold"
               >
-                <Disc3 className="h-4 w-4 text-purple-500" />
-                <span>Sesión DJ AutoMix</span>
+                <Disc3 className="h-4 w-4 text-purple-400" />
+                <span>Sesión DJ</span>
+              </button>
+              <button
+                type="button"
+                disabled={tracks.length === 0}
+                onClick={() => {
+                  if (isDownloadingThis) cancelPlaylistDownload();
+                  else void downloadPlaylistOffline(playlist.id, tracks, playlist.title);
+                }}
+                className="pm-btn-secondary inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold disabled:opacity-40"
+              >
+                {isDownloadingThis ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-400" />
+                ) : allDownloaded ? (
+                  <Check className="h-3.5 w-3.5 text-emerald-400" />
+                ) : (
+                  <Download className="h-3.5 w-3.5" />
+                )}
+                <span>
+                  {isDownloadingThis
+                    ? `${playlistDownloadProgress.completed}/${playlistDownloadProgress.total}`
+                    : allDownloaded
+                      ? 'Descargada'
+                      : 'Descargar'}
+                </span>
               </button>
             </div>
           </div>
@@ -1243,7 +1393,7 @@ export const DetailViewPanel: React.FC = () => {
               key={t.id}
               track={t}
               index={idx}
-              queueContext={[t]}
+              queueContext={tracks}
             />
           ))}
         </div>
@@ -1435,60 +1585,221 @@ export const DetailViewPanel: React.FC = () => {
     );
   };
 
+  const renderPlaylistHeroCard = (opts: {
+    kind: 'local' | 'shared';
+    id: string;
+    name: string;
+    description: string;
+    badgeLabel: string;
+    badgeCollab?: boolean;
+    tracks: Track[];
+    coverUrl?: string | null;
+    bannerUrl?: string | null;
+    bannerEnabled: boolean;
+    seed: number;
+    actionsRow: React.ReactNode;
+    titleContent: React.ReactNode;
+  }) => {
+    const firstTrackThumb = opts.tracks[0]?.thumbnailHighUrl ?? opts.tracks[0]?.thumbnailUrl ?? '';
+    const resolvedCover =
+      opts.coverUrl || firstTrackThumb || generatePlaylistCoverDataUrl(opts.name, opts.seed);
+    const hasCustomBanner = Boolean(opts.bannerUrl);
+    const resolvedBanner =
+      opts.bannerUrl || firstTrackThumb || generatePlaylistBannerDataUrl(opts.name, opts.seed);
+    const durText = formatPlaylistDuration(
+      opts.tracks.reduce((acc, t) => acc + (t.durationSec || 0), 0)
+    );
+    const isBannerAutoFromCover = !hasCustomBanner && Boolean(firstTrackThumb);
+
+    if (!opts.bannerEnabled) {
+      return (
+        <div
+          data-surface="content"
+          data-testid="playlist-classic-header"
+          className="pm-surface-card relative rounded-[20px] p-4 sm:p-6"
+        >
+          <button
+            type="button"
+            aria-label="Personalizar portada y banner"
+            onClick={() => openPlaylistAppearanceModal(opts.kind, opts.id)}
+            className="pm-btn-secondary absolute right-4 top-4 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-semibold"
+          >
+            <Palette className="h-3.5 w-3.5 text-purple-400" />
+            <span className="hidden sm:inline">Personalizar</span>
+          </button>
+          <div className="flex flex-col gap-5">
+            <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-end sm:gap-5">
+              <div className="group relative h-32 w-32 shrink-0 overflow-hidden rounded-[14px] shadow-[0_18px_40px_rgba(0,0,0,0.45)] sm:h-40 sm:w-40">
+                <img
+                  src={resolvedCover}
+                  alt={opts.name}
+                  className="h-full w-full object-cover"
+                />
+                <button
+                  type="button"
+                  aria-label="Cambiar portada"
+                  onClick={() => openPlaylistAppearanceModal(opts.kind, opts.id)}
+                  className="absolute inset-0 flex items-center justify-center bg-black/55 opacity-0 transition-opacity group-hover:opacity-100"
+                >
+                  <Palette className="h-5 w-5 text-white" />
+                </button>
+              </div>
+              <div className="min-w-0 flex-1 space-y-2">
+                <span
+                  className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] font-semibold ${
+                    opts.badgeCollab
+                      ? 'border-emerald-400/30 bg-emerald-500/15 text-emerald-300'
+                      : 'pm-elevated pm-border pm-text-secondary'
+                  }`}
+                >
+                  {opts.badgeCollab && <Users className="h-3 w-3" />}
+                  <span>{opts.badgeLabel}</span>
+                  <span aria-hidden="true">·</span>
+                  <span>{opts.tracks.length} PISTAS</span>
+                  {durText && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <span>{durText}</span>
+                    </>
+                  )}
+                </span>
+                {opts.titleContent}
+                <p className="text-xs pm-text-secondary">{opts.description}</p>
+              </div>
+            </div>
+            {opts.actionsRow}
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <section
+        data-surface="content"
+        data-testid="playlist-hero-banner"
+        className="relative -mx-4 flex min-h-[300px] flex-col justify-end overflow-hidden bg-[var(--pm-bg-canvas)] px-5 pt-[calc(5.2rem+var(--pm-safe-top,env(safe-area-inset-top)))] pb-6 sm:-mx-7 sm:min-h-[340px] sm:px-7 sm:pt-10 sm:pb-7"
+      >
+        <img
+          src={resolvedBanner}
+          alt=""
+          aria-hidden="true"
+          className={`pointer-events-none absolute inset-0 h-full w-full object-cover ${
+            isBannerAutoFromCover
+              ? 'scale-110 object-center blur-2xl brightness-75 saturate-125'
+              : 'scale-[1.02] object-[50%_25%] opacity-90'
+          }`}
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              'linear-gradient(180deg, color-mix(in srgb, var(--pm-bg-canvas) 20%, transparent) 0%, color-mix(in srgb, var(--pm-bg-canvas) 48%, transparent) 52%, color-mix(in srgb, var(--pm-bg-canvas) 88%, transparent) 84%, var(--pm-bg-canvas) 100%)',
+          }}
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              'linear-gradient(90deg, color-mix(in srgb, var(--pm-bg-canvas) 55%, transparent) 0%, transparent 60%)',
+          }}
+        />
+
+        <button
+          type="button"
+          aria-label="Personalizar portada y banner"
+          onClick={() => openPlaylistAppearanceModal(opts.kind, opts.id)}
+          className="absolute right-4 top-[calc(max(0.8rem,var(--pm-safe-top,env(safe-area-inset-top)))+3.2rem)] z-20 inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-black/45 px-3.5 py-1.5 text-[11px] font-semibold text-white/90 backdrop-blur-md hover:bg-black/65 sm:right-7 sm:top-5"
+        >
+          <Palette className="h-3.5 w-3.5 text-purple-300" />
+          <span>Personalizar</span>
+        </button>
+
+        <div className="relative z-10 flex flex-col gap-5">
+          <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-end sm:gap-6">
+            <div className="group relative h-32 w-32 shrink-0 overflow-hidden rounded-[16px] shadow-[0_22px_50px_rgba(0,0,0,0.62)] ring-1 ring-white/15 sm:h-40 sm:w-40">
+              <img
+                src={resolvedCover}
+                alt={opts.name}
+                className="h-full w-full object-cover"
+              />
+              <button
+                type="button"
+                aria-label="Cambiar portada"
+                onClick={() => openPlaylistAppearanceModal(opts.kind, opts.id)}
+                className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/55 opacity-0 transition-opacity group-hover:opacity-100"
+              >
+                <Palette className="h-5 w-5 text-white" />
+                <span className="text-[10px] font-bold text-white">Editar</span>
+              </button>
+            </div>
+            <div className="min-w-0 flex-1 space-y-2">
+              <span
+                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-semibold backdrop-blur-md ${
+                  opts.badgeCollab
+                    ? 'border-emerald-400/35 bg-emerald-500/20 text-emerald-200'
+                    : 'border-white/15 bg-black/35 text-white/90'
+                }`}
+              >
+                {opts.badgeCollab && <Users className="h-3 w-3" />}
+                <span>{opts.badgeLabel}</span>
+                <span aria-hidden="true">·</span>
+                <span>{opts.tracks.length} PISTAS</span>
+                {durText && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span>{durText}</span>
+                  </>
+                )}
+              </span>
+              {opts.titleContent}
+              <p className="text-xs font-medium text-white/75 sm:text-sm drop-shadow">
+                {opts.description}
+              </p>
+            </div>
+          </div>
+
+          {opts.actionsRow}
+        </div>
+      </section>
+    );
+  };
+
   if (activeDetailView.kind === 'shared_playlist') {
     const sharedPl = sharedPlaylists.find((p) => p.id === activeDetailView.sharedId);
     if (!sharedPl) return null;
-    const totalMins = Math.max(
-      0,
-      Math.round(sharedPl.tracks.reduce((acc, t) => acc + (t.durationSec || 0), 0) / 60)
-    );
-    const cover = sharedPl.coverUrl ?? sharedPl.tracks[0]?.thumbnailHighUrl ?? sharedPl.tracks[0]?.thumbnailUrl;
-    const isAddOpen = addFinderOverride ?? sharedPl.tracks.length < 4;
+    const spApp = playlistAppearances[sharedPl.id];
+    const isAddOpen = addFinderOverride ?? false;
+    const isDownloadingThis = playlistDownloadProgress?.playlistId === sharedPl.id;
+    const allDownloaded =
+      sharedPl.tracks.length > 0 &&
+      sharedPl.tracks.every((t) => offlineDownloads[t.id] === 'downloaded');
     const suggestedSharedAdds = (
       addSearchQuery.trim() ? addSearchResults : searchResults.songs.slice(0, 8)
     ).filter((t) => !sharedPl.tracks.some((ex) => ex.id === t.id));
 
     return (
       <div className="pm-page-enter space-y-6">
-        <div
-          data-surface="content"
-          className="pm-surface-card relative rounded-[20px] p-4 sm:p-6"
-        >
-          <div className="flex flex-col gap-5">
-            <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-end sm:gap-5">
-              {cover ? (
-                <img
-                  src={cover}
-                  alt={sharedPl.name}
-                  className="h-32 w-32 shrink-0 rounded-[14px] object-cover shadow-[0_18px_40px_rgba(0,0,0,0.45)] sm:h-40 sm:w-40"
-                />
-              ) : (
-                <div className="pm-elevated flex h-32 w-32 shrink-0 items-center justify-center rounded-[14px] border pm-border text-3xl font-bold pm-text-secondary sm:h-40 sm:w-40">
-                  {sharedPl.name.slice(0, 1).toUpperCase()}
-                </div>
-              )}
-              <div className="min-w-0 flex-1 space-y-2">
-                <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-400/30 bg-emerald-500/15 px-2.5 py-1 text-[11px] font-semibold text-emerald-300">
-                  <Users className="h-3 w-3" />
-                  <span>{sharedPl.kind === 'blend' ? 'BLEND' : 'LISTA COLABORATIVA'}</span>
-                  <span aria-hidden="true">·</span>
-                  <span>{sharedPl.tracks.length} PISTAS</span>
-                  {totalMins > 0 && (
-                    <>
-                      <span aria-hidden="true">·</span>
-                      <span>{totalMins} min</span>
-                    </>
-                  )}
-                </span>
-                <h1 className="truncate text-3xl font-bold tracking-tight pm-text-primary sm:text-4xl">
-                  {sharedPl.name}
-                </h1>
-                <p className="text-xs pm-text-secondary">
-                  {sharedPl.description || 'Playlist colaborativa · Cada canción muestra quién la añadió'}
-                </p>
-              </div>
-            </div>
-
+        {renderPlaylistHeroCard({
+          kind: 'shared',
+          id: sharedPl.id,
+          name: sharedPl.name,
+          description:
+            sharedPl.description || 'Playlist colaborativa · Cada canción muestra quién la añadió',
+          badgeLabel: sharedPl.kind === 'blend' ? 'BLEND' : 'LISTA COLABORATIVA',
+          badgeCollab: true,
+          tracks: sharedPl.tracks,
+          coverUrl: spApp?.coverUrl ?? sharedPl.coverUrl,
+          bannerUrl: spApp?.bannerUrl ?? null,
+          bannerEnabled: spApp?.bannerEnabled ?? true,
+          seed: spApp?.coverStyleSeed ?? 0,
+          titleContent: (
+            <h1 className="truncate text-3xl font-black tracking-tight text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.65)] sm:text-4xl md:text-5xl">
+              {sharedPl.name}
+            </h1>
+          ),
+          actionsRow: (
             <div className="relative flex flex-wrap items-center gap-2">
               <button
                 type="button"
@@ -1504,6 +1815,18 @@ export const DetailViewPanel: React.FC = () => {
               </button>
               <button
                 type="button"
+                onClick={() => {
+                  if (sharedPl.tracks.length > 0) {
+                    void playCollection(sharedPl.tracks, { isPlaylist: true, forceShuffle: true });
+                  }
+                }}
+                className="pm-btn-secondary inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold"
+              >
+                <Shuffle className="h-3.5 w-3.5" />
+                <span>Aleatorio</span>
+              </button>
+              <button
+                type="button"
                 onClick={async () => {
                   await toggleDjMode(true);
                   if (sharedPl.tracks.length > 0) {
@@ -1512,11 +1835,36 @@ export const DetailViewPanel: React.FC = () => {
                 }}
                 className="pm-btn-secondary inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold"
               >
-                <Disc3 className="h-4 w-4 text-purple-500" />
+                <Disc3 className="h-4 w-4 text-purple-400" />
                 <span>Sesión DJ</span>
               </button>
               <button
                 type="button"
+                disabled={sharedPl.tracks.length === 0}
+                onClick={() => {
+                  if (isDownloadingThis) cancelPlaylistDownload();
+                  else void downloadPlaylistOffline(sharedPl.id, sharedPl.tracks, sharedPl.name);
+                }}
+                className="pm-btn-secondary inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold disabled:opacity-40"
+              >
+                {isDownloadingThis ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-400" />
+                ) : allDownloaded ? (
+                  <Check className="h-3.5 w-3.5 text-emerald-400" />
+                ) : (
+                  <Download className="h-3.5 w-3.5" />
+                )}
+                <span>
+                  {isDownloadingThis
+                    ? `${playlistDownloadProgress.completed}/${playlistDownloadProgress.total}`
+                    : allDownloaded
+                      ? 'Descargada'
+                      : 'Descargar'}
+                </span>
+              </button>
+              <button
+                type="button"
+                aria-pressed={isAddOpen}
                 onClick={() => setAddFinderOverride(!isAddOpen)}
                 className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-2.5 text-xs font-semibold ${
                   isAddOpen ? 'pm-btn-primary' : 'pm-btn-secondary'
@@ -1528,14 +1876,26 @@ export const DetailViewPanel: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setCollabModalOpen(true)}
-                className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/35 bg-emerald-500/20 px-4 py-2.5 text-xs font-semibold text-emerald-300"
+                className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/35 bg-emerald-500/20 px-4 py-2.5 text-xs font-semibold text-emerald-200"
               >
                 <UserPlus className="h-3.5 w-3.5" />
                 <span>Invitar / Enlace</span>
               </button>
+              <button
+                type="button"
+                data-testid="playlist-more-actions-btn"
+                aria-label="Más acciones de playlist"
+                onClick={(e) => {
+                  const r = e.currentTarget.getBoundingClientRect();
+                  openPlaylistContextMenu('shared', sharedPl.id, r.left, r.bottom + 8);
+                }}
+                className="pm-btn-secondary inline-flex h-9 w-9 items-center justify-center rounded-full"
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </button>
             </div>
-          </div>
-        </div>
+          ),
+        })}
 
         <div className="space-y-0.5">
           {sharedPl.tracks.length > 0 ? (
@@ -1675,22 +2035,13 @@ export const DetailViewPanel: React.FC = () => {
   const handleAddRecommendedTrack = async (track: Track) => {
     setRecPool((prev) => prev.filter((item) => item.id !== track.id));
     await addTrackToPlaylist(localPl.id, track);
-    const nextExtra = await fetchPlaylistRecommendations(localPl.id, {
-      seedTrack: track,
-      excludeIds: [...sessionSkippedIds, track.id],
-    });
-    setRecPool((prev) => {
-      const existingIds = new Set([...prev.map((x) => x.id), track.id]);
-      const appended = nextExtra.filter((x) => !existingIds.has(x.id));
-      return [...prev, ...appended];
-    });
   };
 
   const handleDismissRecommendedTrack = async (track: Track) => {
     dismissPlaylistRecommendation(localPl.id, track.id);
     const remaining = recPool.filter((item) => item.id !== track.id);
     setRecPool(remaining);
-    if (remaining.length < 8) {
+    if (remaining.length < 8 && localPl.tracks.length >= 10) {
       const fresh = await fetchPlaylistRecommendations(localPl.id, {
         excludeIds: [...sessionSkippedIds, ...remaining.map((x) => x.id), track.id],
       });
@@ -1705,70 +2056,12 @@ export const DetailViewPanel: React.FC = () => {
     addSearchQuery.trim() ? addSearchResults : searchResults.songs.slice(0, 8)
   ).filter((t) => !localPl.tracks.some((ex) => ex.id === t.id));
 
-  const otherPlaylists = playlists.filter((p) => p.id !== localPl.id);
-  const totalPlDurationSec = localPl.tracks.reduce((acc, t) => acc + (t.durationSec || 0), 0);
-  const totalPlMins = Math.max(0, Math.round(totalPlDurationSec / 60));
-  const isAddFinderOpen = addFinderOverride ?? localPl.tracks.length < 3;
-
-  const handleSharePlaylist = async (makeCollab?: boolean) => {
-    const sb = getSyncSupabaseClient();
-    const wantCollab = makeCollab ?? Boolean(localPl.isCollaborative);
-    if (sb && authState.connected && authState.userId) {
-      try {
-        const synced = await publishOrUpdateSharedPlaylistLink(sb, {
-          ownerId: authState.userId,
-          name: localPl.name,
-          description: localPl.description,
-          tracks: localPl.tracks,
-          isCollaborative: wantCollab,
-          existingShareCode: localPl.shareCode,
-          ownerProfile: userProfile,
-        });
-        await setPlaylistShareMetadata(localPl.id, {
-          shareCode: synced.shareCode ?? localPl.shareCode,
-          isCollaborative: wantCollab,
-          isPublicLink: true,
-        });
-        const shareUrl = buildPlaylistShareUrl(synced.shareCode ?? localPl.shareCode ?? '');
-        try {
-          if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
-            await navigator.share({ title: localPl.name, url: shareUrl });
-          } else {
-            await navigator.clipboard?.writeText(shareUrl);
-          }
-        } catch {
-          await navigator.clipboard?.writeText(shareUrl).catch(() => {});
-        }
-        showToast(
-          wantCollab
-            ? 'Enlace de playlist colaborativa copiado'
-            : 'Enlace para compartir playlist copiado'
-        );
-        return;
-      } catch (err) {
-        showToast(err instanceof Error ? err.message : 'No se pudo publicar el enlace');
-      }
-    }
-
-    const trackLines = localPl.tracks
-      .slice(0, 12)
-      .map((t, i) => `${i + 1}. ${t.title} — ${t.artists.map((a) => a.name).join(', ')}`)
-      .join('\n');
-    const summary = `Playlist pMusic: ${localPl.name} (${localPl.tracks.length} pistas)\n${trackLines}`;
-    try {
-      await navigator.clipboard?.writeText(summary);
-      showToast('Lista copiada al portapapeles (inicia sesión para crear enlace web)');
-    } catch {
-      showToast('Inicia sesión para generar un enlace web compartible');
-    }
-  };
-
-  const handleToggleCollaborative = async () => {
-    const synced = await togglePlaylistCollaborative(localPl.id);
-    if (!localPl.isCollaborative || synced?.allowLinkEdit) {
-      setCollabModalOpen(true);
-    }
-  };
+  const isAddFinderOpen = addFinderOverride ?? false;
+  const localApp = playlistAppearances[localPl.id];
+  const isDownloadingThis = playlistDownloadProgress?.playlistId === localPl.id;
+  const allDownloaded =
+    localPl.tracks.length > 0 &&
+    localPl.tracks.every((t) => offlineDownloads[t.id] === 'downloaded');
 
   const linkedShared = localPl.shareCode
     ? sharedPlaylists.find(
@@ -1778,100 +2071,75 @@ export const DetailViewPanel: React.FC = () => {
 
   return (
     <div className="pm-page-enter space-y-6">
-      <div
-        data-surface="content"
-        className="pm-surface-card relative rounded-[20px] p-4 sm:p-6"
-      >
-        <div className="flex flex-col gap-5">
-          <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-end sm:gap-5">
-            {localPl.coverUrl ?? localPl.tracks[0]?.thumbnailUrl ? (
-              <img
-                src={localPl.coverUrl ?? localPl.tracks[0]?.thumbnailUrl}
-                alt={localPl.name}
-                className="h-32 w-32 shrink-0 rounded-[14px] object-cover shadow-[0_18px_40px_rgba(0,0,0,0.45)] sm:h-40 sm:w-40"
-              />
-            ) : (
-              <div className="pm-elevated flex h-32 w-32 shrink-0 items-center justify-center rounded-[14px] border pm-border text-3xl font-bold pm-text-secondary sm:h-40 sm:w-40">
-                {localPl.name.slice(0, 1).toUpperCase()}
-              </div>
-            )}
-
-            <div className="min-w-0 flex-1 space-y-2">
-              <span className="pm-elevated inline-flex items-center gap-1.5 rounded-md border pm-border px-2.5 py-1 text-[11px] font-semibold pm-text-secondary">
-                <span>TU PLAYLIST</span>
-                <span aria-hidden="true">·</span>
-                <span>{localPl.tracks.length} PISTAS</span>
-                {totalPlMins > 0 && (
-                  <>
-                    <span aria-hidden="true">·</span>
-                    <span>{totalPlMins} min</span>
-                  </>
-                )}
-              </span>
-
-              {isEditingName ? (
-                <form
-                  onSubmit={async (e) => {
-                    e.preventDefault();
-                    if (editingName.trim()) {
-                      await renamePlaylist(localPl.id, editingName.trim());
-                      showToast('Nombre actualizado');
-                    }
-                    setIsEditingName(false);
-                  }}
-                  className="flex flex-wrap items-center gap-2"
-                >
-                  <input
-                    type="text"
-                    autoFocus
-                    aria-label="Nuevo nombre de playlist"
-                    value={editingName}
-                    onChange={(e) => setEditingName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Escape') setIsEditingName(false);
-                    }}
-                    className="pm-input rounded-full px-4 py-1.5 text-lg font-bold"
-                  />
-                  <button
-                    type="submit"
-                    className="pm-btn-primary rounded-full px-4 py-1.5 text-xs font-bold"
-                  >
-                    Guardar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setIsEditingName(false)}
-                    className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-semibold"
-                  >
-                    Cancelar
-                  </button>
-                </form>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <h1 className="truncate text-3xl font-bold tracking-tight pm-text-primary sm:text-4xl">
-                    {localPl.name}
-                  </h1>
-                  <button
-                    type="button"
-                    aria-label="Editar nombre de playlist"
-                    onClick={() => {
-                      setEditingName(localPl.name);
-                      setIsEditingName(true);
-                    }}
-                    className="pm-hover rounded-full p-1.5 pm-text-tertiary hover:text-[var(--pm-text-primary)]"
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              )}
-
-              <p className="text-xs pm-text-secondary">
-                {localPl.description || 'Playlist personal · Arrastra pistas para reordenar'}
-              </p>
-            </div>
+      {renderPlaylistHeroCard({
+        kind: 'local',
+        id: localPl.id,
+        name: localPl.name,
+        description:
+          localPl.description || 'Playlist personal · Arrastra pistas para reordenar',
+        badgeLabel: localPl.isCollaborative ? 'COLABORATIVA' : 'TU PLAYLIST',
+        badgeCollab: Boolean(localPl.isCollaborative),
+        tracks: localPl.tracks,
+        coverUrl: localApp?.coverUrl ?? localPl.coverUrl,
+        bannerUrl: localApp?.bannerUrl ?? localPl.bannerUrl,
+        bannerEnabled: localApp?.bannerEnabled ?? localPl.bannerEnabled ?? true,
+        seed: localApp?.coverStyleSeed ?? localPl.coverStyleSeed ?? 0,
+        titleContent: isEditingName ? (
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (editingName.trim()) {
+                await renamePlaylist(localPl.id, editingName.trim());
+                showToast('Nombre actualizado');
+              }
+              setIsEditingName(false);
+            }}
+            className="flex flex-wrap items-center gap-2"
+          >
+            <input
+              type="text"
+              autoFocus
+              aria-label="Nuevo nombre de playlist"
+              value={editingName}
+              onChange={(e) => setEditingName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setIsEditingName(false);
+              }}
+              className="pm-input rounded-full px-4 py-1.5 text-lg font-bold"
+            />
+            <button
+              type="submit"
+              className="pm-btn-primary rounded-full px-4 py-1.5 text-xs font-bold"
+            >
+              Guardar
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsEditingName(false)}
+              className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-semibold"
+            >
+              Cancelar
+            </button>
+          </form>
+        ) : (
+          <div className="flex items-center gap-2">
+            <h1 className="truncate text-3xl font-black tracking-tight pm-text-primary drop-shadow-[0_4px_18px_rgba(0,0,0,0.45)] sm:text-4xl md:text-5xl">
+              {localPl.name}
+            </h1>
+            <button
+              type="button"
+              aria-label="Editar nombre de playlist"
+              onClick={() => {
+                setEditingName(localPl.name);
+                setIsEditingName(true);
+              }}
+              className="pm-hover rounded-full p-1.5 pm-text-tertiary hover:text-[var(--pm-text-primary)]"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
           </div>
-
-          {/* Interactive Playlist Action Toolbar */}
+        ),
+        actionsRow: (
           <div className="relative flex flex-wrap items-center gap-2">
             <button
               type="button"
@@ -1889,6 +2157,20 @@ export const DetailViewPanel: React.FC = () => {
 
             <button
               type="button"
+              onClick={() => {
+                if (localPl.tracks.length > 0) {
+                  recordPlaylistPlay(localPl);
+                  void playCollection(localPl.tracks, { isPlaylist: true, forceShuffle: true });
+                }
+              }}
+              className="pm-btn-secondary inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold"
+            >
+              <Shuffle className="h-3.5 w-3.5" />
+              <span>Aleatorio</span>
+            </button>
+
+            <button
+              type="button"
               onClick={async () => {
                 await toggleDjMode(true);
                 if (localPl.tracks.length > 0) {
@@ -1898,12 +2180,39 @@ export const DetailViewPanel: React.FC = () => {
               }}
               className="pm-btn-secondary inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold"
             >
-              <Disc3 className="h-4 w-4 text-purple-500" />
+              <Disc3 className="h-4 w-4 text-purple-400" />
               <span>Sesión DJ</span>
             </button>
 
             <button
               type="button"
+              disabled={localPl.tracks.length === 0}
+              onClick={() => {
+                if (isDownloadingThis) cancelPlaylistDownload();
+                else void downloadPlaylistOffline(localPl.id, localPl.tracks, localPl.name);
+              }}
+              className="pm-btn-secondary inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold disabled:opacity-40"
+            >
+              {isDownloadingThis ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-400" />
+              ) : allDownloaded ? (
+                <Check className="h-3.5 w-3.5 text-emerald-400" />
+              ) : (
+                <Download className="h-3.5 w-3.5" />
+              )}
+              <span>
+                {isDownloadingThis
+                  ? `${playlistDownloadProgress.completed}/${playlistDownloadProgress.total}`
+                  : allDownloaded
+                    ? 'Descargada'
+                    : 'Descargar'}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              data-testid="playlist-add-songs-btn"
+              aria-pressed={isAddFinderOpen}
               onClick={() => setAddFinderOverride(!isAddFinderOpen)}
               className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-2.5 text-xs font-semibold ${
                 isAddFinderOpen ? 'pm-btn-primary' : 'pm-btn-secondary'
@@ -1917,207 +2226,28 @@ export const DetailViewPanel: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setCollabModalOpen(true)}
-                className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/35 bg-emerald-500/20 px-4 py-2.5 text-xs font-semibold text-emerald-300"
+                className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/35 bg-emerald-500/20 px-4 py-2.5 text-xs font-semibold text-emerald-200"
               >
                 <Users className="h-3.5 w-3.5" />
                 <span>Colaborativa · Invitar</span>
               </button>
             )}
 
-            <div className="relative">
-              <button
-                type="button"
-                data-testid="playlist-more-actions-btn"
-                aria-label="Más acciones de playlist"
-                aria-expanded={plMenuOpen}
-                onClick={() => {
-                  setPlMenuOpen(!plMenuOpen);
-                  setShowCopyTargetMenu(false);
-                  setConfirmDeletePl(false);
-                }}
-                className="pm-btn-secondary inline-flex h-9 w-9 items-center justify-center rounded-full"
-              >
-                <MoreHorizontal className="h-4 w-4" />
-              </button>
-
-              {plMenuOpen && (
-                <>
-                  <div
-                    aria-hidden="true"
-                    onClick={() => setPlMenuOpen(false)}
-                    className="fixed inset-0 z-40"
-                  />
-                  <div
-                    role="menu"
-                    data-testid="playlist-actions-menu"
-                    className="pm-glass-liquid pm-menu-pop fixed inset-x-4 bottom-[max(5.25rem,calc(env(safe-area-inset-bottom)+4.5rem))] z-50 rounded-[20px] p-2 shadow-2xl sm:absolute sm:inset-auto sm:left-0 sm:top-11 sm:w-64 sm:rounded-[18px] sm:p-1.5"
-                    style={{
-                      background:
-                        'color-mix(in srgb, var(--pm-bg-surface) 94%, transparent)',
-                    }}
-                  >
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        setPlMenuOpen(false);
-                        setEditingName(localPl.name);
-                        setIsEditingName(true);
-                      }}
-                      className="pm-hover pm-text-primary flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-xs font-medium"
-                    >
-                      <Pencil className="h-4 w-4 pm-text-secondary" />
-                      <span>Renombrar playlist</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => setShowCopyTargetMenu(!showCopyTargetMenu)}
-                      className="pm-hover pm-text-primary flex w-full items-center justify-between rounded-[10px] px-3 py-2 text-left text-xs font-medium"
-                    >
-                      <span className="flex items-center gap-2.5">
-                        <ListPlus className="h-4 w-4 pm-text-secondary" />
-                        <span>Añadir a otra playlist</span>
-                      </span>
-                      <ChevronRight className="h-3.5 w-3.5 pm-text-tertiary" />
-                    </button>
-
-                    {showCopyTargetMenu && (
-                      <div className="mx-1.5 my-1 max-h-40 space-y-0.5 overflow-y-auto rounded-[10px] border pm-border bg-black/20 p-1">
-                        {otherPlaylists.length > 0 ? (
-                          otherPlaylists.map((target) => (
-                            <button
-                              key={target.id}
-                              type="button"
-                              onClick={async () => {
-                                await copyPlaylistTracksTo(localPl.id, target.id);
-                                setPlMenuOpen(false);
-                                setShowCopyTargetMenu(false);
-                              }}
-                              className="pm-hover pm-text-primary flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[11.5px] font-medium"
-                            >
-                              <span className="truncate">{target.name}</span>
-                              <span className="ml-2 shrink-0 text-[11px] pm-text-tertiary">
-                                {target.tracks.length}
-                              </span>
-                            </button>
-                          ))
-                        ) : (
-                          <div className="px-2.5 py-1.5 text-[11px] pm-text-tertiary">
-                            Crea otra playlist primero
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={async () => {
-                        setPlMenuOpen(false);
-                        const dup = await duplicatePlaylist(localPl.id);
-                        if (dup) openLocalPlaylistDetail(dup.id);
-                      }}
-                      className="pm-hover pm-text-primary flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-xs font-medium"
-                    >
-                      <Copy className="h-4 w-4 pm-text-secondary" />
-                      <span>Duplicar playlist</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={async () => {
-                        setPlMenuOpen(false);
-                        await handleToggleCollaborative();
-                      }}
-                      className="pm-hover pm-text-primary flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-xs font-medium"
-                    >
-                      <Users className="h-4 w-4 text-emerald-400" />
-                      <span>
-                        {localPl.isCollaborative
-                          ? 'Desactivar lista colaborativa'
-                          : 'Hacer lista colaborativa'}
-                      </span>
-                    </button>
-
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={async () => {
-                        setPlMenuOpen(false);
-                        if (!localPl.shareCode && authState.connected) {
-                          await togglePlaylistCollaborative(localPl.id);
-                        }
-                        setCollabModalOpen(true);
-                      }}
-                      className="pm-hover pm-text-primary flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-xs font-medium"
-                    >
-                      <UserPlus className="h-4 w-4 pm-text-secondary" />
-                      <span>Invitar amigo o copiar link</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={async () => {
-                        setPlMenuOpen(false);
-                        await handleSharePlaylist();
-                      }}
-                      className="pm-hover pm-text-primary flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-xs font-medium"
-                    >
-                      <Share2 className="h-4 w-4 pm-text-secondary" />
-                      <span>Compartir lista</span>
-                    </button>
-
-                    <div className="my-1 border-t pm-border" />
-
-                    {confirmDeletePl ? (
-                      <div className="flex items-center justify-between gap-1.5 rounded-[10px] bg-rose-500/15 px-2.5 py-2">
-                        <span className="text-[11px] font-semibold text-rose-400">
-                          ¿Confirmar?
-                        </span>
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              setPlMenuOpen(false);
-                              setConfirmDeletePl(false);
-                              await deletePlaylist(localPl.id);
-                            }}
-                            className="rounded-full bg-rose-500 px-2.5 py-1 text-[11px] font-bold text-white"
-                          >
-                            Eliminar
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setConfirmDeletePl(false)}
-                            className="rounded-full bg-white/10 px-2 py-1 text-[11px] font-semibold"
-                          >
-                            No
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        role="menuitem"
-                        aria-label="Eliminar playlist"
-                        onClick={() => setConfirmDeletePl(true)}
-                        className="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-xs font-semibold text-rose-400 hover:bg-rose-500/15"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        <span>Eliminar playlist</span>
-                      </button>
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
+            <button
+              type="button"
+              data-testid="playlist-more-actions-btn"
+              aria-label="Más acciones de playlist"
+              onClick={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                openPlaylistContextMenu('local', localPl.id, r.left, r.bottom + 8);
+              }}
+              className="pm-btn-secondary inline-flex h-9 w-9 items-center justify-center rounded-full"
+            >
+              <MoreHorizontal className="h-4 w-4" />
+            </button>
           </div>
-        </div>
-      </div>
+        ),
+      })}
 
       {/* Playlist Tracks Dropzone + Reorder */}
       <div
@@ -2265,9 +2395,11 @@ export const DetailViewPanel: React.FC = () => {
       </section>
       )}
 
-      {/* Infinite Adaptive Playlist Recommendations */}
+      {/* Infinite Adaptive Playlist Recommendations (shown only when >= 10 songs) */}
+      {localPl.tracks.length >= 10 && (
       <section
         data-surface="content"
+        data-testid="playlist-recommendations-section"
         className="pm-surface-card space-y-4 rounded-[16px] p-5"
       >
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2342,6 +2474,7 @@ export const DetailViewPanel: React.FC = () => {
           )}
         </div>
       </section>
+      )}
 
       {renderInviteCollaboratorsModal({
         targetId: localPl.id,
@@ -3563,6 +3696,7 @@ export const LibraryScreen: React.FC = () => {
     libraryFilterQuery,
     playlists,
     sharedPlaylists,
+    playlistAppearances,
     likedTracks,
     favoriteArtists,
     playHistory,
@@ -3571,10 +3705,10 @@ export const LibraryScreen: React.FC = () => {
     setLibraryCategory,
     setLibraryFilterQuery,
     createPlaylist,
-    deletePlaylist,
     addTrackToPlaylist,
     openLocalPlaylistDetail,
     openSharedPlaylistDetail,
+    openPlaylistContextMenu,
     openArtistDetail,
     toggleFavoriteArtist,
     setImportModalOpen,
@@ -3588,8 +3722,6 @@ export const LibraryScreen: React.FC = () => {
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [showCreateBar, setShowCreateBar] = useState(false);
   const [dragOverPlaylistId, setDragOverPlaylistId] = useState<string | null>(null);
-  const [openPlMenuId, setOpenPlMenuId] = useState<string | null>(null);
-  const [confirmDeletePlId, setConfirmDeletePlId] = useState<string | null>(null);
 
   const categories: readonly LibraryCategoryTab[] = [
     'Todo',
@@ -3791,26 +3923,33 @@ export const LibraryScreen: React.FC = () => {
           {totalUnifiedPlaylistCount > 0 ? (
             <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-3">
               {filteredSharedPlaylists.map((sp) => {
-                const thumb = sp.coverUrl ?? sp.tracks[0]?.thumbnailUrl;
+                const spApp = playlistAppearances[sp.id];
+                const thumb =
+                  spApp?.coverUrl ??
+                  sp.coverUrl ??
+                  sp.tracks[0]?.thumbnailUrl ??
+                  generatePlaylistCoverDataUrl(sp.name, spApp?.coverStyleSeed ?? 0);
+                const spDur = formatPlaylistDuration(
+                  sp.tracks.reduce((acc, t) => acc + (t.durationSec || 0), 0)
+                );
                 return (
                   <article
                     key={`lib-sp-${sp.id}`}
                     data-surface="content"
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      openPlaylistContextMenu('shared', sp.id, e.clientX, e.clientY);
+                    }}
                     onClick={() => openSharedPlaylistDetail(sp.id)}
                     className="pm-surface-card pm-card-lift relative flex cursor-pointer items-center justify-between gap-3 rounded-[14px] p-3 transition-all sm:p-3.5"
                   >
                     <div className="flex min-w-0 flex-1 items-center gap-3">
-                      {thumb ? (
-                        <img
-                          src={thumb}
-                          alt={sp.name}
-                          className="h-13 w-13 shrink-0 rounded-[10px] object-cover shadow-sm"
-                        />
-                      ) : (
-                        <div className="pm-elevated flex h-13 w-13 shrink-0 items-center justify-center rounded-[10px] border pm-border text-sm font-bold pm-text-secondary">
-                          {sp.name.slice(0, 1).toUpperCase()}
-                        </div>
-                      )}
+                      <img
+                        src={thumb}
+                        alt={sp.name}
+                        className="h-13 w-13 shrink-0 rounded-[10px] object-cover shadow-sm"
+                      />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
                           <h3 className="truncate text-[15px] font-bold leading-tight pm-text-primary">
@@ -3822,30 +3961,50 @@ export const LibraryScreen: React.FC = () => {
                         </div>
                         <p className="mt-0.5 truncate text-xs pm-text-tertiary">
                           {sp.tracks.length} {sp.tracks.length === 1 ? 'canción' : 'canciones'}
+                          {spDur ? ` · ${spDur}` : ''}
                         </p>
                       </div>
                     </div>
-                    {sp.tracks.length > 0 && (
+                    <div
+                      className="flex shrink-0 items-center gap-1"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {sp.tracks.length > 0 && (
+                        <button
+                          type="button"
+                          aria-label={`Reproducir ${sp.name}`}
+                          onClick={() => void playCollection(sp.tracks, { isPlaylist: true })}
+                          className="pm-btn-secondary pm-pressable inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
+                        >
+                          <Play className="h-3.5 w-3.5 translate-x-[1px] fill-current" />
+                        </button>
+                      )}
                       <button
                         type="button"
-                        aria-label={`Reproducir ${sp.name}`}
+                        aria-label={`Opciones de ${sp.name}`}
                         onClick={(e) => {
-                          e.stopPropagation();
-                          void playCollection(sp.tracks, { isPlaylist: true });
+                          const r = e.currentTarget.getBoundingClientRect();
+                          openPlaylistContextMenu('shared', sp.id, r.right - 260, r.bottom + 8);
                         }}
-                        className="pm-btn-secondary pm-pressable inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
+                        className="pm-hover pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-tertiary hover:text-[var(--pm-text-primary)]"
                       >
-                        <Play className="h-3.5 w-3.5 translate-x-[1px] fill-current" />
+                        <MoreHorizontal className="h-4 w-4" />
                       </button>
-                    )}
+                    </div>
                   </article>
                 );
               })}
               {filteredPlaylists.map((pl) => {
-                const thumb = pl.coverUrl ?? pl.tracks[0]?.thumbnailUrl;
+                const plApp = playlistAppearances[pl.id];
+                const thumb =
+                  plApp?.coverUrl ??
+                  pl.coverUrl ??
+                  pl.tracks[0]?.thumbnailUrl ??
+                  generatePlaylistCoverDataUrl(pl.name, plApp?.coverStyleSeed ?? pl.coverStyleSeed ?? 0);
+                const plDur = formatPlaylistDuration(
+                  pl.tracks.reduce((acc, t) => acc + (t.durationSec || 0), 0)
+                );
                 const isDropTarget = dragOverPlaylistId === pl.id;
-                const isMenuOpen = openPlMenuId === pl.id;
-                const isConfirmDelete = confirmDeletePlId === pl.id;
                 return (
                   <article
                     key={pl.id}
@@ -3866,6 +4025,11 @@ export const LibraryScreen: React.FC = () => {
                         void addTrackToPlaylist(pl.id, dropped);
                       }
                     }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      openPlaylistContextMenu('local', pl.id, e.clientX, e.clientY);
+                    }}
                     onClick={() => openLocalPlaylistDetail(pl.id)}
                     className={`pm-surface-card pm-card-lift relative flex cursor-pointer items-center justify-between gap-3 rounded-[14px] p-3 transition-all sm:p-3.5 ${
                       isDropTarget
@@ -3874,17 +4038,11 @@ export const LibraryScreen: React.FC = () => {
                     }`}
                   >
                     <div className="flex min-w-0 flex-1 items-center gap-3">
-                      {thumb ? (
-                        <img
-                          src={thumb}
-                          alt={pl.name}
-                          className="h-13 w-13 shrink-0 rounded-[10px] object-cover shadow-sm"
-                        />
-                      ) : (
-                        <div className="pm-elevated flex h-13 w-13 shrink-0 items-center justify-center rounded-[10px] border pm-border text-sm font-bold pm-text-secondary">
-                          {pl.name.slice(0, 1).toUpperCase()}
-                        </div>
-                      )}
+                      <img
+                        src={thumb}
+                        alt={pl.name}
+                        className="h-13 w-13 shrink-0 rounded-[10px] object-cover shadow-sm"
+                      />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
                           <h3 className="truncate text-[15px] font-bold leading-tight pm-text-primary">
@@ -3898,6 +4056,7 @@ export const LibraryScreen: React.FC = () => {
                         </div>
                         <p className="mt-0.5 truncate text-xs pm-text-tertiary">
                           Playlist · {pl.tracks.length} {pl.tracks.length === 1 ? 'canción' : 'canciones'}
+                          {plDur ? ` · ${plDur}` : ''}
                         </p>
                       </div>
                     </div>
@@ -3924,92 +4083,14 @@ export const LibraryScreen: React.FC = () => {
                       <button
                         type="button"
                         aria-label={`Opciones de ${pl.name}`}
-                        aria-expanded={isMenuOpen}
-                        onClick={() => {
-                          setConfirmDeletePlId(null);
-                          setOpenPlMenuId(isMenuOpen ? null : pl.id);
+                        onClick={(e) => {
+                          const r = e.currentTarget.getBoundingClientRect();
+                          openPlaylistContextMenu('local', pl.id, r.right - 260, r.bottom + 8);
                         }}
                         className="pm-hover pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-tertiary hover:text-[var(--pm-text-primary)]"
                       >
                         <MoreHorizontal className="h-4 w-4" />
                       </button>
-
-                      {isMenuOpen && (
-                        <>
-                          <div
-                            aria-hidden="true"
-                            onClick={() => {
-                              setOpenPlMenuId(null);
-                              setConfirmDeletePlId(null);
-                            }}
-                            className="fixed inset-0 z-40"
-                          />
-                          <div
-                            role="menu"
-                            data-testid={`library-playlist-menu-${pl.id}`}
-                            className="pm-glass-liquid pm-menu-pop absolute right-0 top-10 z-50 w-52 rounded-[16px] p-1.5 shadow-2xl"
-                            style={{
-                              background:
-                                'color-mix(in srgb, var(--pm-bg-surface) 95%, transparent)',
-                            }}
-                          >
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() => {
-                                setOpenPlMenuId(null);
-                                openLocalPlaylistDetail(pl.id);
-                              }}
-                              className="pm-hover pm-text-primary flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-xs font-semibold"
-                            >
-                              <ListMusic className="h-4 w-4 pm-text-secondary" />
-                              <span>Abrir playlist</span>
-                            </button>
-
-                            <div className="my-1 border-t pm-border" />
-
-                            {isConfirmDelete ? (
-                              <div className="flex items-center justify-between gap-1.5 rounded-[10px] bg-rose-500/15 px-2.5 py-2">
-                                <span className="text-[11px] font-semibold text-rose-400">
-                                  ¿Borrar?
-                                </span>
-                                <div className="flex items-center gap-1">
-                                  <button
-                                    type="button"
-                                    aria-label={`Confirmar eliminar ${pl.name}`}
-                                    onClick={() => {
-                                      setOpenPlMenuId(null);
-                                      setConfirmDeletePlId(null);
-                                      void deletePlaylist(pl.id);
-                                    }}
-                                    className="pm-compact-btn rounded-full bg-rose-500 px-2.5 py-1 text-[11px] font-bold text-white"
-                                  >
-                                    Eliminar
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setConfirmDeletePlId(null)}
-                                    className="pm-compact-btn rounded-full bg-white/10 px-2 py-1 text-[11px] font-semibold"
-                                  >
-                                    No
-                                  </button>
-                                </div>
-                              </div>
-                            ) : (
-                              <button
-                                type="button"
-                                role="menuitem"
-                                aria-label={`Eliminar ${pl.name}`}
-                                onClick={() => setConfirmDeletePlId(pl.id)}
-                                className="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-xs font-semibold text-rose-400 hover:bg-rose-500/15"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                                <span>Eliminar playlist</span>
-                              </button>
-                            )}
-                          </div>
-                        </>
-                      )}
                     </div>
                   </article>
                 );

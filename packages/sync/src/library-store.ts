@@ -457,7 +457,16 @@ export class LibraryStore {
     patch: Partial<
       Pick<
         PlaylistRecord,
-        'name' | 'description' | 'coverUrl' | 'tracks' | 'shareCode' | 'isCollaborative' | 'isPublicLink'
+        | 'name'
+        | 'description'
+        | 'coverUrl'
+        | 'bannerUrl'
+        | 'bannerEnabled'
+        | 'coverStyleSeed'
+        | 'tracks'
+        | 'shareCode'
+        | 'isCollaborative'
+        | 'isPublicLink'
       >
     >
   ): Promise<PlaylistRecord | null> {
@@ -468,7 +477,10 @@ export class LibraryStore {
       ...current,
       ...(patch.name !== undefined ? { name: patch.name.trim() || current.name } : {}),
       ...(patch.description !== undefined ? { description: patch.description } : {}),
-      ...(patch.coverUrl !== undefined ? { coverUrl: patch.coverUrl } : {}),
+      ...(patch.coverUrl !== undefined ? { coverUrl: patch.coverUrl || undefined } : {}),
+      ...(patch.bannerUrl !== undefined ? { bannerUrl: patch.bannerUrl || undefined } : {}),
+      ...(patch.bannerEnabled !== undefined ? { bannerEnabled: patch.bannerEnabled } : {}),
+      ...(patch.coverStyleSeed !== undefined ? { coverStyleSeed: patch.coverStyleSeed } : {}),
       ...(patch.tracks !== undefined ? { tracks: patch.tracks.map(canonicalizeStoredTrack) } : {}),
       ...(patch.shareCode !== undefined ? { shareCode: patch.shareCode } : {}),
       ...(patch.isCollaborative !== undefined ? { isCollaborative: patch.isCollaborative } : {}),
@@ -495,7 +507,7 @@ export class LibraryStore {
     if (pl.tracks.some((t) => t.id === track.id)) return pl;
     return this.updatePlaylist(playlistId, {
       tracks: [...pl.tracks, track],
-      coverUrl: pl.coverUrl ?? track.thumbnailUrl,
+      coverUrl: pl.coverUrl || track.thumbnailUrl,
     });
   }
 
@@ -505,11 +517,16 @@ export class LibraryStore {
   ): Promise<PlaylistRecord | null> {
     const pl = this.playlists.find((p) => p.id === playlistId);
     if (!pl) return null;
+    const removed = pl.tracks.find((t) => t.id === trackId);
     const filtered = pl.tracks.filter((t) => t.id !== trackId);
     if (filtered.length === pl.tracks.length) return pl;
+    const keepCustomCover =
+      Boolean(pl.coverUrl) &&
+      (pl.coverUrl!.startsWith('data:') ||
+        (Boolean(removed?.thumbnailUrl) && pl.coverUrl !== removed!.thumbnailUrl));
     return this.updatePlaylist(playlistId, {
       tracks: filtered,
-      coverUrl: filtered[0]?.thumbnailUrl,
+      coverUrl: keepCustomCover ? pl.coverUrl : (filtered[0]?.thumbnailUrl ?? ''),
     });
   }
 

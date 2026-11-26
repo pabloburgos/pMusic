@@ -144,31 +144,33 @@ export const MobileFluidBackdropCanvas: React.FC<MobileFluidBackdropCanvasProps>
       const pair = getPrebakedMobileBackdrop(url);
       if (!pair) return;
 
+      const minDim = Math.max(1, Math.min(w, h));
+      const coverDim = Math.max(w, h) * 1.18;
       const [layerA, layerB] = pair;
       if (layerA) {
         ctx.save();
         ctx.globalAlpha = 0.64 * alpha;
-        const dx = Math.sin(t * 0.72) * w * 0.14;
-        const dy = Math.cos(t * 0.54) * h * 0.12;
-        const sc = 1.46 + Math.sin(t * 0.42) * 0.08;
+        const dx = Math.sin(t * 0.72) * minDim * 0.14;
+        const dy = Math.cos(t * 0.54) * minDim * 0.16;
+        const sc = 1.24 + Math.sin(t * 0.42) * 0.07;
         const rot = Math.sin(t * 0.34) * 0.18;
         ctx.translate(w * 0.5 + dx, h * 0.5 + dy);
         ctx.rotate(rot);
         ctx.scale(sc, sc);
-        ctx.drawImage(layerA, -w * 0.5, -h * 0.5, w, h);
+        ctx.drawImage(layerA, -coverDim * 0.5, -coverDim * 0.5, coverDim, coverDim);
         ctx.restore();
       }
       if (layerB) {
         ctx.save();
         ctx.globalAlpha = 0.42 * alpha;
-        const dx2 = Math.cos(t * 0.62) * w * 0.16;
-        const dy2 = Math.sin(t * 0.66) * h * 0.13;
-        const sc2 = 1.5 + Math.cos(t * 0.38) * 0.08;
+        const dx2 = Math.cos(t * 0.62) * minDim * 0.16;
+        const dy2 = Math.sin(t * 0.66) * minDim * 0.18;
+        const sc2 = 1.28 + Math.cos(t * 0.38) * 0.07;
         const rot2 = -Math.cos(t * 0.31) * 0.2;
         ctx.translate(w * 0.5 + dx2, h * 0.5 + dy2);
         ctx.rotate(rot2);
         ctx.scale(-sc2, sc2);
-        ctx.drawImage(layerB, -w * 0.5, -h * 0.5, w, h);
+        ctx.drawImage(layerB, -coverDim * 0.5, -coverDim * 0.5, coverDim, coverDim);
         ctx.restore();
       }
     };
@@ -184,7 +186,8 @@ export const MobileFluidBackdropCanvas: React.FC<MobileFluidBackdropCanvasProps>
 
       const w = canvas.width;
       const h = canvas.height;
-      const maxDim = Math.max(w, h);
+      const minDim = Math.max(1, Math.min(w, h));
+      const diagDim = Math.hypot(w, h);
 
       ctx.globalAlpha = 1;
       ctx.fillStyle = '#09090d';
@@ -218,23 +221,23 @@ export const MobileFluidBackdropCanvas: React.FC<MobileFluidBackdropCanvasProps>
         alpha: number;
       }> = [
         {
-          cx: w * (0.24 + Math.sin(t * 0.62) * 0.16),
-          cy: h * (0.22 + Math.cos(t * 0.49) * 0.14),
-          rad: maxDim * 0.72,
+          cx: w * 0.34 + Math.sin(t * 0.62) * minDim * 0.24,
+          cy: h * 0.24 + Math.cos(t * 0.49) * minDim * 0.22,
+          rad: diagDim * 0.56,
           rgb: c1,
           alpha: 0.42,
         },
         {
-          cx: w * (0.78 + Math.cos(t * 0.51) * 0.15),
-          cy: h * (0.76 + Math.sin(t * 0.43) * 0.14),
-          rad: maxDim * 0.76,
+          cx: w * 0.68 + Math.cos(t * 0.51) * minDim * 0.24,
+          cy: h * 0.74 + Math.sin(t * 0.43) * minDim * 0.22,
+          rad: diagDim * 0.6,
           rgb: c2,
           alpha: 0.46,
         },
         {
-          cx: w * (0.45 + Math.sin(t * 0.37) * 0.18),
-          cy: h * (0.48 + Math.cos(t * 0.33) * 0.16),
-          rad: maxDim * 0.65,
+          cx: w * 0.5 + Math.sin(t * 0.37) * minDim * 0.22,
+          cy: h * 0.49 + Math.cos(t * 0.33) * minDim * 0.22,
+          rad: diagDim * 0.5,
           rgb: c3,
           alpha: 0.34,
         },

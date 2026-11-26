@@ -564,6 +564,28 @@ export async function inviteMemberToSharedPlaylist(
   return data ? mapSharedPlaylistRow(data) : { ...playlist, memberIds: nextMembers };
 }
 
+export async function deleteOrLeaveSharedPlaylist(
+  client: SupabaseClient,
+  playlist: SharedPlaylistRecord,
+  myUserId: string
+): Promise<'deleted' | 'left'> {
+  if (playlist.ownerId === myUserId) {
+    const { error } = await client
+      .from('shared_playlists')
+      .delete()
+      .eq('id', playlist.id);
+    if (error) throw new Error(formatSocialError(error, 'No se pudo eliminar la playlist'));
+    return 'deleted';
+  }
+  const nextMembers = playlist.memberIds.filter((id) => id !== myUserId);
+  const { error } = await client
+    .from('shared_playlists')
+    .update({ member_ids: nextMembers })
+    .eq('id', playlist.id);
+  if (error) throw new Error(formatSocialError(error, 'No se pudo salir de la playlist'));
+  return 'left';
+}
+
 export function computeBlendScoreAndTracks(
   myTracks: Track[],
   friendLabel: string

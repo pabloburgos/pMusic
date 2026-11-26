@@ -38,11 +38,23 @@ export const MarqueeText: React.FC<MarqueeTextProps> = ({
     const measure = () => {
       const cw = container.clientWidth;
       const tw = track.scrollWidth;
+      if (cw <= 0) {
+        setOverflowPx(0);
+        return;
+      }
       const diff = Math.ceil(tw - cw);
-      setOverflowPx(diff > 3 ? diff : 0);
+      setOverflowPx(diff > 2 ? diff : 0);
     };
 
     measure();
+    const rafId =
+      typeof requestAnimationFrame === 'function' ? requestAnimationFrame(measure) : 0;
+    let cancelled = false;
+    if (typeof document !== 'undefined' && document.fonts?.ready) {
+      void document.fonts.ready.then(() => {
+        if (!cancelled) measure();
+      });
+    }
 
     let ro: ResizeObserver | null = null;
     if (typeof ResizeObserver !== 'undefined') {
@@ -54,6 +66,10 @@ export const MarqueeText: React.FC<MarqueeTextProps> = ({
     }
 
     return () => {
+      cancelled = true;
+      if (rafId && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(rafId);
+      }
       if (ro) {
         ro.disconnect();
       } else if (typeof window !== 'undefined') {
@@ -62,7 +78,7 @@ export const MarqueeText: React.FC<MarqueeTextProps> = ({
     };
   }, [children, disabled]);
 
-  const active = !disabled && overflowPx > 3;
+  const active = !disabled && overflowPx > 2;
   const oneWaySec = Math.max(2.2, overflowPx / Math.max(12, speedPxPerSec));
   const durationSec = Math.min(20, Math.max(7, oneWaySec * 2 + 3.8));
 
@@ -78,7 +94,11 @@ export const MarqueeText: React.FC<MarqueeTextProps> = ({
       <div
         ref={trackRef}
         className={`pm-marquee-track ${
-          active ? 'pm-marquee-animating inline-flex w-max whitespace-nowrap' : 'block max-w-full truncate'
+          disabled
+            ? 'block max-w-full truncate'
+            : active
+              ? 'pm-marquee-animating inline-flex w-max whitespace-nowrap'
+              : 'inline-flex w-max whitespace-nowrap'
         } ${trackClassName}`}
         style={
           active

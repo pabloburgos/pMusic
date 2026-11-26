@@ -3463,3 +3463,68 @@ html.pm-app-hidden .pm-overlay-scrollbar-track {
   transform-origin: left center;
   animation: pmWrappedBarGrow 760ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
+
+/* ── Liquid-Fill Heart Animation ── */
+@keyframes pmusic-liquid-wave {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(-24px, 0, 0);
+  }
+}
+
+@keyframes pmusic-heart-liquid-pop {
+  0% {
+    transform: scale(1);
+  }
+  38% {
+    transform: scale(0.92);
+  }
+  68% {
+    transform: scale(1.2);
+  }
+  86% {
+    transform: scale(0.96);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.pm-liquid-rise {
+  transition: transform 520ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+.pm-liquid-wave-path {
+  will-change: transform;
+}
+
+.pm-liquid-wave-path.pm-liquid-wave-active {
+  animation: pmusic-liquid-wave 1.15s linear infinite;
+}
+
+.pm-heart-liquid-pop {
+  transform-origin: center;
+  animation: pmusic-heart-liquid-pop 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+html.pm-reduced-motion .pm-liquid-rise {
+  transition: none !important;
+}
+
+html.pm-reduced-motion .pm-liquid-wave-path.pm-liquid-wave-active,
+html.pm-reduced-motion .pm-heart-liquid-pop {
+  animation: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pm-liquid-rise {
+    transition: none !important;
+  }
+  .pm-liquid-wave-path.pm-liquid-wave-active,
+  .pm-heart-liquid-pop {
+    animation: none !important;
+  }
+}

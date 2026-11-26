@@ -1677,67 +1677,139 @@ export class SyncEngine implements ISyncEngine {
     };
   }
 
+  private buildCompactAuthPrefs(prefs: Record<string, unknown>): Record<string, unknown> {
+    const compact: Record<string, unknown> = { ...prefs };
+    delete compact.tasteProfile;
+    if (compact.playlistAppearances && typeof compact.playlistAppearances === 'object') {
+      const cleanedAppearances: Record<string, unknown> = {};
+      for (const [k, rawVal] of Object.entries(
+        compact.playlistAppearances as Record<string, unknown>
+      )) {
+        if (!rawVal || typeof rawVal !== 'object') continue;
+        const entry = { ...(rawVal as Record<string, unknown>) };
+        if (typeof entry.coverUrl === 'string' && entry.coverUrl.startsWith('data:')) {
+          delete entry.coverUrl;
+        }
+        if (typeof entry.bannerUrl === 'string' && entry.bannerUrl.startsWith('data:')) {
+          delete entry.bannerUrl;
+        }
+        cleanedAppearances[k] = entry;
+      }
+      compact.playlistAppearances = cleanedAppearances;
+    }
+    if (Array.isArray(compact.favoriteArtists)) {
+      compact.favoriteArtists = (compact.favoriteArtists as Array<Record<string, unknown>>)
+        .slice(0, 60)
+        .map((a) => ({
+          artistId: a.artistId,
+          artistName: a.artistName,
+          likedAt: a.likedAt,
+          ...(typeof a.thumbnailUrl === 'string' && !a.thumbnailUrl.startsWith('data:')
+            ? { thumbnailUrl: a.thumbnailUrl }
+            : {}),
+        }));
+    }
+    return compact;
+  }
+
   public async saveAccountPreferences(prefs: Record<string, unknown>): Promise<void> {
     if (!this.supabaseBackend || !this.authState.connected || !this.authState.userId) return;
+    const nowMs = Date.now();
+    const stampedPrefs: Record<string, unknown> = {
+      ...prefs,
+      savedAt: typeof prefs.savedAt === 'number' ? prefs.savedAt : nowMs,
+    };
     const nowIso = new Date().toISOString();
+    let tableOk = false;
     try {
       const { error } = await this.supabaseBackend.client.from('user_preferences').upsert(
         {
           user_id: this.authState.userId,
-          prefs,
+          prefs: stampedPrefs,
           updated_at: nowIso,
         },
         { onConflict: 'user_id' }
       );
-      if (!error) return;
+      if (!error) tableOk = true;
     } catch {
       // fall through to auth metadata fallback if table isn't created yet
     }
-    try {
-      await this.supabaseBackend.client.auth.updateUser({
-        data: {
-          pmusic_prefs: prefs,
-          pmusic_prefs_updated_at: Date.now(),
-        },
-      });
-    } catch {
-      // ignore transient network errors
+    if (!tableOk) {
+      try {
+        await this.supabaseBackend.client.auth.updateUser({
+          data: {
+            pmusic_prefs: this.buildCompactAuthPrefs(stampedPrefs),
+            pmusic_prefs_updated_at: Number(stampedPrefs.savedAt ?? nowMs),
+          },
+        });
+      } catch {
+        // ignore transient network errors
+      }
     }
   }
 
   public async loadAccountPreferences(): Promise<Record<string, unknown> | null> {
     if (!this.supabaseBackend || !this.authState.connected || !this.authState.userId) return null;
+    let tablePrefs: Record<string, unknown> | null = null;
     try {
       const { data: tableRow, error } = await this.supabaseBackend.client
         .from('user_preferences')
-        .select('prefs')
+        .select('prefs,updated_at')
         .eq('user_id', this.authState.userId)
         .maybeSingle();
       if (!error && tableRow?.prefs && typeof tableRow.prefs === 'object') {
-        return tableRow.prefs as Record<string, unknown>;
+        const raw = tableRow.prefs as Record<string, unknown>;
+        const fallbackTs = tableRow.updated_at ? Date.parse(String(tableRow.updated_at)) : 0;
+        tablePrefs = {
+          ...raw,
+          savedAt: typeof raw.savedAt === 'number' ? raw.savedAt : Number.isFinite(fallbackTs) ? fallbackTs : 0,
+        };
       }
     } catch {
       // fallback to metadata
     }
+    let metaPrefs: Record<string, unknown> | null = null;
     try {
       const { data } = await this.supabaseBackend.client.auth.getUser();
       const meta = data?.user?.user_metadata as Record<string, unknown> | undefined;
       if (meta?.pmusic_prefs && typeof meta.pmusic_prefs === 'object') {
-        const legacyPrefs = meta.pmusic_prefs as Record<string, unknown>;
-        void this.saveAccountPreferences(legacyPrefs);
-        return legacyPrefs;
-      }
-      const { data: sessionData } = await this.supabaseBackend.client.auth.getSession();
-      const sessMeta = sessionData?.session?.user?.user_metadata as Record<string, unknown> | undefined;
-      if (sessMeta?.pmusic_prefs && typeof sessMeta.pmusic_prefs === 'object') {
-        const legacyPrefs = sessMeta.pmusic_prefs as Record<string, unknown>;
-        void this.saveAccountPreferences(legacyPrefs);
-        return legacyPrefs;
+        const raw = meta.pmusic_prefs as Record<string, unknown>;
+        metaPrefs = {
+          ...raw,
+          savedAt:
+            typeof raw.savedAt === 'number'
+              ? raw.savedAt
+              : Number(meta.pmusic_prefs_updated_at ?? 0),
+        };
+      } else {
+        const { data: sessionData } = await this.supabaseBackend.client.auth.getSession();
+        const sessMeta = sessionData?.session?.user?.user_metadata as
+          | Record<string, unknown>
+          | undefined;
+        if (sessMeta?.pmusic_prefs && typeof sessMeta.pmusic_prefs === 'object') {
+          const raw = sessMeta.pmusic_prefs as Record<string, unknown>;
+          metaPrefs = {
+            ...raw,
+            savedAt:
+              typeof raw.savedAt === 'number'
+                ? raw.savedAt
+                : Number(sessMeta.pmusic_prefs_updated_at ?? 0),
+          };
+        }
       }
     } catch {
       // ignore offline read errors
     }
-    return null;
+    if (tablePrefs && metaPrefs) {
+      const tableTs = Number(tablePrefs.savedAt ?? 0);
+      const metaTs = Number(metaPrefs.savedAt ?? 0);
+      return metaTs > tableTs ? { ...tablePrefs, ...metaPrefs } : tablePrefs;
+    }
+    if (metaPrefs && !tablePrefs) {
+      void this.saveAccountPreferences(metaPrefs);
+      return metaPrefs;
+    }
+    return tablePrefs;
   }
 
   public async listFavoriteArtists(): Promise<FavoriteArtistRecord[]> {
