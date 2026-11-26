@@ -20,6 +20,7 @@ export const DETAIL_PERSIST_MAX_ENTRIES = 20;
 export const DETAIL_PERSIST_READ_TTL_MS = 24 * 60 * 60_000;
 export const DETAIL_STALE_REFRESH_MS = 20 * 60_000;
 export const DESCUBRE_RESCAN_INTERVAL_MS = 6 * 60 * 60_000;
+export const DESCUBRE_ALGO_VERSION = 2;
 
 export function getLocalDayKey(ms: number = Date.now()): string {
   const d = new Date(ms);
@@ -59,6 +60,7 @@ export interface SyncedEditorialMixesState {
   descubre: {
     lastScanAt: number;
     lastScanDay: string;
+    algoVersion?: number;
     tracks: CompactSyncedTrack[];
   };
   dailyMix: SyncedDailyMixEntry | null;
@@ -119,11 +121,13 @@ export function mergeIncrementalDescubrePool(
   existingTracks: readonly CompactSyncedTrack[],
   incomingTracks: readonly (Track | CompactSyncedTrack)[],
   nowDate: Date = new Date(),
-  favoriteArtistNames: readonly string[] = []
+  favoriteArtistNames: readonly string[] = [],
+  libraryArtistNames: readonly string[] = []
 ): CompactSyncedTrack[] {
   const todayIso = getLocalDayKey(nowDate.getTime());
   const cutoff15Iso = getRollingDaysAgoIso(15, nowDate);
   const favSet = new Set(favoriteArtistNames.map((n) => normalizeSearchText(n)).filter(Boolean));
+  const libSet = new Set(libraryArtistNames.map((n) => normalizeSearchText(n)).filter(Boolean));
 
   const pool = new Map<string, CompactSyncedTrack>();
   const sigToId = new Map<string, string>();
@@ -184,10 +188,16 @@ export function mergeIncrementalDescubrePool(
   for (const item of existingTracks) consider(item);
   for (const item of incomingTracks) consider(item);
 
+  const artistTier = (artists: CompactSyncedTrack['artists']): number => {
+    const norms = normArtistNames(artists);
+    if (norms.some((n) => favSet.has(n))) return 2;
+    if (norms.some((n) => libSet.has(n))) return 1;
+    return 0;
+  };
+
   const ranked = Array.from(pool.values()).sort((a, b) => {
-    const aFav = normArtistNames(a.artists).some((n) => favSet.has(n)) ? 1 : 0;
-    const bFav = normArtistNames(b.artists).some((n) => favSet.has(n)) ? 1 : 0;
-    if (bFav !== aFav) return bFav - aFav;
+    const diffTier = artistTier(b.artists) - artistTier(a.artists);
+    if (diffTier !== 0) return diffTier;
     const cmpDate = (b.releaseDate ?? b.addedAtDay ?? '').localeCompare(
       a.releaseDate ?? a.addedAtDay ?? ''
     );
@@ -334,22 +344,36 @@ export function mergeCloudEditorialMixes(
   localState: SyncedEditorialMixesState | null | undefined,
   cloudRaw: unknown,
   nowDate: Date = new Date(),
-  favoriteArtistNames: readonly string[] = []
+  favoriteArtistNames: readonly string[] = [],
+  libraryArtistNames: readonly string[] = []
 ): SyncedEditorialMixesState | null {
   if (!cloudRaw || typeof cloudRaw !== 'object') return localState ?? null;
   const cloud = cloudRaw as Partial<SyncedEditorialMixesState>;
   const todayKey = getLocalDayKey(nowDate.getTime());
 
+  const localAlgo = localState?.descubre?.algoVersion ?? 1;
+  const cloudAlgo = cloud.descubre?.algoVersion ?? 1;
+  const localTracks = localAlgo >= cloudAlgo ? localState?.descubre?.tracks ?? [] : [];
+  const cloudTracks = cloudAlgo >= localAlgo ? cloud.descubre?.tracks ?? [] : [];
+
   const mergedDescubreTracks = mergeIncrementalDescubrePool(
-    localState?.descubre?.tracks ?? [],
-    cloud.descubre?.tracks ?? [],
+    localTracks,
+    cloudTracks,
     nowDate,
-    favoriteArtistNames
+    favoriteArtistNames,
+    libraryArtistNames
   );
-  const lastScanAt = Math.max(
-    localState?.descubre?.lastScanAt ?? 0,
-    typeof cloud.descubre?.lastScanAt === 'number' ? cloud.descubre.lastScanAt : 0
-  );
+  const lastScanAt =
+    localAlgo !== cloudAlgo
+      ? localAlgo > cloudAlgo
+        ? localState?.descubre?.lastScanAt ?? 0
+        : typeof cloud.descubre?.lastScanAt === 'number'
+          ? cloud.descubre.lastScanAt
+          : 0
+      : Math.max(
+          localState?.descubre?.lastScanAt ?? 0,
+          typeof cloud.descubre?.lastScanAt === 'number' ? cloud.descubre.lastScanAt : 0
+        );
   const lastScanDay =
     (localState?.descubre?.lastScanDay ?? '') >= (cloud.descubre?.lastScanDay ?? '')
       ? localState?.descubre?.lastScanDay || cloud.descubre?.lastScanDay || todayKey
@@ -369,6 +393,7 @@ export function mergeCloudEditorialMixes(
     descubre: {
       lastScanAt,
       lastScanDay,
+      algoVersion: Math.max(localAlgo, cloudAlgo),
       tracks: mergedDescubreTracks,
     },
     dailyMix,

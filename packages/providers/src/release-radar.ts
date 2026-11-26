@@ -2,13 +2,14 @@ import { normalizeSearchText, type ExternalReleaseCandidate, type Track } from '
 
 export const SPOTIFY_RELEASE_RADAR_PLAYLISTS: ReadonlyArray<{
   id: string;
-  source: 'spotify_novedades_es' | 'spotify_pegao' | 'spotify_nmf';
+  source: 'spotify_novedades_es' | 'spotify_novedades_latin' | 'spotify_pegao' | 'spotify_nmf';
   priority: number;
   stampEstimatedFridayDate: boolean;
 }> = [
   { id: '37i9dQZF1DX6PYajiT4pAf', source: 'spotify_novedades_es', priority: 95, stampEstimatedFridayDate: true },
-  { id: '37i9dQZF1DX1HCSfq0nSal', source: 'spotify_pegao', priority: 85, stampEstimatedFridayDate: false },
-  { id: '37i9dQZF1DX4JAvHpjipBk', source: 'spotify_nmf', priority: 75, stampEstimatedFridayDate: true },
+  { id: '37i9dQZF1DX10zKzsJ2jva', source: 'spotify_novedades_latin', priority: 92, stampEstimatedFridayDate: true },
+  { id: '37i9dQZF1DX1HCSfq0nSal', source: 'spotify_pegao', priority: 86, stampEstimatedFridayDate: false },
+  { id: '37i9dQZF1DX4JAvHpjipBk', source: 'spotify_nmf', priority: 60, stampEstimatedFridayDate: true },
 ];
 
 export const APPLE_MUSIC_ES_SONGS_URL =
@@ -139,7 +140,7 @@ export function parseLaHigueraNovedadesHtml(
 
 export function parseSpotifyEmbedPlaylistHtml(
   html: string,
-  source: 'spotify_novedades_es' | 'spotify_pegao' | 'spotify_nmf',
+  source: 'spotify_novedades_es' | 'spotify_novedades_latin' | 'spotify_pegao' | 'spotify_nmf',
   estimatedReleaseDate?: string
 ): ExternalReleaseCandidate[] {
   if (!html) return [];
@@ -155,7 +156,13 @@ export function parseSpotifyEmbedPlaylistHtml(
   if (!Array.isArray(trackList)) return [];
 
   const priority =
-    source === 'spotify_novedades_es' ? 95 : source === 'spotify_pegao' ? 85 : 75;
+    source === 'spotify_novedades_es'
+      ? 95
+      : source === 'spotify_novedades_latin'
+        ? 92
+        : source === 'spotify_pegao'
+          ? 86
+          : 60;
   const out: ExternalReleaseCandidate[] = [];
   for (const item of trackList) {
     const title = decodeHtmlEntities(String(item?.title ?? ''));
@@ -395,7 +402,7 @@ export async function fetchExternalReleaseRadar(
     }
     const rwTracks = Array.isArray(radarWeeklyData?.data) ? radarWeeklyData.data : [];
     for (const rawT of rwTracks.slice(0, 60)) {
-      const cand = deezerRawToCandidate(rawT, 'deezer_radar_weekly', 78, fridayIso);
+      const cand = deezerRawToCandidate(rawT, 'deezer_radar_weekly', 55, fridayIso);
       if (cand) out.push(cand);
     }
     return out;

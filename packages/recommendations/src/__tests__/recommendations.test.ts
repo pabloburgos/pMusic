@@ -828,4 +828,206 @@ describe('@pmusic/recommendations', () => {
     expect(dln?.tracks.length).toBe(50);
     expect(dln?.tracks[0]?.title).toBe('SOY MEJOR 2.0');
   });
+
+  it('discovers rotating playlist artists (Anmi - SECRETNOVIO), resolves short pegao titles (Jhayco - X), and filters off-genre global pop', async () => {
+    const now = new Date();
+    const pad2 = (n: number) => String(n).padStart(2, '0');
+    const todayIso = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+
+    const topArtists = [
+      'Bad Bunny',
+      'Feid',
+      'Quevedo',
+      'Cruz Cafune',
+      'Saiko',
+      'Rels B',
+      'Morad',
+      'Mora',
+      'Myke Towers',
+      'Jhayco',
+    ];
+    const ownedTracks = [
+      ...topArtists.flatMap((name, idx) =>
+        Array.from({ length: 2 }, (_, copy) => ({
+          id: `lib_${idx}_${copy}`,
+          title: `${name} Hit ${copy}`,
+          artists: [{ id: `ar_${idx}`, name }],
+          durationSec: 180,
+          thumbnailUrl: 'https://example.com/lib.jpg',
+          source: 'ytmusic' as const,
+          releaseYear: 2024,
+        }))
+      ),
+      {
+        id: 'lib_anmi_1',
+        title: 'Anmi Old Track',
+        artists: [{ id: 'ar_anmi', name: 'Anmi' }],
+        durationSec: 175,
+        thumbnailUrl: 'https://example.com/anmi.jpg',
+        source: 'ytmusic' as const,
+        releaseYear: 2024,
+      },
+    ];
+
+    const latinRadarItems = Array.from({ length: 20 }, (_, i) => ({
+      title: `Latin Drop ${i + 1}`,
+      artists: [`Latin Artist ${i + 1}`],
+      releaseDate: todayIso,
+      kind: 'track' as const,
+      source: 'spotify_novedades_latin' as const,
+      priority: 92,
+      track: {
+        id: `sp_lat_${i}`,
+        title: `Latin Drop ${i + 1}`,
+        artists: [{ id: `lat_ar_${i}`, name: `Latin Artist ${i + 1}` }],
+        durationSec: 190,
+        thumbnailUrl: 'https://example.com/lat.jpg',
+        source: 'ytmusic' as const,
+        releaseYear: now.getFullYear(),
+        releaseDate: todayIso,
+      },
+    }));
+
+    const radarItems = [
+      {
+        title: 'X',
+        artists: ['Jhayco'],
+        kind: 'track' as const,
+        source: 'spotify_pegao' as const,
+        priority: 86,
+      },
+      {
+        title: 'Bluebird Pop',
+        artists: ['Lana Del Rey'],
+        releaseDate: todayIso,
+        kind: 'track' as const,
+        source: 'deezer_radar_weekly' as const,
+        priority: 55,
+        track: {
+          id: 'dz_lana_offgenre',
+          title: 'Bluebird Pop',
+          artists: [{ id: 'ar_lana', name: 'Lana Del Rey' }],
+          durationSec: 210,
+          thumbnailUrl: 'https://example.com/lana.jpg',
+          source: 'ytmusic' as const,
+          releaseYear: now.getFullYear(),
+          releaseDate: todayIso,
+        },
+      },
+      {
+        title: 'Global Dance Single',
+        artists: ['Dua Lipa'],
+        releaseDate: todayIso,
+        kind: 'track' as const,
+        source: 'spotify_nmf' as const,
+        priority: 60,
+        track: {
+          id: 'sp_dua_offgenre',
+          title: 'Global Dance Single',
+          artists: [{ id: 'ar_dua', name: 'Dua Lipa' }],
+          durationSec: 200,
+          thumbnailUrl: 'https://example.com/dua.jpg',
+          source: 'ytmusic' as const,
+          releaseYear: now.getFullYear(),
+          releaseDate: todayIso,
+        },
+      },
+      ...latinRadarItems,
+    ];
+
+    const mockProvider = {
+      search: async (query: string) => {
+        if (query.toLowerCase().includes('jhayco') && query.toLowerCase().includes('x')) {
+          return {
+            query,
+            songs: [
+              {
+                id: 'yt_jhayco_x',
+                title: 'X (Official Video)',
+                artists: [{ id: 'ar_jhayco', name: 'Jhayco' }],
+                durationSec: 195,
+                thumbnailUrl: 'https://example.com/x.jpg',
+                source: 'ytmusic' as const,
+                releaseYear: now.getFullYear(),
+                releaseDate: todayIso,
+              },
+            ],
+            videos: [],
+            artists: [],
+            albums: [],
+            playlists: [],
+          };
+        }
+        return { query, songs: [], videos: [], artists: [], albums: [], playlists: [] };
+      },
+      getHomeFeed: async () => ({ shelves: [], moods: [] }),
+      getUpNext: async () => [],
+      getRelated: async () => ({ tracks: [], artists: [], playlists: [] }),
+      getArtist: async (idOrName: string) => ({
+        artist: { id: idOrName, name: idOrName, thumbnailUrl: 'https://example.com/a.jpg' },
+        topSongs: [],
+        appearances: [],
+        albums: [],
+        singles:
+          idOrName === 'Anmi' || idOrName === 'ar_anmi'
+            ? [
+                {
+                  id: 'alb_anmi_secretnovio',
+                  title: 'SECRETNOVIO',
+                  artists: [{ id: 'ar_anmi', name: 'Anmi' }],
+                  year: now.getFullYear(),
+                  releaseDate: todayIso,
+                  thumbnailUrl: 'https://example.com/sn.jpg',
+                  type: 'Single' as const,
+                },
+              ]
+            : [],
+        relatedArtists: [],
+      }),
+      getAlbum: async (albumId: string) =>
+        albumId === 'alb_anmi_secretnovio'
+          ? {
+              album: {
+                id: 'alb_anmi_secretnovio',
+                title: 'SECRETNOVIO',
+                artists: [{ id: 'ar_anmi', name: 'Anmi' }],
+                year: now.getFullYear(),
+                releaseDate: todayIso,
+                thumbnailUrl: 'https://example.com/sn.jpg',
+                type: 'Single' as const,
+              },
+              tracks: [
+                {
+                  id: 'yt_anmi_secretnovio',
+                  title: 'SECRETNOVIO',
+                  artists: [{ id: 'ar_anmi', name: 'Anmi' }],
+                  durationSec: 170,
+                  thumbnailUrl: 'https://example.com/sn.jpg',
+                  source: 'ytmusic' as const,
+                  releaseYear: now.getFullYear(),
+                  releaseDate: todayIso,
+                },
+              ],
+            }
+          : {
+              album: { id: albumId, title: albumId, artists: [], thumbnailUrl: '' },
+              tracks: [],
+            },
+      getReleaseRadar: async () => radarItems,
+    };
+
+    const engine = new RecommendationEngine({ musicProvider: mockProvider as any });
+    engine.setUserLibraryContext({ libraryTracks: ownedTracks });
+    const shelves = await engine.buildHomeShelves();
+    const dln = shelves
+      .find((s) => s.kind === 'mixes_for_you')
+      ?.mixes?.find((m) => m.id === 'mix_descubre_lo_nuevo');
+
+    const titles = (dln?.tracks ?? []).map((t) => t.title);
+    const ids = new Set((dln?.tracks ?? []).map((t) => t.id));
+    expect(titles).toContain('SECRETNOVIO');
+    expect(titles).toContain('X (Official Video)');
+    expect(ids.has('dz_lana_offgenre')).toBe(false);
+    expect(ids.has('sp_dua_offgenre')).toBe(false);
+  });
 });

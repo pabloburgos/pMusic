@@ -20,6 +20,7 @@ import {
 } from '../utils/cover-color.ts';
 import { optimizeArtworkUrl } from '../utils/image-opt.ts';
 import {
+  DESCUBRE_ALGO_VERSION,
   evolveDailyPlaylistForNewDay,
   getLocalDayKey,
   getRollingDaysAgoIso,
@@ -776,5 +777,95 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
     expect(usePMusicStore.getState().isTransitioning).toBe(false);
     expect(usePMusicStore.getState().outgoingTransitionTrack).toBeNull();
     expect(usePMusicStore.getState().incomingTransitionTrack).toBeNull();
+  });
+
+  it('v0.23.12 auto-purges stale v1 Descubre cloud caches, ranks library artists higher, restores NowPlaying Play morph CSS, and uses multi-directional Pintura drift', () => {
+    const todayIso = getLocalDayKey();
+    const v2Local = {
+      version: 1 as const,
+      ownerUserId: 'usr-1',
+      updatedAt: 200,
+      descubre: {
+        lastScanAt: 200,
+        lastScanDay: todayIso,
+        algoVersion: DESCUBRE_ALGO_VERSION,
+        tracks: [
+          toCompactSyncedTrack(
+            {
+              ...makeTrack(901),
+              id: 'clean_jhayco',
+              title: 'X',
+              artists: [{ id: 'ar-jhayco', name: 'Jhayco' }],
+              releaseDate: todayIso,
+            },
+            todayIso
+          ),
+        ],
+      },
+      dailyMix: null,
+      dailyDiscover: null,
+    };
+    const v1Cloud = {
+      version: 1 as const,
+      ownerUserId: 'usr-1',
+      updatedAt: 300,
+      descubre: {
+        lastScanAt: 300,
+        lastScanDay: todayIso,
+        tracks: [
+          toCompactSyncedTrack(
+            {
+              ...makeTrack(902),
+              id: 'stale_lana',
+              title: 'Off-Genre Pop',
+              artists: [{ id: 'ar-lana', name: 'Lana Del Rey' }],
+              releaseDate: todayIso,
+            },
+            todayIso
+          ),
+        ],
+      },
+      dailyMix: null,
+      dailyDiscover: null,
+    };
+
+    const keptV2 = mergeCloudEditorialMixes(v2Local, v1Cloud, new Date(), [], ['Anmi', 'Jhayco']);
+    expect(keptV2?.descubre.algoVersion).toBe(DESCUBRE_ALGO_VERSION);
+    expect(keptV2?.descubre.tracks.map((t) => t.id)).toEqual(['clean_jhayco']);
+
+    const upgradedToV2 = mergeCloudEditorialMixes(v1Cloud, v2Local, new Date(), [], ['Anmi', 'Jhayco']);
+    expect(upgradedToV2?.descubre.algoVersion).toBe(DESCUBRE_ALGO_VERSION);
+    expect(upgradedToV2?.descubre.tracks.map((t) => t.id)).toEqual(['clean_jhayco']);
+
+    const ranked = mergeIncrementalDescubrePool(
+      [],
+      [
+        {
+          ...makeTrack(903),
+          id: 'editorial_other',
+          title: 'Other',
+          artists: [{ name: 'Random Editorial' }],
+          releaseDate: todayIso,
+        },
+        {
+          ...makeTrack(904),
+          id: 'lib_anmi',
+          title: 'SECRETNOVIO',
+          artists: [{ name: 'Anmi' }],
+          releaseDate: todayIso,
+        },
+      ],
+      new Date(),
+      [],
+      ['Anmi']
+    );
+    expect(ranked[0]?.id).toBe('lib_anmi');
+
+    const exoticSrc = readFileSync(resolve(__dirname, '../components/ExoticBackdropCanvas.tsx'), 'utf-8');
+    expect(exoticSrc).toContain('driftQ');
+    expect(exoticSrc).toContain('driftR');
+
+    const cssSrc = readFileSync(resolve(__dirname, '../styles/index.css'), 'utf-8');
+    expect(cssSrc).not.toContain('h1, button, svg');
   });
 });

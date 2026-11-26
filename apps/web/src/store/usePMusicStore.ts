@@ -6,6 +6,7 @@ import {
   saveOfflineCover,
 } from '../utils/offline-covers.ts';
 import {
+  DESCUBRE_ALGO_VERSION,
   DESCUBRE_RESCAN_INTERVAL_MS,
   DETAIL_STALE_REFRESH_MS,
   applySyncedMixesToShelves,
@@ -2783,6 +2784,30 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   let activeEditorialMixesState: SyncedEditorialMixesState | null = null;
 
+  function collectLibraryArtistNames(): string[] {
+    const state = get();
+    const seen = new Set<string>();
+    const out: string[] = [];
+    const pushArtist = (name?: string) => {
+      const trimmed = (name ?? '').trim();
+      if (!trimmed) return;
+      const key = trimmed.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(trimmed);
+    };
+    for (const fa of state.favoriteArtists) pushArtist(fa.artistName);
+    for (const entry of state.likedTracks) {
+      for (const a of entry.track.artists) pushArtist(a.name);
+    }
+    for (const pl of state.playlists) {
+      for (const t of pl.tracks) {
+        for (const a of t.artists) pushArtist(a.name);
+      }
+    }
+    return out;
+  }
+
   function syncEditorialMixesFromShelves(
     shelves: HomeEditorialShelf[],
     ownerKey: string | null,
@@ -2790,17 +2815,23 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   ): HomeEditorialShelf[] {
     const todayKey = getLocalDayKey();
     const favNames = get().favoriteArtists.map((fa) => fa.artistName);
+    const libArtistNames = collectLibraryArtistNames();
     const mixes = shelves.flatMap((s) => s.mixes ?? []);
     const dlnMix = mixes.find((m) => m.id === 'mix_descubre_lo_nuevo');
     const dmMix = mixes.find((m) => m.id === 'mix_daily_mix');
     const ddMix = mixes.find((m) => m.id === 'mix_daily_discover');
 
     const prev = opts?.forceReset ? null : activeEditorialMixesState ?? readSyncedEditorialMixes(ownerKey);
+    const prevIsStaleAlgo = (prev?.descubre?.algoVersion ?? 1) < DESCUBRE_ALGO_VERSION;
+    const incomingDescubreTracks = dlnMix?.tracks ?? [];
+    const baseExistingDescubre =
+      prevIsStaleAlgo && incomingDescubreTracks.length > 0 ? [] : prev?.descubre?.tracks ?? [];
     const nextDescubreTracks = mergeIncrementalDescubrePool(
-      prev?.descubre?.tracks ?? [],
-      dlnMix?.tracks ?? [],
+      baseExistingDescubre,
+      incomingDescubreTracks,
       new Date(),
-      favNames
+      favNames,
+      libArtistNames
     );
     const prevDm = prev?.dailyMix;
     const prevDd = prev?.dailyDiscover;
@@ -2819,6 +2850,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       descubre: {
         lastScanAt: opts?.markDescubreScan ? nowMs : prev?.descubre?.lastScanAt ?? nowMs,
         lastScanDay: opts?.markDescubreScan ? todayKey : prev?.descubre?.lastScanDay ?? todayKey,
+        algoVersion: DESCUBRE_ALGO_VERSION,
         tracks:
           nextDescubreTracks.length > 0
             ? nextDescubreTracks
@@ -2842,7 +2874,14 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
     const prevIds = prev.descubre.tracks.map((t) => t.id).join('|');
     const favNames = get().favoriteArtists.map((fa) => fa.artistName);
-    const mergedTracks = mergeIncrementalDescubrePool(prev.descubre.tracks, freshOnes, new Date(), favNames);
+    const libArtistNames = collectLibraryArtistNames();
+    const mergedTracks = mergeIncrementalDescubrePool(
+      prev.descubre.tracks,
+      freshOnes,
+      new Date(),
+      favNames,
+      libArtistNames
+    );
     const nextIds = mergedTracks.map((t) => t.id).join('|');
     if (mergedTracks.length === 0 || prevIds === nextIds) return;
 
@@ -2851,6 +2890,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       updatedAt: Date.now(),
       descubre: {
         ...prev.descubre,
+        algoVersion: prev.descubre.algoVersion ?? DESCUBRE_ALGO_VERSION,
         tracks: mergedTracks,
       },
     };
@@ -3116,7 +3156,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         activeEditorialMixesState ?? readSyncedEditorialMixes(get().authState.userId ?? null),
         prefs.editorialMixes,
         new Date(),
-        get().favoriteArtists.map((a) => a.artistName)
+        get().favoriteArtists.map((a) => a.artistName),
+        collectLibraryArtistNames()
       );
       if (mergedMixes) {
         activeEditorialMixesState = mergedMixes;
@@ -4033,8 +4074,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         const syncedCachedHome = applySyncedMixesToShelves(cachedHome, activeEditorialMixesState);
         await commitShelvesAndSeedPlayer(syncedCachedHome);
         const syncedNow = activeEditorialMixesState;
+        const needsDescubreAlgoUpgrade =
+          !syncedNow || (syncedNow.descubre.algoVersion ?? 1) < DESCUBRE_ALGO_VERSION;
         const isLockedDailyHealthy = Boolean(
           syncedNow &&
+            !needsDescubreAlgoUpgrade &&
             syncedNow.dailyMix?.dayKey === todayLocalIso &&
             syncedNow.dailyMix.tracks.length >= 25 &&
             syncedNow.dailyDiscover?.dayKey === todayLocalIso &&
@@ -4042,7 +4086,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
             syncedNow.descubre.tracks.length >= 35 &&
             Date.now() - syncedNow.descubre.lastScanAt < DESCUBRE_RESCAN_INTERVAL_MS
         );
-        if (isLockedDailyHealthy || (isSameLocalDay && hasHealthyDailyMixes(syncedCachedHome))) {
+        if (
+          isLockedDailyHealthy ||
+          (!needsDescubreAlgoUpgrade && isSameLocalDay && hasHealthyDailyMixes(syncedCachedHome))
+        ) {
           return;
         }
         if (isOnline && isLiveRuntime()) {

@@ -84,7 +84,24 @@ const KNOWN_ES_SCENE_ARTISTS = new Set([
   'trueno', 'tiago pzk', 'lit killah', 'khea', 'bizarrap', 'tainy', 'kidd voodoo',
   'soge culebra', 'raul clyde', 'kristina', 'ptazeta', 'lola indigo', 'aitana',
   'sen senra', 'ca7riel', 'paco amoroso', 'milo j', 'blessd', 'karol g',
+  'anmi', 'cris mj', 'floyymenor', 'yan block', 'yandel', 'chencho corleone',
+  'ovy on the drums', 'sky rompiendo', 'tito double p', 'peso pluma', 'junior h',
+  'natanael cano', 'fuerza regida', 'darell', 'noriel', 'brytiago', 'juhn', 'lunay',
+  'lenny tavarez', 'justin quiles', 'dalex', 'boza', 'beele', 'manuel turizo',
+  'danny ocean', 'rusherking', 'bhavi', 'cro', 'c r o', 'neo pistea', 'dillom', 'wos',
+  'paulo londra', 'maria becerra', 'cazzu', 'nathy peluso', 'villano antillano',
+  '8belial', 'hades66', 'roa', 'latin mafia', 'al safir', 'el bobe', 'cyril kamer',
+  'camin', 'pimp flaco', 'kinder malo',
 ]);
+
+function stripTitleEditionSuffix(title: string): string {
+  return title
+    .replace(/\s*\([^)]*(?:feat\.?|ft\.?|with|official|video|audio|visualizer|lyric|en vivo|live|remix|version|versión|prod\.?)[^)]*\)/gi, '')
+    .replace(/\s*\[[^\]]*(?:feat\.?|ft\.?|with|official|video|audio|visualizer|lyric|en vivo|live|remix|version|versión|prod\.?)[^\]]*\]/gi, '')
+    .replace(/\s*-\s*(?:single|ep|official\s+(?:video|audio)|video\s+oficial|visualizer|lyric\s+video|remix)\s*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 function collapseNormalized(input: string): string {
   return normalizeSearchText(input).replace(/[^a-z0-9]+/g, '');
@@ -1192,6 +1209,8 @@ export class RecommendationEngine implements IRecommendationEngine {
     }
 
     const recentReleasesMap = new Map<string, Track>();
+    const recentTrackMeta = new Map<string, { tasteTier: number; source: string }>();
+    const offGenreFallbackTracks = new Map<string, Track>();
     const collectedAlbums: AlbumSummary[] = [];
     const seenAlbumKeys = new Set<string>();
     const pushAlbum = (al: AlbumSummary | undefined | null, forceAllow = false) => {
@@ -1254,12 +1273,20 @@ export class RecommendationEngine implements IRecommendationEngine {
         return results;
       };
 
-      const coreBatch = userCoreArtists.slice(0, 8);
+      const coreBatch = userCoreArtists.slice(0, 10);
+      const tailCoreArtists = userCoreArtists.slice(10, 90);
+      const rotationSlot = Math.floor(now.getTime() / (6 * 60 * 60 * 1000));
+      const rotationOffset = tailCoreArtists.length > 0 ? (rotationSlot * 12) % tailCoreArtists.length : 0;
+      const rotatingLibraryBatch: Array<{ displayName: string; id?: string }> = [];
+      for (let i = 0; i < Math.min(12, tailCoreArtists.length); i++) {
+        rotatingLibraryBatch.push(tailCoreArtists[(rotationOffset + i) % tailCoreArtists.length]!);
+      }
+      const wave1Artists = [...coreBatch, ...rotatingLibraryBatch];
       const seedTrackCandidates = seededShuffle(userOwnedTracks, `seeds:${dailyKey}`).slice(0, 4);
 
-      // Wave 1: Bounded parallel fetch of core artists (avoids Deezer 50req/5s quota bursts), track radios, and external radar
+      // Wave 1: Bounded parallel fetch of core + rotating playlist/library artists (avoids Deezer 50req/5s quota bursts), track radios, and external radar
       const [artistDetailsRaw, relatedTrackRaw, externalRadarRaw] = await Promise.all([
-        runBoundedBatch(coreBatch, 3, 4500, (a): Promise<unknown> =>
+        runBoundedBatch(wave1Artists, 3, 4500, (a): Promise<unknown> =>
           typeof this.musicProvider!.getArtist === 'function'
             ? this.musicProvider!.getArtist!(a.id || a.displayName, signal, { name: a.displayName })
             : this.musicProvider!.search(a.displayName, 'song', signal)
@@ -1292,12 +1319,20 @@ export class RecommendationEngine implements IRecommendationEngine {
           // ArtistDetail
           for (const t of val.topSongs) {
             for (const co of t.artists ?? []) addAllowedArtist(co.name);
+            if (
+              isReleaseDateInWindow(t.releaseDate, rollingWin.startIso, rollingWin.endIso) &&
+              !recentReleasesMap.has(t.id)
+            ) {
+              recentReleasesMap.set(t.id, t);
+              recentTrackMeta.set(t.id, { tasteTier: 3, source: 'artist_top_songs' });
+            }
             pushTrack(t, true);
           }
           for (const ap of (val.appearances ?? []) as Track[]) {
             if (isBrokenOrSyntheticTrack(ap)) continue;
             for (const co of ap.artists ?? []) addAllowedArtist(co.name);
             if (!recentReleasesMap.has(ap.id)) recentReleasesMap.set(ap.id, ap);
+            recentTrackMeta.set(ap.id, { tasteTier: 3, source: 'artist_appearances' });
             pushTrack(ap, true);
           }
           for (const rel of val.relatedArtists ?? []) {
@@ -1316,6 +1351,14 @@ export class RecommendationEngine implements IRecommendationEngine {
         } else if (Array.isArray(val.songs)) {
           // Fallback SearchResultBundle
           for (const t of val.songs) {
+            if (
+              isReleaseDateInWindow(t.releaseDate, rollingWin.startIso, rollingWin.endIso) &&
+              (!hasRealUserTaste || isAllowedTrack(t)) &&
+              !recentReleasesMap.has(t.id)
+            ) {
+              recentReleasesMap.set(t.id, t);
+              recentTrackMeta.set(t.id, { tasteTier: 3, source: 'artist_search_songs' });
+            }
             pushTrack(t);
           }
           for (const al of val.albums ?? []) {
@@ -1364,9 +1407,57 @@ export class RecommendationEngine implements IRecommendationEngine {
         ) ||
         userOwnedTracks.some((t) => this.scoreTrackSceneFit(t) >= 30);
 
+      const SPANISH_LATIN_RADAR_SOURCES = new Set([
+        'spotify_novedades_es',
+        'spotify_novedades_latin',
+        'spotify_pegao',
+        'deezer_novedades_es',
+        'apple_es_top',
+        'lahiguera_novedades',
+        'lahiguera_canciones',
+      ]);
+      const GLOBAL_POP_RADAR_SOURCES = new Set(['spotify_nmf', 'deezer_radar_weekly']);
+
+      const classifyRadarTasteTier = (artistNames: readonly string[], source: string): number => {
+        for (const rawName of artistNames) {
+          const subNames = rawName.split(/\s*(?:,|&|\bfeat\.?\b|\bft\.?\b|\bcon\b)\s*/i);
+          const candidatesForArtist = subNames.length > 1 ? [rawName, ...subNames] : [rawName];
+          for (const candName of candidatesForArtist) {
+            const ak = normalizeArtistKey(candName);
+            if (!ak) continue;
+            if (hasRealUserTaste && (isArtistInSet(ak, favArtistNorms) || isArtistInSet(ak, seenCoreKeys))) {
+              return 3;
+            }
+          }
+        }
+        for (const rawName of artistNames) {
+          const subNames = rawName.split(/\s*(?:,|&|\bfeat\.?\b|\bft\.?\b|\bcon\b)\s*/i);
+          const candidatesForArtist = subNames.length > 1 ? [rawName, ...subNames] : [rawName];
+          for (const candName of candidatesForArtist) {
+            const ak = normalizeArtistKey(candName);
+            if (!ak) continue;
+            if (
+              isArtistInSet(ak, allowedTasteKeys) ||
+              emergingArtistsPool.has(ak) ||
+              (isSpanishUrbanUser &&
+                (KNOWN_ES_SCENE_ARTISTS.has(ak) ||
+                  Array.from(KNOWN_ES_SCENE_ARTISTS).some((sk) => isSameArtistAlias(ak, sk))))
+            ) {
+              return 2;
+            }
+          }
+        }
+        if (!hasRealUserTaste) return 1;
+        if (isSpanishUrbanUser) {
+          return SPANISH_LATIN_RADAR_SOURCES.has(source) ? 1 : 0;
+        }
+        return GLOBAL_POP_RADAR_SOURCES.has(source) ? 1 : 1;
+      };
+
       const rawRadarList = Array.isArray(externalRadarRaw) ? externalRadarRaw : [];
 
-      // Zero-search fast path: pre-built playable tracks within the 15-day window go straight into recentReleasesMap
+      // Zero-search fast path: pre-built playable tracks within the 15-day window are routed by tasteTier
+      // so off-genre global pop never pollutes allowedTasteKeys or crowds out scene/library tracks.
       for (const cand of rawRadarList) {
         const preTrack = cand?.track;
         if (!preTrack || isBrokenOrSyntheticTrack(preTrack)) continue;
@@ -1399,13 +1490,29 @@ export class RecommendationEngine implements IRecommendationEngine {
           releaseDate: effectiveDate,
           releaseYear: Number.parseInt(effectiveDate.slice(0, 4), 10) || preTrack.releaseYear || currentYear,
         };
-        for (const a of resolvedTrack.artists) addAllowedArtist(a.name);
-        const candKey = `${normalizeSearchText(resolvedTrack.title)}::${normalizeArtistKey(resolvedTrack.artists[0]?.name ?? cand.artists?.[0] ?? '')}`;
-        if (candKey !== '::') existingRecentKeys.add(candKey);
-        if (!recentReleasesMap.has(resolvedTrack.id)) {
-          recentReleasesMap.set(resolvedTrack.id, resolvedTrack);
+        const tier = classifyRadarTasteTier(
+          resolvedTrack.artists.map((a) => a.name),
+          cand.source
+        );
+        const prevMeta = recentTrackMeta.get(resolvedTrack.id);
+        if (!prevMeta || tier >= prevMeta.tasteTier) {
+          recentTrackMeta.set(resolvedTrack.id, { tasteTier: tier, source: cand.source });
         }
-        pushTrack(resolvedTrack, true);
+        if (tier >= 2 || !hasRealUserTaste) {
+          for (const a of resolvedTrack.artists) addAllowedArtist(a.name);
+        }
+        const candKey = `${normalizeSearchText(resolvedTrack.title)}::${normalizeArtistKey(resolvedTrack.artists[0]?.name ?? cand.artists?.[0] ?? '')}`;
+        if (tier >= 1) {
+          if (candKey !== '::') existingRecentKeys.add(candKey);
+          if (!recentReleasesMap.has(resolvedTrack.id)) {
+            recentReleasesMap.set(resolvedTrack.id, resolvedTrack);
+          }
+          pushTrack(resolvedTrack, true);
+        } else {
+          if (!offGenreFallbackTracks.has(resolvedTrack.id)) {
+            offGenreFallbackTracks.set(resolvedTrack.id, resolvedTrack);
+          }
+        }
       }
 
       const allowEditorialFill = rawRadarList.length >= 12;
@@ -1420,57 +1527,75 @@ export class RecommendationEngine implements IRecommendationEngine {
           let tasteScore = 0;
           let matchedArtistName: string | undefined;
           let bestTierWeight = 0;
-          for (const aName of cand.artists) {
-            const ak = normalizeArtistKey(aName);
-            if (!ak) continue;
-            if (isArtistInSet(ak, favArtistNorms) || isArtistInSet(ak, seenCoreKeys)) {
-              tasteScore += 100;
-              if (100 > bestTierWeight) {
-                bestTierWeight = 100;
-                matchedArtistName = aName;
-              }
-            } else if (isArtistInSet(ak, allowedTasteKeys) || emergingArtistsPool.has(ak)) {
-              tasteScore += 58;
-              if (58 > bestTierWeight) {
-                bestTierWeight = 58;
-                matchedArtistName = aName;
-              }
-            } else if (
-              isSpanishUrbanUser &&
-              cand.source !== 'spotify_nmf' &&
-              (KNOWN_ES_SCENE_ARTISTS.has(ak) ||
-                Array.from(KNOWN_ES_SCENE_ARTISTS).some((sk) => isSameArtistAlias(ak, sk)))
-            ) {
-              tasteScore += 36;
-              if (36 > bestTierWeight) {
-                bestTierWeight = 36;
-                matchedArtistName = aName;
+          for (const rawName of cand.artists) {
+            const subNames = rawName.split(/\s*(?:,|&|\bfeat\.?\b|\bft\.?\b|\bcon\b)\s*/i);
+            const candidatesForArtist = subNames.length > 1 ? [rawName, ...subNames] : [rawName];
+            for (const aName of candidatesForArtist) {
+              const ak = normalizeArtistKey(aName);
+              if (!ak) continue;
+              if (isArtistInSet(ak, favArtistNorms) || isArtistInSet(ak, seenCoreKeys)) {
+                tasteScore += 120;
+                if (120 > bestTierWeight) {
+                  bestTierWeight = 120;
+                  matchedArtistName = aName;
+                }
+              } else if (isArtistInSet(ak, allowedTasteKeys) || emergingArtistsPool.has(ak)) {
+                tasteScore += 68;
+                if (68 > bestTierWeight) {
+                  bestTierWeight = 68;
+                  matchedArtistName = aName;
+                }
+              } else if (
+                isSpanishUrbanUser &&
+                (KNOWN_ES_SCENE_ARTISTS.has(ak) ||
+                  Array.from(KNOWN_ES_SCENE_ARTISTS).some((sk) => isSameArtistAlias(ak, sk)))
+              ) {
+                tasteScore += 55;
+                if (55 > bestTierWeight) {
+                  bestTierWeight = 55;
+                  matchedArtistName = aName;
+                }
               }
             }
           }
           // Tier 4 broad fresh editorial fill so Descubre lo Nuevo reaches up to 50 tracks cleanly
-          if (
-            tasteScore <= 0 &&
-            allowEditorialFill &&
-            cand.releaseDate &&
-            (cand.source === 'apple_es_top' ||
-              cand.source === 'deezer_novedades_es' ||
+          const isTier4AllowedSource =
+            hasRealUserTaste && isSpanishUrbanUser
+              ? cand.source === 'apple_es_top' ||
+                cand.source === 'deezer_novedades_es' ||
+                cand.source === 'spotify_novedades_es' ||
+                cand.source === 'spotify_novedades_latin' ||
+                cand.source === 'spotify_pegao' ||
+                cand.source === 'lahiguera_canciones'
+              : cand.source === 'apple_es_top' ||
+                cand.source === 'deezer_novedades_es' ||
+                cand.source === 'spotify_novedades_es' ||
+                cand.source === 'spotify_novedades_latin' ||
+                cand.source === 'lahiguera_canciones' ||
+                cand.source === 'deezer_radar_weekly' ||
+                cand.source === 'spotify_nmf';
+          if (tasteScore <= 0 && allowEditorialFill && cand.releaseDate && isTier4AllowedSource) {
+            tasteScore =
+              cand.source === 'apple_es_top' ||
               cand.source === 'spotify_novedades_es' ||
-              cand.source === 'lahiguera_canciones' ||
-              cand.source === 'deezer_radar_weekly' ||
-              cand.source === 'spotify_nmf')
-          ) {
-            tasteScore = cand.source === 'apple_es_top' || cand.source === 'spotify_novedades_es' ? 24 : 16;
+              cand.source === 'spotify_novedades_latin'
+                ? 26
+                : 18;
             matchedArtistName = cand.artists[0]!;
           }
           if (tasteScore <= 0) return null;
-          // Prioritize fresh-dated editorial drops (Apple ES / Novedades Viernes ES / LaHiguera) above undated chart tracks (PEGAO)
-          const datedFreshBonus = cand.releaseDate ? 120 : -80;
+          const hasStrongTasteOrScene = tasteScore >= 55;
+          const pegaoBonus = cand.source === 'spotify_pegao' && hasStrongTasteOrScene ? 35 : 0;
+          const datedFreshBonus = cand.releaseDate
+            ? 120
+            : cand.source === 'spotify_pegao' && hasStrongTasteOrScene
+              ? 35
+              : -80;
           return {
             cand,
             candKey,
             matchedArtistName: cand.artists[0] ?? matchedArtistName!,
-            score: tasteScore + datedFreshBonus + cand.priority * 0.4,
+            score: tasteScore + pegaoBonus + datedFreshBonus + cand.priority * 0.4,
           };
         })
         .filter(
@@ -1491,7 +1616,7 @@ export class RecommendationEngine implements IRecommendationEngine {
         if (seenRadarTargetKeys.has(item.candKey)) continue;
         seenRadarTargetKeys.add(item.candKey);
         dedupedRadarTargets.push({ cand: item.cand, queryArtist: item.matchedArtistName });
-        if (dedupedRadarTargets.length >= 22) break;
+        if (dedupedRadarTargets.length >= 28) break;
       }
 
       // Wave 2: Prioritize rolling 15-day (then 30-day) releases, resolve taste-matched radar drops, and emerging artists
@@ -1502,7 +1627,7 @@ export class RecommendationEngine implements IRecommendationEngine {
         isReleaseDateInWindow(al.releaseDate, rollingWin.startIso, rollingWin.endIso)
       );
       const fallback30Albums =
-        recentWindowAlbums.length >= 4
+        recentWindowAlbums.length >= 6
           ? []
           : allCandidateAlbums.filter(
               (al) =>
@@ -1517,8 +1642,8 @@ export class RecommendationEngine implements IRecommendationEngine {
           const db = b.releaseDate ?? `${b.year ?? 0}-01-01`;
           return db.localeCompare(da);
         })
-        .slice(0, prioritizedWindowAlbums.length < 4 ? 6 : 2);
-      const newestReleaseTargets = [...prioritizedWindowAlbums.slice(0, 6), ...nonWindowNewest].slice(0, 8);
+        .slice(0, prioritizedWindowAlbums.length < 4 ? 8 : 4);
+      const newestReleaseTargets = [...prioritizedWindowAlbums.slice(0, 10), ...nonWindowNewest].slice(0, 14);
       const fetchedAlbumIds = new Set(newestReleaseTargets.map((al) => al.id));
 
       const emergingTargets = seededShuffle(
@@ -1626,16 +1751,19 @@ export class RecommendationEngine implements IRecommendationEngine {
         const { cand } = target;
         const candTitleTokens = new Set(tokenizeNormalized(cand.title));
         const candTitleNorm = normalizeSearchText(cand.title);
+        const candStrippedNorm = normalizeSearchText(stripTitleEditionSuffix(cand.title)) || candTitleNorm;
         const candArtistNorms = cand.artists.map((a) => normalizeArtistKey(a)).filter(Boolean);
         const matchedSong = (res.value.songs ?? []).find((song) => {
           if (isBrokenOrSyntheticTrack(song)) return false;
           const sTitleNorm = normalizeSearchText(song.title);
+          const sStrippedNorm = normalizeSearchText(stripTitleEditionSuffix(song.title)) || sTitleNorm;
           if (!sTitleNorm) return false;
-          if (candTitleNorm.length <= 2) {
-            if (sTitleNorm !== candTitleNorm) return false;
+          if (candStrippedNorm.length <= 2 || candTitleNorm.length <= 2) {
+            if (sStrippedNorm !== candStrippedNorm && sTitleNorm !== candTitleNorm) return false;
           } else {
             const titleContains =
               sTitleNorm === candTitleNorm ||
+              sStrippedNorm === candStrippedNorm ||
               sTitleNorm.includes(candTitleNorm) ||
               candTitleNorm.includes(sTitleNorm);
             if (!titleContains) {
@@ -1646,8 +1774,12 @@ export class RecommendationEngine implements IRecommendationEngine {
             }
           }
           return song.artists.some((sa) => {
-            const sak = normalizeArtistKey(sa.name);
-            return candArtistNorms.some((ck) => isSameArtistAlias(sak, ck));
+            const subNames = sa.name.split(/\s*(?:,|&|\bfeat\.?\b|\bft\.?\b|\bcon\b)\s*/i);
+            const candidatesForArtist = subNames.length > 1 ? [sa.name, ...subNames] : [sa.name];
+            return candidatesForArtist.some((cn) => {
+              const sak = normalizeArtistKey(cn);
+              return candArtistNorms.some((ck) => isSameArtistAlias(sak, ck));
+            });
           });
         });
         if (!matchedSong) continue;
@@ -1691,11 +1823,27 @@ export class RecommendationEngine implements IRecommendationEngine {
               }
             : {}),
         };
-        for (const a of resolvedTrack.artists) addAllowedArtist(a.name);
-        if (!recentReleasesMap.has(resolvedTrack.id)) {
-          recentReleasesMap.set(resolvedTrack.id, resolvedTrack);
+        const tier = classifyRadarTasteTier(
+          resolvedTrack.artists.map((a) => a.name),
+          cand.source
+        );
+        const prevMeta = recentTrackMeta.get(resolvedTrack.id);
+        if (!prevMeta || tier >= prevMeta.tasteTier) {
+          recentTrackMeta.set(resolvedTrack.id, { tasteTier: tier, source: cand.source });
         }
-        pushTrack(resolvedTrack, true);
+        if (tier >= 2 || !hasRealUserTaste) {
+          for (const a of resolvedTrack.artists) addAllowedArtist(a.name);
+        }
+        if (tier >= 1) {
+          if (!recentReleasesMap.has(resolvedTrack.id)) {
+            recentReleasesMap.set(resolvedTrack.id, resolvedTrack);
+          }
+          pushTrack(resolvedTrack, true);
+        } else {
+          if (!offGenreFallbackTracks.has(resolvedTrack.id)) {
+            offGenreFallbackTracks.set(resolvedTrack.id, resolvedTrack);
+          }
+        }
       }
 
       const secondWaveSeeds: Track[] = [];
@@ -1956,20 +2104,36 @@ export class RecommendationEngine implements IRecommendationEngine {
       isReleaseDateInWindow(t.releaseDate, rollingWin.startIso, rollingWin.endIso)
     );
     const used30Fallback = rolling15Tracks.length === 0;
-    const strictRecentTracks = used30Fallback
+    const baseRecentTracks = used30Fallback
       ? allDatedPool.filter((t) =>
           isReleaseDateInWindow(t.releaseDate, rolling30Win.startIso, rolling30Win.endIso)
         )
       : rolling15Tracks;
 
+    const fallbackWin = used30Fallback ? rolling30Win : rollingWin;
+    const datedOffGenrePool =
+      baseRecentTracks.length < 20
+        ? Array.from(offGenreFallbackTracks.values()).filter(
+            (t) =>
+              !isBrokenOrSyntheticTrack(t) &&
+              !recentPoolMap.has(t.id) &&
+              isReleaseDateInWindow(t.releaseDate, fallbackWin.startIso, fallbackWin.endIso)
+          )
+        : [];
+    const strictRecentTracks =
+      baseRecentTracks.length < 20 && datedOffGenrePool.length > 0
+        ? [...baseRecentTracks, ...datedOffGenrePool.slice(0, 20 - baseRecentTracks.length)]
+        : baseRecentTracks;
+
     const nowDayMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     const scoreRecentRelease = (t: Track): number => {
       let sc = 0;
-      let hasTier1 = false;
+      let hasCore = false;
       let hasFav = false;
       let hasTier2 = false;
       let hasScene = false;
-      let isAllowedEditorial = isAllowedTrack(t);
+      const isAllowedEditorial = isAllowedTrack(t);
+      const trackMeta = recentTrackMeta.get(t.id);
       for (const a of t.artists) {
         const subNames = a.name.split(/\s*(?:,|&|\bfeat\.?\b|\bft\.?\b|\bcon\b)\s*/i);
         const candidatesForArtist = subNames.length > 1 ? [a.name, ...subNames] : [a.name];
@@ -1978,9 +2142,9 @@ export class RecommendationEngine implements IRecommendationEngine {
           if (!ak) continue;
           if (hasKeyInSet(ak, favArtistKeysForScoring)) {
             hasFav = true;
-            hasTier1 = true;
-          } else if (hasKeyInSet(ak, seenCoreKeys)) {
-            hasTier1 = true;
+            hasCore = true;
+          } else if (hasRealUserTaste && hasKeyInSet(ak, seenCoreKeys)) {
+            hasCore = true;
           } else if (hasKeyInSet(ak, allowedTasteKeys)) {
             hasTier2 = true;
           }
@@ -1992,15 +2156,22 @@ export class RecommendationEngine implements IRecommendationEngine {
           }
         }
       }
-      if (hasTier1) sc += 45;
-      if (hasFav) sc += 15;
-      else if (!hasTier1 && hasTier2) sc += 20;
-      else if (!hasTier1 && !hasTier2 && hasScene) sc += 12;
-      else if (!hasTier1 && !hasTier2 && !hasScene && isAllowedEditorial) sc += 8;
-      else if (!hasTier1 && !hasTier2 && !hasScene) sc += 2;
+      if (hasFav) sc += 140;
+      else if (hasCore) sc += 110;
+      else if (hasTier2 || hasScene || (trackMeta?.tasteTier ?? 0) >= 2) sc += 70;
+      else if (
+        (trackMeta?.tasteTier ?? -1) >= 1 ||
+        (!hasRealUserTaste && isAllowedEditorial)
+      ) {
+        sc += 20;
+      } else if (trackMeta?.tasteTier === 0 && hasRealUserTaste) {
+        sc -= 60;
+      } else if (isAllowedEditorial) {
+        sc += 10;
+      }
       if (isUnheard(t)) sc += 14;
       const primaryKey = normalizeArtistKey(t.artists[0]?.name ?? '');
-      if (t.artists.length > 1 || (hasTier1 && !hasKeyInSet(primaryKey, seenCoreKeys))) {
+      if (t.artists.length > 1 || (hasCore && !hasKeyInSet(primaryKey, seenCoreKeys))) {
         sc += 10;
       }
       const iso = (t.releaseDate ?? '').slice(0, 10);

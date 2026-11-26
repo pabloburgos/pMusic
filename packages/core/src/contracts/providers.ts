@@ -90,6 +90,7 @@ export interface ExternalReleaseCandidate {
     | 'deezer_novedades_es'
     | 'deezer_radar_weekly'
     | 'spotify_novedades_es'
+    | 'spotify_novedades_latin'
     | 'spotify_pegao'
     | 'spotify_nmf'
     | 'lahiguera_novedades'

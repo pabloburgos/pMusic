@@ -107,17 +107,30 @@ void main() {
   vec2 uv = centered * mix(1.38, 1.08, isPortrait);
   float t = u_time * 0.22;
 
-  vec2 q = fbm2(uv + vec2(t * 0.58, -t * 0.42));
-  vec2 r = fbm2(uv + 1.95 * q + vec2(1.7 + 0.32 * t, 9.2 - 0.28 * t));
-  float f = texture2D(u_noiseTex, (uv + 1.8 * r) * 0.06).r * 0.65 +
-            texture2D(u_noiseTex, (uv + 1.8 * r) * 0.13 + vec2(0.23, 0.41)).g * 0.35;
+  // Multi-directional wandering drift (incommensurate Lissajous orbits — never drifts in one fixed direction)
+  vec2 driftQ = vec2(
+    sin(t * 0.41) * 0.52 + cos(t * 0.27 + 1.3) * 0.34,
+    cos(t * 0.36 + 0.7) * 0.48 + sin(t * 0.23 + 2.4) * 0.32
+  );
+  vec2 driftR = vec2(
+    cos(t * 0.31 + 2.1) * 0.44 - sin(t * 0.19 + 0.5) * 0.30,
+    sin(t * 0.29 + 1.6) * 0.42 + cos(t * 0.17 + 3.1) * 0.28
+  );
 
-  // Calm painterly flow with displaced/rotated square cover regions so portrait phones never stretch
+  vec2 q = fbm2(uv + driftQ);
+  vec2 r = fbm2(uv + 1.95 * q + vec2(1.7, 9.2) + driftR);
+  float f = texture2D(u_noiseTex, (uv + 1.8 * r) * 0.06 + driftQ * 0.08).r * 0.65 +
+            texture2D(u_noiseTex, (uv + 1.8 * r) * 0.13 + vec2(0.23, 0.41) - driftR * 0.07).g * 0.35;
+
+  // Organic wandering painterly flow with gentle oscillating sway (no monotonous linear panning)
   vec2 baseSample = centered * mix(0.62, 0.44, isPortrait);
-  vec2 flow = (q - 0.5) * 0.44 + (r - 0.5) * 0.36;
-  vec2 coverUv1 = rot2(baseSample, 0.92 + t * 0.08) + vec2(0.28, 0.74) + flow;
-  vec2 coverUv2 = rot2(vec2(-baseSample.x, baseSample.y), -1.48 - t * 0.07) * 0.94 + vec2(0.76, 0.26) + (r - 0.5) * 0.46;
-  vec2 coverUv3 = rot2(baseSample, 2.35 + t * 0.10) * 0.88 + vec2(0.68, 0.78) + (q.yx - 0.5) * 0.38;
+  vec2 wander1 = vec2(sin(t * 0.29 + 0.4), cos(t * 0.24 + 1.1)) * 0.11;
+  vec2 wander2 = vec2(cos(t * 0.21 + 2.2), sin(t * 0.27 + 0.8)) * 0.12;
+  vec2 wander3 = vec2(sin(t * 0.18 + 3.5), cos(t * 0.32 + 2.0)) * 0.10;
+  vec2 flow = (q - 0.5) * 0.46 + (r - 0.5) * 0.38;
+  vec2 coverUv1 = rot2(baseSample, 0.92 + sin(t * 0.19) * 0.42 + cos(t * 0.11) * 0.18) + vec2(0.28, 0.74) + flow + wander1;
+  vec2 coverUv2 = rot2(vec2(-baseSample.x, baseSample.y), -1.48 + cos(t * 0.17 + 1.0) * 0.38) * 0.94 + vec2(0.76, 0.26) + (r - 0.5) * 0.48 + wander2;
+  vec2 coverUv3 = rot2(baseSample, 2.35 + sin(t * 0.15 + 2.1) * 0.45) * 0.88 + vec2(0.68, 0.78) + (q.yx - 0.5) * 0.40 + wander3;
 
   vec3 s1 = sampleCover(coverUv1);
   vec3 s2 = sampleCover(coverUv2);
