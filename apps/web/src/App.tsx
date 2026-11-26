@@ -139,6 +139,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
   const {
     initApp,
     appReady,
+    homeFeedReady,
     activeTab,
     sidebarCollapsed,
     rightPanelOpen,
@@ -753,9 +754,9 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       setTimeout(() => el.remove(), 420);
     };
     const isOfflineStart = typeof navigator !== 'undefined' && navigator.onLine === false;
-    const maxCapMs = isTestEnv ? 0 : isOfflineStart ? 1000 : 4200;
+    const maxCapMs = isTestEnv ? 0 : isOfflineStart ? 1000 : 6200;
     const safetyTimer = splashUpdating ? null : setTimeout(dismissSplash, maxCapMs);
-    if (!appReady || splashUpdating) {
+    if (!appReady || !homeFeedReady || splashUpdating) {
       return () => {
         cancelled = true;
         if (safetyTimer) clearTimeout(safetyTimer);
@@ -822,7 +823,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       if (safetyTimer) clearTimeout(safetyTimer);
       if (hideTimer) clearTimeout(hideTimer);
     };
-  }, [appReady, splashUpdating]);
+  }, [appReady, homeFeedReady, splashUpdating]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;

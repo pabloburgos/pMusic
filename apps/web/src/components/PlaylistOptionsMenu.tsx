@@ -4,6 +4,7 @@ import {
   Check,
   ChevronRight,
   Copy,
+  Disc3,
   Download,
   ListPlus,
   Loader2,
@@ -33,6 +34,7 @@ export const PlaylistOptionsMenu: React.FC = () => {
     closePlaylistContextMenu,
     openPlaylistAppearanceModal,
     playCollection,
+    toggleDjMode,
     recordPlaylistPlay,
     renamePlaylist,
     duplicatePlaylist,
@@ -217,6 +219,26 @@ export const PlaylistOptionsMenu: React.FC = () => {
         >
           <Shuffle className="h-4 w-4 text-white/75" />
           <span>Reproducir en aleatorio</span>
+        </button>
+
+        <button
+          type="button"
+          role="menuitem"
+          data-testid="playlist-menu-dj-btn"
+          disabled={tracks.length === 0}
+          onClick={() => {
+            closePlaylistContextMenu();
+            if (tracks.length > 0) {
+              if (localPl) recordPlaylistPlay(localPl);
+              void playCollection(tracks, { isPlaylist: true }).then(() => {
+                void toggleDjMode(true);
+              });
+            }
+          }}
+          className="pm-hover flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-xs font-medium text-white disabled:opacity-40"
+        >
+          <Disc3 className="h-4 w-4 text-purple-300" />
+          <span>Iniciar Sesión DJ AutoMix</span>
         </button>
 
         <button

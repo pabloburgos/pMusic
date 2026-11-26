@@ -1170,24 +1170,36 @@ export class RecommendationEngine implements IRecommendationEngine {
     };
 
     if (this.musicProvider) {
-      const coreBatch = userCoreArtists.slice(0, 8);
-      const seedTrackCandidates = seededShuffle(userOwnedTracks, `seeds:${dailyKey}`).slice(0, 6);
+      const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T | null> =>
+        Promise.race([
+          promise.catch(() => null),
+          new Promise<null>((resolveTimeout) => setTimeout(() => resolveTimeout(null), ms)),
+        ]);
 
-      // Wave 1: Query real discographies/top songs/related artists for user's top artists + track radios across ALL user music
+      const coreBatch = userCoreArtists.slice(0, 6);
+      const seedTrackCandidates = seededShuffle(userOwnedTracks, `seeds:${dailyKey}`).slice(0, 4);
+
+      // Wave 1: Fast parallel fetch of user's core artists + track radios (bounded 2.5s)
       const [artistDetails, relatedTrackRes] = await Promise.all([
-        typeof this.musicProvider.getArtist === 'function'
-          ? Promise.allSettled(
-              coreBatch.map((a) =>
-                this.musicProvider!.getArtist!(a.id || a.displayName, signal, { name: a.displayName })
+        withTimeout<PromiseSettledResult<unknown>[]>(
+          typeof this.musicProvider.getArtist === 'function'
+            ? Promise.allSettled(
+                coreBatch.map((a) =>
+                  this.musicProvider!.getArtist!(a.id || a.displayName, signal, { name: a.displayName })
+                )
               )
-            )
-          : Promise.allSettled(
-              coreBatch.map((a) => this.musicProvider!.search(a.displayName, 'song', signal))
-            ),
+            : Promise.allSettled(
+                coreBatch.map((a) => this.musicProvider!.search(a.displayName, 'song', signal))
+              ),
+          2500
+        ).then((r) => r ?? []),
         seedTrackCandidates.length > 0
-          ? Promise.allSettled(
-              seedTrackCandidates.map((t) => this.musicProvider!.getRelated(t.id, signal))
-            )
+          ? withTimeout(
+              Promise.allSettled(
+                seedTrackCandidates.map((t) => this.musicProvider!.getRelated(t.id, signal))
+              ),
+              2500
+            ).then((r) => r ?? [])
           : Promise.resolve([] as PromiseSettledResult<any>[]),
       ]);
 
@@ -1257,16 +1269,16 @@ export class RecommendationEngine implements IRecommendationEngine {
           return db.localeCompare(da);
         })
         .slice(0, weeklyAlbumTargets.length < 4 ? 6 : 3);
-      const newestReleaseTargets = [...weeklyAlbumTargets.slice(0, 14), ...nonWeeklyNewest].slice(0, 18);
+      const newestReleaseTargets = [...weeklyAlbumTargets.slice(0, 5), ...nonWeeklyNewest].slice(0, 6);
       const fetchedAlbumIds = new Set(newestReleaseTargets.map((al) => al.id));
 
       const emergingTargets = seededShuffle(
         Array.from(emergingArtistsPool.values())
           .filter((a) => !seenCoreKeys.has(normalizeArtistKey(a.name)))
           .sort((a, b) => b.score - a.score)
-          .slice(0, 20),
+          .slice(0, 14),
         `emg:${dailyKey}`
-      ).slice(0, 12);
+      ).slice(0, 6);
 
       const extraTargets =
         emergingTargets.length > 0
@@ -1275,17 +1287,23 @@ export class RecommendationEngine implements IRecommendationEngine {
 
       const [albumDetailRes, emergingRes] = await Promise.all([
         typeof this.musicProvider.getAlbum === 'function' && newestReleaseTargets.length > 0
-          ? Promise.allSettled(
-              newestReleaseTargets.map((al) => this.musicProvider!.getAlbum!(al.id, signal))
-            )
+          ? withTimeout(
+              Promise.allSettled(
+                newestReleaseTargets.map((al) => this.musicProvider!.getAlbum!(al.id, signal))
+              ),
+              2200
+            ).then((r) => r ?? [])
           : Promise.resolve([] as PromiseSettledResult<any>[]),
-        Promise.allSettled(
-          extraTargets.map((a) =>
-            typeof this.musicProvider!.getArtist === 'function'
-              ? this.musicProvider!.getArtist!(a.id || a.name, signal, { name: a.name })
-              : this.musicProvider!.search(a.name, 'song', signal)
-          )
-        ),
+        withTimeout(
+          Promise.allSettled(
+            extraTargets.map((a) =>
+              typeof this.musicProvider!.getArtist === 'function'
+                ? this.musicProvider!.getArtist!(a.id || a.name, signal, { name: a.name })
+                : this.musicProvider!.search(a.name, 'song', signal)
+            )
+          ),
+          2200
+        ).then((r) => r ?? []),
       ]);
 
       const stampAlbumTracks = (resVal: any, fallbackMeta?: AlbumSummary) => {
@@ -1356,31 +1374,42 @@ export class RecommendationEngine implements IRecommendationEngine {
         }
       }
 
-      // Wave 3: Fetch emerging artists' Monday-to-Monday releases + deep discovery graph for 100-song Daily Mix & Daily Discover
+      // Wave 3: Only fetch deeper discovery graph if catalog is still under 120 tracks (bounded 1.8s)
       const wave3AlbumBatch =
-        typeof this.musicProvider.getAlbum === 'function' ? emergingWeeklyAlbums.slice(0, 8) : [];
-      const wave3RelatedSeeds = collectedTrackMap.size < 250 ? secondWaveSeeds.slice(0, 10) : [];
+        collectedTrackMap.size < 120 && typeof this.musicProvider.getAlbum === 'function'
+          ? emergingWeeklyAlbums.slice(0, 4)
+          : [];
+      const wave3RelatedSeeds = collectedTrackMap.size < 120 ? secondWaveSeeds.slice(0, 4) : [];
       const wave3SecondDegArtists =
-        collectedTrackMap.size < 230
-          ? seededShuffle(Array.from(secondDegreeEmerging.values()), `deg2:${dailyKey}`).slice(0, 8)
+        collectedTrackMap.size < 120
+          ? seededShuffle(Array.from(secondDegreeEmerging.values()), `deg2:${dailyKey}`).slice(0, 4)
           : [];
 
       if (wave3AlbumBatch.length > 0 || wave3RelatedSeeds.length > 0 || wave3SecondDegArtists.length > 0) {
         const [emgAlbumRes, relSeedRes, deg2Res] = await Promise.all([
           wave3AlbumBatch.length > 0
-            ? Promise.allSettled(wave3AlbumBatch.map((al) => this.musicProvider!.getAlbum!(al.id, signal)))
+            ? withTimeout(
+                Promise.allSettled(wave3AlbumBatch.map((al) => this.musicProvider!.getAlbum!(al.id, signal))),
+                1800
+              ).then((r) => r ?? [])
             : Promise.resolve([] as PromiseSettledResult<any>[]),
           wave3RelatedSeeds.length > 0
-            ? Promise.allSettled(wave3RelatedSeeds.map((t) => this.musicProvider!.getRelated(t.id, signal)))
+            ? withTimeout(
+                Promise.allSettled(wave3RelatedSeeds.map((t) => this.musicProvider!.getRelated(t.id, signal))),
+                1800
+              ).then((r) => r ?? [])
             : Promise.resolve([] as PromiseSettledResult<any>[]),
           wave3SecondDegArtists.length > 0
-            ? Promise.allSettled(
-                wave3SecondDegArtists.map((a) =>
-                  typeof this.musicProvider!.getArtist === 'function'
-                    ? this.musicProvider!.getArtist!(a.id || a.name, signal, { name: a.name })
-                    : this.musicProvider!.search(a.name, 'song', signal)
-                )
-              )
+            ? withTimeout(
+                Promise.allSettled(
+                  wave3SecondDegArtists.map((a) =>
+                    typeof this.musicProvider!.getArtist === 'function'
+                      ? this.musicProvider!.getArtist!(a.id || a.name, signal, { name: a.name })
+                      : this.musicProvider!.search(a.name, 'song', signal)
+                  )
+                ),
+                1800
+              ).then((r) => r ?? [])
             : Promise.resolve([] as PromiseSettledResult<any>[]),
         ]);
 

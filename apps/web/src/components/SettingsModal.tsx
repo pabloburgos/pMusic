@@ -222,11 +222,17 @@ export const SettingsModal: React.FC = () => {
   useEffect(() => {
     if (settingsOpen) {
       if (settingsInitialCategory) {
-        setActiveCategory(settingsInitialCategory);
+        setActiveCategory(
+          isMobileViewport && settingsInitialCategory === 'discord'
+            ? 'apariencia'
+            : settingsInitialCategory
+        );
+      } else if (isMobileViewport && activeCategory === 'discord') {
+        setActiveCategory('apariencia');
       }
       void refreshDiscordRpcStatus();
     }
-  }, [settingsOpen, settingsInitialCategory, refreshDiscordRpcStatus]);
+  }, [settingsOpen, settingsInitialCategory, isMobileViewport, activeCategory, refreshDiscordRpcStatus]);
 
   if (!settingsOpen) return null;
 
@@ -1087,8 +1093,8 @@ export const SettingsModal: React.FC = () => {
               </div>
             )}
 
-            {/* 4. DISCORD RICH PRESENCE */}
-            {activeCategory === 'discord' && (
+            {/* 4. DISCORD RICH PRESENCE (solo Escritorio) */}
+            {activeCategory === 'discord' && !isMobileViewport && (
               <div className="space-y-5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
@@ -1163,7 +1169,27 @@ export const SettingsModal: React.FC = () => {
                     onToggle={() => setDiscordRpcEnabled(!discordRpcEnabled)}
                   />
 
-                  <div className="space-y-2 border-t pm-border pt-3">
+                  <div className="space-y-3 border-t pm-border pt-3">
+                    <div className="rounded-[12px] border border-[#5865F2]/30 bg-[#5865F2]/[0.08] p-3.5 text-xs space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-bold text-[#99AAFF]">
+                          Cómo activar Discord RPC en Windows (3 pasos)
+                        </span>
+                        <a
+                          href="https://discord.com/developers/applications"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-full bg-[#5865F2] px-3 py-1 text-[11px] font-bold text-white hover:opacity-90"
+                        >
+                          Abrir Discord Developers
+                        </a>
+                      </div>
+                      <ol className="list-decimal pl-4 space-y-1 text-[11.5px] pm-text-secondary">
+                        <li>Abre <strong>Discord Desktop</strong> en Windows (en navegador web no funciona el IPC local).</li>
+                        <li>Entra en <code className="pm-panel rounded px-1 py-0.5">discord.com/developers/applications</code>, pulsa <strong>New Application</strong> (ej. <em>pMusic</em>) y copia su <strong>Application ID</strong>.</li>
+                        <li>Pega ese número abajo y pulsa <strong>Guardar y reconectar</strong>. Si ya tenías una app creada, pMusic intenta reconectar al instante.</li>
+                      </ol>
+                    </div>
                     <label
                       htmlFor="discord-client-id"
                       className="block text-xs font-bold pm-text-primary"
@@ -1171,9 +1197,7 @@ export const SettingsModal: React.FC = () => {
                       Discord Application Client ID
                     </label>
                     <p className="text-[11.5px] pm-text-secondary">
-                      Crea una aplicación gratuita llamada <strong>pMusic</strong> en{' '}
-                      <code className="pm-panel rounded px-1.5 py-0.5">discord.com/developers/applications</code>{' '}
-                      y pega aquí su <em>Application ID</em> para activar la conexión real en Windows.
+                      Pega el <em>Application ID</em> numérico para vincular la presencia real en tu perfil de Discord.
                     </p>
                     <div className="flex flex-col gap-2 sm:flex-row">
                       <input
@@ -1853,7 +1877,7 @@ export const SettingsModal: React.FC = () => {
           aria-label="Categorías de ajustes"
           className="flex shrink-0 gap-1.5 overflow-x-auto border-b pm-border px-4 py-2.5 pm-no-scrollbar"
         >
-          {CATEGORIES.map((cat) => {
+          {CATEGORIES.filter((cat) => cat.id !== 'discord').map((cat) => {
             const active = activeCategory === cat.id;
             return (
               <button

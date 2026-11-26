@@ -145,21 +145,23 @@ describe('pMusic v0.22.0 mobile & offline hardening', () => {
 
     render(<App />);
 
-    // Playlist header must NOT show a duplicate Shuffle button
+    // Playlist header must NOT show a duplicate Shuffle button or main Sesión DJ button (moved to ••• menu)
     expect(screen.queryByLabelText('Aleatorio')).toBeNull();
+    expect(screen.queryByLabelText('Sesión DJ')).toBeNull();
 
     const addBtn = screen.getByTestId('playlist-add-songs-btn');
     const moreBtn = screen.getByTestId('playlist-more-actions-btn');
-    const djBtn = screen.getByLabelText('Sesión DJ');
 
     expect(addBtn).toBeTruthy();
     expect(moreBtn).toBeTruthy();
-    expect(djBtn).toBeTruthy();
 
     // Pure borderless icons: zero circular bordered pills
     expect(addBtn.className.includes('bg-transparent')).toBe(true);
     expect(addBtn.className.includes('rounded-full border ')).toBe(false);
-    expect(djBtn.className.includes('bg-transparent')).toBe(true);
+
+    // Sesión DJ AutoMix is exposed inside the 3-dots menu
+    fireEvent.click(moreBtn);
+    expect(screen.getByTestId('playlist-menu-dj-btn')).toBeTruthy();
   });
 
   it('renders sticky mobile header with borderless avatar and opens mobile Preajustes Hub with multi-account, history, and devices', () => {
@@ -262,7 +264,7 @@ describe('pMusic v0.22.0 mobile & offline hardening', () => {
       'utf-8'
     );
     expect(buildElectronSrc.includes('pmusic:open-auth-window')).toBe(true);
-    expect(buildElectronSrc.includes('--new-window')).toBe(true);
+    expect(buildElectronSrc.includes('--app=')).toBe(true);
     expect(buildElectronSrc.includes('Sesión iniciada correctamente')).toBe(true);
 
     act(() => {

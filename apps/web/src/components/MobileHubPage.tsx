@@ -5,7 +5,6 @@ import {
   ChevronRight,
   Database,
   Disc3,
-  Gamepad2,
   History,
   Laptop,
   LogOut,
@@ -458,12 +457,6 @@ export const MobileHubPage: React.FC = () => {
                       title: 'Cuenta, Perfil y Offline',
                       sub: 'Perfil público, copias de seguridad y caché offline',
                       icon: <Database className="h-4 w-4 text-emerald-400" />,
-                    },
-                    {
-                      id: 'discord',
-                      title: 'Discord RPC',
-                      sub: 'Estado en vivo en Discord',
-                      icon: <Gamepad2 className="h-4 w-4 text-indigo-400" />,
                     },
                   ] as const
                 ).map((item) => (

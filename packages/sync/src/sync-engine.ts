@@ -1359,6 +1359,7 @@ export class SyncEngine implements ISyncEngine {
     }
 
     let hadError = false;
+    let pulledLibraryChanges = false;
 
     // 1. Apply pending deletes first
     try {
@@ -1443,6 +1444,7 @@ export class SyncEngine implements ISyncEngine {
               track: row.track_data as Track,
               likedAt: String(row.liked_at ?? new Date().toISOString()),
             });
+            pulledLibraryChanges = true;
           }
         }
       }
@@ -1559,31 +1561,49 @@ export class SyncEngine implements ISyncEngine {
         if (matchedRemote && !hasPendingUpsert) {
           const remoteIdsSig = remoteTracks.map((t) => t.id).join(',');
           const localIdsSig = pl.tracks.map((t) => t.id).join(',');
+          const remoteName = String(matchedRemote.name ?? pl.name);
+          const remoteDesc = String(matchedRemote.description ?? '');
+          const remoteCover = (matchedRemote.cover_url as string | null) ?? undefined;
+          const remoteUpdatedMs = Date.parse(String(matchedRemote.updated_at ?? '')) || 0;
+          const localUpdatedMs = Date.parse(String(pl.updatedAt ?? '')) || 0;
+          const metaDiffers =
+            remoteName !== pl.name ||
+            remoteDesc !== (pl.description ?? '') ||
+            (remoteCover ?? '') !== (pl.coverUrl ?? '');
+          const remoteIsNewer = remoteUpdatedMs > localUpdatedMs + 1000;
+
+          if (remoteIdsSig === localIdsSig && !metaDiffers && cloudId === pl.id) {
+            // Identical in cloud and local — no-op
+            continue;
+          }
+
+          if (remoteIsNewer || (pl.tracks.length === 0 && remoteTracks.length > 0)) {
+            // Remote snapshot is newer (e.g. deleted track or updated cover on companion device)
+            await this.libraryStore.upsertRemotePlaylist({
+              id: cloudId,
+              name: remoteName,
+              description: remoteDesc,
+              coverUrl: remoteCover,
+              source: (matchedRemote.source as any) ?? 'local',
+              sourceUrl: (matchedRemote.source_url as string | null) ?? undefined,
+              tracks: remoteTracks,
+              createdAt: matchedRemote.created_at ? String(matchedRemote.created_at) : pl.createdAt,
+              updatedAt: matchedRemote.updated_at ? String(matchedRemote.updated_at) : pl.updatedAt,
+            });
+            pulledLibraryChanges = true;
+            continue;
+          }
 
           if (remoteTracks.length > 0 && remoteIdsSig !== localIdsSig) {
-            if (pl.tracks.length === 0) {
-              await this.libraryStore.upsertRemotePlaylist({
-                id: cloudId,
-                name: String(matchedRemote.name ?? pl.name),
-                description: String(matchedRemote.description ?? ''),
-                coverUrl: (matchedRemote.cover_url as string | null) ?? undefined,
-                source: (matchedRemote.source as any) ?? 'local',
-                sourceUrl: (matchedRemote.source_url as string | null) ?? undefined,
-                tracks: remoteTracks,
-                createdAt: matchedRemote.created_at ? String(matchedRemote.created_at) : pl.createdAt,
-                updatedAt: matchedRemote.updated_at ? String(matchedRemote.updated_at) : pl.updatedAt,
-              });
-              continue;
-            }
-            // Superset merge: never shrink a fuller playlist (e.g. 32 tracks) to a stale smaller snapshot (18 tracks)
+            // Ambiguous near-simultaneous edits without local pending flag: keep superset merge
             const primaryList = pl.tracks.length >= remoteTracks.length ? pl.tracks : remoteTracks;
             const secondaryList = pl.tracks.length >= remoteTracks.length ? remoteTracks : pl.tracks;
             tracksToPush = mergePlaylistTracksUnique(primaryList, secondaryList);
             await this.libraryStore.upsertRemotePlaylist({
               id: cloudId,
               name: pl.name,
-              description: pl.description || String(matchedRemote.description ?? ''),
-              coverUrl: pl.coverUrl ?? tracksToPush[0]?.thumbnailUrl ?? (matchedRemote.cover_url as string | null) ?? undefined,
+              description: pl.description || remoteDesc,
+              coverUrl: pl.coverUrl ?? tracksToPush[0]?.thumbnailUrl ?? remoteCover,
               source: pl.source,
               sourceUrl: pl.sourceUrl ?? (matchedRemote.source_url as string | null) ?? undefined,
               tracks: tracksToPush,
@@ -1593,7 +1613,8 @@ export class SyncEngine implements ISyncEngine {
                   ? String(matchedRemote.updated_at)
                   : pl.updatedAt,
             });
-            if (tracksToPush.length === remoteTracks.length && tracksToPush.length === primaryList.length) {
+            pulledLibraryChanges = true;
+            if (tracksToPush.length === remoteTracks.length && tracksToPush.length === primaryList.length && !metaDiffers) {
               continue;
             }
           } else if (cloudId !== pl.id) {
@@ -1608,6 +1629,7 @@ export class SyncEngine implements ISyncEngine {
               createdAt: pl.createdAt,
               updatedAt: pl.updatedAt,
             });
+            pulledLibraryChanges = true;
           }
         }
 
@@ -1620,6 +1642,7 @@ export class SyncEngine implements ISyncEngine {
             cover_url: pl.coverUrl ?? tracksToPush[0]?.thumbnailUrl ?? null,
             source: pl.source ?? 'local',
             source_url: pl.sourceUrl ?? null,
+            updated_at: pl.updatedAt || new Date().toISOString(),
           },
           { onConflict: 'id' }
         );
@@ -1674,6 +1697,7 @@ export class SyncEngine implements ISyncEngine {
           createdAt: rpl.created_at ? String(rpl.created_at) : undefined,
           updatedAt: rpl.updated_at ? String(rpl.updated_at) : undefined,
         });
+        pulledLibraryChanges = true;
       }
       await this.libraryStore.deduplicatePlaylists();
     } catch {
@@ -1682,6 +1706,10 @@ export class SyncEngine implements ISyncEngine {
 
     if (!hadError && pending.length > 0) {
       await this.libraryStore.outbox.clearProcessed(pending.map((m) => m.id));
+    }
+    if (pulledLibraryChanges) {
+      this.emitLibraryChanged('playlists');
+      this.emitLibraryChanged('liked_tracks');
     }
   }
 

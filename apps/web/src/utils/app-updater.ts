@@ -1,4 +1,4 @@
-export const APP_VERSION = '0.23.0';
+export const APP_VERSION = '0.23.1';
 
 const GITHUB_LATEST_RELEASE_URL =
   'https://api.github.com/repos/pabloburgos/pMusic/releases/latest';

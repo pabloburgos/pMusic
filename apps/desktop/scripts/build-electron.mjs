@@ -169,9 +169,11 @@ import { dirname, extname, join, normalize } from 'node:path';
 import { tmpdir } from 'node:os';
 import { deflateSync } from 'node:zlib';
 import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, shell } from 'electron';
+import { Client as DiscordRpcClient } from '@xhayper/discord-rpc';
+import type { DiscordPresenceState, DiscordRpcStatus } from '@pmusic/core';
 import { createPMusicApiHandler } from '@pmusic/providers';
 
-const PMUSIC_DESKTOP_VERSION = '0.23.0';
+const PMUSIC_DESKTOP_VERSION = '0.23.1';
 
 function compareSemverDesktop(remoteRaw: string, localRaw: string): number {
   const clean = (v: string) =>
@@ -195,9 +197,10 @@ function compareSemverDesktop(remoteRaw: string, localRaw: string): number {
 
 function scheduleCloseOAuthBrowserWindow(): void {
   if (process.platform !== 'win32') return;
-  setTimeout(() => {
-    try {
-      const psScript = \`
+  for (const delayMs of [1100, 2300]) {
+    setTimeout(() => {
+      try {
+        const psScript = \`
 Add-Type -TypeDefinition @"
 using System;
 using System.Text;
@@ -207,14 +210,18 @@ public class PMWinClose {
   [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc lpEnumFunc, IntPtr lParam);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
-  public static void CloseMatching(string needle) {
+  public static void CloseMatching(uint selfPid) {
     EnumWindows((hWnd, lParam) => {
       if (!IsWindowVisible(hWnd)) return true;
+      uint pid = 0;
+      GetWindowThreadProcessId(hWnd, out pid);
+      if (pid == selfPid) return true;
       var sb = new StringBuilder(512);
       GetWindowText(hWnd, sb, sb.Capacity);
       var title = sb.ToString();
-      if (title.Contains(needle) && title.Contains("pMusic")) {
+      if (title.Contains("pMusic") && (title.Contains("iniciada") || title.Contains("Auth"))) {
         PostMessage(hWnd, 0x0010, IntPtr.Zero, IntPtr.Zero);
       }
       return true;
@@ -222,20 +229,269 @@ public class PMWinClose {
   }
 }
 "@
-[PMWinClose]::CloseMatching("Sesión iniciada")
+[PMWinClose]::CloseMatching(\${process.pid})
 \`;
-      const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
-      const child = spawn(
-        'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', encoded],
-        { detached: true, stdio: 'ignore', windowsHide: true }
-      );
-      child.unref();
-    } catch {
-      // ignore window auto-close fallback errors
-    }
-  }, 1500);
+        const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
+        const child = spawn(
+          'powershell.exe',
+          ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', encoded],
+          { detached: true, stdio: 'ignore', windowsHide: true }
+        );
+        child.unref();
+      } catch {
+        // ignore window auto-close fallback errors
+      }
+    }, delayMs);
+  }
 }
+
+class DiscordRpcManager {
+  private client: InstanceType<typeof DiscordRpcClient> | null = null;
+  private clientId = '';
+  private status: DiscordRpcStatus['status'] = 'disconnected';
+  private username: string | undefined;
+  private lastError: string | undefined;
+  private connecting = false;
+  private enabled = true;
+  private lastState: DiscordPresenceState | null = null;
+  private reconnectTimer: ReturnType<typeof setInterval> | null = null;
+
+  private getConfigPath(): string {
+    return join(app.getPath('userData'), 'discord-rpc.json');
+  }
+
+  public loadSavedClientId(): void {
+    try {
+      const cfgPath = this.getConfigPath();
+      if (existsSync(cfgPath)) {
+        const raw = JSON.parse(readFileSync(cfgPath, 'utf8')) as { clientId?: string };
+        if (typeof raw?.clientId === 'string' && raw.clientId.trim()) {
+          this.clientId = raw.clientId.trim();
+          return;
+        }
+      }
+    } catch {
+      // Ignore corrupt file
+    }
+    this.clientId = (process.env.DISCORD_CLIENT_ID ?? '').trim();
+  }
+
+  public saveClientId(clientId: string): void {
+    this.clientId = clientId.trim();
+    try {
+      writeFileSync(
+        this.getConfigPath(),
+        JSON.stringify({ clientId: this.clientId }, null, 2),
+        'utf8'
+      );
+    } catch {
+      // Ignore disk write failure
+    }
+  }
+
+  public getStatus(): DiscordRpcStatus {
+    return {
+      connected: Boolean(this.client?.user && this.status === 'connected'),
+      status: this.clientId
+        ? this.enabled
+          ? this.status
+          : 'disabled'
+        : 'needs_client_id',
+      username: this.username,
+      clientId: this.clientId,
+      lastError: this.lastError,
+    };
+  }
+
+  public start(): void {
+    this.loadSavedClientId();
+    if (!this.reconnectTimer) {
+      this.reconnectTimer = setInterval(() => {
+        if (this.enabled && this.clientId && (!this.client || !this.client.user)) {
+          void this.connect();
+        }
+      }, 15_000);
+    }
+    if (this.clientId && this.enabled) {
+      void this.connect();
+    } else if (!this.clientId) {
+      this.status = 'needs_client_id';
+    }
+  }
+
+  public async configureAndReconnect(clientId: string): Promise<DiscordRpcStatus> {
+    this.saveClientId(clientId);
+    await this.disconnect();
+    if (!this.clientId) {
+      this.status = 'needs_client_id';
+      this.lastError = undefined;
+      return this.getStatus();
+    }
+    this.enabled = true;
+    await this.connect();
+    return this.getStatus();
+  }
+
+  public async disconnect(): Promise<void> {
+    if (this.client) {
+      try {
+        await this.client.destroy?.();
+      } catch {
+        // Ignore teardown errors
+      }
+      this.client = null;
+    }
+    this.username = undefined;
+    if (this.status === 'connected' || this.status === 'connecting') {
+      this.status = 'disconnected';
+    }
+  }
+
+  public async connect(): Promise<DiscordRpcStatus> {
+    if (!this.enabled) {
+      this.status = 'disabled';
+      return this.getStatus();
+    }
+    if (!this.clientId) {
+      this.status = 'needs_client_id';
+      return this.getStatus();
+    }
+    if (this.connecting) return this.getStatus();
+    if (this.client?.user && this.status === 'connected') return this.getStatus();
+
+    this.connecting = true;
+    this.status = 'connecting';
+    this.lastError = undefined;
+
+    try {
+      const client = new DiscordRpcClient({ clientId: this.clientId });
+      client.on('ready', () => {
+        this.client = client;
+        this.status = 'connected';
+        this.username = client.user?.username ?? undefined;
+        this.lastError = undefined;
+        if (this.lastState) {
+          void this.updateActivity(this.lastState);
+        }
+      });
+      client.on('disconnected', () => {
+        if (this.client === client) {
+          this.client = null;
+          this.username = undefined;
+          this.status = 'disconnected';
+        }
+      });
+
+      await client.login();
+      this.client = client;
+      if (client.user) {
+        this.status = 'connected';
+        this.username = client.user.username ?? undefined;
+      }
+    } catch (err) {
+      this.client = null;
+      this.username = undefined;
+      this.status = 'disconnected';
+      this.lastError =
+        err instanceof Error
+          ? err.message
+          : 'Discord Desktop no detectado o Client ID inválido';
+    } finally {
+      this.connecting = false;
+    }
+    return this.getStatus();
+  }
+
+  public async updateActivity(state: DiscordPresenceState): Promise<void> {
+    this.lastState = state;
+    this.enabled = state.enabled;
+    if (typeof state.clientId === 'string' && state.clientId.trim() !== this.clientId) {
+      await this.configureAndReconnect(state.clientId);
+    }
+
+    if (!state.enabled) {
+      this.status = this.clientId ? 'disabled' : 'needs_client_id';
+      if (this.client?.user) {
+        await this.client.user.clearActivity().catch(() => {});
+      }
+      return;
+    }
+
+    if (!this.clientId) {
+      this.status = 'needs_client_id';
+      return;
+    }
+
+    if (!this.client?.user) {
+      await this.connect();
+      if (!this.client?.user) return;
+    }
+
+    try {
+      if (!state.track || (!state.isPlaying && state.showWhenPaused === false)) {
+        await this.client.user.clearActivity();
+        return;
+      }
+
+      const rawTitle = (state.track.title || 'pMusic').trim();
+      const details = rawTitle.length < 2 ? rawTitle + ' ' : rawTitle.slice(0, 128);
+      const artists = state.track.artists.map((a) => a.name).join(', ') || 'Artista';
+      const stateTextRaw = state.isPlaying ? artists : 'En pausa · ' + artists;
+      const stateText = stateTextRaw.length < 2 ? stateTextRaw + ' ' : stateTextRaw.slice(0, 128);
+      const artUrl =
+        state.showArtwork !== false
+          ? state.track.thumbnailHighUrl ?? state.track.thumbnailUrl
+          : undefined;
+      const validArtUrl =
+        artUrl && (artUrl.startsWith('https://') || artUrl.startsWith('http://'))
+          ? artUrl
+          : undefined;
+
+      const nowSec = Math.floor(Date.now() / 1000);
+      const dur = state.durationSec ?? state.track.durationSec ?? 0;
+      const timestamps =
+        state.isPlaying && state.showTimestamps !== false
+          ? {
+              startTimestamp: Math.max(0, nowSec - Math.max(0, Math.round(state.positionSec))),
+              ...(dur > state.positionSec
+                ? { endTimestamp: nowSec + Math.round(dur - state.positionSec) }
+                : {}),
+            }
+          : {};
+
+      const statusDisplayType =
+        state.displayMode === 'artist' ? 1 : state.displayMode === 'app' ? 0 : 2;
+
+      await this.client.user.setActivity({
+        type: 2,
+        statusDisplayType,
+        details,
+        state: stateText,
+        ...(validArtUrl
+          ? {
+              largeImageKey: validArtUrl,
+              largeImageText: state.track.album?.name?.slice(0, 128) || 'pMusic',
+            }
+          : {}),
+        instance: false,
+        ...timestamps,
+      } as any);
+    } catch {
+      this.status = 'disconnected';
+      this.client = null;
+    }
+  }
+
+  public dispose(): void {
+    if (this.reconnectTimer) {
+      clearInterval(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    void this.disconnect();
+  }
+}
+
+const discordRpc = new DiscordRpcManager();
 
 const isTransientStreamError = (err: unknown): boolean => {
   const code = (err as { code?: string })?.code ?? '';
@@ -366,7 +622,7 @@ async function openUrlInNewBrowserWindow(url: string): Promise<void> {
       if (exe) {
         const args = /firefox\\.exe$/i.test(exe)
           ? ['-new-window', url]
-          : ['--new-window', '--window-size=520,720', url];
+          : ['--app=' + url, '--window-size=500,680'];
         const child = spawn(exe, args, { detached: true, stdio: 'ignore', windowsHide: false });
         child.unref();
         return;
@@ -429,7 +685,8 @@ async function startOAuthCallbackServer(): Promise<number> {
   if (location.hash && location.hash.includes('access_token')) {
     fetch('/auth/hash', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: location.href }).catch(()=>{});
   }
-  setTimeout(() => { try { window.open('', '_self'); window.close(); } catch {} }, 1400);
+  setTimeout(() => { try { window.open('', '_self'); window.close(); } catch {} }, 900);
+  setTimeout(() => { try { window.close(); } catch {} }, 1600);
 </script></body></html>\`;
 
   const tryListen = (port: number) =>
@@ -680,7 +937,14 @@ ipcMain.handle('pmusic:vault-remove', (_event, key: string) => {
     writeVaultData(vault);
   }
 });
-ipcMain.handle('pmusic:update-discord', () => undefined);
+ipcMain.handle('pmusic:update-discord', async (_event, state: DiscordPresenceState) => {
+  await discordRpc.updateActivity(state);
+});
+ipcMain.handle('pmusic:configure-discord', async (_event, clientId: string) =>
+  discordRpc.configureAndReconnect(typeof clientId === 'string' ? clientId : '')
+);
+ipcMain.handle('pmusic:reconnect-discord', async () => discordRpc.connect());
+ipcMain.handle('pmusic:get-discord-status', () => discordRpc.getStatus());
 ipcMain.handle('pmusic:update-media-session', (_event, state: { isPlaying?: boolean; track?: { title?: string } }) => {
   const nextPlaying = Boolean(state?.isPlaying);
   if (nextPlaying !== lastThumbarPlaying) {
@@ -940,6 +1204,7 @@ void app.whenReady().then(async () => {
   if (pendingAuthCallbackUrl) {
     dispatchAuthCallbackUrl(pendingAuthCallbackUrl);
   }
+  discordRpc.start();
   try {
     globalShortcut.register('MediaPlayPause', () => sendMediaAction('toggle'));
     globalShortcut.register('MediaNextTrack', () => sendMediaAction('nexttrack'));
@@ -951,6 +1216,7 @@ void app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   globalShortcut.unregisterAll();
+  discordRpc.dispose();
   loopbackServer?.close();
   oauthServer?.close();
   if (process.platform !== 'darwin') {

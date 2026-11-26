@@ -156,32 +156,39 @@ export const SocialScreen: React.FC = () => {
 
   return (
     <div className="pm-page-enter space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-[24px] font-bold tracking-tight pm-text-primary sm:text-[28px]">
-            Social
-          </h1>
-          <p className="text-xs pm-text-secondary">
-            {userProfile?.username ? `@${userProfile.username}` : authState.email} · Tiempo real entre
-            amigos, Jam en vivo y listas compartidas
-          </p>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3.5">
+          <UserAvatar
+            src={userProfile?.avatarUrl ?? authState.avatarUrl}
+            name={userProfile?.displayName ?? authState.displayName ?? 'pMusic'}
+            size="md"
+            showRing
+          />
+          <div className="min-w-0">
+            <h1 className="text-[28px] font-black leading-tight tracking-tight pm-text-primary sm:text-[30px]">
+              Social
+            </h1>
+            <p className="truncate text-xs pm-text-secondary">
+              {userProfile?.username ? `@${userProfile.username}` : authState.email} · Jam en directo, amigos y listas compartidas
+            </p>
+          </div>
         </div>
 
-        <div className="inline-flex rounded-full border pm-border bg-white/[0.04] p-1">
+        <div className="grid w-full grid-cols-3 rounded-full border pm-border bg-white/[0.04] p-1 sm:inline-flex sm:w-auto">
           {[
             {
               id: 'jam' as const,
               label: activeJamSession?.active ? `Jam · ${activeJamSession.code}` : 'Jam & QR',
             },
             { id: 'amigos' as const, label: `Amigos (${acceptedFriends.length})` },
-            { id: 'compartidas' as const, label: `Compartidas (${sharedPlaylists.length})` },
+            { id: 'compartidas' as const, label: `Listas (${sharedPlaylists.length})` },
           ].map((tab) => (
             <button
               key={tab.id}
               type="button"
               onClick={() => setSocialSubTab(tab.id)}
-              className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition ${
-                socialSubTab === tab.id ? 'pm-btn-primary' : 'pm-text-secondary hover:text-white'
+              className={`truncate rounded-full px-3 py-1.5 text-xs font-bold transition sm:px-3.5 ${
+                socialSubTab === tab.id ? 'pm-btn-primary shadow-sm' : 'pm-text-secondary hover:text-white'
               }`}
             >
               {tab.label}
@@ -201,32 +208,36 @@ export const SocialScreen: React.FC = () => {
         <div className="space-y-4">
           {!activeJamSession?.active ? (
             <div className="space-y-4">
-              <div className="pm-surface-card space-y-5 rounded-3xl p-6">
+              <div className="pm-surface-card relative overflow-hidden space-y-5 rounded-[24px] border border-emerald-400/20 bg-gradient-to-br from-emerald-500/[0.10] via-transparent to-purple-500/[0.12] p-5 sm:p-6">
                 <div className="flex items-start gap-4">
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-400">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-400/30">
                     <Radio className="h-6 w-6" />
                   </div>
                   <div className="space-y-1">
-                    <h2 className="text-lg font-bold pm-text-primary">
+                    <div className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-300">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                      TIEMPO REAL MULTIDISPOSITIVO
+                    </div>
+                    <h2 className="text-lg font-black tracking-tight pm-text-primary sm:text-xl">
                       Jam en directo dentro del reproductor
                     </h2>
-                    <p className="text-xs pm-text-secondary">
-                      Tu cola normal se transforma en una Cola de Jam en tiempo real. Tus amigos con la
-                      app escuchan y añaden con su cuenta, y los invitados desde la web añaden
-                      canciones al instante con el enlace o QR.
+                    <p className="text-xs leading-relaxed pm-text-secondary">
+                      Tu cola se sincroniza al segundo entre móviles y PCs. Tus amigos escuchan contigo o añaden temas escaneando tu QR.
                     </p>
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  disabled={jamBusy}
-                  onClick={() => void handleStartJamClick()}
-                  className="pm-btn-primary inline-flex items-center gap-2 rounded-full px-6 py-3 text-sm font-bold disabled:opacity-50"
-                >
-                  {jamBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radio className="h-4 w-4" />}
-                  Iniciar Jam y abrir Cola en vivo
-                </button>
+                <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center">
+                  <button
+                    type="button"
+                    disabled={jamBusy}
+                    onClick={() => void handleStartJamClick()}
+                    className="pm-btn-primary pm-pressable inline-flex items-center justify-center gap-2 rounded-full px-6 py-3 text-sm font-bold shadow-lg disabled:opacity-50"
+                  >
+                    {jamBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radio className="h-4 w-4" />}
+                    Iniciar Jam y abrir Cola en vivo
+                  </button>
+                </div>
               </div>
 
               <form
@@ -235,20 +246,20 @@ export const SocialScreen: React.FC = () => {
                   void joinJamInApp(joinJamInput);
                   setJoinJamInput('');
                 }}
-                className="pm-surface-card flex flex-wrap items-center gap-2 rounded-2xl p-4"
+                className="pm-surface-card flex items-center gap-2 rounded-full p-1.5 pl-4"
               >
                 <input
                   type="text"
                   value={joinJamInput}
                   onChange={(e) => setJoinJamInput(e.target.value.toUpperCase())}
-                  placeholder="¿Tienes un código de Jam? Ej: AB3K9P"
-                  className="pm-input min-w-[200px] flex-1 rounded-full px-4 py-2 text-xs"
+                  placeholder="Código de Jam (ej. AB3K9P)"
+                  className="min-w-0 flex-1 bg-transparent text-xs font-semibold pm-text-primary placeholder:pm-text-tertiary focus:outline-none"
                 />
                 <button
                   type="submit"
-                  className="pm-btn-secondary rounded-full px-4 py-2 text-xs font-bold"
+                  className="pm-btn-secondary pm-pressable shrink-0 rounded-full px-4 py-2 text-xs font-bold"
                 >
-                  Unirse desde mi cuenta
+                  Unirse
                 </button>
               </form>
             </div>
@@ -616,11 +627,12 @@ export const SocialScreen: React.FC = () => {
               lateral. Pulsa el menú ••• dentro de cualquier playlist para hacerla colaborativa.
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-3">
               {sharedPlaylists.map((pl) => (
                 <div
                   key={pl.id}
-                  className="pm-surface-card flex flex-col justify-between gap-3 rounded-2xl p-4"
+                  data-surface="content"
+                  className="pm-surface-card pm-card-lift flex flex-col justify-between gap-3 rounded-[16px] p-4"
                 >
                   <button
                     type="button"

@@ -327,6 +327,10 @@ function isLiveRuntime(): boolean {
   return proto.startsWith('http') || proto === 'file:' || isElectronDesktopRuntime();
 }
 
+function isVitestEnv(): boolean {
+  return Boolean((import.meta as any).vitest) || (import.meta as any).env?.MODE === 'test';
+}
+
 function isMobileHardwareVolumeRuntime(): boolean {
   if (typeof window === 'undefined') return false;
   if (window.location?.hostname === 'appassets.pmusic.local') return true;
@@ -524,7 +528,7 @@ function canonicalizeTrackArtists(track: Track): Track {
   return changed ? { ...track, artists: nextArtists } : track;
 }
 
-const HOME_SHELVES_CACHE_KEY = 'pmusic_home_shelves_cache_v2';
+const HOME_SHELVES_CACHE_KEY = 'pmusic_home_shelves_cache_v3';
 const HOME_SHELVES_CACHE_TTL_MS = 30 * 60 * 1000;
 
 interface CachedHomeShelvesEntry {
@@ -533,16 +537,34 @@ interface CachedHomeShelvesEntry {
   shelves: HomeEditorialShelf[];
 }
 
+function isLegacyOrFallbackShelves(shelves: HomeEditorialShelf[]): boolean {
+  if (!Array.isArray(shelves) || shelves.length === 0) return true;
+  const hasLegacyMixId = shelves.some((s) =>
+    (s.mixes ?? []).some((m) => m.id === 'mix_cruz_urbano_es')
+  );
+  if (hasLegacyMixId) return true;
+  const hasSyntheticFallback = shelves.some((s) =>
+    (s.tracks ?? []).some((t) => t.id.startsWith('trk_fb_') || t.id.startsWith('fallback_'))
+  );
+  return hasSyntheticFallback;
+}
+
 function readCachedHomeShelves(
   expectedOwnerUserId?: string | null
 ): CachedHomeShelvesEntry | null {
   try {
     if (typeof localStorage === 'undefined') return null;
     localStorage.removeItem('pmusic_home_shelves_cache_v1');
+    localStorage.removeItem('pmusic_home_shelves_cache_v2');
     const raw = localStorage.getItem(HOME_SHELVES_CACHE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<CachedHomeShelvesEntry> | null;
-    if (!parsed || !Array.isArray(parsed.shelves) || parsed.shelves.length === 0) {
+    if (
+      !parsed ||
+      !Array.isArray(parsed.shelves) ||
+      parsed.shelves.length === 0 ||
+      isLegacyOrFallbackShelves(parsed.shelves)
+    ) {
       return null;
     }
     const storedOwner = parsed.ownerUserId ?? null;
@@ -564,7 +586,14 @@ function saveCachedHomeShelves(
   ownerUserId?: string | null
 ): void {
   try {
-    if (typeof localStorage === 'undefined' || !shelves || shelves.length === 0) return;
+    if (
+      typeof localStorage === 'undefined' ||
+      !shelves ||
+      shelves.length === 0 ||
+      isLegacyOrFallbackShelves(shelves)
+    ) {
+      return;
+    }
     const entry: CachedHomeShelvesEntry = {
       ownerUserId: ownerUserId ?? null,
       savedAt: Date.now(),
@@ -813,15 +842,42 @@ let cloudPrefsSaveTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingCloudPrefsPayload: Record<string, unknown> | null = null;
 let cloudLibrarySyncTimer: ReturnType<typeof setTimeout> | null = null;
 let prefsUnloadBound = false;
+let lastLocalPrefsSavedAt = 0;
+let cloudFocusSyncAt = 0;
+let oauthCallbackInFlight = false;
+const handledOAuthTokens = new Set<string>();
 
-function scheduleLibraryCloudSync(): void {
-  if (cloudLibrarySyncTimer) clearTimeout(cloudLibrarySyncTimer);
-  cloudLibrarySyncTimer = setTimeout(() => {
+function extractOAuthTokenKey(callbackUrl: string): string | null {
+  try {
+    const normalized = callbackUrl.replace('#', '?');
+    const parsed = new URL(normalized.includes('://') ? normalized : `https://pmusic.local/${normalized}`);
+    const code = parsed.searchParams.get('code');
+    if (code) return `code:${code}`;
+    const accessToken = parsed.searchParams.get('access_token');
+    if (accessToken) return `token:${accessToken.slice(0, 32)}`;
+  } catch {
+    // ignore malformed url
+  }
+  return null;
+}
+
+function scheduleLibraryCloudSync(immediate = false): void {
+  if (cloudLibrarySyncTimer) {
+    clearTimeout(cloudLibrarySyncTimer);
     cloudLibrarySyncTimer = null;
-    if (syncEngine.getAuthState().connected) {
-      void syncEngine.syncNow();
-    }
-  }, 600);
+  }
+  const runSync = () => {
+    cloudLibrarySyncTimer = null;
+    if (!syncEngine.getAuthState().connected) return;
+    void syncEngine.syncNow().then(() => {
+      void syncEngine.sendRemoteCommand({ targetDeviceId: '*', type: 'library_sync' });
+    });
+  };
+  if (immediate) {
+    runSync();
+    return;
+  }
+  cloudLibrarySyncTimer = setTimeout(runSync, 350);
 }
 
 function applyAmbientPaletteForTrack(track: Track | null, durationMs = 1100): void {
@@ -903,6 +959,7 @@ export interface PMusicStoreState {
   // Navigation & Sheets
   activeTab: MainNavTab;
   appReady: boolean;
+  homeFeedReady: boolean;
   carModeOpen: boolean;
   sidebarCollapsed: boolean;
   rightPanelOpen: boolean;
@@ -1841,6 +1898,27 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         });
         void st.playTrack(snap.track, snap.queue, snap.positionMs / 1000);
         st.showToast(`Escuchando aquí: ${snap.track.title}`);
+      } else if (cmd.type === 'library_sync') {
+        void Promise.all([
+          syncEngine.syncNow(),
+          syncEngine.loadAccountPreferences?.(),
+        ]).then(([, cloudPrefs]) => {
+          set((prev) => ({
+            playlists: libraryStore.getPlaylists(),
+            likedTracks: libraryStore.getLikedTracks(),
+            playHistory: libraryStore.getPlayHistory(),
+            ...(cloudPrefs?.playlistAppearances &&
+            typeof cloudPrefs.playlistAppearances === 'object' &&
+            Number(cloudPrefs.savedAt ?? 0) >= lastLocalPrefsSavedAt
+              ? {
+                  playlistAppearances: cloudPrefs.playlistAppearances as Record<
+                    string,
+                    PlaylistAppearanceEntry
+                  >,
+                }
+              : {}),
+          }));
+        });
       }
     });
 
@@ -2686,7 +2764,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }
     const payload = pendingCloudPrefsPayload;
     pendingCloudPrefsPayload = null;
-    void syncEngine.saveAccountPreferences?.(payload);
+    const savedAt = Number(payload.savedAt ?? Date.now());
+    lastLocalPrefsSavedAt = Math.max(lastLocalPrefsSavedAt, savedAt);
+    void syncEngine.saveAccountPreferences?.(payload)?.then(() => {
+      void syncEngine.sendRemoteCommand({ targetDeviceId: '*', type: 'library_sync' });
+    });
   }
 
   function persistPrefsFromStore(immediate = false): void {
@@ -2977,6 +3059,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   return {
   activeTab: 'Inicio',
   appReady: false,
+  homeFeedReady: isVitestEnv() || !isLiveRuntime(),
   carModeOpen: false,
   sidebarCollapsed: typeof window !== 'undefined' ? window.innerWidth < 1024 : false,
   rightPanelOpen: typeof window !== 'undefined' ? window.innerWidth >= 1280 : false,
@@ -3089,63 +3172,66 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   activeLyricIndex: -1,
   lyricsUserScrolled: false,
 
-  homeShelves: [
-    {
-      id: 'shelf_listen_again',
-      kind: 'listen_again',
-      title: 'Escuchar de nuevo',
-      subtitle: 'Tus temas recientes y favoritos al instante',
-      tracks: canonicalFallbackQueue.slice(0, 8),
-    },
-    {
-      id: 'shelf_mixes_for_you',
-      kind: 'mixes_for_you',
-      title: 'Mixes para ti',
-      subtitle: 'Generados por tu algoritmo con Modo Sesión DJ',
-      mixes: [
+  homeShelves:
+    isLiveRuntime() && !isVitestEnv()
+      ? []
+      : [
         {
-          id: 'mix_cruz_urbano_es',
-          title: 'Mix Cruzzi',
-          subtitle: 'Cruzzi, La Pantera, Quevedo y escena urbana ES',
-          coverUrl: canonicalFallbackQueue[0]!.thumbnailUrl,
-          accentColor: '#BF5AF2',
+          id: 'shelf_listen_again',
+          kind: 'listen_again',
+          title: 'Escuchar de nuevo',
+          subtitle: 'Tus temas recientes y favoritos al instante',
           tracks: canonicalFallbackQueue.slice(0, 8),
         },
         {
-          id: 'mix_trap_canarias',
-          title: 'Mix La Pantera & Canarias',
-          subtitle: 'La Pantera, Cruzzi, Juseph y trap isleño',
-          coverUrl: canonicalFallbackQueue[3]!.thumbnailUrl,
-          accentColor: '#0A84FF',
-          tracks: [...canonicalFallbackQueue.slice(2), ...canonicalFallbackQueue.slice(0, 2)],
+          id: 'shelf_mixes_for_you',
+          kind: 'mixes_for_you',
+          title: 'Mixes para ti',
+          subtitle: 'Generados por tu algoritmo con Modo Sesión DJ',
+          mixes: [
+            {
+              id: 'mix_cruz_urbano_es',
+              title: 'Mix Cruzzi',
+              subtitle: 'Cruzzi, La Pantera, Quevedo y escena urbana ES',
+              coverUrl: canonicalFallbackQueue[0]!.thumbnailUrl,
+              accentColor: '#BF5AF2',
+              tracks: canonicalFallbackQueue.slice(0, 8),
+            },
+            {
+              id: 'mix_trap_canarias',
+              title: 'Mix La Pantera & Canarias',
+              subtitle: 'La Pantera, Cruzzi, Juseph y trap isleño',
+              coverUrl: canonicalFallbackQueue[3]!.thumbnailUrl,
+              accentColor: '#0A84FF',
+              tracks: [...canonicalFallbackQueue.slice(2), ...canonicalFallbackQueue.slice(0, 2)],
+            },
+            {
+              id: 'mix_sesion_dj_club',
+              title: 'Sesión DJ: Bad Bunny & Urbano',
+              subtitle: 'Bad Bunny, Saiko, Morad y himnos de club',
+              coverUrl: canonicalFallbackQueue[5]!.thumbnailUrl,
+              accentColor: '#30D158',
+              tracks: [...canonicalFallbackQueue].reverse(),
+            },
+          ],
         },
         {
-          id: 'mix_sesion_dj_club',
-          title: 'Sesión DJ: Bad Bunny & Urbano',
-          subtitle: 'Bad Bunny, Saiko, Morad y himnos de club',
-          coverUrl: canonicalFallbackQueue[5]!.thumbnailUrl,
-          accentColor: '#30D158',
-          tracks: [...canonicalFallbackQueue].reverse(),
+          id: 'shelf_because_you_listened',
+          kind: 'because_you_listened',
+          title: 'Porque escuchaste a Cruzzi',
+          subtitle: 'Recomendaciones adaptadas a tu perfil urbano',
+          anchorArtist: 'Cruzzi',
+          tracks: canonicalFallbackQueue.slice(0, 8),
+        },
+        {
+          id: 'shelf_favorite_new_releases',
+          kind: 'favorite_new_releases',
+          title: 'Novedades de tus artistas favoritos',
+          subtitle: 'Lanzamientos destacados de Bad Bunny, La Pantera y Cruzzi',
+          albums: [...FALLBACK_ALBUMS],
+          tracks: canonicalFallbackQueue.slice(0, 6),
         },
       ],
-    },
-    {
-      id: 'shelf_because_you_listened',
-      kind: 'because_you_listened',
-      title: 'Porque escuchaste a Cruzzi',
-      subtitle: 'Recomendaciones adaptadas a tu perfil urbano',
-      anchorArtist: 'Cruzzi',
-      tracks: canonicalFallbackQueue.slice(0, 8),
-    },
-    {
-      id: 'shelf_favorite_new_releases',
-      kind: 'favorite_new_releases',
-      title: 'Novedades de tus artistas favoritos',
-      subtitle: 'Lanzamientos destacados de Bad Bunny, La Pantera y Cruzzi',
-      albums: [...FALLBACK_ALBUMS],
-      tracks: canonicalFallbackQueue.slice(0, 6),
-    },
-  ],
   searchQuery: '',
   isSearching: false,
   searchScope: 'Todo',
@@ -3574,13 +3660,54 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
     if (!prefsUnloadBound) {
       prefsUnloadBound = true;
+      const pullCloudDeltaOnFocus = () => {
+        if (!get().authState.connected) return;
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+        const now = Date.now();
+        if (now - cloudFocusSyncAt < 8000) return;
+        cloudFocusSyncAt = now;
+        void Promise.all([
+          syncEngine.syncNow(),
+          syncEngine.loadAccountPreferences?.(),
+        ]).then(([, cloudPrefs]) => {
+          set((prev) => ({
+            playlists: libraryStore.getPlaylists().map((pl) => ({
+              ...pl,
+              tracks: pl.tracks.map(canonicalizeTrackArtists),
+            })),
+            likedTracks: libraryStore.getLikedTracks().map((l) => ({
+              ...l,
+              track: canonicalizeTrackArtists(l.track),
+            })),
+            playHistory: libraryStore.getPlayHistory().map((h) => ({
+              ...h,
+              track: canonicalizeTrackArtists(h.track),
+            })),
+            ...(cloudPrefs?.playlistAppearances &&
+            typeof cloudPrefs.playlistAppearances === 'object' &&
+            Number(cloudPrefs.savedAt ?? 0) >= lastLocalPrefsSavedAt
+              ? {
+                  playlistAppearances: cloudPrefs.playlistAppearances as Record<
+                    string,
+                    PlaylistAppearanceEntry
+                  >,
+                }
+              : {}),
+          }));
+        });
+      };
       if (typeof window !== 'undefined') {
         window.addEventListener('beforeunload', () => flushCloudPrefsNow());
         window.addEventListener('pagehide', () => flushCloudPrefsNow());
+        window.addEventListener('focus', pullCloudDeltaOnFocus);
       }
       if (typeof document !== 'undefined') {
         document.addEventListener('visibilitychange', () => {
-          if (document.hidden) flushCloudPrefsNow();
+          if (document.hidden) {
+            flushCloudPrefsNow();
+          } else {
+            pullCloudDeltaOnFocus();
+          }
         });
       }
     }
@@ -3632,6 +3759,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         homeShelves: canonicalShelves.some((s) => (s.tracks?.length ?? 0) > 0)
           ? canonicalShelves
           : prev.homeShelves,
+        homeFeedReady: true,
         trackAnalyses: { ...prev.trackAnalyses, ...analyses },
         ...(firstReal && !prev.isPlaying
           ? {
@@ -3797,11 +3925,16 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
     const syncWorkPromise = runCloudAndShelfSync();
     if (isLiveRuntime() && isOnline) {
-      const budgetMs = hasWarmAccount && hasFreshHomeCache ? 850 : 3400;
+      const budgetMs = hasWarmAccount && hasFreshHomeCache ? 900 : 5200;
       await Promise.race([
         syncWorkPromise,
         new Promise<void>((resolve) => setTimeout(resolve, budgetMs)),
       ]);
+      void syncWorkPromise.then(() => {
+        if (!get().homeFeedReady) {
+          set({ homeFeedReady: true });
+        }
+      });
     } else {
       await syncWorkPromise;
     }
@@ -3830,7 +3963,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
     applyAmbientPaletteForTrack(get().currentTrack);
     void get().loadLyricsForTrack(get().currentTrack);
-    set({ appReady: true });
+    set((prev) => ({
+      appReady: true,
+      homeFeedReady: prev.homeFeedReady || prev.homeShelves.length > 0 || !isOnline,
+    }));
     syncAndroidAutoLibrarySnapshot();
     if (isLiveRuntime() && isOnline) {
       void get().refreshExploreDiscovery();
@@ -3878,34 +4014,16 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       };
     }
 
-    // Wire native & web OAuth deep-link callbacks (Google Sign-In)
+    // Check initial URL query for web OAuth redirect (native listeners stay singleton at module scope)
     if (typeof window !== 'undefined') {
-      (window as any).__pmusicHandleAuthCallback = (cbUrl: string) => {
-        if (cbUrl) void get().handleAuthCallbackUrl(cbUrl);
-      };
-      const desktopBridge = (window as any).pmusicDesktop;
-      if (desktopBridge?.onAuthCallback) {
-        desktopBridge.onAuthCallback((cbUrl: string) => {
-          if (cbUrl) void get().handleAuthCallbackUrl(cbUrl);
-        });
-      }
-      if (desktopBridge?.consumePendingAuthCallback) {
-        void desktopBridge.consumePendingAuthCallback().then((pending: string | null) => {
-          if (pending) void get().handleAuthCallbackUrl(pending);
-        });
-      }
-      const androidNative = (window as any).PMusicNative;
-      if (androidNative?.consumePendingAuthCallback) {
-        try {
-          const pending = androidNative.consumePendingAuthCallback();
-          if (pending) void get().handleAuthCallbackUrl(pending);
-        } catch {
-          // ignore
-        }
-      }
       const href = window.location?.href ?? '';
       if (href.includes('code=') || href.includes('access_token=')) {
-        void get().handleAuthCallbackUrl(href);
+        const dispatchOnce = (window as any).__pmusicHandleAuthCallback;
+        if (typeof dispatchOnce === 'function') {
+          dispatchOnce(href);
+        } else {
+          void get().handleAuthCallbackUrl(href);
+        }
       }
     }
 
@@ -6648,7 +6766,6 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           [playlistId]: nextApp,
         },
       }));
-      scheduleLibraryCloudSync();
     } else {
       set((prev) => ({
         playlistAppearances: {
@@ -6657,7 +6774,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         },
       }));
     }
-    persistPrefsFromStore();
+    scheduleLibraryCloudSync(true);
+    persistPrefsFromStore(true);
   },
 
   downloadPlaylistOffline: async (playlistId, tracks, playlistName) => {
@@ -7372,6 +7490,17 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       );
       return;
     }
+    const tokenKey = extractOAuthTokenKey(callbackUrl);
+    if (tokenKey && handledOAuthTokens.has(tokenKey)) {
+      return;
+    }
+    if (oauthCallbackInFlight) {
+      return;
+    }
+    if (tokenKey) {
+      handledOAuthTokens.add(tokenKey);
+    }
+    oauthCallbackInFlight = true;
     set({ authCallbackError: null });
     try {
       const auth = await syncEngine.completeOAuthCallback?.(callbackUrl);
@@ -7384,6 +7513,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           // ignore
         }
         const profile = (await syncEngine.getProfile?.()) ?? null;
+        await syncEngine.syncNow().catch(() => {});
         try {
           const cloudPrefs = await syncEngine.loadAccountPreferences?.();
           if (cloudPrefs) {
@@ -7394,7 +7524,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
             await hydrateAndMergeCloudTaste(cloudPrefs);
           } else {
             await hydrateAndMergeCloudTaste(null);
-            persistPrefsFromStore();
+            persistPrefsFromStore(true);
           }
         } catch {
           // ignore
@@ -7429,6 +7559,19 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
               : undefined
           )
           .then((slots) => set({ savedAccounts: slots }));
+        if (isLiveRuntime()) {
+          void recommendationEngine
+            .buildHomeShelves()
+            .then((fresh) => {
+              if (fresh.length > 0) {
+                saveCachedHomeShelves(fresh, auth.userId);
+                set({ homeShelves: fresh, homeFeedReady: true });
+              }
+            })
+            .catch(() => {});
+        } else {
+          set({ homeFeedReady: true });
+        }
         get().showToast(
           profile
             ? `Sesión iniciada como @${profile.username}`
@@ -7443,9 +7586,15 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         set({ authCallbackError: 'No se recibió una sesión válida de Google. Inténtalo de nuevo.' });
       }
     } catch (err) {
+      if (syncEngine.getAuthState().connected) {
+        set({ authCallbackError: null, authOnboardingOpen: false });
+        return;
+      }
       const msg = err instanceof Error ? err.message : 'No se pudo completar el inicio con Google';
       set({ authCallbackError: msg });
       get().showToast(msg);
+    } finally {
+      oauthCallbackInFlight = false;
     }
   },
 

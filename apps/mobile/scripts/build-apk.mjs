@@ -236,8 +236,17 @@ const shuffleOffVectorXml = `<?xml version="1.0" encoding="utf-8"?>
     android:viewportWidth="24"
     android:viewportHeight="24">
     <path
-        android:fillColor="#88FFFFFF"
-        android:pathData="M10.59,9.17L5.41,4L4,5.41l5.17,5.17l1.42,-1.41zM14.5,4l2.04,2.04L4,18.59L5.41,20L17.96,7.46L20,9.5V4h-5.5zM14.83,13.41l-1.41,1.41l3.13,3.13L14.5,20H20v-5.5l-2.04,2.04l-3.13,-3.13z" />
+        android:strokeColor="#88FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M2,18 H5.2 C7.8,18 9.2,15 12,12 C14.8,9 16.2,6 18.8,6 H21.5 M18.5,2.8 L22,6 L18.5,9.2" />
+    <path
+        android:strokeColor="#88FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M2,6 H5.2 C7.8,6 9.2,9 12,12 C14.8,15 16.2,18 18.8,18 H21.5 M18.5,14.8 L22,18 L18.5,21.2" />
 </vector>
 `;
 const shuffleOnVectorXml = `<?xml version="1.0" encoding="utf-8"?>
@@ -247,11 +256,20 @@ const shuffleOnVectorXml = `<?xml version="1.0" encoding="utf-8"?>
     android:viewportWidth="24"
     android:viewportHeight="24">
     <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M10.59,9.17L5.41,4L4,5.41l5.17,5.17l1.42,-1.41zM14.5,4l2.04,2.04L4,18.59L5.41,20L17.96,7.46L20,9.5V4h-5.5zM14.83,13.41l-1.41,1.41l3.13,3.13L14.5,20H20v-5.5l-2.04,2.04l-3.13,-3.13z" />
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.1"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M2,18 H5.2 C7.8,18 9.2,15 12,12 C14.8,9 16.2,6 18.8,6 H21.5 M18.5,2.8 L22,6 L18.5,9.2" />
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.1"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M2,6 H5.2 C7.8,6 9.2,9 12,12 C14.8,15 16.2,18 18.8,18 H21.5 M18.5,14.8 L22,18 L18.5,21.2" />
     <path
         android:fillColor="#FF34D399"
-        android:pathData="M12,21.5m-1.5,0a1.5,1.5 0,1 1,3 0a1.5,1.5 0,1 1,-3 0" />
+        android:pathData="M12,21.8 m-1.4,0 a1.4,1.4 0 1 1 2.8,0 a1.4,1.4 0 1 1 -2.8,0" />
 </vector>
 `;
 const repeatOffVectorXml = `<?xml version="1.0" encoding="utf-8"?>
@@ -261,8 +279,17 @@ const repeatOffVectorXml = `<?xml version="1.0" encoding="utf-8"?>
     android:viewportWidth="24"
     android:viewportHeight="24">
     <path
-        android:fillColor="#88FFFFFF"
-        android:pathData="M7,7h10v3l4,-4l-4,-4v3H5v6h2V7zM17,17H7v-3l-4,4l4,4v-3h12v-6h-2V17z" />
+        android:strokeColor="#88FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M17,2 L21,6 L17,10 M3,11 V9 A4,4 0 0 1 7,5 H21" />
+    <path
+        android:strokeColor="#88FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M7,22 L3,18 L7,14 M21,13 V15 A4,4 0 0 1 17,19 H3" />
 </vector>
 `;
 const repeatAllVectorXml = `<?xml version="1.0" encoding="utf-8"?>
@@ -272,11 +299,20 @@ const repeatAllVectorXml = `<?xml version="1.0" encoding="utf-8"?>
     android:viewportWidth="24"
     android:viewportHeight="24">
     <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M7,7h10v3l4,-4l-4,-4v3H5v6h2V7zM17,17H7v-3l-4,4l4,4v-3h12v-6h-2V17z" />
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.1"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M17,2 L21,6 L17,10 M3,11 V9 A4,4 0 0 1 7,5 H21" />
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.1"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M7,22 L3,18 L7,14 M21,13 V15 A4,4 0 0 1 17,19 H3" />
     <path
         android:fillColor="#FF34D399"
-        android:pathData="M12,21.5m-1.5,0a1.5,1.5 0,1 1,3 0a1.5,1.5 0,1 1,-3 0" />
+        android:pathData="M12,22 m-1.4,0 a1.4,1.4 0 1 1 2.8,0 a1.4,1.4 0 1 1 -2.8,0" />
 </vector>
 `;
 const repeatOneVectorXml = `<?xml version="1.0" encoding="utf-8"?>
@@ -286,8 +322,67 @@ const repeatOneVectorXml = `<?xml version="1.0" encoding="utf-8"?>
     android:viewportWidth="24"
     android:viewportHeight="24">
     <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.1"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M17,2 L21,6 L17,10 M3,11 V9 A4,4 0 0 1 7,5 H21" />
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.1"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M7,22 L3,18 L7,14 M21,13 V15 A4,4 0 0 1 17,19 H3" />
+    <path
+        android:strokeColor="#FF34D399"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M11,10.5 L12.2,9.5 V14.5" />
+</vector>
+`;
+const mediaPlayVectorXml = `<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M7,7h10v3l4,-4l-4,-4v3H5v6h2V7zM17,17H7v-3l-4,4l4,4v-3h12v-6h-2V17zM13,15V9h-1l-2,1v1h1.5v4H13z" />
+        android:pathData="M6.4,3.4 C5.0,2.58 3.4,3.6 3.4,5.2 V18.8 C3.4,20.4 5.0,21.42 6.4,20.6 L19.4,13.8 C20.85,13.04 20.85,10.96 19.4,10.2 L6.4,3.4 Z" />
+</vector>
+`;
+const mediaPauseVectorXml = `<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M7.4,3 C8.946,3 10.2,4.254 10.2,5.8 V18.2 C10.2,19.746 8.946,21 7.4,21 C5.854,21 4.6,19.746 4.6,18.2 V5.8 C4.6,4.254 5.854,3 7.4,3 Z M16.6,3 C18.146,3 19.4,4.254 19.4,5.8 V18.2 C19.4,19.746 18.146,21 16.6,21 C15.054,21 13.8,19.746 13.8,18.2 V5.8 C13.8,4.254 15.054,3 16.6,3 Z" />
+</vector>
+`;
+const mediaNextVectorXml = `<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4.8,4.4 C3.7,3.72 2.4,4.52 2.4,5.82 V18.18 C2.4,19.48 3.7,20.28 4.8,19.6 L14.8,13.42 C15.88,12.76 15.88,11.24 14.8,10.58 L4.8,4.4 Z M19.4,4.2 C20.284,4.2 21.0,4.916 21.0,5.8 V18.2 C21.0,19.084 20.284,19.8 19.4,19.8 C18.516,19.8 17.8,19.084 17.8,18.2 V5.8 C17.8,4.916 18.516,4.2 19.4,4.2 Z" />
+</vector>
+`;
+const mediaPrevVectorXml = `<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4.6,4.2 C5.484,4.2 6.2,4.916 6.2,5.8 V18.2 C6.2,19.084 5.484,19.8 4.6,19.8 C3.716,19.8 3.0,19.084 3.0,18.2 V5.8 C3.0,4.916 3.716,4.2 4.6,4.2 Z M19.2,4.4 C20.3,3.72 21.6,4.52 21.6,5.82 V18.18 C21.6,19.48 20.3,20.28 19.2,19.6 L9.2,13.42 C8.12,12.76 8.12,11.24 9.2,10.58 L19.2,4.4 Z" />
 </vector>
 `;
 writeFileSync(resolve(drawableDir, 'ic_media_shuffle_off.xml'), shuffleOffVectorXml, 'utf-8');
@@ -295,6 +390,10 @@ writeFileSync(resolve(drawableDir, 'ic_media_shuffle_on.xml'), shuffleOnVectorXm
 writeFileSync(resolve(drawableDir, 'ic_media_repeat_off.xml'), repeatOffVectorXml, 'utf-8');
 writeFileSync(resolve(drawableDir, 'ic_media_repeat_all.xml'), repeatAllVectorXml, 'utf-8');
 writeFileSync(resolve(drawableDir, 'ic_media_repeat_one.xml'), repeatOneVectorXml, 'utf-8');
+writeFileSync(resolve(drawableDir, 'ic_media_play.xml'), mediaPlayVectorXml, 'utf-8');
+writeFileSync(resolve(drawableDir, 'ic_media_pause.xml'), mediaPauseVectorXml, 'utf-8');
+writeFileSync(resolve(drawableDir, 'ic_media_next.xml'), mediaNextVectorXml, 'utf-8');
+writeFileSync(resolve(drawableDir, 'ic_media_prev.xml'), mediaPrevVectorXml, 'utf-8');
 
 // 3. Write res/values/strings.xml & pure-black splash theme res/values/styles.xml
 writeFileSync(
@@ -337,8 +436,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="46"
-    android:versionName="0.23.0">
+    android:versionCode="47"
+    android:versionName="0.23.1">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -923,13 +1022,13 @@ public class PMusicPlaybackService extends Service {
                     .setOnlyAlertOnce(true)
                     .setVisibility(Notification.VISIBILITY_PUBLIC)
                     .addAction(shuffleIconRes, shuffleLabel, makeServiceActionIntent(ACTION_SHUFFLE, 9))
-                    .addAction(android.R.drawable.ic_media_previous, "Anterior", makeServiceActionIntent(ACTION_PREV, 10))
+                    .addAction(R.drawable.ic_media_prev, "Anterior", makeServiceActionIntent(ACTION_PREV, 10))
                     .addAction(
-                            sIsPlaying ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play,
+                            sIsPlaying ? R.drawable.ic_media_pause : R.drawable.ic_media_play,
                             sIsPlaying ? "Pausar" : "Reproducir",
                             makeServiceActionIntent(ACTION_TOGGLE, 11)
                     )
-                    .addAction(android.R.drawable.ic_media_next, "Siguiente", makeServiceActionIntent(ACTION_NEXT, 12))
+                    .addAction(R.drawable.ic_media_next, "Siguiente", makeServiceActionIntent(ACTION_NEXT, 12))
                     .addAction(repeatIconRes, repeatLabel, makeServiceActionIntent(ACTION_REPEAT, 13))
                     .setStyle(mediaStyle);
             if (Build.VERSION.SDK_INT >= 26) {

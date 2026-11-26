@@ -632,6 +632,7 @@ export const DetailViewPanel: React.FC = () => {
   const [collabUserHits, setCollabUserHits] = useState<UserProfile[]>([]);
   const [searchingCollabUsers, setSearchingCollabUsers] = useState(false);
   const [addFinderOverride, setAddFinderOverride] = useState<boolean | null>(null);
+  const [heroMoreMenuId, setHeroMoreMenuId] = useState<string | null>(null);
   const [playlistDropActive, setPlaylistDropActive] = useState(false);
   const [addSearchQuery, setAddSearchQuery] = useState('');
   const [addSearchResults, setAddSearchResults] = useState<Track[]>([]);
@@ -724,6 +725,7 @@ export const DetailViewPanel: React.FC = () => {
     setIsEditingName(false);
     setSessionSkippedIds([]);
     setRecPool([]);
+    setHeroMoreMenuId(null);
   }, [activeLocalPlaylistId, activeSharedPlaylistId]);
 
   useEffect(() => {
@@ -1306,7 +1308,7 @@ export const DetailViewPanel: React.FC = () => {
           <div className="relative z-10 flex flex-col gap-5">
             <div className="flex min-w-0 flex-row items-center gap-3.5 sm:items-end sm:gap-6">
               {albumHeroCover ? (
-                <div className="h-24 w-24 shrink-0 overflow-hidden rounded-[14px] shadow-[0_22px_50px_rgba(0,0,0,0.62)] ring-1 ring-white/15 sm:h-40 sm:w-40 sm:rounded-[16px]">
+                <div className="h-[104px] w-[104px] shrink-0 overflow-hidden rounded-[14px] shadow-[0_22px_50px_rgba(0,0,0,0.62)] ring-1 ring-white/15 sm:h-40 sm:w-40 sm:rounded-[16px]">
                   <TrackArtwork
                     trackId={tracks[0]?.id}
                     src={albumHeroCover}
@@ -1316,7 +1318,7 @@ export const DetailViewPanel: React.FC = () => {
                   />
                 </div>
               ) : (
-                <div className="h-24 w-24 shrink-0 animate-pulse rounded-[14px] bg-white/[0.08] sm:h-40 sm:w-40 sm:rounded-[16px]" />
+                <div className="h-[104px] w-[104px] shrink-0 animate-pulse rounded-[14px] bg-white/[0.08] sm:h-40 sm:w-40 sm:rounded-[16px]" />
               )}
 
               <div className="min-w-0 flex-1 space-y-1 sm:space-y-1.5">
@@ -1324,7 +1326,7 @@ export const DetailViewPanel: React.FC = () => {
                   {releaseTypeLabel}
                   {album.year ? ` · ${album.year}` : ''}
                 </div>
-                <h1 className="line-clamp-2 text-xl font-black leading-tight tracking-tight text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.65)] sm:text-4xl md:text-5xl">
+                <h1 className="line-clamp-2 text-[27px] font-black leading-[1.06] tracking-tight text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.65)] sm:text-4xl md:text-5xl">
                   {album.title}
                 </h1>
                 <div className="text-xs font-semibold text-white/85 sm:text-sm">
@@ -1396,21 +1398,6 @@ export const DetailViewPanel: React.FC = () => {
               </HeroIconAction>
 
               <HeroIconAction
-                label="Sesión DJ"
-                tooltip="Sesión DJ AutoMix"
-                activeDot={djMode.enabled && isPlayingAlbum}
-                activeDotClass="bg-purple-300"
-                disabled={isAlbumLoading && tracks.length === 0}
-                onClick={async () => {
-                  await toggleDjMode(true);
-                  if (tracks[0]) await playTrack(tracks[0], tracks);
-                }}
-                className="text-purple-300/90 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-purple-200 hover:drop-shadow-[0_0_12px_rgba(192,132,252,0.75)]"
-              >
-                <Disc3 className="h-[22px] w-[22px] transition-transform duration-300 group-hover/act:rotate-45 sm:h-6 sm:w-6" />
-              </HeroIconAction>
-
-              <HeroIconAction
                 label={
                   isDownloadingAlbum
                     ? `Descargando ${playlistDownloadProgress.completed} de ${playlistDownloadProgress.total}`
@@ -1448,6 +1435,55 @@ export const DetailViewPanel: React.FC = () => {
                   <Download className="h-[22px] w-[22px] sm:h-6 sm:w-6" />
                 )}
               </HeroIconAction>
+
+              <div className="relative">
+                <HeroIconAction
+                  dataTestId="album-more-options-btn"
+                  label="Más opciones de álbum"
+                  tooltip="Más opciones (Sesión DJ)"
+                  disabled={isAlbumLoading && tracks.length === 0}
+                  onClick={() =>
+                    setHeroMoreMenuId((cur) => (cur === `album:${album.id}` ? null : `album:${album.id}`))
+                  }
+                  className="text-white/85 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-white"
+                >
+                  <MoreHorizontal className="h-[22px] w-[22px] sm:h-6 sm:w-6" />
+                </HeroIconAction>
+
+                {heroMoreMenuId === `album:${album.id}` && (
+                  <div
+                    role="menu"
+                    className="pm-menu-glass pm-modal-pop absolute left-0 top-11 z-40 w-60 space-y-0.5 rounded-[14px] p-1.5"
+                  >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      data-testid="hero-menu-dj-btn"
+                      onClick={async () => {
+                        setHeroMoreMenuId(null);
+                        await toggleDjMode(true);
+                        if (tracks[0]) await playTrack(tracks[0], tracks);
+                      }}
+                      className="pm-hover flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-xs font-medium text-white"
+                    >
+                      <Disc3 className="h-4 w-4 text-purple-300" />
+                      <span>Iniciar Sesión DJ AutoMix</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setHeroMoreMenuId(null);
+                        if (tracks.length > 0) void playCollection(tracks, { isPlaylist: true, forceShuffle: true });
+                      }}
+                      className="pm-hover flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-xs font-medium text-white"
+                    >
+                      <Shuffle className="h-4 w-4 text-white/75" />
+                      <span>Reproducir en aleatorio</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </section>
@@ -1519,13 +1555,13 @@ export const DetailViewPanel: React.FC = () => {
               <img
                 src={edCover}
                 alt={playlist.title}
-                className="h-24 w-24 shrink-0 rounded-[14px] object-cover shadow-[0_22px_50px_rgba(0,0,0,0.6)] ring-1 ring-white/15 sm:h-40 sm:w-40 sm:rounded-[16px]"
+                className="h-[104px] w-[104px] shrink-0 rounded-[14px] object-cover shadow-[0_22px_50px_rgba(0,0,0,0.6)] ring-1 ring-white/15 sm:h-40 sm:w-40 sm:rounded-[16px]"
               />
               <div className="min-w-0 flex-1 space-y-1 sm:space-y-1.5">
                 <div className="text-[10.5px] font-bold uppercase tracking-[0.14em] text-white/65">
                   PLAYLIST pMUSIC
                 </div>
-                <h1 className="line-clamp-2 text-xl font-black leading-tight tracking-tight text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.6)] sm:text-4xl md:text-5xl">
+                <h1 className="line-clamp-2 text-[27px] font-black leading-[1.06] tracking-tight text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.6)] sm:text-4xl md:text-5xl">
                   {playlist.title}
                 </h1>
                 {playlist.author && (
@@ -1583,20 +1619,6 @@ export const DetailViewPanel: React.FC = () => {
               </button>
 
               <HeroIconAction
-                label="Sesión DJ"
-                tooltip="Sesión DJ AutoMix"
-                activeDot={djMode.enabled}
-                activeDotClass="bg-purple-300"
-                onClick={async () => {
-                  await toggleDjMode(true);
-                  if (tracks.length > 0) await playCollection(tracks, { isPlaylist: true });
-                }}
-                className="text-purple-300/90 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-purple-200 hover:drop-shadow-[0_0_12px_rgba(192,132,252,0.75)]"
-              >
-                <Disc3 className="h-[22px] w-[22px] transition-transform duration-300 group-hover/act:rotate-45 sm:h-6 sm:w-6" />
-              </HeroIconAction>
-
-              <HeroIconAction
                 label={
                   isDownloadingThis
                     ? `Descargando ${playlistDownloadProgress.completed} de ${playlistDownloadProgress.total}`
@@ -1634,6 +1656,56 @@ export const DetailViewPanel: React.FC = () => {
                   <Download className="h-[22px] w-[22px] sm:h-6 sm:w-6" />
                 )}
               </HeroIconAction>
+
+              <div className="relative">
+                <HeroIconAction
+                  dataTestId="editorial-more-options-btn"
+                  label="Más opciones de playlist"
+                  tooltip="Más opciones (Sesión DJ)"
+                  onClick={() =>
+                    setHeroMoreMenuId((cur) =>
+                      cur === `ed:${playlist.id}` ? null : `ed:${playlist.id}`
+                    )
+                  }
+                  className="text-white/85 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-white"
+                >
+                  <MoreHorizontal className="h-[22px] w-[22px] sm:h-6 sm:w-6" />
+                </HeroIconAction>
+
+                {heroMoreMenuId === `ed:${playlist.id}` && (
+                  <div
+                    role="menu"
+                    className="pm-menu-glass pm-modal-pop absolute left-0 top-11 z-40 w-60 space-y-0.5 rounded-[14px] p-1.5"
+                  >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      data-testid="hero-menu-dj-btn"
+                      onClick={async () => {
+                        setHeroMoreMenuId(null);
+                        await toggleDjMode(true);
+                        if (tracks.length > 0) await playCollection(tracks, { isPlaylist: true });
+                      }}
+                      className="pm-hover flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-xs font-medium text-white"
+                    >
+                      <Disc3 className="h-4 w-4 text-purple-300" />
+                      <span>Iniciar Sesión DJ AutoMix</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setHeroMoreMenuId(null);
+                        if (tracks.length > 0) void playCollection(tracks, { isPlaylist: true, forceShuffle: true });
+                      }}
+                      className="pm-hover flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-xs font-medium text-white"
+                    >
+                      <Shuffle className="h-4 w-4 text-white/75" />
+                      <span>Reproducir en aleatorio</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </section>
@@ -1917,7 +1989,7 @@ export const DetailViewPanel: React.FC = () => {
           <div className="flex flex-col gap-5">
             <div className="flex min-w-0 flex-row items-center gap-3.5 sm:items-end sm:gap-6">
               {renderCoverButton(
-                'h-24 w-24 rounded-[14px] shadow-[0_18px_40px_rgba(0,0,0,0.45)] sm:h-40 sm:w-40 sm:rounded-[16px]'
+                'h-[104px] w-[104px] rounded-[14px] shadow-[0_18px_40px_rgba(0,0,0,0.45)] sm:h-40 sm:w-40 sm:rounded-[16px]'
               )}
               <div className="min-w-0 flex-1 space-y-1 sm:space-y-1.5">
                 <div
@@ -1975,7 +2047,7 @@ export const DetailViewPanel: React.FC = () => {
         <div className="relative z-10 flex flex-col gap-5">
           <div className="flex min-w-0 flex-row items-center gap-3.5 sm:items-end sm:gap-6">
             {renderCoverButton(
-              'h-24 w-24 rounded-[14px] shadow-[0_22px_50px_rgba(0,0,0,0.62)] ring-1 ring-white/15 sm:h-40 sm:w-40 sm:rounded-[16px]'
+              'h-[104px] w-[104px] rounded-[14px] shadow-[0_22px_50px_rgba(0,0,0,0.62)] ring-1 ring-white/15 sm:h-40 sm:w-40 sm:rounded-[16px]'
             )}
             <div className="min-w-0 flex-1 space-y-1 sm:space-y-1.5">
               <div
@@ -2031,7 +2103,7 @@ export const DetailViewPanel: React.FC = () => {
           bannerEnabled: spApp?.bannerEnabled ?? true,
           seed: spApp?.coverStyleSeed ?? 0,
           titleContent: (
-            <h1 className="line-clamp-2 text-xl font-black leading-tight tracking-tight text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.65)] sm:text-4xl md:text-5xl">
+            <h1 className="line-clamp-2 text-[27px] font-black leading-[1.06] tracking-tight text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.65)] sm:text-4xl md:text-5xl">
               {sharedPl.name}
             </h1>
           ),
@@ -2076,22 +2148,6 @@ export const DetailViewPanel: React.FC = () => {
                   <RoundedPlayIcon className="h-[44px] w-[44px] translate-x-[2px] sm:h-[50px] sm:w-[50px]" />
                 )}
               </button>
-
-              <HeroIconAction
-                label="Sesión DJ"
-                tooltip="Sesión DJ AutoMix"
-                activeDot={djMode.enabled}
-                activeDotClass="bg-purple-300"
-                onClick={async () => {
-                  await toggleDjMode(true);
-                  if (sharedPl.tracks.length > 0) {
-                    await playCollection(sharedPl.tracks, { isPlaylist: true });
-                  }
-                }}
-                className="text-purple-300/90 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-purple-200 hover:drop-shadow-[0_0_12px_rgba(192,132,252,0.75)]"
-              >
-                <Disc3 className="h-[22px] w-[22px] transition-transform duration-300 group-hover/act:rotate-45 sm:h-6 sm:w-6" />
-              </HeroIconAction>
 
               <HeroIconAction
                 label={
@@ -2401,7 +2457,14 @@ export const DetailViewPanel: React.FC = () => {
           </form>
         ) : (
           <div className="flex items-center gap-1.5">
-            <h1 className="line-clamp-2 text-xl font-black leading-tight tracking-tight pm-text-primary drop-shadow-[0_4px_18px_rgba(0,0,0,0.45)] sm:text-4xl md:text-5xl">
+            <h1
+              onClick={() => {
+                setEditingName(localPl.name);
+                setIsEditingName(true);
+              }}
+              title="Pulsa para renombrar"
+              className="line-clamp-2 cursor-pointer text-[27px] font-black leading-[1.06] tracking-tight pm-text-primary drop-shadow-[0_4px_18px_rgba(0,0,0,0.45)] hover:opacity-90 sm:text-4xl md:text-5xl"
+            >
               {localPl.name}
             </h1>
             <button
@@ -2459,23 +2522,6 @@ export const DetailViewPanel: React.FC = () => {
                 <RoundedPlayIcon className="h-[44px] w-[44px] translate-x-[2px] sm:h-[50px] sm:w-[50px]" />
               )}
             </button>
-
-            <HeroIconAction
-              label="Sesión DJ"
-              tooltip="Sesión DJ AutoMix"
-              activeDot={djMode.enabled}
-              activeDotClass="bg-purple-300"
-              onClick={async () => {
-                await toggleDjMode(true);
-                if (localPl.tracks.length > 0) {
-                  recordPlaylistPlay(localPl);
-                  await playCollection(localPl.tracks, { isPlaylist: true });
-                }
-              }}
-              className="text-purple-300/90 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-purple-200 hover:drop-shadow-[0_0_12px_rgba(192,132,252,0.75)]"
-            >
-              <Disc3 className="h-[22px] w-[22px] transition-transform duration-300 group-hover/act:rotate-45 sm:h-6 sm:w-6" />
-            </HeroIconAction>
 
             <HeroIconAction
               label={
@@ -2809,6 +2855,7 @@ export const HomeScreen: React.FC = () => {
     homeShelves,
     playlists,
     sharedPlaylists,
+    playlistAppearances,
     likedTracks,
     playHistory,
     searchResults,
@@ -3001,7 +3048,8 @@ export const HomeScreen: React.FC = () => {
         <section aria-label="Escuchar de nuevo">
           <div className="grid grid-cols-2 gap-2 sm:gap-2.5 lg:grid-cols-3">
             {frequentPlaylists.map((pl) => {
-              const plCover = pl.coverUrl ?? pl.tracks[0]?.thumbnailUrl;
+              const plCover =
+                playlistAppearances[pl.id]?.coverUrl ?? pl.coverUrl ?? pl.tracks[0]?.thumbnailUrl;
               return (
                 <div
                   key={`quick-pl-${pl.id}`}
@@ -3342,11 +3390,13 @@ export const ExploreScreen: React.FC = () => {
   const emergingArtists = exploreEmergingArtists;
   const artists = searchResults.artists;
 
+  const heroDiscoveryTrack = similarDiscoverTracks[0] ?? trendingSongs[0] ?? null;
+
   return (
-    <div className="pm-page-enter space-y-8">
+    <div className="pm-page-enter space-y-7 sm:space-y-8">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-[28px] font-bold tracking-tight pm-text-primary md:text-[32px]">
+          <h1 className="text-[28px] font-black tracking-tight pm-text-primary md:text-[32px]">
             Explorar
           </h1>
           <p className="text-[13px] pm-text-tertiary">
@@ -3358,17 +3408,68 @@ export const ExploreScreen: React.FC = () => {
           onClick={() => void refreshExploreDiscovery(true)}
           className="pm-btn-secondary pm-pressable inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold"
         >
-          {isLoadingExplore && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+          {isLoadingExplore ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Sparkles className="h-3.5 w-3.5 text-purple-300" />
+          )}
           <span>Actualizar recomendaciones</span>
         </button>
       </div>
 
+      {/* Featured Discovery Spotlight Hero */}
+      {heroDiscoveryTrack && (
+        <section
+          data-surface="content"
+          className="pm-surface-card relative overflow-hidden rounded-[22px] border border-white/10 p-4 sm:p-6"
+        >
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute -right-14 -top-14 h-52 w-52 rounded-full bg-[var(--pm-accent-primary)]/20 blur-3xl"
+          />
+          <div className="relative z-10 flex items-center gap-4 sm:gap-5">
+            <TrackArtwork
+              trackId={heroDiscoveryTrack.id}
+              src={heroDiscoveryTrack.thumbnailHighUrl ?? heroDiscoveryTrack.thumbnailUrl}
+              alt={heroDiscoveryTrack.title}
+              variant="card"
+              imgClassName="h-20 w-20 shrink-0 rounded-[14px] object-cover shadow-xl sm:h-24 sm:w-24 sm:rounded-[16px]"
+            />
+            <div className="min-w-0 flex-1 space-y-1">
+              <div className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.08] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white/80">
+                <Sparkles className="h-3 w-3 text-purple-300" />
+                <span>Selección pMusic · Para tu vibra</span>
+              </div>
+              <h2 className="truncate text-lg font-black tracking-tight pm-text-primary sm:text-2xl">
+                {heroDiscoveryTrack.title}
+              </h2>
+              <p className="truncate text-xs font-medium pm-text-secondary sm:text-sm">
+                {heroDiscoveryTrack.artists.map((a) => a.name).join(', ')}
+              </p>
+            </div>
+            <button
+              type="button"
+              aria-label={`Reproducir ${heroDiscoveryTrack.title}`}
+              onClick={() =>
+                void playTrack(
+                  heroDiscoveryTrack,
+                  similarDiscoverTracks.length > 0 ? similarDiscoverTracks : trendingSongs
+                )
+              }
+              className="pm-btn-primary pm-pressable inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full shadow-lg sm:h-12 sm:w-12"
+            >
+              <Play className="h-4 w-4 translate-x-[1px] fill-current sm:h-5 sm:w-5" />
+            </button>
+          </div>
+        </section>
+      )}
+
       {/* Genres Grid */}
       <section className="space-y-3">
-        <h2 className="text-[20px] font-bold tracking-tight pm-text-primary">
+        <h2 className="text-[19px] font-bold tracking-tight pm-text-primary sm:text-[20px]">
           Explorar géneros
         </h2>
-        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 sm:gap-3">
           {GENRE_CARDS.map((g) => (
             <button
               key={g.query}
@@ -3377,16 +3478,25 @@ export const ExploreScreen: React.FC = () => {
                 setActiveTab('Buscar');
                 void submitSearch(g.query);
               }}
-              className="pm-surface-card pm-card-lift group flex items-center gap-3 rounded-[12px] px-4 py-3.5 text-left"
+              className="pm-surface-card pm-card-lift group relative flex items-center justify-between gap-2.5 overflow-hidden rounded-[14px] px-4 py-3.5 text-left"
+              style={{
+                background: `radial-gradient(120% 100% at 100% 0%, ${g.accent}24 0%, transparent 62%)`,
+              }}
             >
-              <span
-                aria-hidden="true"
-                className="h-5 w-1.5 shrink-0 rounded-full transition-transform group-hover:scale-y-110"
-                style={{ backgroundColor: g.accent }}
+              <div className="flex min-w-0 items-center gap-2.5">
+                <span
+                  aria-hidden="true"
+                  className="h-5 w-1.5 shrink-0 rounded-full transition-transform group-hover:scale-y-125"
+                  style={{ backgroundColor: g.accent }}
+                />
+                <span className="truncate text-[13.5px] font-bold pm-text-primary">
+                  {g.label}
+                </span>
+              </div>
+              <Music2
+                className="h-4 w-4 shrink-0 opacity-45 transition-opacity group-hover:opacity-90"
+                style={{ color: g.accent }}
               />
-              <span className="truncate text-[13.5px] font-semibold pm-text-primary">
-                {g.label}
-              </span>
             </button>
           ))}
         </div>
@@ -4035,6 +4145,7 @@ export const LibraryScreen: React.FC = () => {
 
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [showCreateBar, setShowCreateBar] = useState(false);
+  const [showMobileFilter, setShowMobileFilter] = useState(false);
   const [dragOverPlaylistId, setDragOverPlaylistId] = useState<string | null>(null);
 
   const categories: readonly LibraryCategoryTab[] = [
@@ -4068,9 +4179,9 @@ export const LibraryScreen: React.FC = () => {
   return (
     <div className="pm-page-enter space-y-5 sm:space-y-6">
       {/* Clean pMusic Library Header */}
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center justify-between gap-2.5">
         <div className="min-w-0">
-          <h1 className="text-[26px] font-bold tracking-tight pm-text-primary sm:text-[28px]">
+          <h1 className="text-[28px] font-black tracking-tight pm-text-primary sm:text-[30px]">
             Biblioteca
           </h1>
           <p className="hidden text-[13px] pm-text-tertiary sm:block">
@@ -4078,21 +4189,30 @@ export const LibraryScreen: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+          <button
+            type="button"
+            aria-label="Buscar en biblioteca"
+            onClick={() => setShowMobileFilter((v) => !v)}
+            className={`pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full sm:hidden ${
+              showMobileFilter || libraryFilterQuery ? 'pm-btn-primary' : 'pm-btn-secondary'
+            }`}
+          >
+            <Search className="h-4 w-4" />
+          </button>
           <button
             type="button"
             aria-label="Nueva playlist"
             onClick={() => setShowCreateBar((v) => !v)}
-            className="pm-btn-secondary pm-pressable inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-bold sm:hidden"
+            className="pm-btn-secondary pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full sm:hidden"
           >
-            <Plus className="h-3.5 w-3.5" />
-            <span>Nueva</span>
+            <Plus className="h-4 w-4" />
           </button>
           <button
             type="button"
             aria-label="Importar playlist"
             onClick={() => setImportModalOpen(true)}
-            className="pm-btn-primary pm-pressable inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-bold sm:px-5"
+            className="pm-btn-primary pm-pressable inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-xs font-bold sm:h-auto sm:px-5 sm:py-2"
           >
             <ListMusic className="h-4 w-4" />
             <span className="sm:hidden">Importar</span>
@@ -4106,7 +4226,7 @@ export const LibraryScreen: React.FC = () => {
         <div
           role="tablist"
           aria-label="Categorías de biblioteca"
-          className="flex w-full flex-nowrap gap-1.5 overflow-x-auto pb-1 pm-no-scrollbar sm:w-auto sm:flex-wrap sm:overflow-visible sm:pb-0"
+          className="flex w-full flex-nowrap gap-1.5 overflow-x-auto pb-0.5 pm-no-scrollbar sm:w-auto sm:flex-wrap sm:overflow-visible sm:pb-0"
         >
           {categories.map((cat) => {
             const active = libraryCategory === cat;
@@ -4117,7 +4237,7 @@ export const LibraryScreen: React.FC = () => {
                 role="tab"
                 aria-selected={active}
                 onClick={() => setLibraryCategory(cat)}
-                className={`shrink-0 rounded-full px-4 py-1.5 text-xs font-bold transition-colors ${
+                className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-bold transition-colors sm:px-4 ${
                   active ? 'pm-btn-primary' : 'pm-btn-secondary'
                 }`}
               >
@@ -4127,7 +4247,11 @@ export const LibraryScreen: React.FC = () => {
           })}
         </div>
 
-        <div className="pm-input flex w-full items-center gap-2 rounded-full px-3.5 py-1.5 sm:w-56">
+        <div
+          className={`pm-input w-full items-center gap-2 rounded-full px-3.5 py-1.5 sm:flex sm:w-56 ${
+            showMobileFilter || libraryFilterQuery ? 'flex' : 'hidden'
+          }`}
+        >
           <Search className="h-3.5 w-3.5 shrink-0 pm-text-tertiary" />
           <input
             type="search"
@@ -4150,7 +4274,7 @@ export const LibraryScreen: React.FC = () => {
         </div>
       </div>
 
-      {/* Create New Playlist Quick Bar (Collapsible toggle on Mobile, Always visible on Desktop) */}
+      {/* Create New Playlist Quick Bar */}
       {(libraryCategory === 'Todo' || libraryCategory === 'Playlists') && (
         <div
           data-surface="content"
@@ -4196,10 +4320,10 @@ export const LibraryScreen: React.FC = () => {
               setLibraryCategory('Me gusta');
             }
           }}
-          className="pm-surface-card pm-card-lift flex cursor-pointer items-center justify-between gap-3 rounded-[16px] p-3.5"
+          className="pm-hover flex cursor-pointer items-center justify-between gap-3 rounded-[14px] bg-white/[0.03] px-2.5 py-2.5 sm:px-3.5 sm:py-3"
         >
-          <div className="flex min-w-0 items-center gap-3.5">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[12px] bg-gradient-to-br from-rose-500/85 to-purple-600/85 text-white shadow-md">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[11px] bg-gradient-to-br from-rose-500/85 to-purple-600/85 text-white shadow-md sm:h-13 sm:w-13">
               <Heart className="h-5 w-5 fill-current" />
             </div>
             <div className="min-w-0">
@@ -4207,7 +4331,7 @@ export const LibraryScreen: React.FC = () => {
                 Tus Me gusta
               </div>
               <div className="text-xs pm-text-tertiary">
-                {likedTracks.length} {likedTracks.length === 1 ? 'canción' : 'canciones'} guardadas
+                {likedTracks.length} {likedTracks.length === 1 ? 'canción' : 'canciones'}
               </div>
             </div>
           </div>
@@ -4219,23 +4343,23 @@ export const LibraryScreen: React.FC = () => {
               const list = likedTracks.map((l) => l.track);
               if (list.length > 0) void playCollection(list, { isPlaylist: true });
             }}
-            className="pm-btn-primary pm-pressable inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full shadow-md"
+            className="pm-btn-primary pm-pressable inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full shadow-md"
           >
             <Play className="h-4 w-4 translate-x-[1px] fill-current" />
           </button>
         </div>
       )}
 
-      {/* Playlists Section (Local + Collaborative / Blend unified as normal playlists) */}
+      {/* Playlists Section (Clean compact mobile list, rich 2-col desktop grid) */}
       {(libraryCategory === 'Todo' || libraryCategory === 'Playlists') && (
-        <section className="space-y-3">
+        <section className="space-y-2.5">
           <div className="flex items-center justify-between">
             <h2 className="text-[17px] font-bold pm-text-primary sm:text-[18px]">
               Tus Playlists ({totalUnifiedPlaylistCount})
             </h2>
           </div>
           {totalUnifiedPlaylistCount > 0 ? (
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-3">
+            <div className="grid grid-cols-1 gap-1 sm:grid-cols-2 sm:gap-3">
               {filteredSharedPlaylists.map((sp) => {
                 const spApp = playlistAppearances[sp.id];
                 const thumb =
@@ -4256,13 +4380,13 @@ export const LibraryScreen: React.FC = () => {
                       openPlaylistContextMenu('shared', sp.id, e.clientX, e.clientY);
                     }}
                     onClick={() => openSharedPlaylistDetail(sp.id)}
-                    className="pm-surface-card pm-card-lift relative flex cursor-pointer items-center justify-between gap-3 rounded-[14px] p-3 transition-all sm:p-3.5"
+                    className="pm-hover sm:pm-surface-card relative flex cursor-pointer items-center justify-between gap-3 rounded-[12px] px-2 py-2 transition-all sm:rounded-[14px] sm:p-3.5"
                   >
                     <div className="flex min-w-0 flex-1 items-center gap-3">
                       <img
                         src={thumb}
                         alt={sp.name}
-                        className="h-13 w-13 shrink-0 rounded-[10px] object-cover shadow-sm"
+                        className="h-12 w-12 shrink-0 rounded-[10px] object-cover shadow-sm sm:h-13 sm:w-13"
                       />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
@@ -4274,7 +4398,7 @@ export const LibraryScreen: React.FC = () => {
                           </span>
                         </div>
                         <p className="mt-0.5 truncate text-xs pm-text-tertiary">
-                          {sp.tracks.length} {sp.tracks.length === 1 ? 'canción' : 'canciones'}
+                          {sp.tracks.length} {sp.tracks.length === 1 ? 'pista' : 'pistas'}
                           {spDur ? ` · ${spDur}` : ''}
                         </p>
                       </div>
@@ -4288,7 +4412,7 @@ export const LibraryScreen: React.FC = () => {
                           type="button"
                           aria-label={`Reproducir ${sp.name}`}
                           onClick={() => void playCollection(sp.tracks, { isPlaylist: true })}
-                          className="pm-btn-secondary pm-pressable inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
+                          className="pm-btn-secondary pm-pressable hidden h-9 w-9 shrink-0 items-center justify-center rounded-full sm:inline-flex"
                         >
                           <Play className="h-3.5 w-3.5 translate-x-[1px] fill-current" />
                         </button>
@@ -4345,7 +4469,7 @@ export const LibraryScreen: React.FC = () => {
                       openPlaylistContextMenu('local', pl.id, e.clientX, e.clientY);
                     }}
                     onClick={() => openLocalPlaylistDetail(pl.id)}
-                    className={`pm-surface-card pm-card-lift relative flex cursor-pointer items-center justify-between gap-3 rounded-[14px] p-3 transition-all sm:p-3.5 ${
+                    className={`pm-hover sm:pm-surface-card relative flex cursor-pointer items-center justify-between gap-3 rounded-[12px] px-2 py-2 transition-all sm:rounded-[14px] sm:p-3.5 ${
                       isDropTarget
                         ? 'pm-active-row ring-2 ring-[var(--pm-accent-primary)]'
                         : ''
@@ -4355,7 +4479,7 @@ export const LibraryScreen: React.FC = () => {
                       <img
                         src={thumb}
                         alt={pl.name}
-                        className="h-13 w-13 shrink-0 rounded-[10px] object-cover shadow-sm"
+                        className="h-12 w-12 shrink-0 rounded-[10px] object-cover shadow-sm sm:h-13 sm:w-13"
                       />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
@@ -4369,7 +4493,7 @@ export const LibraryScreen: React.FC = () => {
                           )}
                         </div>
                         <p className="mt-0.5 truncate text-xs pm-text-tertiary">
-                          Playlist · {pl.tracks.length} {pl.tracks.length === 1 ? 'canción' : 'canciones'}
+                          {pl.tracks.length} {pl.tracks.length === 1 ? 'pista' : 'pistas'}
                           {plDur ? ` · ${plDur}` : ''}
                         </p>
                       </div>
@@ -4389,7 +4513,7 @@ export const LibraryScreen: React.FC = () => {
                               void playCollection(pl.tracks, { isPlaylist: true });
                             }
                           }}
-                          className="pm-btn-secondary pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full"
+                          className="pm-btn-secondary pm-pressable hidden h-9 w-9 items-center justify-center rounded-full sm:inline-flex"
                         >
                           <Play className="h-3.5 w-3.5 translate-x-[1px] fill-current" />
                         </button>
@@ -4418,8 +4542,9 @@ export const LibraryScreen: React.FC = () => {
         </section>
       )}
 
-      {/* Favorite Artists Section */}
-      {(libraryCategory === 'Todo' || libraryCategory === 'Artistas') && (
+      {/* Favorite Artists Section (hidden in Todo when empty) */}
+      {(libraryCategory === 'Artistas' ||
+        (libraryCategory === 'Todo' && favoriteArtists.length > 0)) && (
         <section className="space-y-2.5">
           <h2 className="text-[18px] font-bold pm-text-primary">
             Artistas favoritos ({favoriteArtists.length})
@@ -4489,7 +4614,8 @@ export const LibraryScreen: React.FC = () => {
       )}
 
       {/* Liked Tracks Section */}
-      {(libraryCategory === 'Todo' || libraryCategory === 'Me gusta') && (
+      {(libraryCategory === 'Me gusta' ||
+        (libraryCategory === 'Todo' && filteredLikes.length > 0)) && (
         <section className="space-y-2.5">
           <h2 className="text-[18px] font-bold pm-text-primary">
             Canciones que te gustan ({filteredLikes.length})
@@ -4514,7 +4640,8 @@ export const LibraryScreen: React.FC = () => {
       )}
 
       {/* Offline Downloads Section */}
-      {(libraryCategory === 'Todo' || libraryCategory === 'Descargas') && (
+      {(libraryCategory === 'Descargas' ||
+        (libraryCategory === 'Todo' && offlineEntries.length > 0)) && (
         <section className="space-y-2.5">
           <h2 className="text-[18px] font-bold pm-text-primary">
             En este dispositivo · Offline ({offlineEntries.length})
@@ -4569,7 +4696,8 @@ export const LibraryScreen: React.FC = () => {
       )}
 
       {/* Listening History Section */}
-      {(libraryCategory === 'Todo' || libraryCategory === 'Historial') && (
+      {(libraryCategory === 'Historial' ||
+        (libraryCategory === 'Todo' && playHistory.length > 0)) && (
         <section className="space-y-2.5">
           <h2 className="text-[18px] font-bold pm-text-primary">
             Historial reciente ({playHistory.length})

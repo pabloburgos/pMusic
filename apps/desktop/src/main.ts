@@ -802,7 +802,7 @@ ipcMain.handle('pmusic:check-and-apply-update', async () => {
     const clean = (v: string) =>
       v.replace(/^v/i, '').split('-')[0]?.split('.').map((n) => parseInt(n, 10) || 0) ?? [0, 0, 0];
     const r = clean(latestVer);
-    const l = clean('0.23.0');
+    const l = clean('0.23.1');
     const newer = [0, 1, 2].some((i, _a, arr) => {
       for (let j = 0; j < i; j++) if ((r[j] ?? 0) !== (l[j] ?? 0)) return false;
       return (r[i] ?? 0) > (l[i] ?? 0);

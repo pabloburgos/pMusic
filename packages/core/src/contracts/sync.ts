@@ -143,7 +143,15 @@ export interface RemoteCommandEnvelope {
 
 export type RemoteCommand =
   | (RemoteCommandEnvelope & {
-      type: 'play' | 'pause' | 'toggle' | 'next' | 'prev' | 'request_state' | 'pull_transfer';
+      type:
+        | 'play'
+        | 'pause'
+        | 'toggle'
+        | 'next'
+        | 'prev'
+        | 'request_state'
+        | 'pull_transfer'
+        | 'library_sync';
     })
   | (RemoteCommandEnvelope & { type: 'seek'; positionMs: number })
   | (RemoteCommandEnvelope & { type: 'volume'; volume01: number })

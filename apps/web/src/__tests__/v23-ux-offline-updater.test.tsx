@@ -180,7 +180,7 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
     expect(buildApkSrc.includes('requestAudioFocus')).toBe(false);
   });
 
-  it('configures Electron OAuth auto-close window helper and silent installer updater flags', () => {
+  it('configures Electron DiscordRpcManager, OAuth --app= window auto-close, and silent updater', () => {
     const buildElectronSrc = readFileSync(
       resolve(__dirname, '../../../desktop/scripts/build-electron.mjs'),
       'utf-8'
@@ -190,10 +190,75 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
       'utf-8'
     );
     expect(buildElectronSrc).toContain('scheduleCloseOAuthBrowserWindow');
+    expect(buildElectronSrc).toContain('GetWindowThreadProcessId');
+    expect(buildElectronSrc).toContain("'--app='");
+    expect(buildElectronSrc).toContain('DiscordRpcManager');
+    expect(buildElectronSrc).toContain('pmusic:configure-discord');
+    expect(buildElectronSrc).toContain('pmusic:get-discord-status');
     expect(buildElectronSrc).toContain('0x0010');
     expect(buildElectronSrc).toContain('Sesión iniciada');
     expect(buildElectronSrc).toContain('pmusic:check-and-apply-update');
     expect(buildInstallerSrc).toContain('/silent');
     expect(buildInstallerSrc).toContain('/relaunch');
+  });
+
+  it('wires custom pMusic vector icons in APK build and hides Discord RPC on mobile settings', () => {
+    const buildApkSrc = readFileSync(
+      resolve(__dirname, '../../../mobile/scripts/build-apk.mjs'),
+      'utf-8'
+    );
+    expect(buildApkSrc).toContain('versionName="0.23.1"');
+    expect(buildApkSrc).toContain('ic_media_play.xml');
+    expect(buildApkSrc).toContain('ic_media_pause.xml');
+    expect(buildApkSrc).toContain('ic_media_prev.xml');
+    expect(buildApkSrc).toContain('ic_media_next.xml');
+    expect(buildApkSrc).toContain('R.drawable.ic_media_play');
+    expect(buildApkSrc).toContain('R.drawable.ic_media_pause');
+
+    // Mobile SettingsModal hides Discord category
+    const origInnerWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      writable: true,
+      value: 390,
+    });
+    window.dispatchEvent(new Event('resize'));
+    act(() => {
+      usePMusicStore.getState().openSettingsCategory('apariencia');
+    });
+    render(<SettingsModal />);
+    expect(screen.queryByTestId('settings-category-discord')).toBeNull();
+
+    cleanup();
+    // Desktop SettingsModal exposes Discord category + 3-step guide
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      writable: true,
+      value: 1280,
+    });
+    window.dispatchEvent(new Event('resize'));
+    act(() => {
+      usePMusicStore.getState().openSettingsCategory('discord');
+    });
+    render(<SettingsModal />);
+    expect(screen.getByTestId('settings-category-discord')).toBeTruthy();
+    expect(screen.getByText(/Cómo activar Discord RPC en Windows/i)).toBeTruthy();
+
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      writable: true,
+      value: origInnerWidth,
+    });
+    window.dispatchEvent(new Event('resize'));
+  });
+
+  it('rejects legacy mix_cruz_urbano_es home cache entries and tracks homeFeedReady', () => {
+    expect(typeof usePMusicStore.getState().homeFeedReady).toBe('boolean');
+    const storeSrc = readFileSync(
+      resolve(__dirname, '../store/usePMusicStore.ts'),
+      'utf-8'
+    );
+    expect(storeSrc).toContain('pmusic_home_shelves_cache_v3');
+    expect(storeSrc).toContain('isLegacyOrFallbackShelves');
   });
 });
