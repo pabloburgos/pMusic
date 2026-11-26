@@ -184,28 +184,144 @@ export function onRealFullscreenChange(cb: (isFs: boolean) => void): Unsubscribe
   return () => {};
 }
 
+const OFFLINE_IDB_NAME = 'pmusic_offline_audio_v1';
+const OFFLINE_IDB_STORE = 'audio_blobs';
+
+function openOfflineAudioDb(): Promise<IDBDatabase | null> {
+  if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+  return new Promise((resolve) => {
+    try {
+      const req = indexedDB.open(OFFLINE_IDB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(OFFLINE_IDB_STORE)) {
+          db.createObjectStore(OFFLINE_IDB_STORE, { keyPath: 'trackId' });
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+      req.onblocked = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
 class BrowserOfflineStorageBridge implements IOfflineStorageBridge {
   private readonly memoryStore = new Map<string, StoredOfflineBlobRecord>();
   private readonly objectUrls = new Map<string, string>();
   private readonly indexStorageKey = 'pmusic.offline.entries';
   private readonly prefs: IPreferencesStorageBridge;
+  private dbPromise: Promise<IDBDatabase | null> | null = null;
 
   public constructor(prefs: IPreferencesStorageBridge) {
     this.prefs = prefs;
   }
 
+  private getDb(): Promise<IDBDatabase | null> {
+    if (!this.dbPromise) {
+      this.dbPromise = openOfflineAudioDb();
+    }
+    return this.dbPromise;
+  }
+
+  private async idbPut(record: StoredOfflineBlobRecord): Promise<boolean> {
+    const db = await this.getDb();
+    if (!db) return false;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(OFFLINE_IDB_STORE, 'readwrite');
+        tx.objectStore(OFFLINE_IDB_STORE).put(record);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+        tx.onabort = () => resolve(false);
+      } catch {
+        resolve(false);
+      }
+    });
+  }
+
+  private async idbGet(trackId: string): Promise<StoredOfflineBlobRecord | null> {
+    const db = await this.getDb();
+    if (!db) return null;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(OFFLINE_IDB_STORE, 'readonly');
+        const req = tx.objectStore(OFFLINE_IDB_STORE).get(trackId);
+        req.onsuccess = () => resolve((req.result as StoredOfflineBlobRecord | undefined) ?? null);
+        req.onerror = () => resolve(null);
+      } catch {
+        resolve(null);
+      }
+    });
+  }
+
+  private async idbDelete(trackId: string): Promise<void> {
+    const db = await this.getDb();
+    if (!db) return;
+    await new Promise<void>((resolve) => {
+      try {
+        const tx = db.transaction(OFFLINE_IDB_STORE, 'readwrite');
+        tx.objectStore(OFFLINE_IDB_STORE).delete(trackId);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      } catch {
+        resolve();
+      }
+    });
+  }
+
+  private async idbClear(): Promise<void> {
+    const db = await this.getDb();
+    if (!db) return;
+    await new Promise<void>((resolve) => {
+      try {
+        const tx = db.transaction(OFFLINE_IDB_STORE, 'readwrite');
+        tx.objectStore(OFFLINE_IDB_STORE).clear();
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      } catch {
+        resolve();
+      }
+    });
+  }
+
+  private async idbListAll(): Promise<OfflineAudioEntry[] | null> {
+    const db = await this.getDb();
+    if (!db) return null;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(OFFLINE_IDB_STORE, 'readonly');
+        const req = tx.objectStore(OFFLINE_IDB_STORE).getAll();
+        req.onsuccess = () => {
+          const rows = Array.isArray(req.result) ? (req.result as StoredOfflineBlobRecord[]) : [];
+          resolve(
+            rows
+              .filter((r) => Boolean(r?.trackId && r?.sizeBytes > 0))
+              .map((r) => ({ trackId: r.trackId, sizeBytes: r.sizeBytes }))
+          );
+        };
+        req.onerror = () => resolve(null);
+      } catch {
+        resolve(null);
+      }
+    });
+  }
+
   public async saveAudio(
     trackId: string,
     data: ArrayBuffer,
-    mimeType = 'audio/wav'
+    mimeType = 'audio/mp4'
   ): Promise<OfflineAudioSaveResult> {
     const sizeBytes = data.byteLength;
-    this.memoryStore.set(trackId, {
+    const record: StoredOfflineBlobRecord = {
       trackId,
       mimeType,
       sizeBytes,
       data,
-    });
+    };
+    this.memoryStore.set(trackId, record);
+    await this.idbPut(record);
 
     const existingUrl = this.objectUrls.get(trackId);
     if (existingUrl && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
@@ -230,8 +346,22 @@ class BrowserOfflineStorageBridge implements IOfflineStorageBridge {
   public async getAudioUrl(trackId: string): Promise<string | null> {
     const cachedUrl = this.objectUrls.get(trackId);
     if (cachedUrl) return cachedUrl;
-    const entries = await this.listOfflineIds();
-    if (entries.some((e) => e.trackId === trackId)) {
+
+    let record = this.memoryStore.get(trackId) ?? null;
+    if (!record) {
+      record = await this.idbGet(trackId);
+      if (record) {
+        this.memoryStore.set(trackId, record);
+      }
+    }
+    if (record && record.data && record.data.byteLength > 0) {
+      if (typeof Blob !== 'undefined' && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+        const blobUrl = URL.createObjectURL(
+          new Blob([record.data], { type: record.mimeType || 'audio/mp4' })
+        );
+        this.objectUrls.set(trackId, blobUrl);
+        return blobUrl;
+      }
       return `/api/stream/${encodeURIComponent(trackId)}?offline=1`;
     }
     return null;
@@ -239,6 +369,7 @@ class BrowserOfflineStorageBridge implements IOfflineStorageBridge {
 
   public async deleteAudio(trackId: string): Promise<void> {
     this.memoryStore.delete(trackId);
+    await this.idbDelete(trackId);
     const existingUrl = this.objectUrls.get(trackId);
     if (existingUrl && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
       URL.revokeObjectURL(existingUrl);
@@ -251,8 +382,27 @@ class BrowserOfflineStorageBridge implements IOfflineStorageBridge {
   }
 
   public async listOfflineIds(): Promise<OfflineAudioEntry[]> {
+    const idbEntries = await this.idbListAll();
+    if (idbEntries !== null) {
+      const map = new Map<string, OfflineAudioEntry>();
+      for (const e of idbEntries) map.set(e.trackId, e);
+      for (const [id, rec] of this.memoryStore.entries()) {
+        if (!map.has(id) && rec.sizeBytes > 0) {
+          map.set(id, { trackId: id, sizeBytes: rec.sizeBytes });
+        }
+      }
+      const combined = Array.from(map.values());
+      await this.prefs.setItem(this.indexStorageKey, JSON.stringify(combined));
+      return combined;
+    }
+
     const raw = await this.prefs.getItem(this.indexStorageKey);
-    if (!raw) return [];
+    if (!raw) {
+      return Array.from(this.memoryStore.values()).map((r) => ({
+        trackId: r.trackId,
+        sizeBytes: r.sizeBytes,
+      }));
+    }
     try {
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? (parsed as OfflineAudioEntry[]) : [];
@@ -263,6 +413,7 @@ class BrowserOfflineStorageBridge implements IOfflineStorageBridge {
 
   public async clearAll(): Promise<void> {
     this.memoryStore.clear();
+    await this.idbClear();
     if (typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
       for (const u of this.objectUrls.values()) {
         URL.revokeObjectURL(u);

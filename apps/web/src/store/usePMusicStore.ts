@@ -280,6 +280,9 @@ async function resolveTrackStreamUrl(track: Track): Promise<string> {
   if (baseUrl.startsWith('blob:') || baseUrl.startsWith('data:')) {
     return baseUrl;
   }
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    throw new Error('TRACK_OFFLINE_UNAVAILABLE');
+  }
   const sep = baseUrl.includes('?') ? '&' : '?';
   const artist = track.artists[0]?.name ?? '';
   return `${baseUrl}${sep}title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(artist)}&durationSec=${Math.round(track.durationSec || 200)}`;
@@ -1745,6 +1748,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       desktopBridge?.onWindowVisibilityChanged?.((visible: boolean) => {
         get().setAppHidden(!visible);
       });
+      (window as unknown as { __pmusicOnAppResume?: () => void }).__pmusicOnAppResume = () => {
+        get().setAppHidden(false);
+        audioEngine.recoverAfterAppResume();
+      };
     }
 
     if (!playbackMonitorTimer && typeof setInterval === 'function') {
@@ -3703,6 +3710,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     if (hidden) {
       trimBackdropMemoryCaches();
     } else {
+      audioEngine.recoverAfterAppResume();
       checkLivePlaybackTriggers(audioEngine.getState());
     }
   },
@@ -4002,8 +4010,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   closeTrackMenu: () => set({ trackMenu: null }),
 
   playTrack: async (rawTrack, newQueue, startSec, direction = 'next') => {
-    const track = canonicalizeTrackArtists(rawTrack);
-    recordSessionPlayedTrack(track);
+    const requestedTrack = canonicalizeTrackArtists(rawTrack);
     ensureAudioEngineBindings();
     if (seekAutoTriggerTimer) {
       clearTimeout(seekAutoTriggerTimer);
@@ -4013,6 +4020,31 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     manualTrackSwitchInFlight = true;
     try {
       const st = get();
+      const offlineNow =
+        st.isOfflineNetwork || (typeof navigator !== 'undefined' && navigator.onLine === false);
+      let track = requestedTrack;
+      if (offlineNow) {
+        let hasOfflineAudio = st.offlineDownloads[track.id] === 'downloaded';
+        if (!hasOfflineAudio) {
+          const directUrl = await defaultPlatformBridge.offlineStorage.getAudioUrl(track.id);
+          hasOfflineAudio = Boolean(directUrl);
+        }
+        if (!hasOfflineAudio) {
+          const pool =
+            newQueue && newQueue.length > 0
+              ? newQueue.map(canonicalizeTrackArtists)
+              : st.queue.map(canonicalizeTrackArtists);
+          const firstAvailable = pool.find((t) => st.offlineDownloads[t.id] === 'downloaded');
+          if (firstAvailable && newQueue && newQueue.length > 1) {
+            st.showToast(`Sin conexión: saltando a «${firstAvailable.title}»`);
+            track = firstAvailable;
+          } else {
+            st.showToast('Sin conexión: esta canción no está descargada');
+            return;
+          }
+        }
+      }
+      recordSessionPlayedTrack(track);
       if (st.currentTrack && st.currentTrack.id !== track.id && st.positionSec >= 30) {
         recordWrappedListenIfEligible(
           st.currentTrack,
@@ -4095,19 +4127,24 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       );
       void analyzeTrackAudioInBackground(track);
 
-      // Lazy full-credits contributor hydration if playing a single-credit Deezer track
-      void hydrateTrackContributorsIfNeeded(track);
+      // Lazy full-credits contributor hydration & presence only when online
+      if (!offlineNow) {
+        void hydrateTrackContributorsIfNeeded(track);
+      }
 
-      void syncEngine.updatePresence({
-        is_active: true,
-        is_playing: true,
-        track_title: `${track.title} — ${track.artists.map((a) => a.name).join(', ')}`,
-      });
+      if (!offlineNow) {
+        void syncEngine.updatePresence({
+          is_active: true,
+          is_playing: true,
+          track_title: `${track.title} — ${track.artists.map((a) => a.name).join(', ')}`,
+        });
+      }
       syncDiscordPresenceState();
       pushHostJamStateSoon();
 
       if (
         isLiveRuntime() &&
+        !offlineNow &&
         (get().recommendedQueue.length < 5 || (newQueue && newQueue.length === 1))
       ) {
         void get().replenishRecommendedQueue(Boolean(newQueue && newQueue.length === 1));
@@ -4232,8 +4269,31 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         return;
       }
 
+      const offlineNow =
+        st.isOfflineNetwork || (typeof navigator !== 'undefined' && navigator.onLine === false);
       let target = getUpcomingDjTarget(st);
-      if (!target && st.autoplayEnabled) {
+      if (offlineNow && target && st.offlineDownloads[target.track.id] !== 'downloaded') {
+        const offlinePool = st.queue.filter(
+          (t, i) => i > st.queueIndex && st.offlineDownloads[t.id] === 'downloaded'
+        );
+        const fallbackPool =
+          offlinePool.length > 0
+            ? offlinePool
+            : st.queue.filter(
+                (t) => t.id !== st.currentTrack?.id && st.offlineDownloads[t.id] === 'downloaded'
+              );
+        if (fallbackPool.length > 0) {
+          const picked = fallbackPool[0]!;
+          target = {
+            track: picked,
+            nextIdx: st.queue.findIndex((t) => t.id === picked.id),
+            fromRecommended: false,
+          };
+        } else {
+          target = null;
+        }
+      }
+      if (!target && st.autoplayEnabled && !offlineNow) {
         await st.replenishRecommendedQueue(true);
         target = getUpcomingDjTarget(get());
       }
@@ -6669,9 +6729,33 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       const headers = await defaultPlatformBridge.getAuthHeaders();
       const res = await fetch(url, { headers });
       if (!res.ok) throw new Error('stream');
+      const contentType = (res.headers.get('content-type') ?? 'audio/mp4').toLowerCase();
+      if (
+        contentType.includes('application/json') ||
+        contentType.includes('text/html') ||
+        contentType.includes('text/plain')
+      ) {
+        throw new Error('invalid_audio_mime');
+      }
       const buf = await res.arrayBuffer();
-      await defaultPlatformBridge.offlineStorage.saveAudio(track.id, buf, res.headers.get('content-type') ?? 'audio/mp4');
+      if (buf.byteLength < 32_768) {
+        throw new Error('audio_too_small');
+      }
+      await defaultPlatformBridge.offlineStorage.saveAudio(
+        track.id,
+        buf,
+        res.headers.get('content-type') ?? 'audio/mp4'
+      );
+      const coverUrl = track.thumbnailHighUrl ?? track.thumbnailUrl;
+      if (coverUrl && typeof caches !== 'undefined') {
+        void caches
+          .open('pmusic-offline-covers-v1')
+          .then((cache) => cache.add(coverUrl).catch(() => undefined))
+          .catch(() => undefined);
+      }
       const entries = await defaultPlatformBridge.offlineStorage.listOfflineIds();
+      const verified = entries.some((e) => e.trackId === track.id);
+      if (!verified) throw new Error('persist_failed');
       set((prev) => ({
         offlineDownloads: { ...prev.offlineDownloads, [track.id]: 'downloaded' },
         offlineEntries: entries,

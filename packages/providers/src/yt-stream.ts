@@ -21,8 +21,30 @@ interface Resolved {
 
 const YOUTUBE_ID_RE = /^[a-zA-Z0-9_-]{11}$/;
 const AUDIO_CLIENTS = ['ANDROID', 'YTMUSIC', 'MWEB', 'IOS'] as const;
+const HARD_UNWANTED_RE =
+  /\b(karaoke|instrumental|backing track|sin voz|minus one|pista karaoke|cover|tribute|parodia|parody|ai cover|tutorial|piano version|guitar cover|ukulele|reaction|reaccion|8d audio|slowed|sped up|nightcore|reverb|bass boosted|acapella|a capella|mashup|bootleg|megamix|mixtape|dj set|break intro|dj intro|intro edit|lyrics|letra)\b/g;
+const REMIX_VERSION_RE =
+  /\b(remix|rmx|rework|refix|flip|vip mix|club mix|extended mix|radio edit)\b/;
+const LIVE_VERSION_RE = /\b(live|en vivo|en directo|concierto|acoustic|acustico|unplugged)\b/;
 const BAD_VERSION_RE =
   /\b(karaoke|remix|rmx|mashup|bootleg|flip|rework|refix|vip mix|club mix|extended mix|break intro|dj intro|intro edit|acapella|a capella|live|en vivo|cover|reaction|sped up|slowed|nightcore|instrumental|letra|lyrics|tutorial|8d audio|reverb|bass boosted|dj set|mixtape|megamix|tribute|parodia|parody|ai cover|pitched|radio edit|edit|version)\b/;
+
+function hasHardUnwantedCandidateTerm(rawNormTitle: string, candText: string): boolean {
+  const matches = candText.match(HARD_UNWANTED_RE);
+  if (!matches) return false;
+  for (const term of matches) {
+    if (!rawNormTitle.includes(term)) return true;
+  }
+  return false;
+}
+
+function isCandidateVersionDisallowed(rawNormTitle: string, candTitle: string, candArtistText = ''): boolean {
+  const combined = `${candTitle} ${candArtistText}`.trim();
+  if (hasHardUnwantedCandidateTerm(rawNormTitle, combined)) return true;
+  if (!REMIX_VERSION_RE.test(rawNormTitle) && REMIX_VERSION_RE.test(candTitle)) return true;
+  if (!LIVE_VERSION_RE.test(rawNormTitle) && LIVE_VERSION_RE.test(combined)) return true;
+  return false;
+}
 
 function normText(s: string): string {
   return s
@@ -66,12 +88,14 @@ export function scoreAudioCandidate(
   const strippedNormTitle = normText(stripTrackTitleNoise(target.title) || target.title);
   const cleanTitle = strippedNormTitle || rawNormTitle;
   const wantsSpecial = BAD_VERSION_RE.test(rawNormTitle);
+  const wantsRemix = REMIX_VERSION_RE.test(rawNormTitle);
 
   const candTitle = normText(cand.candidateTitle);
   const candStrippedTitle = normText(stripTrackTitleNoise(cand.candidateTitle) || cand.candidateTitle);
+  const candArtistNorm = normText(`${cand.candidateArtists ?? ''} ${cand.candidateAuthor ?? ''}`);
   if (!candTitle || cand.candidateDurationSec < 40) return -Infinity;
 
-  if (!wantsSpecial && BAD_VERSION_RE.test(candTitle) && !BAD_VERSION_RE.test(cleanTitle)) {
+  if (isCandidateVersionDisallowed(rawNormTitle, candTitle, candArtistNorm)) {
     return -Infinity;
   }
 
@@ -165,6 +189,9 @@ export function scoreAudioCandidate(
   else if (exactTitle) score += 6;
   else if (candTitle.includes(cleanTitle) || cleanTitle.includes(candStrippedTitle)) score += 4;
   score += Math.round(titleOverlap * 4);
+  if (wantsRemix) {
+    score += REMIX_VERSION_RE.test(candTitle) ? 8 : -6;
+  }
 
   if (rawArtistParts.length > 0) {
     score += artistMatchCount > 0 ? 6 + Math.min(3, artistMatchCount) : 0;
@@ -413,7 +440,7 @@ export class AudioStreamResolver {
         ? Math.abs(dur - info.durationSec) <= maxRelaxDelta
         : dur >= 45 && dur <= 600;
 
-    const wantsSpecialTitle = BAD_VERSION_RE.test(normText(info.title));
+    const rawNormInfoTitle = normText(info.title);
     const artistTokens = tokenize(primaryArtist).filter((t) => t.length >= 2);
 
     // 1) Priority: YouTube Music official songs search (strict then relaxed for underground tracks)
@@ -442,6 +469,7 @@ export class AudioStreamResolver {
             musicCandidates.push({ id, score });
           } else if (isRelaxDurationOk(dur)) {
             const normCand = normText(candTitleStr);
+            const normArt = normText(itemArtists);
             const normCombined = normText(`${candTitleStr} ${itemArtists}`);
             const normTok = tokenize(strippedTitle).filter((t) => t.length >= 3);
             const artistOk =
@@ -449,7 +477,7 @@ export class AudioStreamResolver {
             if (
               normTok.some((t) => normCand.includes(t)) &&
               artistOk &&
-              (wantsSpecialTitle || !BAD_VERSION_RE.test(normCand))
+              !isCandidateVersionDisallowed(rawNormInfoTitle, normCand, normArt)
             ) {
               relaxedYtm.push({ id, score: Number.isFinite(score) ? score : 0 });
             }
@@ -496,6 +524,7 @@ export class AudioStreamResolver {
             candidates.push({ id: vid, score: sc });
           } else if (isRelaxDurationOk(dur)) {
             const normCand = normText(candTitleStr);
+            const normAuth = normText(candAuthor);
             const normCombined = normText(`${candTitleStr} ${candAuthor}`);
             const normTok = tokenize(strippedTitle).filter((t) => t.length >= 3);
             const artistOk =
@@ -503,7 +532,7 @@ export class AudioStreamResolver {
             if (
               normTok.some((t) => normCand.includes(t)) &&
               artistOk &&
-              (wantsSpecialTitle || !BAD_VERSION_RE.test(normCand))
+              !isCandidateVersionDisallowed(rawNormInfoTitle, normCand, normAuth)
             ) {
               relaxedYt.push({ id: vid, score: Number.isFinite(sc) ? sc : 0 });
             }
@@ -547,7 +576,7 @@ export class AudioStreamResolver {
       info.artist.split(/,|&|\bfeat\.?\b|\bft\.?\b/i)[0]?.trim() || info.artist.trim();
     const focusedQuery = `${primaryArtist} ${strippedTitle}`.trim();
     const queries = Array.from(new Set([focusedQuery, strippedTitle].filter(Boolean)));
-    const wantsSpecial = BAD_VERSION_RE.test(normText(info.title));
+    const rawNormTitle = normText(info.title);
 
     const strictMatches: Array<{ id: string; score: number }> = [];
 
@@ -571,7 +600,7 @@ export class AudioStreamResolver {
           const candTitle = String(item?.title ?? '');
           const candArtist = String(item?.user?.name ?? '');
           const candHandle = String(item?.user?.handle ?? '');
-          if (!wantsSpecial && BAD_VERSION_RE.test(normText(`${candTitle} ${candArtist}`))) {
+          if (isCandidateVersionDisallowed(rawNormTitle, normText(candTitle), normText(candArtist))) {
             continue;
           }
           // Require the Audius uploader itself to match the track artist so third-party DJ edits cannot masquerade

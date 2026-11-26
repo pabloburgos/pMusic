@@ -200,7 +200,34 @@ if (existsSync(androidBrandIcon)) {
 } else {
   writeFileSync(resolve(drawableDir, 'ic_launcher.png'), generateIconPng(192));
 }
-writeFileSync(resolve(drawableDir, 'ic_stat_pmusic.png'), generateNotificationIconPng(96));
+
+const officialFaviconSvgPath = resolve(__dirname, '../../web/public/favicon.svg');
+const officialFaviconSvg = existsSync(officialFaviconSvgPath)
+  ? readFileSync(officialFaviconSvgPath, 'utf-8')
+  : '';
+const pathDataMatch = officialFaviconSvg.match(/d="([^"]+)"/);
+const officialPathData = pathDataMatch
+  ? pathDataMatch[1]
+  : 'M100.6 0.2 C121.0 1.4 139.0 12.1 149.4 29.5 C163.3 52.8 159.4 81.9 140.0 101.2 C127.6 113.5 110.9 120.2 93.4 120.0 L59.0 119.6 L59.0 165.4 C59.0 176.9 49.7 186.2 38.2 186.2 L32.2 186.2 C20.7 186.2 11.4 176.9 11.4 165.4 L11.4 58.6 C11.4 25.1 39.2 -1.9 72.7 0.0 Z M91.4 33.4 C77.1 33.4 65.5 45.0 65.5 59.3 C65.5 73.6 77.1 85.2 91.4 85.2 C105.7 85.2 117.3 73.6 117.3 59.3 C117.3 45.0 105.7 33.4 91.4 33.4 Z';
+const icStatVectorXml = `<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="256"
+    android:viewportHeight="256">
+    <group
+        android:translateX="52.56"
+        android:translateY="34.00"
+        android:scaleX="0.94"
+        android:scaleY="0.94">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:fillType="evenOdd"
+            android:pathData="${officialPathData}" />
+    </group>
+</vector>
+`;
+writeFileSync(resolve(drawableDir, 'ic_stat_pmusic.xml'), icStatVectorXml, 'utf-8');
 
 // 3. Write res/values/strings.xml & pure-black splash theme res/values/styles.xml
 writeFileSync(
@@ -243,12 +270,14 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="40"
-    android:versionName="0.18.4">
+    android:versionCode="44"
+    android:versionName="0.22.0">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
@@ -317,13 +346,19 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
+import android.media.AudioManager;
 import android.media.MediaMetadata;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
@@ -363,10 +398,21 @@ public class PMusicPlaybackService extends Service {
     private static volatile String sAlbum = "pMusic";
     private static volatile String sArtworkUrl = "";
     private static volatile boolean sIsPlaying = false;
+    private static volatile boolean sPausedByTransientLoss = false;
     private static volatile long sPositionMs = 0L;
     private static volatile long sDurationMs = 200000L;
 
     private PowerManager.WakeLock wakeLock;
+    private WifiManager.WifiLock wifiLock;
+    private AudioManager audioManager;
+    private AudioManager.OnAudioFocusChangeListener focusListener;
+    private Object audioFocusRequest;
+    private BroadcastReceiver noisyReceiver;
+    private boolean noisyRegistered = false;
+
+    public static boolean isCurrentlyPlaying() {
+        return sIsPlaying;
+    }
 
     public static synchronized MediaSession.Token getOrCreateSessionToken(Context ctx) {
         ensureMediaSessionStatic(ctx.getApplicationContext());
@@ -457,6 +503,7 @@ public class PMusicPlaybackService extends Service {
                 } catch (Throwable ignored) {
                 }
             } else {
+                sServiceInstance.updateFocusAndLocks(sIsPlaying);
                 sServiceInstance.syncMediaSessionAndNotification(metaChanged);
             }
 
@@ -649,15 +696,106 @@ public class PMusicPlaybackService extends Service {
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "pMusic::PlaybackWakeLock");
             wakeLock.setReferenceCounted(false);
         }
+        try {
+            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            if (wm != null) {
+                wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "pMusic::PlaybackWifiLock");
+                wifiLock.setReferenceCounted(false);
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+            focusListener = new AudioManager.OnAudioFocusChangeListener() {
+                @Override
+                public void onAudioFocusChange(int focusChange) {
+                    if (focusChange == AudioManager.AUDIOFOCUS_LOSS) {
+                        sPausedByTransientLoss = false;
+                        sIsPlaying = false;
+                        MainActivity.dispatchMediaAction(PMusicPlaybackService.this, "pause", -1);
+                        syncMediaSessionAndNotification(true);
+                    } else if (focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+                        if (sIsPlaying) {
+                            sPausedByTransientLoss = true;
+                            sIsPlaying = false;
+                            MainActivity.dispatchMediaAction(PMusicPlaybackService.this, "pause", -1);
+                            syncMediaSessionAndNotification(true);
+                        }
+                    } else if (focusChange == AudioManager.AUDIOFOCUS_GAIN) {
+                        if (sPausedByTransientLoss) {
+                            sPausedByTransientLoss = false;
+                            sIsPlaying = true;
+                            MainActivity.dispatchMediaAction(PMusicPlaybackService.this, "play", -1);
+                            syncMediaSessionAndNotification(true);
+                        }
+                    }
+                }
+            };
+        } catch (Throwable ignored) {
+        }
+        try {
+            noisyReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    if (intent != null && AudioManager.ACTION_AUDIO_BECOMING_NOISY.equals(intent.getAction())) {
+                        sPausedByTransientLoss = false;
+                        sIsPlaying = false;
+                        MainActivity.dispatchMediaAction(PMusicPlaybackService.this, "pause", -1);
+                        syncMediaSessionAndNotification(true);
+                    }
+                }
+            };
+            IntentFilter noisyFilter = new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY);
+            if (Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(noisyReceiver, noisyFilter, Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                registerReceiver(noisyReceiver, noisyFilter);
+            }
+            noisyRegistered = true;
+        } catch (Throwable ignored) {
+        }
         syncMediaSessionAndNotification();
+    }
+
+    private void updateFocusAndLocks(boolean playing) {
+        try {
+            if (playing) {
+                if (wakeLock != null && !wakeLock.isHeld()) {
+                    wakeLock.acquire(6 * 60 * 60 * 1000L);
+                }
+                if (wifiLock != null && !wifiLock.isHeld()) {
+                    wifiLock.acquire();
+                }
+                if (audioManager != null && focusListener != null) {
+                    if (Build.VERSION.SDK_INT >= 26) {
+                        if (audioFocusRequest == null) {
+                            AudioAttributes attrs = new AudioAttributes.Builder()
+                                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                                    .build();
+                            audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                                    .setAudioAttributes(attrs)
+                                    .setOnAudioFocusChangeListener(focusListener)
+                                    .build();
+                        }
+                        audioManager.requestAudioFocus((AudioFocusRequest) audioFocusRequest);
+                    } else {
+                        audioManager.requestAudioFocus(focusListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN);
+                    }
+                }
+            } else {
+                if (wifiLock != null && wifiLock.isHeld()) {
+                    wifiLock.release();
+                }
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         sServiceInstance = this;
-        if (wakeLock != null && !wakeLock.isHeld()) {
-            wakeLock.acquire(6 * 60 * 60 * 1000L);
-        }
+        updateFocusAndLocks(sIsPlaying || intent == null || !ACTION_STOP.equals(intent.getAction()));
         String action = intent != null ? intent.getAction() : null;
         if (ACTION_PREV.equals(action)) {
             MainActivity.dispatchMediaAction(this, "previoustrack", -1);
@@ -677,9 +815,29 @@ public class PMusicPlaybackService extends Service {
         if (sServiceInstance == this) {
             sServiceInstance = null;
         }
+        if (noisyRegistered && noisyReceiver != null) {
+            try {
+                unregisterReceiver(noisyReceiver);
+            } catch (Throwable ignored) {
+            }
+            noisyRegistered = false;
+        }
+        try {
+            if (audioManager != null && focusListener != null) {
+                if (Build.VERSION.SDK_INT >= 26 && audioFocusRequest != null) {
+                    audioManager.abandonAudioFocusRequest((AudioFocusRequest) audioFocusRequest);
+                } else {
+                    audioManager.abandonAudioFocus(focusListener);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
         try {
             stopForeground(true);
         } catch (Throwable ignored) {
+        }
+        if (wifiLock != null && wifiLock.isHeld()) {
+            wifiLock.release();
         }
         if (wakeLock != null && wakeLock.isHeld()) {
             wakeLock.release();
@@ -913,10 +1071,28 @@ public class MainActivity extends Activity {
     private static final String YT_WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
     private static final long STREAM_CACHE_TTL_MS = 35L * 60L * 1000L;
     private static final Pattern YT_ID_PATTERN = Pattern.compile("^[a-zA-Z0-9_-]{11}$");
-    private static final Pattern BAD_VERSION_PATTERN = Pattern.compile("\\\\b(karaoke|remix|rmx|mashup|bootleg|flip|rework|refix|vip mix|club mix|extended mix|break intro|dj intro|intro edit|acapella|a capella|live|en vivo|cover|reaction|sped up|slowed|nightcore|instrumental|letra|lyrics|tutorial|8d audio|reverb|bass boosted|dj set|mixtape|megamix|tribute|parodia|parody|ai cover|pitched|radio edit|edit|version)\\\\b");
-    private static final Pattern TITLE_NOISE_PATTERN = Pattern.compile("\\\\((?:feat\\\\.|ft\\\\.|with|prod\\\\.|official|video|audio|lyric|remix|en vivo|live).*?\\\\)|\\\\[(?:official|video|audio|lyric|remix|hd|4k).*?\\\\]", Pattern.CASE_INSENSITIVE);
+    private static final Pattern HARD_UNWANTED_PATTERN = Pattern.compile("\\\\b(karaoke|instrumental|acapella|a capella|cover|ai cover|reaction|sped up|slowed|nightcore|8d audio|8d|reverb|bass boosted|tutorial|letra|lyrics|parodia|parody|tribute|pitched|karaoke version|instrumental version)\\\\b");
+    private static final Pattern REMIX_PATTERN = Pattern.compile("\\\\b(remix|rmx|vip mix|club mix|extended mix|mashup|bootleg|flip|rework|refix)\\\\b");
+    private static final Pattern LIVE_PATTERN = Pattern.compile("\\\\b(live|en vivo|directo|acustico|acoustic|unplugged|tiny desk|session|sesiones)\\\\b");
+    private static final Pattern TITLE_NOISE_PATTERN = Pattern.compile("\\\\((?:feat\\\\.|ft\\\\.|with|prod\\\\.|official|video|audio|lyric|en vivo|live).*?\\\\)|\\\\[(?:official|video|audio|lyric|hd|4k).*?\\\\]", Pattern.CASE_INSENSITIVE);
     private static final Pattern DURATION_TOKEN_PATTERN = Pattern.compile("^\\\\d{1,2}:\\\\d{2}(?::\\\\d{2})?$");
     private static final Pattern OPEN_RANGE_PATTERN = Pattern.compile("^bytes=(\\\\d+)-$");
+
+    private static boolean hasDisallowedVersion(String targetTitle, String candidateText) {
+        String candNorm = normText(candidateText);
+        if (candNorm.isEmpty()) return false;
+        String targetNorm = normText(targetTitle);
+        if (HARD_UNWANTED_PATTERN.matcher(candNorm).find() && !HARD_UNWANTED_PATTERN.matcher(targetNorm).find()) {
+            return true;
+        }
+        if (REMIX_PATTERN.matcher(candNorm).find() && !REMIX_PATTERN.matcher(targetNorm).find()) {
+            return true;
+        }
+        if (LIVE_PATTERN.matcher(candNorm).find() && !LIVE_PATTERN.matcher(targetNorm).find()) {
+            return true;
+        }
+        return false;
+    }
 
     private static final class ResolvedStream {
         final String url;
@@ -1049,7 +1225,16 @@ public class MainActivity extends Activity {
         if (window != null) {
             window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.BLACK));
         }
-        webView = new WebView(this);
+        webView = new WebView(this) {
+            @Override
+            protected void onWindowVisibilityChanged(int visibility) {
+                if (PMusicPlaybackService.isCurrentlyPlaying()) {
+                    super.onWindowVisibilityChanged(View.VISIBLE);
+                } else {
+                    super.onWindowVisibilityChanged(visibility);
+                }
+            }
+        };
         webView.setBackgroundColor(Color.BLACK);
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
         if (Build.VERSION.SDK_INT >= 26) {
@@ -1311,6 +1496,11 @@ public class MainActivity extends Activity {
                         }
 
                         String cacheKey = (rawTrackId != null ? rawTrackId : "") + "::" + (qTitle != null ? qTitle.trim() : "");
+                        if ("1".equals(uri.getQueryParameter("fresh"))) {
+                            synchronized (fullStreamCache) {
+                                fullStreamCache.remove(cacheKey);
+                            }
+                        }
                         ResolvedStream fullStream = getOrResolveFullStream(cacheKey, rawTrackId, qTitle, qArtist, qDurSec);
                         if (fullStream != null) {
                             WebResourceResponse ytResp = proxyStreamResponse(
@@ -1520,6 +1710,33 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onPause() {
+        super.onPause();
+        if (webView != null && PMusicPlaybackService.isCurrentlyPlaying()) {
+            try {
+                webView.onResume();
+                webView.resumeTimers();
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (webView != null) {
+            try {
+                webView.onResume();
+                webView.resumeTimers();
+                if (Build.VERSION.SDK_INT >= 19) {
+                    webView.evaluateJavascript("window.__pmusicOnAppResume && window.__pmusicOnAppResume();", null);
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    @Override
     protected void onDestroy() {
         if (carModeReceiver != null) {
             try {
@@ -1574,7 +1791,7 @@ public class MainActivity extends Activity {
     private void handleLoopbackClient(Socket client) {
         HttpURLConnection conn = null;
         try {
-            client.setSoTimeout(15000);
+            client.setSoTimeout(30000);
             BufferedReader reader = new BufferedReader(new InputStreamReader(client.getInputStream(), StandardCharsets.US_ASCII));
             String reqLine = reader.readLine();
             if (reqLine == null || reqLine.trim().isEmpty()) return;
@@ -1625,6 +1842,11 @@ public class MainActivity extends Activity {
             }
 
             String cacheKey = (rawTrackId != null ? rawTrackId : "") + "::" + (qTitle != null ? qTitle.trim() : "");
+            if ("1".equals(uri.getQueryParameter("fresh"))) {
+                synchronized (fullStreamCache) {
+                    fullStreamCache.remove(cacheKey);
+                }
+            }
             ResolvedStream fullStream = getOrResolveFullStream(cacheKey, rawTrackId, qTitle, qArtist, qDurSec);
             if (fullStream == null) {
                 out.write("HTTP/1.1 503 Service Unavailable\\r\\nAccess-Control-Allow-Origin: *\\r\\nContent-Type: application/json\\r\\nContent-Length: 30\\r\\nConnection: close\\r\\n\\r\\n{\\"error\\":\\"stream_unavailable\\"}".getBytes(StandardCharsets.UTF_8));
@@ -1890,7 +2112,6 @@ public class MainActivity extends Activity {
             String primary = targetArtist != null ? targetArtist.trim() : "";
             String focused = (primary.isEmpty() ? targetTitle : primary + " " + targetTitle).trim();
             String[] queries = primary.isEmpty() ? new String[] { targetTitle } : new String[] { focused, targetTitle };
-            boolean wantsSpecial = BAD_VERSION_PATTERN.matcher(normText(targetTitle)).find();
 
             String bestId = null;
             int bestScore = Integer.MIN_VALUE;
@@ -1915,7 +2136,7 @@ public class MainActivity extends Activity {
                     JSONObject userObj = item.optJSONObject("user");
                     String candArtist = userObj != null ? userObj.optString("name", "") : "";
                     String candHandle = userObj != null ? userObj.optString("handle", "") : "";
-                    if (!wantsSpecial && BAD_VERSION_PATTERN.matcher(normText(candTitle + " " + candArtist)).find()) {
+                    if (hasDisallowedVersion(targetTitle, candTitle + " " + candArtist)) {
                         continue;
                     }
                     if (!primary.isEmpty()) {
@@ -2436,7 +2657,7 @@ public class MainActivity extends Activity {
         String rawNormTitle = normText(targetTitle);
         String candNorm = normText(candTitle);
         if (candNorm.isEmpty() || candDurSec < 40) return -100;
-        if (BAD_VERSION_PATTERN.matcher(candNorm).find() && !BAD_VERSION_PATTERN.matcher(rawNormTitle).find()) {
+        if (hasDisallowedVersion(targetTitle, candTitle + " " + candSubtext)) {
             return -50;
         }
 
@@ -2453,6 +2674,10 @@ public class MainActivity extends Activity {
         double titleRatio = tTokens.isEmpty() ? 0.0 : (double) titleHits / (double) tTokens.size();
 
         int score = 0;
+        if (REMIX_PATTERN.matcher(rawNormTitle).find()) {
+            if (REMIX_PATTERN.matcher(normText(candTitle + " " + candSubtext)).find()) score += 8;
+            else score -= 6;
+        }
         if (candNorm.equals(rawNormTitle) || (!rawNormTitle.isEmpty() && candNorm.contains(rawNormTitle))) {
             score += 10;
         } else if (titleRatio >= 0.6) {

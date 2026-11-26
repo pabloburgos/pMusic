@@ -256,6 +256,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
   private lastProgressWallMs = 0;
   private lastRecoveryNudgeWallMs = 0;
   private lastHiddenEmitMs = 0;
+  private readonly streamRetryCount = new Map<string, number>();
   private audioUnlockAttached = false;
   private audioUnlockCleanup: (() => void) | null = null;
 
@@ -678,6 +679,53 @@ export class DualDeckAudioEngine implements IAudioEngine {
           this.triggerTrackEnded(id);
           return;
         }
+        const isRealHtmlAudio =
+          typeof HTMLAudioElement !== 'undefined' && audio instanceof HTMLAudioElement;
+        const isOnline = typeof navigator === 'undefined' || navigator.onLine !== false;
+        if (
+          isRealHtmlAudio &&
+          this.isPlaying &&
+          !this.isTransitioning &&
+          !audio.src.startsWith('blob:') &&
+          isOnline
+        ) {
+          const retryKey =
+            (id === 'A' ? this.deckA?.track?.id : this.deckB?.track?.id) ?? audio.src;
+          const retries = this.streamRetryCount.get(retryKey) ?? 0;
+          if (retries < 2) {
+            this.streamRetryCount.set(retryKey, retries + 1);
+            const cleanBase = audio.src.replace(/([?&])fresh=\d+(&|$)/g, (_, sep, tail) =>
+              tail === '&' ? sep : ''
+            );
+            const refreshedUrl = `${cleanBase}${cleanBase.includes('?') ? '&' : '?'}fresh=1`;
+            this.isBuffering = true;
+            this.emitState();
+            audio.crossOrigin = 'anonymous';
+            audio.src = refreshedUrl;
+            try {
+              audio.load();
+            } catch {
+              // ignore
+            }
+            if (curPos > 0.5) {
+              audio.addEventListener(
+                'loadedmetadata',
+                () => {
+                  try {
+                    if (Math.abs((audio.currentTime || 0) - curPos) > 0.8) {
+                      audio.currentTime = curPos;
+                    }
+                  } catch {
+                    // ignore
+                  }
+                },
+                { once: true }
+              );
+            }
+            void audio.play()?.catch?.(() => undefined);
+            return;
+          }
+        }
         this.isPlaying = false;
         this.emitState();
         const err = new DomainError('TRACK_UNPLAYABLE', 'No se pudo cargar el audio completo de esta pista');
@@ -835,6 +883,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
       this.resetDeckDsp(otherDeck, 0);
 
       deck.track = track;
+      this.streamRetryCount.delete(track.id);
       this.playbackRate = 1.0;
       this.durationSec = track.durationSec > 0 ? track.durationSec : 195;
       this.positionSec = Math.max(0, startSec);
@@ -963,6 +1012,24 @@ export class DualDeckAudioEngine implements IAudioEngine {
     this.deckB.audio.pause();
     this.isPlaying = false;
     this.isBuffering = false;
+    this.emitState();
+  }
+
+  public recoverAfterAppResume(): void {
+    this.unlockAudioContext();
+    this.lastProgressWallMs = Date.now();
+    if (this.audioCtx && this.audioCtx.state === 'suspended') {
+      void this.audioCtx.resume().catch(() => undefined);
+    }
+    if (!this.deckA || !this.deckB) return;
+    const deck = this.getDeck(this.activeDeck);
+    if (this.isPlaying && deck.audio.paused && deck.audio.src) {
+      try {
+        void deck.audio.play()?.catch?.(() => undefined);
+      } catch {
+        // ignore in mock/jsdom environments
+      }
+    }
     this.emitState();
   }
 

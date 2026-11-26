@@ -446,6 +446,58 @@ describe('@pmusic/providers', () => {
     expect(cangriScore).toBeGreaterThanOrEqual(20);
   });
 
+  it('rejects karaoke/cover/slowed/8d variants for remix songs while preferring the official remix', () => {
+    const target = {
+      title: 'Las Bratz (Remix)',
+      artist: 'Aitana',
+      durationSec: 218,
+    };
+
+    const officialRemixScore = scoreAudioCandidate(target, {
+      candidateTitle: 'Las Bratz (Remix)',
+      candidateArtists: 'Aitana, Saiko, Dei V',
+      candidateDurationSec: 218,
+      isYtMusicSong: true,
+    });
+    const karaokeScore = scoreAudioCandidate(target, {
+      candidateTitle: 'Las Bratz (Remix) Karaoke Version',
+      candidateArtists: 'Karaoke Hits',
+      candidateDurationSec: 218,
+      isYtMusicSong: false,
+    });
+    const instrumentalScore = scoreAudioCandidate(target, {
+      candidateTitle: 'Las Bratz Remix Instrumental',
+      candidateArtists: 'Beat Maker',
+      candidateDurationSec: 218,
+      isYtMusicSong: false,
+    });
+    const coverScore = scoreAudioCandidate(target, {
+      candidateTitle: 'Las Bratz Remix (Cover)',
+      candidateArtists: 'Cover Singer',
+      candidateDurationSec: 218,
+      isYtMusicSong: false,
+    });
+    const slowedScore = scoreAudioCandidate(target, {
+      candidateTitle: 'Las Bratz (Remix) [Slowed + Reverb]',
+      candidateArtists: 'NightEdits',
+      candidateDurationSec: 230,
+      isYtMusicSong: false,
+    });
+    const nonRemixScore = scoreAudioCandidate(target, {
+      candidateTitle: 'Las Bratz',
+      candidateArtists: 'Aitana',
+      candidateDurationSec: 215,
+      isYtMusicSong: true,
+    });
+
+    expect(officialRemixScore).toBeGreaterThan(20);
+    expect(officialRemixScore).toBeGreaterThan(nonRemixScore);
+    expect(karaokeScore).toBe(-Infinity);
+    expect(instrumentalScore).toBe(-Infinity);
+    expect(coverScore).toBe(-Infinity);
+    expect(slowedScore).toBe(-Infinity);
+  });
+
   it('rejects scrambled gibberish or foreign cipher lyrics and returns not_found instead of fake lines', async () => {
     const scrambled = [
       '[00:10.00]Kahe rorew vip',

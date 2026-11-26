@@ -726,24 +726,80 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     if (typeof document === 'undefined') return;
     const isTestEnv =
       Boolean((import.meta as any).vitest) || (import.meta as any).env?.MODE === 'test';
+    let cancelled = false;
     const dismissSplash = () => {
+      if (cancelled) return;
       const el = document.getElementById('pm-boot-splash');
       if (!el || el.classList.contains('pm-splash-hide')) return;
       el.classList.add('pm-splash-hide');
       setTimeout(() => el.remove(), 420);
     };
-    const safetyTimer = setTimeout(dismissSplash, 2200);
+    const isOfflineStart = typeof navigator !== 'undefined' && navigator.onLine === false;
+    const maxCapMs = isTestEnv ? 0 : isOfflineStart ? 1400 : 5200;
+    const safetyTimer = setTimeout(dismissSplash, maxCapMs);
     if (!appReady) {
-      return () => clearTimeout(safetyTimer);
+      return () => {
+        cancelled = true;
+        clearTimeout(safetyTimer);
+      };
     }
-    const elapsed =
-      (typeof performance !== 'undefined' ? performance.now() : Date.now()) -
-      bootMountMsRef.current;
-    const remainingMinMs = isTestEnv ? 0 : Math.max(0, 480 - elapsed);
-    const hideTimer = setTimeout(dismissSplash, remainingMinMs);
+    if (isTestEnv) {
+      const hideNow = setTimeout(dismissSplash, 0);
+      return () => {
+        cancelled = true;
+        clearTimeout(safetyTimer);
+        clearTimeout(hideNow);
+      };
+    }
+
+    const waitImageReady = (img: HTMLImageElement) =>
+      new Promise<void>((resolveImg) => {
+        if (img.complete) {
+          if (typeof img.decode === 'function' && img.naturalWidth > 0) {
+            img.decode().then(() => resolveImg(), () => resolveImg());
+          } else {
+            resolveImg();
+          }
+          return;
+        }
+        const done = () => {
+          img.removeEventListener('load', done);
+          img.removeEventListener('error', done);
+          resolveImg();
+        };
+        img.addEventListener('load', done, { once: true });
+        img.addEventListener('error', done, { once: true });
+      });
+
+    let hideTimer: ReturnType<typeof setTimeout> | null = null;
+    const fontsReady =
+      (document as unknown as { fonts?: { ready?: Promise<unknown> } }).fonts?.ready ??
+      Promise.resolve();
+
+    const rafId = requestAnimationFrame(() => {
+      const imgs = Array.from(document.querySelectorAll('img')).slice(0, 10) as HTMLImageElement[];
+      const elapsed =
+        (typeof performance !== 'undefined' ? performance.now() : Date.now()) -
+        bootMountMsRef.current;
+      const minWaitMs = Math.max(0, 480 - elapsed);
+      const minPromise = new Promise<void>((r) => {
+        hideTimer = setTimeout(r, minWaitMs);
+      });
+      const visualPromise = isOfflineStart
+        ? Promise.resolve()
+        : Promise.all([fontsReady.catch(() => undefined), ...imgs.map(waitImageReady)]).then(
+            () => undefined
+          );
+      void Promise.all([minPromise, visualPromise]).then(() => {
+        dismissSplash();
+      });
+    });
+
     return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
       clearTimeout(safetyTimer);
-      clearTimeout(hideTimer);
+      if (hideTimer) clearTimeout(hideTimer);
     };
   }, [appReady]);
 

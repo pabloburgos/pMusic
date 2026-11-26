@@ -1312,7 +1312,7 @@ export const NowPlayingSheet: React.FC = () => {
       className={`flex flex-col items-center ${
         compact
           ? 'w-full gap-3 xl:gap-3.5'
-          : 'mx-auto flex h-full w-full max-w-[420px] justify-center gap-4 pb-4 md:h-auto md:justify-center md:gap-4 md:py-0'
+          : 'mx-auto flex h-full w-full max-w-[420px] justify-evenly gap-2 pb-2 md:h-auto md:justify-center md:gap-4 md:py-0'
       }`}
     >
       {/* Large Borderless Centerpiece Artwork with pMusic Fractal Ink-Bleed Transition (Permanent Stage Key: Zero Cut at t=0) */}
@@ -1348,7 +1348,7 @@ export const NowPlayingSheet: React.FC = () => {
         } relative aspect-square overflow-hidden rounded-[16px] bg-[#111115] shadow-[0_26px_64px_rgba(0,0,0,0.58)] transition-transform duration-300 ease-out ${
           compact
             ? 'w-[min(68vw,320px,36dvh)] xl:w-[min(68vw,346px,38dvh)]'
-            : 'w-[min(86vw,356px,42dvh)] md:w-[min(74vw,340px,38dvh)] xl:w-[min(74vw,380px,42dvh)]'
+            : 'w-[min(78vw,316px,35dvh)] md:w-[min(74vw,340px,38dvh)] xl:w-[min(74vw,380px,42dvh)]'
         } ${isPlaying ? 'scale-100' : 'scale-[0.96]'}`}
       >
         {showInkCoverTransition && outgoingTransitionTrack && incomingTransitionTrack ? (
@@ -1421,7 +1421,7 @@ export const NowPlayingSheet: React.FC = () => {
                       : 'Descargar para escuchar offline'
                   }
                   onClick={() => void downloadTrackOffline(currentTrack)}
-                  className="pm-pressable hidden h-8 w-8 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/[0.10] hover:text-white md:flex"
+                  className="pm-pressable flex h-8 w-8 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/[0.10] hover:text-white"
                 >
                   {dlStatus === 'downloading' ? (
                     <Loader2 className="h-4.5 w-4.5 animate-spin text-white" />
@@ -1558,7 +1558,7 @@ export const NowPlayingSheet: React.FC = () => {
                       : 'Descargar para escuchar offline'
                   }
                   onClick={() => void downloadTrackOffline(currentTrack)}
-                  className="pm-pressable hidden h-8 w-8 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/[0.10] hover:text-white md:flex"
+                  className="pm-pressable flex h-8 w-8 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/[0.10] hover:text-white"
                 >
                   {dlStatus === 'downloading' ? (
                     <Loader2 className="h-4.5 w-4.5 animate-spin text-white" />
@@ -2080,18 +2080,6 @@ export const NowPlayingSheet: React.FC = () => {
             >
               <span className="h-1 w-10 rounded-full bg-white/35" />
             </button>
-            <button
-              type="button"
-              aria-label={isRealFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa real'}
-              onClick={() => void toggleRealFullscreen().then(setIsRealFullscreen)}
-              className="pm-pressable absolute right-0 flex h-8 w-8 items-center justify-center rounded-full bg-white/[0.08] text-white/80 hover:bg-white/[0.16] hover:text-white"
-            >
-              {isRealFullscreen ? (
-                <Minimize className="h-3.5 w-3.5" />
-              ) : (
-                <Maximize className="h-3.5 w-3.5" />
-              )}
-            </button>
           </div>
         ) : (
           /* Mobile Letras / Cola: compact top mini-track header matching Apple Music style */
@@ -2183,7 +2171,7 @@ export const NowPlayingSheet: React.FC = () => {
       <div
         className={`relative z-10 min-h-0 flex-1 px-5 md:px-10 ${
           nowPlayingTab === 'Portada'
-            ? 'overflow-x-hidden overflow-y-auto py-2 md:py-5'
+            ? 'overflow-hidden py-1 md:overflow-x-hidden md:overflow-y-auto md:py-5'
             : nowPlayingTab === 'Letras'
               ? 'overflow-hidden py-0'
               : 'overflow-hidden py-2 md:py-5'
