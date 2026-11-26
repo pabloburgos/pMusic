@@ -17,7 +17,14 @@ import {
 } from 'lucide-react';
 import { usePMusicStore } from '../store/usePMusicStore.ts';
 
-export const TrackContextMenu: React.FC = () => {
+export const TrackContextMenu: React.FC = React.memo(() => {
+  const open = usePMusicStore((s) => Boolean(s.trackMenu));
+  if (!open) return null;
+  return <TrackContextMenuInner />;
+});
+TrackContextMenu.displayName = 'TrackContextMenu';
+
+const TrackContextMenuInner: React.FC = () => {
   const {
     trackMenu,
     playlists,

@@ -1156,7 +1156,7 @@ input[type="range"].pm-eq-vertical {
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  will-change: transform, background-position;
+  will-change: transform;
 }
 
 .pm-sing-word[data-word-state='upcoming'] {
@@ -1166,13 +1166,17 @@ input[type="range"].pm-eq-vertical {
 
 .pm-sing-word[data-word-state='active'] {
   transition: none;
-  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.24));
 }
 
 .pm-sing-word[data-word-state='sung'] {
   background-position: 0% 0%;
   color: #FFFFFF;
   transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.pm-lyric-line-active,
+.pm-lyric-line-inactive {
+  contain: layout style;
 }
 
 .pm-lyric-line-inactive {
@@ -3382,12 +3386,22 @@ html.pm-app-hidden .pm-overlay-scrollbar-track {
   opacity: 0 !important;
 }
 
-/* Pause background glass blur & animations underneath fullscreen NowPlayingSheet */
+/* Pause global inherited :root @property --pm-ambient-1/2/3 CSS transitions when fullscreen WebGL backdrop is active */
+html.pm-np-canvas-open {
+  transition: none !important;
+}
+
+/* Skip style/layout/paint/compositing & animations underneath fullscreen NowPlayingSheet */
+.pm-behind-nowplaying {
+  content-visibility: hidden;
+  contain: layout style paint;
+}
 .pm-behind-nowplaying,
 .pm-behind-nowplaying * {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   animation-play-state: paused !important;
+  transition: none !important;
 }
 
 /* ── pMusic Wrapped Epic Motion Graphics ── */
@@ -3542,7 +3556,7 @@ html.pm-reduced-motion .pm-heart-liquid-pop {
   color: #000000;
 }
 
-[data-testid="now-playing-sheet"] :is(h1, p, span, button, svg, .pm-indicator-dot, [data-testid="nowplaying-progress-fill"]):not(.pm-hud-dark):not(.pm-hud-dark *):not(.pm-sing-word) {
+[data-testid="now-playing-sheet"] :is(h1, button, svg, .pm-indicator-dot, [data-testid="nowplaying-progress-fill"]):not(.pm-hud-dark):not(.pm-sing-word) {
   transition-property: color, background-color, border-color;
   transition-duration: var(--pm-ink-transition-ms, 650ms);
   transition-timing-function: ease;
@@ -3554,8 +3568,9 @@ html.pm-reduced-motion .pm-heart-liquid-pop {
   transition-timing-function: ease;
 }
 
-.pm-np-light-surface :is(h1, h2, h3, button, a, span, p, div):not(.pm-hud-dark):not(.pm-hud-dark *):not([data-testid="audio-studio-sheet"] *):not([data-testid="lyrics-style-switcher"] *):not([data-testid="devices-sheet"] *):not([data-testid="jam-invite-modal"] *) {
-  --tw-drop-shadow: none;
+.pm-np-light-surface [class*="drop-shadow"]:not(.pm-hud-dark):not(.pm-hud-dark *):not([data-testid="audio-studio-sheet"] *):not([data-testid="lyrics-style-switcher"] *):not([data-testid="devices-sheet"] *):not([data-testid="jam-invite-modal"] *) {
+  --tw-drop-shadow: initial !important;
+  --tw-drop-shadow-size: initial !important;
 }
 
 .pm-np-light-surface header button,

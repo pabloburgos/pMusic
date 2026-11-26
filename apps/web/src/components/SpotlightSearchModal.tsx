@@ -12,7 +12,14 @@ import { formatDurationSec } from '@pmusic/core';
 import { usePMusicStore } from '../store/usePMusicStore.ts';
 import { ArtistLinks } from './ArtistLinks.tsx';
 
-export const SpotlightSearchModal: React.FC = () => {
+export const SpotlightSearchModal: React.FC = React.memo(() => {
+  const spotlightOpen = usePMusicStore((s) => s.spotlightOpen);
+  if (!spotlightOpen) return null;
+  return <SpotlightSearchModalInner />;
+});
+SpotlightSearchModal.displayName = 'SpotlightSearchModal';
+
+const SpotlightSearchModalInner: React.FC = () => {
   const {
     spotlightOpen,
     setSpotlightOpen,

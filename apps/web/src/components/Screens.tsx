@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   Check,
   ChevronDown,
@@ -159,12 +160,12 @@ export const TrackListRow: React.FC<{
   queueContext?: Track[];
   playlistId?: string;
   onDropReorder?: (fromIndex: number, toIndex: number) => void;
-}> = ({ track, index, queueContext, playlistId, onDropReorder }) => {
+}> = React.memo(({ track, index, queueContext, playlistId, onDropReorder }) => {
   const {
-    currentTrack,
+    isCurrent,
     isPlaying,
-    likedTracks,
-    offlineDownloads,
+    isLiked,
+    dlStatus,
     isOfflineNetwork,
     playTrack,
     togglePlayPause,
@@ -173,16 +174,31 @@ export const TrackListRow: React.FC<{
     addToQueue,
     removeTrackFromPlaylist,
     openTrackMenu,
-    playlists,
     recordPlaylistPlay,
-  } = usePMusicStore();
+  } = usePMusicStore(
+    useShallow((s) => {
+      const cur = s.currentTrack.id === track.id;
+      return {
+        isCurrent: cur,
+        isPlaying: cur ? s.isPlaying : false,
+        isLiked: s.likedTracks.some((l) => l.trackId === track.id),
+        dlStatus: s.offlineDownloads[track.id] ?? 'idle',
+        isOfflineNetwork: s.isOfflineNetwork,
+        playTrack: s.playTrack,
+        togglePlayPause: s.togglePlayPause,
+        toggleLike: s.toggleLike,
+        downloadTrackOffline: s.downloadTrackOffline,
+        addToQueue: s.addToQueue,
+        removeTrackFromPlaylist: s.removeTrackFromPlaylist,
+        openTrackMenu: s.openTrackMenu,
+        recordPlaylistPlay: s.recordPlaylistPlay,
+      };
+    })
+  );
 
   const [dragOver, setDragOver] = useState(false);
   const [coverHidden, setCoverHidden] = useState(false);
 
-  const isCurrent = currentTrack.id === track.id;
-  const isLiked = likedTracks.some((l) => l.trackId === track.id);
-  const dlStatus = offlineDownloads[track.id] ?? 'idle';
   const isUnavailableOffline = isOfflineNetwork && dlStatus !== 'downloaded';
 
   const handleRowPlay = () => {
@@ -190,7 +206,7 @@ export const TrackListRow: React.FC<{
       void togglePlayPause();
     } else {
       if (playlistId) {
-        const pl = playlists.find((p) => p.id === playlistId);
+        const pl = usePMusicStore.getState().playlists.find((p) => p.id === playlistId);
         if (pl) recordPlaylistPlay(pl);
       }
       void playTrack(track, queueContext);
@@ -418,7 +434,8 @@ export const TrackListRow: React.FC<{
       </div>
     </div>
   );
-};
+});
+TrackListRow.displayName = 'TrackListRow';
 
 const CoverCard: React.FC<{
   image: string;
@@ -577,7 +594,7 @@ const CarouselSection: React.FC<{
   );
 };
 
-export const DetailViewPanel: React.FC = () => {
+export const DetailViewPanel: React.FC = React.memo(() => {
   const {
     activeDetailView,
     currentTrack,
@@ -625,7 +642,56 @@ export const DetailViewPanel: React.FC = () => {
     openLocalPlaylistDetail,
     recordPlaylistPlay,
     showToast,
-  } = usePMusicStore();
+  } = usePMusicStore(
+    useShallow((s) => ({
+      activeDetailView: s.activeDetailView,
+      currentTrack: s.currentTrack,
+      isPlaying: s.isPlaying,
+      shuffleEnabled: s.shuffleEnabled,
+      alwaysShuffle: s.alwaysShuffle,
+      djMode: s.djMode,
+      playlists: s.playlists,
+      sharedPlaylists: s.sharedPlaylists,
+      friends: s.friends,
+      likedTracks: s.likedTracks,
+      favoriteArtists: s.favoriteArtists,
+      dismissedPlaylistRecs: s.dismissedPlaylistRecs,
+      playlistAppearances: s.playlistAppearances,
+      offlineDownloads: s.offlineDownloads,
+      playlistDownloadProgress: s.playlistDownloadProgress,
+      searchResults: s.searchResults,
+      authState: s.authState,
+      userProfile: s.userProfile,
+      playTrack: s.playTrack,
+      playCollection: s.playCollection,
+      togglePlayPause: s.togglePlayPause,
+      playArtistShuffled: s.playArtistShuffled,
+      toggleFavoriteArtist: s.toggleFavoriteArtist,
+      isArtistFavorite: s.isArtistFavorite,
+      setPlaylistShareMetadata: s.setPlaylistShareMetadata,
+      togglePlaylistCollaborative: s.togglePlaylistCollaborative,
+      inviteFriendToPlaylist: s.inviteFriendToPlaylist,
+      addTrackToCollaborativePlaylist: s.addTrackToCollaborativePlaylist,
+      removeTrackFromCollaborativePlaylist: s.removeTrackFromCollaborativePlaylist,
+      toggleDjMode: s.toggleDjMode,
+      startTrackRadio: s.startTrackRadio,
+      renamePlaylist: s.renamePlaylist,
+      openPlaylistContextMenu: s.openPlaylistContextMenu,
+      openPlaylistAppearanceModal: s.openPlaylistAppearanceModal,
+      downloadPlaylistOffline: s.downloadPlaylistOffline,
+      cancelPlaylistDownload: s.cancelPlaylistDownload,
+      addTrackToPlaylist: s.addTrackToPlaylist,
+      reorderPlaylistTrack: s.reorderPlaylistTrack,
+      searchTracksForPlaylist: s.searchTracksForPlaylist,
+      dismissPlaylistRecommendation: s.dismissPlaylistRecommendation,
+      fetchPlaylistRecommendations: s.fetchPlaylistRecommendations,
+      openAlbumDetail: s.openAlbumDetail,
+      openArtistDetail: s.openArtistDetail,
+      openLocalPlaylistDetail: s.openLocalPlaylistDetail,
+      recordPlaylistPlay: s.recordPlaylistPlay,
+      showToast: s.showToast,
+    }))
+  );
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [editingName, setEditingName] = useState('');
@@ -2996,11 +3062,12 @@ export const DetailViewPanel: React.FC = () => {
       })}
     </div>
   );
-};
+});
+DetailViewPanel.displayName = 'DetailViewPanel';
 
 const HOME_CHIPS = ['Todo', 'Música', 'Mixes', 'Álbumes'] as const;
 
-export const HomeScreen: React.FC = () => {
+export const HomeScreen: React.FC = React.memo(() => {
   const {
     currentTrack,
     isPlaying,
@@ -3025,7 +3092,33 @@ export const HomeScreen: React.FC = () => {
     recordPlaylistPlay,
     openTrackMenu,
     refreshHomeRecommendations,
-  } = usePMusicStore();
+  } = usePMusicStore(
+    useShallow((s) => ({
+      currentTrack: s.currentTrack,
+      isPlaying: s.isPlaying,
+      homeShelves: s.homeShelves,
+      playlists: s.playlists,
+      sharedPlaylists: s.sharedPlaylists,
+      playlistAppearances: s.playlistAppearances,
+      likedTracks: s.likedTracks,
+      playHistory: s.playHistory,
+      searchResults: s.searchResults,
+      exploreEmergingArtists: s.exploreEmergingArtists,
+      playlistPlayCounts: s.playlistPlayCounts,
+      isOfflineNetwork: s.isOfflineNetwork,
+      wrappedSeasonActive: s.wrappedSeasonActive,
+      openWrappedModal: s.openWrappedModal,
+      favoriteArtists: s.favoriteArtists,
+      playTrack: s.playTrack,
+      playCollection: s.playCollection,
+      openAlbumDetail: s.openAlbumDetail,
+      openArtistDetail: s.openArtistDetail,
+      openLocalPlaylistDetail: s.openLocalPlaylistDetail,
+      recordPlaylistPlay: s.recordPlaylistPlay,
+      openTrackMenu: s.openTrackMenu,
+      refreshHomeRecommendations: s.refreshHomeRecommendations,
+    }))
+  );
   const [chip, setChip] = useState<(typeof HOME_CHIPS)[number]>('Todo');
   const [isRefreshingHome, setIsRefreshingHome] = useState(false);
 
@@ -3473,7 +3566,8 @@ export const HomeScreen: React.FC = () => {
       )}
     </div>
   );
-};
+});
+HomeScreen.displayName = 'HomeScreen';
 
 const GENRE_CARDS = [
   { label: 'Latino', query: 'Género: Latino', accent: '#EF4444' },
@@ -3486,7 +3580,7 @@ const GENRE_CARDS = [
   { label: 'Rock', query: 'Género: Rock', accent: '#F97316' },
 ] as const;
 
-export const ExploreScreen: React.FC = () => {
+export const ExploreScreen: React.FC = React.memo(() => {
   const {
     homeShelves,
     searchResults,
@@ -3501,7 +3595,23 @@ export const ExploreScreen: React.FC = () => {
     playTrack,
     openAlbumDetail,
     openArtistDetail,
-  } = usePMusicStore();
+  } = usePMusicStore(
+    useShallow((s) => ({
+      homeShelves: s.homeShelves,
+      searchResults: s.searchResults,
+      playlists: s.playlists,
+      likedTracks: s.likedTracks,
+      exploreSimilarTracks: s.exploreSimilarTracks,
+      exploreEmergingArtists: s.exploreEmergingArtists,
+      isLoadingExplore: s.isLoadingExplore,
+      refreshExploreDiscovery: s.refreshExploreDiscovery,
+      submitSearch: s.submitSearch,
+      setActiveTab: s.setActiveTab,
+      playTrack: s.playTrack,
+      openAlbumDetail: s.openAlbumDetail,
+      openArtistDetail: s.openArtistDetail,
+    }))
+  );
 
   const listen = homeShelves.find((s) => s.kind === 'listen_again');
   const releases = homeShelves.find((s) => s.kind === 'favorite_new_releases');
@@ -3788,9 +3898,10 @@ export const ExploreScreen: React.FC = () => {
       )}
     </div>
   );
-};
+});
+ExploreScreen.displayName = 'ExploreScreen';
 
-export const SearchScreen: React.FC = () => {
+export const SearchScreen: React.FC = React.memo(() => {
   const {
     spotlightOpen,
     setSpotlightOpen,
@@ -3809,7 +3920,27 @@ export const SearchScreen: React.FC = () => {
     openArtistDetail,
     openAlbumDetail,
     openPlaylistDetail,
-  } = usePMusicStore();
+  } = usePMusicStore(
+    useShallow((s) => ({
+      spotlightOpen: s.spotlightOpen,
+      setSpotlightOpen: s.setSpotlightOpen,
+      searchQuery: s.searchQuery,
+      isSearching: s.isSearching,
+      searchScope: s.searchScope,
+      searchResults: s.searchResults,
+      bestResult: s.bestResult,
+      autocompleteSuggestions: s.autocompleteSuggestions,
+      recentSearches: s.recentSearches,
+      setSearchQuery: s.setSearchQuery,
+      submitSearch: s.submitSearch,
+      setSearchScope: s.setSearchScope,
+      clearRecentSearches: s.clearRecentSearches,
+      playTrack: s.playTrack,
+      openArtistDetail: s.openArtistDetail,
+      openAlbumDetail: s.openAlbumDetail,
+      openPlaylistDetail: s.openPlaylistDetail,
+    }))
+  );
 
   const scopes: readonly SearchScopeTab[] = [
     'Todo',
@@ -4264,9 +4395,10 @@ export const SearchScreen: React.FC = () => {
         )}
     </div>
   );
-};
+});
+SearchScreen.displayName = 'SearchScreen';
 
-export const LibraryScreen: React.FC = () => {
+export const LibraryScreen: React.FC = React.memo(() => {
   const {
     libraryCategory,
     libraryFilterQuery,
@@ -4293,7 +4425,35 @@ export const LibraryScreen: React.FC = () => {
     playCollection,
     recordPlaylistPlay,
     showToast,
-  } = usePMusicStore();
+  } = usePMusicStore(
+    useShallow((s) => ({
+      libraryCategory: s.libraryCategory,
+      libraryFilterQuery: s.libraryFilterQuery,
+      playlists: s.playlists,
+      sharedPlaylists: s.sharedPlaylists,
+      playlistAppearances: s.playlistAppearances,
+      likedTracks: s.likedTracks,
+      favoriteArtists: s.favoriteArtists,
+      playHistory: s.playHistory,
+      offlineEntries: s.offlineEntries,
+      searchResults: s.searchResults,
+      setLibraryCategory: s.setLibraryCategory,
+      setLibraryFilterQuery: s.setLibraryFilterQuery,
+      createPlaylist: s.createPlaylist,
+      addTrackToPlaylist: s.addTrackToPlaylist,
+      openLocalPlaylistDetail: s.openLocalPlaylistDetail,
+      openSharedPlaylistDetail: s.openSharedPlaylistDetail,
+      openPlaylistContextMenu: s.openPlaylistContextMenu,
+      openArtistDetail: s.openArtistDetail,
+      toggleFavoriteArtist: s.toggleFavoriteArtist,
+      setImportModalOpen: s.setImportModalOpen,
+      removeOfflineTrack: s.removeOfflineTrack,
+      playTrack: s.playTrack,
+      playCollection: s.playCollection,
+      recordPlaylistPlay: s.recordPlaylistPlay,
+      showToast: s.showToast,
+    }))
+  );
 
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [showCreateBar, setShowCreateBar] = useState(false);
@@ -4869,4 +5029,5 @@ export const LibraryScreen: React.FC = () => {
       )}
     </div>
   );
-};
+});
+LibraryScreen.displayName = 'LibraryScreen';

@@ -42,7 +42,14 @@ function formatRelativeTimeEs(iso: string): string {
   return `Hace ${days} d`;
 }
 
-export const MobileHubPage: React.FC = () => {
+export const MobileHubPage: React.FC = React.memo(() => {
+  const mobileHubOpen = usePMusicStore((s) => s.mobileHubOpen);
+  if (!mobileHubOpen) return null;
+  return <MobileHubPageInner />;
+});
+MobileHubPage.displayName = 'MobileHubPage';
+
+const MobileHubPageInner: React.FC = () => {
   const {
     mobileHubOpen,
     setMobileHubOpen,

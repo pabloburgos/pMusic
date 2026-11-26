@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   ArrowLeft,
   Check,
@@ -47,7 +48,11 @@ import {
   RoundedPlayIcon,
 } from './TransportIcons.tsx';
 import { LiquidHeartIcon } from './LiquidHeartIcon.tsx';
-import { InkBleedCoverTransition, prefetchInkCoverImage } from './InkBleedCoverTransition.tsx';
+import {
+  InkBleedCoverTransition,
+  prefetchInkCoverImage,
+  warmUpInkBleedWebGL,
+} from './InkBleedCoverTransition.tsx';
 import { ExoticBackdropCanvas } from './ExoticBackdropCanvas.tsx';
 import { MarqueeText } from './MarqueeText.tsx';
 import { TrackArtwork } from './TrackArtwork.tsx';
@@ -79,17 +84,18 @@ import {
 import { getThemeDefinition } from '../utils/themes.ts';
 import {
   animateAmbientPaletteFromCover,
-  getCachedPaletteCss,
   getLiveCoverBrightness,
-  getPrebakedMobileBackdrop,
-  prebakeMobileBackdrop,
+  prefetchAmbientPaletteFromCover,
   registerBackdropCleanupHook,
   shouldUseDarkInkOnBackdrop,
   subscribeCoverBrightness,
 } from '../utils/cover-color.ts';
 import { ArtistLinks } from './ArtistLinks.tsx';
 import { PMusicSwitch } from './PMusicSwitch.tsx';
-import { MobileFluidBackdropCanvas } from './MobileFluidBackdropCanvas.tsx';
+import {
+  MobileFluidBackdropCanvas,
+  prefetchFluidBackdropCover,
+} from './MobileFluidBackdropCanvas.tsx';
 
 function normalizeLyricToken(raw: string): string {
   return raw
@@ -226,7 +232,14 @@ export function clearDecodedBackdropCache(): void {
 }
 registerBackdropCleanupHook(clearDecodedBackdropCache);
 
-export const NowPlayingSheet: React.FC = () => {
+export const NowPlayingSheet: React.FC = React.memo(() => {
+  const nowPlayingOpen = usePMusicStore((s) => s.nowPlayingOpen);
+  if (!nowPlayingOpen) return null;
+  return <NowPlayingSheetInner />;
+});
+NowPlayingSheet.displayName = 'NowPlayingSheet';
+
+const NowPlayingSheetInner: React.FC = () => {
   const {
     nowPlayingOpen,
     nowPlayingTab,
@@ -255,28 +268,24 @@ export const NowPlayingSheet: React.FC = () => {
     setShowRemainingTime,
     lastTrackDirection,
     currentTrack,
-    queue,
-    queueIndex,
-    recommendedQueue,
+    nextPrefetchUrl,
+    needsRecommendedReplenish,
     isLoadingRecommendedQueue,
     shuffleEnabled,
     repeatMode,
     isPlaying,
     isBuffering,
-    positionSec,
     durationSec,
     volume,
     isTransitioning,
     transitionDurationSec,
     djMode,
     activeTransitionPlan,
-    trackAnalyses,
     currentLyrics,
-    activeLyricIndex,
     lyricsUserScrolled,
     setLyricsUserScrolled,
-    likedTracks,
-    offlineDownloads,
+    isLiked,
+    dlStatus,
     togglePlayPause,
     nextTrack,
     prevTrack,
@@ -288,35 +297,84 @@ export const NowPlayingSheet: React.FC = () => {
     openTrackMenu,
     toggleLike,
     downloadTrackOffline,
-    moveQueueItem,
-    removeQueueItem,
-    clearUpNextQueue,
-    addToQueue,
-    playNextInQueue,
     replenishRecommendedQueue,
-    promoteRecommendedTrack,
-    dismissRecommendedTrack,
-    searchTracksForPlaylist,
-    playTrack,
     openAlbumDetail,
-    showToast,
-    activeJamSession,
-    activeJamRole,
-    activeJamRequests,
-    jamInviteModalOpen,
-    setJamInviteModalOpen,
-    startJam,
-    leaveOrEndJam,
-    addTrackToActiveJam,
-    approveJamRequest,
-    rejectJamRequest,
-  } = usePMusicStore();
+  } = usePMusicStore(
+    useShallow((s) => {
+      const nextTrackCand = s.queue[s.queueIndex + 1] ?? s.recommendedQueue[0] ?? null;
+      return {
+        nowPlayingOpen: s.nowPlayingOpen,
+        nowPlayingTab: s.nowPlayingTab,
+        setNowPlayingOpen: s.setNowPlayingOpen,
+        setNowPlayingTab: s.setNowPlayingTab,
+        eqSheetOpen: s.eqSheetOpen,
+        setEqSheetOpen: s.setEqSheetOpen,
+        djPopoverOpen: s.djPopoverOpen,
+        setDjPopoverOpen: s.setDjPopoverOpen,
+        audioPanelTab: s.audioPanelTab,
+        setAudioPanelTab: s.setAudioPanelTab,
+        outgoingTransitionTrack: s.outgoingTransitionTrack,
+        incomingTransitionTrack: s.incomingTransitionTrack,
+        themeId: s.themeId,
+        reducedMotionPref: s.reducedMotionPref,
+        isAppHidden: s.isAppHidden,
+        lyricsSize: s.lyricsSize,
+        lyricsBlurEnabled: s.lyricsBlurEnabled,
+        lyricsStyle: s.lyricsStyle,
+        setLyricsStyle: s.setLyricsStyle,
+        ambientMotionEnabled: s.ambientMotionEnabled,
+        nowPlayingBackdropStyle: s.nowPlayingBackdropStyle,
+        skipSameAlbumCoverTransition: s.skipSameAlbumCoverTransition,
+        marqueeTextEnabled: s.marqueeTextEnabled,
+        showRemainingTime: s.showRemainingTime,
+        setShowRemainingTime: s.setShowRemainingTime,
+        lastTrackDirection: s.lastTrackDirection,
+        currentTrack: s.currentTrack,
+        nextPrefetchUrl: nextTrackCand
+          ? (nextTrackCand.thumbnailHighUrl ?? nextTrackCand.thumbnailUrl ?? '').trim()
+          : '',
+        needsRecommendedReplenish: s.recommendedQueue.length < 3,
+        isLoadingRecommendedQueue: s.isLoadingRecommendedQueue,
+        shuffleEnabled: s.shuffleEnabled,
+        repeatMode: s.repeatMode,
+        isPlaying: s.isPlaying,
+        isBuffering: s.isBuffering,
+        durationSec: s.durationSec,
+        volume: s.volume,
+        isTransitioning: s.isTransitioning,
+        transitionDurationSec: s.transitionDurationSec,
+        djMode: s.djMode,
+        activeTransitionPlan: s.activeTransitionPlan,
+        currentLyrics: s.currentLyrics,
+        lyricsUserScrolled: s.lyricsUserScrolled,
+        setLyricsUserScrolled: s.setLyricsUserScrolled,
+        isLiked: s.likedTracks.some((l) => l.trackId === s.currentTrack.id),
+        dlStatus: s.offlineDownloads[s.currentTrack.id] ?? 'idle',
+        togglePlayPause: s.togglePlayPause,
+        nextTrack: s.nextTrack,
+        prevTrack: s.prevTrack,
+        toggleShuffle: s.toggleShuffle,
+        cycleRepeatMode: s.cycleRepeatMode,
+        seekTo: s.seekTo,
+        setVolume: s.setVolume,
+        toggleMute: s.toggleMute,
+        openTrackMenu: s.openTrackMenu,
+        toggleLike: s.toggleLike,
+        downloadTrackOffline: s.downloadTrackOffline,
+        replenishRecommendedQueue: s.replenishRecommendedQueue,
+        openAlbumDetail: s.openAlbumDetail,
+      };
+    })
+  );
 
+  const initialPosSec = usePMusicStore.getState().positionSec;
   const isElectronDesktop = isElectronDesktopRuntime();
   const showBuffering = useDelayedBuffering(isBuffering, 500);
   const sheetRootRef = useRef<HTMLDivElement | null>(null);
   const lyricsContainerRef = useRef<HTMLDivElement | null>(null);
   const activeLyricRef = useRef<HTMLButtonElement | null>(null);
+  const cachedSingLineElRef = useRef<HTMLButtonElement | null>(null);
+  const cachedSingSpansRef = useRef<NodeListOf<HTMLElement> | null>(null);
   const progressInputRef = useRef<HTMLInputElement | null>(null);
   const sheetFillRef = useRef<HTMLDivElement | null>(null);
   const sheetRewindGlowRef = useRef<HTMLSpanElement | null>(null);
@@ -331,9 +389,11 @@ export const NowPlayingSheet: React.FC = () => {
   nowPlayingTabRef.current = nowPlayingTab;
   const reducedMotionPrefRef = useRef(reducedMotionPref);
   reducedMotionPrefRef.current = reducedMotionPref;
+  const isPlayingRef = useRef(isPlaying);
+  isPlayingRef.current = isPlaying;
   const coverSwipeStartRef = useRef<{ x: number; y: number } | null>(null);
   const sheetSwipeDownRef = useRef<{ y: number; x: number } | null>(null);
-  const lastWholeSecRef = useRef<number>(Math.floor(positionSec));
+  const lastWholeSecRef = useRef<number>(Math.floor(initialPosSec));
   const lastLyricStateSyncMsRef = useRef<number>(0);
   const lastRenderedLyricIdxRef = useRef<number>(-1);
   const currentLyricsRef = useRef(currentLyrics);
@@ -344,7 +404,7 @@ export const NowPlayingSheet: React.FC = () => {
   const prevTabForModalRef = useRef<string>(nowPlayingTab);
   const lyricsLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lyricsPointerStartRef = useRef<{ x: number; y: number } | null>(null);
-  const [smoothPosSec, setSmoothPosSec] = useState(positionSec);
+  const [smoothPosSec, setSmoothPosSec] = useState(initialPosSec);
   const [sheetDisplayDurSec, setSheetDisplayDurSec] = useState(durationSec);
   const [isRealFullscreen, setIsRealFullscreen] = useState(false);
   const [coverBrightness, setCoverBrightness] = useState(getLiveCoverBrightness);
@@ -406,41 +466,6 @@ export const NowPlayingSheet: React.FC = () => {
   } | null>(null);
   const sheetManualSeekAtMsRef = useRef<number>(0);
 
-  const [backdropSlots, setBackdropSlots] = useState<{
-    active: 0 | 1;
-    outgoing: 0 | 1 | null;
-    urls: [string, string];
-    fadeMs: number;
-    linear: boolean;
-    fadeStarted: boolean;
-  }>(() => {
-    const initUrl = currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl;
-    return {
-      active: 0,
-      outgoing: null,
-      urls: [initUrl, initUrl],
-      fadeMs: 1100,
-      linear: false,
-      fadeStarted: true,
-    };
-  });
-  const backdropActiveRef = useRef<{ active: 0 | 1; urls: [string, string] }>({
-    active: 0,
-    urls: [
-      currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl,
-      currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl,
-    ],
-  });
-  backdropActiveRef.current = { active: backdropSlots.active, urls: backdropSlots.urls };
-  const mobileBackdropCanvasRefs = useRef<
-    [
-      [HTMLCanvasElement | null, HTMLCanvasElement | null],
-      [HTMLCanvasElement | null, HTMLCanvasElement | null],
-    ]
-  >([
-    [null, null],
-    [null, null],
-  ]);
   const [isMobileBackdrop, setIsMobileBackdrop] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     if (window.location?.hostname === 'appassets.pmusic.local') return true;
@@ -466,155 +491,24 @@ export const NowPlayingSheet: React.FC = () => {
     return undefined;
   }, []);
 
-  const paintSoftBakedCanvas = (
-    canvas: HTMLCanvasElement | null,
-    img: HTMLImageElement | null,
-    fallbackUrl: string,
-    midSampleSize: number
-  ) => {
-    if (!canvas) return;
-    let ctx: CanvasRenderingContext2D | null = null;
-    try {
-      ctx = canvas.getContext('2d');
-    } catch {
-      ctx = null;
-    }
-    if (!ctx) return;
-    const cw = canvas.width;
-    const ch = canvas.height;
-    ctx.clearRect(0, 0, cw, ch);
-    if (img && img.complete && img.naturalWidth > 0 && typeof document !== 'undefined') {
-      try {
-        // 3-step hardware mipmap downsample (natural -> 128 -> midSampleSize -> 64)
-        // creates smooth organic Gaussian blur without live CSS filter:blur flicker on Android WebView
-        const iw = img.naturalWidth;
-        const ih = img.naturalHeight;
-        const side = Math.min(iw, ih);
-        const sx = (iw - side) * 0.5;
-        const sy = (ih - side) * 0.5;
-
-        const step1 = document.createElement('canvas');
-        step1.width = 128;
-        step1.height = 128;
-        const c1 = step1.getContext('2d');
-
-        const step2 = document.createElement('canvas');
-        step2.width = midSampleSize;
-        step2.height = midSampleSize;
-        const c2 = step2.getContext('2d');
-
-        if (c1 && c2) {
-          c1.imageSmoothingEnabled = true;
-          if ('imageSmoothingQuality' in c1) c1.imageSmoothingQuality = 'high';
-          c1.drawImage(img, sx, sy, side, side, 0, 0, 128, 128);
-
-          c2.imageSmoothingEnabled = true;
-          if ('imageSmoothingQuality' in c2) c2.imageSmoothingQuality = 'high';
-          c2.drawImage(step1, 0, 0, midSampleSize, midSampleSize);
-
-          ctx.imageSmoothingEnabled = true;
-          if ('imageSmoothingQuality' in ctx) ctx.imageSmoothingQuality = 'high';
-          ctx.drawImage(step2, 0, 0, cw, ch);
-          return;
-        }
-      } catch {
-        // fall through to palette wash
-      }
-    }
-    const [c1, c2, c3] = getCachedPaletteCss(fallbackUrl);
-    const g = ctx.createLinearGradient(0, 0, cw, ch);
-    g.addColorStop(0, c1);
-    g.addColorStop(0.55, c2);
-    g.addColorStop(1, c3);
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, cw, ch);
-  };
-
-  const paintMobileMipmapSlot = (
-    slotIdx: 0 | 1,
-    img: HTMLImageElement | null,
-    fallbackUrl: string
-  ) => {
-    const pair = mobileBackdropCanvasRefs.current[slotIdx];
-    const cachedPair = getPrebakedMobileBackdrop(fallbackUrl);
-    if (cachedPair) {
-      for (let i = 0; i < 2; i++) {
-        const dest = pair[i];
-        const src = cachedPair[i];
-        if (!dest || !src) continue;
-        try {
-          const ctx = dest.getContext('2d');
-          if (!ctx) continue;
-          ctx.clearRect(0, 0, dest.width, dest.height);
-          ctx.drawImage(src, 0, 0, dest.width, dest.height);
-        } catch {
-          // ignore canvas draw error
-        }
-      }
-      return;
-    }
-    if (img && img.complete && img.naturalWidth > 0) {
-      prebakeMobileBackdrop(fallbackUrl, img);
-      const freshlyBaked = getPrebakedMobileBackdrop(fallbackUrl);
-      if (freshlyBaked) {
-        for (let i = 0; i < 2; i++) {
-          const dest = pair[i];
-          const src = freshlyBaked[i];
-          if (!dest || !src) continue;
-          try {
-            const ctx = dest.getContext('2d');
-            if (!ctx) continue;
-            ctx.clearRect(0, 0, dest.width, dest.height);
-            ctx.drawImage(src, 0, 0, dest.width, dest.height);
-          } catch {
-            // ignore
-          }
-        }
-        return;
-      }
-    }
-    paintSoftBakedCanvas(pair[0], img, fallbackUrl, 24);
-    paintSoftBakedCanvas(pair[1], img, fallbackUrl, 16);
-  };
-
+  // Pre-warm pooled WebGL ink-bleed context & shaders during idle time after sheet opens (0ms t=0 crossfade stall!)
   useEffect(() => {
-    if (!nowPlayingOpen || !isMobileBackdrop || typeof Image === 'undefined') return;
-    const slot = backdropActiveRef.current.active;
-    const url = backdropActiveRef.current.urls[slot];
-    if (!url) return;
-    if (getPrebakedMobileBackdrop(url)) {
-      paintMobileMipmapSlot(slot, null, url);
-      return;
-    }
-    const cached = decodedBackdropImgCache.get(url);
-    if (cached && cached.complete && cached.naturalWidth > 0) {
-      prebakeMobileBackdrop(url, cached);
-      paintMobileMipmapSlot(slot, cached, url);
-      return;
-    }
-    let cancelled = false;
-    const img = new Image();
-    img.decoding = 'async';
-    const commit = (ok: boolean) => {
-      if (cancelled) return;
-      if (ok) {
-        decodedBackdropImgCache.set(url, img);
-        if (decodedBackdropImgCache.size > 6) {
-          const oldest = decodedBackdropImgCache.keys().next().value;
-          if (oldest) decodedBackdropImgCache.delete(oldest);
-        }
-        prebakeMobileBackdrop(url, img);
-      }
-      paintMobileMipmapSlot(slot, ok ? img : null, url);
-    };
-    img.onload = () => commit(true);
-    img.onerror = () => commit(false);
-    img.src = url;
-    if (img.complete && img.naturalWidth > 0) commit(true);
+    if (reducedMotionPref) return;
+    const timer = setTimeout(() => {
+      warmUpInkBleedWebGL();
+    }, 360);
+    return () => clearTimeout(timer);
+  }, [reducedMotionPref]);
+
+  // Pause global inherited :root @property --pm-ambient-1/2/3 CSS transitions while fullscreen WebGL/Canvas backdrop is active
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const useCanvasBackdrop = nowPlayingBackdropStyle !== 'minimal';
+    document.documentElement.classList.toggle('pm-np-canvas-open', useCanvasBackdrop);
     return () => {
-      cancelled = true;
+      document.documentElement.classList.remove('pm-np-canvas-open');
     };
-  }, [nowPlayingOpen, isMobileBackdrop]);
+  }, [nowPlayingBackdropStyle]);
 
   const markLyricsUserScrolled = () => {
     setLyricsUserScrolled(true);
@@ -658,14 +552,13 @@ export const NowPlayingSheet: React.FC = () => {
       ? (incomingTransitionTrack.thumbnailHighUrl ?? incomingTransitionTrack.thumbnailUrl)
       : (currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl);
 
-  const cfActiveBackdropRef = useRef<boolean>(cfActiveBackdrop);
-  cfActiveBackdropRef.current = cfActiveBackdrop;
   const cfDurBackdropSecRef = useRef<number>(cfDurBackdropSec);
   cfDurBackdropSecRef.current = cfDurBackdropSec;
 
   useEffect(() => {
     if (targetBackdropUrl) {
       prefetchInkCoverImage(targetBackdropUrl);
+      prefetchFluidBackdropCover(targetBackdropUrl);
     }
     if (cfActiveBackdrop && incomingTransitionTrack) {
       animateAmbientPaletteFromCover(
@@ -675,159 +568,19 @@ export const NowPlayingSheet: React.FC = () => {
     }
   }, [cfActiveBackdrop, incomingTransitionTrack, targetBackdropUrl]);
 
-  // Prefetch next queued track cover into backdrop, ink-bleed & prebaked caches so crossfades start at t=0 with zero snap
-  const nextQueuedTrack = queue[queueIndex + 1] ?? recommendedQueue[0] ?? null;
-  const nextPrefetchUrl =
-    nextQueuedTrack ? (nextQueuedTrack.thumbnailHighUrl ?? nextQueuedTrack.thumbnailUrl ?? '').trim() : '';
+  // Prefetch next queued track cover via ONE shared deduplicated CORS fetch into ink-bleed, WebGL fluid, exotic & palette caches
   useEffect(() => {
     if (!nextPrefetchUrl || typeof Image === 'undefined') return;
     prefetchInkCoverImage(nextPrefetchUrl);
-    if (decodedBackdropImgCache.has(nextPrefetchUrl)) return;
-    let aborted = false;
-    const pre = new Image();
-    pre.decoding = 'async';
-    pre.onload = () => {
-      if (aborted || !pre.naturalWidth) return;
-      decodedBackdropImgCache.set(nextPrefetchUrl, pre);
-      prebakeMobileBackdrop(nextPrefetchUrl, pre);
-      if (decodedBackdropImgCache.size > 6) {
-        const oldest = decodedBackdropImgCache.keys().next().value;
-        if (oldest && oldest !== targetBackdropUrl) decodedBackdropImgCache.delete(oldest);
-      }
-    };
-    pre.src = nextPrefetchUrl;
-    return () => {
-      aborted = true;
-    };
-  }, [nextPrefetchUrl, targetBackdropUrl]);
-
-  useEffect(() => {
-    const curState = backdropActiveRef.current;
-    if (curState.urls[curState.active] === targetBackdropUrl) return;
-
-    let cancelled = false;
-    let rafA = 0;
-    let rafB = 0;
-
-    const commitSlotSwap = (decodedImg: HTMLImageElement | null) => {
-      if (cancelled) return;
-      const liveState = backdropActiveRef.current;
-      if (liveState.urls[liveState.active] === targetBackdropUrl) return;
-      const nextSlot: 0 | 1 = liveState.active === 0 ? 1 : 0;
-      const nextUrls: [string, string] =
-        nextSlot === 0
-          ? [targetBackdropUrl, liveState.urls[1]]
-          : [liveState.urls[0], targetBackdropUrl];
-
-      if (isMobileBackdrop) {
-        paintMobileMipmapSlot(nextSlot, decodedImg, targetBackdropUrl);
-      }
-
-      const canRafFade =
-        !reducedMotionPref &&
-        typeof requestAnimationFrame === 'function' &&
-        typeof document !== 'undefined';
-
-      const isCrossfadeTransition = cfActiveBackdropRef.current;
-      const fadeDurationMs = isCrossfadeTransition
-        ? Math.round(cfDurBackdropSecRef.current * 1000)
-        : 950;
-
-      setBackdropSlots({
-        active: nextSlot,
-        outgoing: canRafFade ? liveState.active : null,
-        urls: nextUrls,
-        fadeMs: fadeDurationMs,
-        linear: isCrossfadeTransition,
-        fadeStarted: !canRafFade,
-      });
-
-      if (canRafFade) {
-        rafA = requestAnimationFrame(() => {
-          rafB = requestAnimationFrame(() => {
-            if (!cancelled) {
-              setBackdropSlots((s) =>
-                s.active === nextSlot ? { ...s, fadeStarted: true } : s
-              );
-            }
-          });
-        });
-      }
-    };
-
-    const hasBaked = isMobileBackdrop && Boolean(getPrebakedMobileBackdrop(targetBackdropUrl));
-    if (hasBaked) {
-      commitSlotSwap(null);
-      return () => {
-        cancelled = true;
-        if (rafA && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafA);
-        if (rafB && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafB);
-      };
-    }
-
-    const cachedImg = targetBackdropUrl ? decodedBackdropImgCache.get(targetBackdropUrl) : undefined;
-    if (cachedImg && cachedImg.complete && cachedImg.naturalWidth > 0) {
-      prebakeMobileBackdrop(targetBackdropUrl, cachedImg);
-      commitSlotSwap(cachedImg);
-      return () => {
-        cancelled = true;
-        if (rafA && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafA);
-        if (rafB && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafB);
-      };
-    }
-
-    if (typeof Image === 'undefined' || !targetBackdropUrl) {
-      commitSlotSwap(null);
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    let settled = false;
-    const finish = (img: HTMLImageElement | null) => {
-      if (settled || cancelled) return;
-      settled = true;
-      clearTimeout(safetyTimer);
-      if (img && img.complete && img.naturalWidth > 0) {
-        decodedBackdropImgCache.set(targetBackdropUrl, img);
-        prebakeMobileBackdrop(targetBackdropUrl, img);
-        if (decodedBackdropImgCache.size > 6) {
-          const oldest = decodedBackdropImgCache.keys().next().value;
-          if (oldest) decodedBackdropImgCache.delete(oldest);
-        }
-      }
-      commitSlotSwap(img);
-    };
-
-    const img = new Image();
-    img.decoding = 'async';
-    const safetyTimer = setTimeout(() => finish(null), 900);
-    img.onload = () => {
-      if (typeof img.decode === 'function') {
-        void img.decode().catch(() => {}).finally(() => finish(img));
-      } else {
-        finish(img);
-      }
-    };
-    img.onerror = () => finish(null);
-    img.src = targetBackdropUrl;
-    if (img.complete && img.naturalWidth > 0) {
-      finish(img);
-    }
-
-    return () => {
-      cancelled = true;
-      clearTimeout(safetyTimer);
-      if (rafA && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafA);
-      if (rafB && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafB);
-    };
-  }, [targetBackdropUrl, isMobileBackdrop, reducedMotionPref]);
+    prefetchFluidBackdropCover(nextPrefetchUrl);
+    prefetchAmbientPaletteFromCover(nextPrefetchUrl);
+  }, [nextPrefetchUrl]);
 
   useEffect(() => {
     if (
       nowPlayingOpen &&
       nowPlayingTab === 'Cola' &&
-      recommendedQueue.length < 3 &&
+      needsRecommendedReplenish &&
       !isLoadingRecommendedQueue
     ) {
       void replenishRecommendedQueue();
@@ -835,108 +588,143 @@ export const NowPlayingSheet: React.FC = () => {
   }, [
     nowPlayingOpen,
     nowPlayingTab,
-    recommendedQueue.length,
+    needsRecommendedReplenish,
     isLoadingRecommendedQueue,
     replenishRecommendedQueue,
   ]);
 
   const syncClockRef = useRef({
-    posSec: positionSec,
-    renderedPosSec: positionSec,
+    posSec: initialPosSec,
+    renderedPosSec: initialPosSec,
     trackId: currentTrack.id,
     atMs: typeof performance !== 'undefined' ? performance.now() : 0,
   });
   const lyricClockRef = useRef({
-    lastRawPos: positionSec,
+    lastRawPos: initialPosSec,
     lastWallMs: typeof performance !== 'undefined' ? performance.now() : 0,
-    smoothedPos: positionSec,
+    smoothedPos: initialPosSec,
     trackId: currentTrack.id,
   });
 
+  // Sync positionSec imperatively via Zustand subscribe (ZERO 1Hz React re-renders of NowPlayingSheet!)
   useEffect(() => {
-    const now = typeof performance !== 'undefined' ? performance.now() : 0;
-    const trackChanged = syncClockRef.current.trackId !== currentTrack.id;
-    const live = getLivePlaybackPosition();
-    if (isPlaying && nowPlayingOpen && live.isTransitioning && !trackChanged) {
-      return;
-    }
-    const seekJumped = Math.abs(positionSec - syncClockRef.current.renderedPosSec) > 0.85;
-    const useIncoming = Boolean(
-      live.isTransitioning &&
-        live.transitionProgress01 >= 0.5 &&
-        typeof live.incomingPositionSec === 'number' &&
-        typeof live.incomingDurationSec === 'number' &&
-        live.incomingDurationSec > 0
-    );
-    const effDur = useIncoming
-      ? live.incomingDurationSec!
-      : Math.max(1, durationSec);
-    if (Math.abs(sheetDisplayDurSecRef.current - effDur) > 0.5) {
-      sheetDisplayDurSecRef.current = effDur;
-      setSheetDisplayDurSec(effDur);
-    }
-    const basePos = useIncoming
-      ? live.incomingPositionSec!
-      : !isPlaying && !trackChanged && !seekJumped && Number.isFinite(live.positionSec) && live.positionSec > 0
-        ? Math.max(positionSec, live.positionSec)
-        : positionSec;
-    const clampedPos = Math.max(0, Math.min(effDur, basePos));
-    syncClockRef.current.posSec = clampedPos;
-    syncClockRef.current.atMs = now;
-    syncClockRef.current.trackId = currentTrack.id;
-    if (trackChanged || seekJumped || !isPlaying) {
-      syncClockRef.current.renderedPosSec = clampedPos;
-      lyricClockRef.current = {
-        lastRawPos: clampedPos,
-        lastWallMs: now,
-        smoothedPos: clampedPos,
-        trackId: currentTrack.id,
-      };
-      lastWholeSecRef.current = Math.floor(clampedPos);
-      setSmoothPosSec(clampedPos);
-      const pct = Math.min(100, Math.max(0, (clampedPos / effDur) * 100));
-      if (
-        trackChanged &&
-        !reducedMotionPref &&
-        now - sheetManualSeekAtMsRef.current > 350 &&
-        now - lastSheetRewindAtMsRef.current > 900 &&
-        !sheetBarRewindRef.current &&
-        lastSheetBarPctRef.current - pct > 8
-      ) {
-        lastSheetRewindAtMsRef.current = now;
-        sheetBarRewindRef.current = {
-          fromPct: lastSheetBarPctRef.current,
-          startMs: now,
-          durationMs: 850,
+    const syncPositionSnapshot = (
+      posVal: number,
+      trackIdVal: string,
+      playingVal: boolean,
+      durVal: number
+    ) => {
+      const now = typeof performance !== 'undefined' ? performance.now() : 0;
+      const trackChanged = syncClockRef.current.trackId !== trackIdVal;
+      const live = getLivePlaybackPosition();
+      if (playingVal && live.isTransitioning && !trackChanged) {
+        return;
+      }
+      const seekJumped = Math.abs(posVal - syncClockRef.current.renderedPosSec) > 0.85;
+      const useIncoming = Boolean(
+        live.isTransitioning &&
+          live.transitionProgress01 >= 0.5 &&
+          typeof live.incomingPositionSec === 'number' &&
+          typeof live.incomingDurationSec === 'number' &&
+          live.incomingDurationSec > 0
+      );
+      const effDur = useIncoming ? live.incomingDurationSec! : Math.max(1, durVal);
+      if (Math.abs(sheetDisplayDurSecRef.current - effDur) > 0.5) {
+        sheetDisplayDurSecRef.current = effDur;
+        setSheetDisplayDurSec(effDur);
+      }
+      const basePos = useIncoming
+        ? live.incomingPositionSec!
+        : !playingVal && !trackChanged && !seekJumped && Number.isFinite(live.positionSec) && live.positionSec > 0
+          ? Math.max(posVal, live.positionSec)
+          : posVal;
+      const clampedPos = Math.max(0, Math.min(effDur, basePos));
+      syncClockRef.current.posSec = clampedPos;
+      syncClockRef.current.atMs = now;
+      syncClockRef.current.trackId = trackIdVal;
+      if (trackChanged || seekJumped || !playingVal) {
+        syncClockRef.current.renderedPosSec = clampedPos;
+        lyricClockRef.current = {
+          lastRawPos: clampedPos,
+          lastWallMs: now,
+          smoothedPos: clampedPos,
+          trackId: trackIdVal,
         };
-        if (sheetRewindGlowRef.current) {
-          sheetRewindGlowRef.current.style.opacity = '1';
+        lastWholeSecRef.current = Math.floor(clampedPos);
+        if (nowPlayingTabRef.current === 'Letras' || trackChanged || !playingVal) {
+          setSmoothPosSec(clampedPos);
         }
-      } else if (!sheetBarRewindRef.current) {
-        lastSheetBarPctRef.current = pct;
-        if (sheetFillRef.current) {
-          sheetFillRef.current.style.transform = `translate3d(${(pct - 100).toFixed(4)}%, 0, 0)`;
+        const pct = Math.min(100, Math.max(0, (clampedPos / effDur) * 100));
+        if (
+          trackChanged &&
+          !reducedMotionPrefRef.current &&
+          now - sheetManualSeekAtMsRef.current > 350 &&
+          now - lastSheetRewindAtMsRef.current > 900 &&
+          !sheetBarRewindRef.current &&
+          lastSheetBarPctRef.current - pct > 8
+        ) {
+          lastSheetRewindAtMsRef.current = now;
+          sheetBarRewindRef.current = {
+            fromPct: lastSheetBarPctRef.current,
+            startMs: now,
+            durationMs: 850,
+          };
+          if (sheetRewindGlowRef.current) {
+            sheetRewindGlowRef.current.style.opacity = '1';
+          }
+        } else if (!sheetBarRewindRef.current) {
+          lastSheetBarPctRef.current = pct;
+          if (sheetFillRef.current) {
+            sheetFillRef.current.style.transform = `translate3d(${(pct - 100).toFixed(4)}%, 0, 0)`;
+          }
+          if (sheetRewindGlowRef.current) {
+            sheetRewindGlowRef.current.style.opacity = '0';
+          }
+          if (progressInputRef.current) {
+            const nextMax = String(Math.max(1, Math.round(effDur)));
+            const nextVal = String(
+              Number(Math.min(effDur, Math.round(clampedPos * 10) / 10).toFixed(1))
+            );
+            if (progressInputRef.current.max !== nextMax) progressInputRef.current.max = nextMax;
+            if (progressInputRef.current.value !== nextVal) progressInputRef.current.value = nextVal;
+          }
         }
-        if (sheetRewindGlowRef.current) {
-          sheetRewindGlowRef.current.style.opacity = '0';
+        if (progressTimeRef.current) {
+          const txt = formatDurationSec(clampedPos);
+          if (progressTimeRef.current.textContent !== txt) {
+            progressTimeRef.current.textContent = txt;
+          }
         }
-        if (progressInputRef.current) {
-          progressInputRef.current.max = String(Math.max(1, Math.round(effDur)));
-          progressInputRef.current.value = String(
-            Number(Math.min(effDur, Math.round(clampedPos * 10) / 10).toFixed(1))
-          );
+        if (progressRemainRef.current) {
+          const rightTxt = showRemainingTimeRef.current
+            ? `-${formatDurationSec(Math.max(0, effDur - clampedPos))}`
+            : formatDurationSec(effDur);
+          if (progressRemainRef.current.textContent !== rightTxt) {
+            progressRemainRef.current.textContent = rightTxt;
+          }
         }
       }
-      if (progressTimeRef.current) {
-        progressTimeRef.current.textContent = formatDurationSec(clampedPos);
+    };
+
+    const stInit = usePMusicStore.getState();
+    syncPositionSnapshot(stInit.positionSec, stInit.currentTrack.id, stInit.isPlaying, stInit.durationSec);
+
+    return usePMusicStore.subscribe((state, prevState) => {
+      if (
+        state.positionSec !== prevState.positionSec ||
+        state.currentTrack.id !== prevState.currentTrack.id ||
+        state.isPlaying !== prevState.isPlaying ||
+        state.durationSec !== prevState.durationSec
+      ) {
+        syncPositionSnapshot(
+          state.positionSec,
+          state.currentTrack.id,
+          state.isPlaying,
+          state.durationSec
+        );
       }
-      if (progressRemainRef.current) {
-        progressRemainRef.current.textContent = showRemainingTimeRef.current
-          ? `-${formatDurationSec(Math.max(0, effDur - clampedPos))}`
-          : formatDurationSec(effDur);
-      }
-    }
-  }, [positionSec, currentTrack.id, isPlaying, nowPlayingOpen, durationSec, reducedMotionPref]);
+    });
+  }, []);
 
   useEffect(() => {
     showRemainingTimeRef.current = showRemainingTime;
@@ -1114,9 +902,12 @@ export const NowPlayingSheet: React.FC = () => {
         if (progressInputRef.current.max !== roundedMax) {
           progressInputRef.current.max = roundedMax;
         }
-        progressInputRef.current.value = String(
+        const nextRangeVal = String(
           Number(Math.min(effDur, Math.round(((visualPct / 100) * effDur) * 10) / 10).toFixed(1))
         );
+        if (progressInputRef.current.value !== nextRangeVal) {
+          progressInputRef.current.value = nextRangeVal;
+        }
       }
       if (progressTimeRef.current) {
         const txt = formatDurationSec(rendered);
@@ -1144,7 +935,7 @@ export const NowPlayingSheet: React.FC = () => {
           }
         }
 
-        // Direct 60-120fps DOM sweep for classic Apple Music Sing mode (zero React re-render stutter)
+        // Direct 60-120fps DOM sweep for classic Apple Music Sing mode (cached NodeList, zero querySelectorAll spam)
         if (
           lyricsStyleRef.current === 'classic' &&
           docs &&
@@ -1174,33 +965,51 @@ export const NowPlayingSheet: React.FC = () => {
               0,
               Math.min(1, (rendered * 1000 - activeLineObj.timeMs) / vocalSpanMs)
             );
-            const spans = activeLyricRef.current.querySelectorAll<HTMLElement>('.pm-sing-word');
-            for (let s = 0; s < spans.length; s++) {
-              const el = spans[s]!;
-              const wStart = Number(el.dataset.wStart ?? '0');
-              const wEnd = Number(el.dataset.wEnd ?? '1');
-              const wp = Math.max(
-                0,
-                Math.min(1, (vp01 - wStart) / Math.max(0.01, wEnd - wStart))
-              );
-              const wordState =
-                wp <= 0.002 ? 'upcoming' : wp >= 0.998 ? 'sung' : 'active';
-              if (el.dataset.wordState !== wordState) {
-                el.dataset.wordState = wordState;
+            if (
+              cachedSingLineElRef.current !== activeLyricRef.current ||
+              !cachedSingLineElRef.current?.isConnected
+            ) {
+              cachedSingLineElRef.current = activeLyricRef.current;
+              cachedSingSpansRef.current =
+                activeLyricRef.current.querySelectorAll<HTMLElement>('.pm-sing-word');
+            }
+            const spans = cachedSingSpansRef.current;
+            if (spans) {
+              for (let s = 0; s < spans.length; s++) {
+                const el = spans[s]!;
+                const wStart = Number(el.dataset.wStart ?? '0');
+                const wEnd = Number(el.dataset.wEnd ?? '1');
+                const wp = Math.max(
+                  0,
+                  Math.min(1, (vp01 - wStart) / Math.max(0.01, wEnd - wStart))
+                );
+                const wordState =
+                  wp <= 0.002 ? 'upcoming' : wp >= 0.998 ? 'sung' : 'active';
+                const prevWordState = el.dataset.wordState;
+                if (prevWordState === wordState && wordState !== 'active') {
+                  continue;
+                }
+                const bgPos = wordState === 'upcoming' ? 100 : wordState === 'sung' ? 0 : (1 - wp) * 100;
+                const prevBgPos = Number(el.dataset.lastBgPos ?? '-999');
+                if (prevWordState === wordState && Math.abs(bgPos - prevBgPos) < 0.45) {
+                  continue;
+                }
+                if (prevWordState !== wordState) {
+                  el.dataset.wordState = wordState;
+                }
+                el.dataset.lastBgPos = bgPos.toFixed(1);
+                el.style.setProperty('--word-bg-pos', `${bgPos.toFixed(2)}%`);
+                const wave = wordState === 'active' ? Math.sin(wp * Math.PI) : 0;
+                const lift = wordState === 'upcoming' ? 0 : wordState === 'sung' ? -1 : -(1 + 2.6 * wave);
+                const scale = wordState === 'active' ? 1 + 0.032 * wave : 1;
+                el.style.setProperty('--word-y', `${lift.toFixed(2)}px`);
+                el.style.setProperty('--word-scale', scale.toFixed(4));
               }
-              const bgPos = wordState === 'upcoming' ? 100 : wordState === 'sung' ? 0 : (1 - wp) * 100;
-              el.style.setProperty('--word-bg-pos', `${bgPos.toFixed(2)}%`);
-              const wave = wordState === 'active' ? Math.sin(wp * Math.PI) : 0;
-              const lift = wordState === 'upcoming' ? 0 : wordState === 'sung' ? -1 : -(1 + 2.6 * wave);
-              const scale = wordState === 'active' ? 1 + 0.032 * wave : 1;
-              el.style.setProperty('--word-y', `${lift.toFixed(2)}px`);
-              el.style.setProperty('--word-scale', scale.toFixed(4));
             }
           }
         }
 
         const lineChanged = curLineIdx !== lastRenderedLyricIdxRef.current;
-        const wholeChanged = Math.floor(rendered) !== lastWholeSecRef.current;
         const isAnimatedNonClassic =
           lyricsStyleRef.current === 'wordflow' ||
           lyricsStyleRef.current === 'typewriter' ||
@@ -1208,6 +1017,20 @@ export const NowPlayingSheet: React.FC = () => {
           lyricsStyleRef.current === 'poster';
         const isAnimDue =
           isAnimatedNonClassic && now - lastLyricStateSyncMsRef.current >= 40;
+        const introGapActive =
+          Boolean(docs?.lines[0] && docs.lines[0].timeMs > 4000 && rendered * 1000 < docs.lines[0].timeMs);
+        const activeLineForGap = curLineIdx >= 0 ? docs?.lines[curLineIdx] : undefined;
+        const nextLineForGap = curLineIdx >= 0 ? docs?.lines[curLineIdx + 1] : undefined;
+        const midGapJustCrossed = Boolean(
+          activeLineForGap &&
+            nextLineForGap &&
+            nextLineForGap.timeMs - activeLineForGap.timeMs > 6500 &&
+            rendered * 1000 - activeLineForGap.timeMs > 3200 &&
+            (lastWholeSecRef.current * 1000 - activeLineForGap.timeMs <= 3200)
+        );
+        const wholeChanged =
+          (introGapActive && Math.floor(rendered) !== lastWholeSecRef.current) ||
+          midGapJustCrossed;
 
         if (lineChanged || isAnimDue || wholeChanged) {
           lastRenderedLyricIdxRef.current = curLineIdx;
@@ -1255,12 +1078,13 @@ export const NowPlayingSheet: React.FC = () => {
       }
     }
   }
+  const storeActiveLyricIndex = usePMusicStore.getState().activeLyricIndex;
   const resolvedActiveLyricIdx =
     currentLyrics && currentLyrics.lines.length > 0
       ? liveLyricIdx >= 0
         ? liveLyricIdx
-        : activeLyricIndex >= 0
-          ? activeLyricIndex
+        : storeActiveLyricIndex >= 0
+          ? storeActiveLyricIndex
           : 0
       : -1;
 
@@ -1304,12 +1128,14 @@ export const NowPlayingSheet: React.FC = () => {
 
   if (!nowPlayingOpen) return null;
 
-  const isLiked = likedTracks.some((l) => l.trackId === currentTrack.id);
-  const dlStatus = offlineDownloads[currentTrack.id] ?? 'idle';
   const activeSheetDurSec = Math.max(1, sheetDisplayDurSec || durationSec);
+  const liveRenderPosSec =
+    nowPlayingTab === 'Letras'
+      ? smoothPosSec
+      : Math.max(0, Math.min(activeSheetDurSec, syncClockRef.current.renderedPosSec));
   const progressPct = Math.max(
     0,
-    Math.min(100, (smoothPosSec / activeSheetDurSec) * 100)
+    Math.min(100, (liveRenderPosSec / activeSheetDurSec) * 100)
   );
   const activeSheetFillPct = sheetBarRewindRef.current
     ? lastSheetBarPctRef.current
@@ -1342,7 +1168,7 @@ export const NowPlayingSheet: React.FC = () => {
         ? 'Repetir playlist (siguiente: repetir una)'
         : 'Activar repetición de playlist';
 
-  const remainingSec = Math.max(0, activeSheetDurSec - smoothPosSec);
+  const remainingSec = Math.max(0, activeSheetDurSec - liveRenderPosSec);
   const cfActive = Boolean(
     isTransitioning &&
       outgoingTransitionTrack &&
@@ -1795,7 +1621,7 @@ export const NowPlayingSheet: React.FC = () => {
           />
         </div>
         <div className="tabular-nums flex items-center justify-between text-[11px] font-medium text-white/60">
-          <span ref={progressTimeRef}>{formatDurationSec(smoothPosSec)}</span>
+          <span ref={progressTimeRef}>{formatDurationSec(liveRenderPosSec)}</span>
           {djMode.enabled && isTransitioning ? (
             <span className="font-sans text-[10px] font-semibold tracking-[0.14em] text-purple-300/90 animate-pulse">
               MEZCLANDO · DJ
@@ -2008,16 +1834,18 @@ export const NowPlayingSheet: React.FC = () => {
           !ambientMotionEnabled || reducedMotionPref ? 'pm-backdrop-static' : ''
         }`}
         style={{
+          contain: 'strict',
+          transform: 'translateZ(0)',
           background:
             nowPlayingBackdropStyle === 'minimal'
               ? 'radial-gradient(ellipse at 50% 24%, color-mix(in srgb, var(--pm-ambient-1) 30%, #070709) 0%, color-mix(in srgb, var(--pm-ambient-3) 38%, #070709) 55%, #070709 100%)'
-              : 'radial-gradient(circle at 20% 24%, var(--pm-ambient-1), transparent 58%), radial-gradient(circle at 80% 76%, var(--pm-ambient-2), transparent 60%), linear-gradient(180deg, var(--pm-ambient-3) 0%, #070709 100%)',
+              : '#070709',
         }}
       >
         {/* Zero-Blur GPU-Composited Fluid Canvas (Desktop + Mobile) & Un-throttled Exotic Shaders */}
         {nowPlayingBackdropStyle === 'fluid' && !isAppHidden && (
           <div
-            className="pointer-events-none fixed inset-0"
+            className="pointer-events-none absolute inset-16"
             style={{ zIndex: 2 }}
           >
             <MobileFluidBackdropCanvas
@@ -2934,7 +2762,14 @@ const DJ_FX_ITEMS: readonly { key: keyof DjFxToggles; label: string }[] = [
   { key: 'echo_out', label: 'Echo Out' },
 ];
 
-export const AudioStudioSheet: React.FC = () => {
+export const AudioStudioSheet: React.FC = React.memo(() => {
+  const isOpen = usePMusicStore((s) => s.eqSheetOpen || s.djPopoverOpen);
+  if (!isOpen) return null;
+  return <AudioStudioSheetInner />;
+});
+AudioStudioSheet.displayName = 'AudioStudioSheet';
+
+const AudioStudioSheetInner: React.FC = () => {
   const {
     eqSheetOpen,
     djPopoverOpen,
@@ -2984,7 +2819,61 @@ export const AudioStudioSheet: React.FC = () => {
     setAmbientMotionEnabled,
     showRemainingTime,
     setShowRemainingTime,
-  } = usePMusicStore();
+  } = usePMusicStore(
+    useShallow((s) => ({
+      eqSheetOpen: s.eqSheetOpen,
+      djPopoverOpen: s.djPopoverOpen,
+      audioPanelTab: s.audioPanelTab,
+      setAudioPanelTab: s.setAudioPanelTab,
+      setEqSheetOpen: s.setEqSheetOpen,
+      setDjPopoverOpen: s.setDjPopoverOpen,
+      nowPlayingOpen: s.nowPlayingOpen,
+      playerBarStyle: s.playerBarStyle,
+      setPlayerBarStyle: s.setPlayerBarStyle,
+      userEq: s.userEq,
+      safeCrossfade: s.safeCrossfade,
+      djMode: s.djMode,
+      currentTrack: s.currentTrack,
+      positionSec:
+        s.audioPanelTab === 'dj' && s.djMode.enabled && Boolean(s.activeTransitionPlan)
+          ? Math.floor(s.positionSec)
+          : 0,
+      activeTransitionPlan: s.activeTransitionPlan,
+      isTransitioning: s.isTransitioning,
+      trackAnalyses: s.trackAnalyses,
+      setEqPreset: s.setEqPreset,
+      setEqBandGain: s.setEqBandGain,
+      setEqEnabled: s.setEqEnabled,
+      setSafeCrossfade: s.setSafeCrossfade,
+      toggleDjMode: s.toggleDjMode,
+      setDjSessionStyle: s.setDjSessionStyle,
+      toggleDjFx: s.toggleDjFx,
+      triggerDjMixNow: s.triggerDjMixNow,
+      startFullDjRadio: s.startFullDjRadio,
+      streamQuality: s.streamQuality,
+      setStreamQuality: s.setStreamQuality,
+      audioNormalization: s.audioNormalization,
+      setAudioNormalization: s.setAudioNormalization,
+      nowPlayingBackdropStyle: s.nowPlayingBackdropStyle,
+      setNowPlayingBackdropStyle: s.setNowPlayingBackdropStyle,
+      lyricsStyle: s.lyricsStyle,
+      setLyricsStyle: s.setLyricsStyle,
+      lyricsSize: s.lyricsSize,
+      setLyricsSize: s.setLyricsSize,
+      lyricsBlurEnabled: s.lyricsBlurEnabled,
+      setLyricsBlurEnabled: s.setLyricsBlurEnabled,
+      alwaysShuffle: s.alwaysShuffle,
+      setAlwaysShuffle: s.setAlwaysShuffle,
+      skipSameAlbumCoverTransition: s.skipSameAlbumCoverTransition,
+      setSkipSameAlbumCoverTransition: s.setSkipSameAlbumCoverTransition,
+      marqueeTextEnabled: s.marqueeTextEnabled,
+      setMarqueeTextEnabled: s.setMarqueeTextEnabled,
+      ambientMotionEnabled: s.ambientMotionEnabled,
+      setAmbientMotionEnabled: s.setAmbientMotionEnabled,
+      showRemainingTime: s.showRemainingTime,
+      setShowRemainingTime: s.setShowRemainingTime,
+    }))
+  );
 
   const [isMobileViewport, setIsMobileViewport] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth < 768 : false
@@ -3730,7 +3619,14 @@ export const AudioStudioSheet: React.FC = () => {
 export const EqAndCrossfadeSheet = AudioStudioSheet;
 export const DjPopover: React.FC = () => null;
 
-export const DevicesConnectSheet: React.FC = () => {
+export const DevicesConnectSheet: React.FC = React.memo(() => {
+  const devicesSheetOpen = usePMusicStore((s) => s.devicesSheetOpen);
+  if (!devicesSheetOpen) return null;
+  return <DevicesConnectSheetInner />;
+});
+DevicesConnectSheet.displayName = 'DevicesConnectSheet';
+
+const DevicesConnectSheetInner: React.FC = () => {
   const {
     devicesSheetOpen,
     setDevicesSheetOpen,
@@ -4256,7 +4152,14 @@ export const DevicesConnectSheet: React.FC = () => {
   );
 };
 
-export const JamInviteModal: React.FC = () => {
+export const JamInviteModal: React.FC = React.memo(() => {
+  const open = usePMusicStore((s) => Boolean(s.jamInviteModalOpen && s.activeJamSession));
+  if (!open) return null;
+  return <JamInviteModalInner />;
+});
+JamInviteModal.displayName = 'JamInviteModal';
+
+const JamInviteModalInner: React.FC = () => {
   const {
     jamInviteModalOpen,
     setJamInviteModalOpen,
@@ -4393,7 +4296,14 @@ export const JamInviteModal: React.FC = () => {
   );
 };
 
-export const ImportPlaylistModal: React.FC = () => {
+export const ImportPlaylistModal: React.FC = React.memo(() => {
+  const importModalOpen = usePMusicStore((s) => s.importModalOpen);
+  if (!importModalOpen) return null;
+  return <ImportPlaylistModalInner />;
+});
+ImportPlaylistModal.displayName = 'ImportPlaylistModal';
+
+const ImportPlaylistModalInner: React.FC = () => {
   const {
     importModalOpen,
     setImportModalOpen,

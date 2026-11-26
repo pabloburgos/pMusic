@@ -1,4 +1,5 @@
 import type { Track } from '@pmusic/core';
+import { getCachedOfflineCoverUrl } from './offline-covers.ts';
 
 export type RgbTriple = [number, number, number];
 export type PaletteTriplet = [RgbTriple, RgbTriple, RgbTriple];
@@ -110,10 +111,234 @@ export function shouldUseDarkInkOnBackdrop(params: {
   }
   return params.perceptualLuma >= 0.52 - h && params.brightFraction >= 0.44 - h;
 }
-let paletteAnimRafId = 0;
 let activeExtractToken = 0;
 let activePaletteTrackKey = '';
 const lastAppliedCss: [string, string, string] = ['', '', ''];
+
+let paletteAnimActive = false;
+let paletteAnimStartMs = 0;
+let paletteAnimDurMs = 0;
+let animFromLuma = 0.45;
+let animToLuma = 0.45;
+const animFromRgb: PaletteTriplet = [
+  [58, 58, 66],
+  [38, 38, 44],
+  [16, 16, 20],
+];
+const animToRgb: PaletteTriplet = [
+  [58, 58, 66],
+  [38, 38, 44],
+  [16, 16, 20],
+];
+const animFromQuad: PaletteQuad = [
+  [58, 58, 66],
+  [48, 48, 55],
+  [38, 38, 44],
+  [18, 18, 22],
+];
+const animToQuad: PaletteQuad = [
+  [58, 58, 66],
+  [48, 48, 55],
+  [38, 38, 44],
+  [18, 18, 22],
+];
+
+function copyTriplet(dst: PaletteTriplet, src: PaletteTriplet): void {
+  for (let i = 0; i < 3; i++) {
+    dst[i]![0] = src[i]![0];
+    dst[i]![1] = src[i]![1];
+    dst[i]![2] = src[i]![2];
+  }
+}
+
+function copyQuad(dst: PaletteQuad, src: PaletteQuad): void {
+  for (let i = 0; i < 4; i++) {
+    dst[i]![0] = src[i]![0];
+    dst[i]![1] = src[i]![1];
+    dst[i]![2] = src[i]![2];
+  }
+}
+
+function syncLivePaletteNow(): void {
+  if (!paletteAnimActive) return;
+  const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  const rawT =
+    paletteAnimDurMs <= 0
+      ? 1
+      : Math.max(0, Math.min(1, (now - paletteAnimStartMs) / paletteAnimDurMs));
+  liveLuminance = animFromLuma + (animToLuma - animFromLuma) * rawT;
+  for (let i = 0; i < 4; i++) {
+    const f = animFromQuad[i]!;
+    const t = animToQuad[i]!;
+    const out = liveQuad[i]!;
+    out[0] = f[0] + (t[0] - f[0]) * rawT;
+    out[1] = f[1] + (t[1] - f[1]) * rawT;
+    out[2] = f[2] + (t[2] - f[2]) * rawT;
+  }
+  for (let i = 0; i < 3; i++) {
+    const f = animFromRgb[i]!;
+    const t = animToRgb[i]!;
+    const out = liveRgb[i]!;
+    out[0] = f[0] + (t[0] - f[0]) * rawT;
+    out[1] = f[1] + (t[1] - f[1]) * rawT;
+    out[2] = f[2] + (t[2] - f[2]) * rawT;
+  }
+  if (rawT >= 1) {
+    paletteAnimActive = false;
+  }
+}
+
+export function canUseCoverProxyUrl(srcUrl: string): boolean {
+  if (!srcUrl || !srcUrl.startsWith('https://')) return false;
+  if (typeof window === 'undefined') return false;
+  const proto = window.location?.protocol;
+  return proto === 'http:' || proto === 'https:';
+}
+
+export function toCoverProxyUrl(srcUrl: string): string {
+  return `/api/cover-proxy?url=${encodeURIComponent(srcUrl)}`;
+}
+
+const MAX_SHARED_CORS_COVER_CACHE = 20;
+const sharedCorsCoverCache = new Map<string, HTMLImageElement>();
+const sharedCorsCoverWaiters = new Map<
+  string,
+  Set<{ onLoaded: (img: HTMLImageElement) => void; onFailed: () => void }>
+>();
+
+function rememberSharedCorsCover(cleanUrl: string, img: HTMLImageElement): void {
+  sharedCorsCoverCache.delete(cleanUrl);
+  sharedCorsCoverCache.set(cleanUrl, img);
+  if (sharedCorsCoverCache.size > MAX_SHARED_CORS_COVER_CACHE) {
+    const oldest = sharedCorsCoverCache.keys().next().value;
+    if (oldest) sharedCorsCoverCache.delete(oldest);
+  }
+}
+
+export function getCachedCorsCoverImage(url?: string | null): HTMLImageElement | null {
+  const cleanUrl = url?.trim();
+  if (!cleanUrl) return null;
+  const cached = sharedCorsCoverCache.get(cleanUrl);
+  if (cached && cached.complete && cached.naturalWidth > 0) {
+    rememberSharedCorsCover(cleanUrl, cached);
+    return cached;
+  }
+  return null;
+}
+
+/**
+ * Deduplicated CORS-clean cover image loader shared across InkBleedCoverTransition,
+ * MobileFluidBackdropCanvas, ExoticBackdropCanvas, and ambient palette extraction.
+ * One network fetch + decode feeds all 4 consumers with automatic offline-cache and /api/cover-proxy retry.
+ */
+export function loadSharedCorsCoverImage(
+  url: string,
+  onLoaded: (img: HTMLImageElement) => void,
+  onFailed: () => void
+): () => void {
+  const cleanUrl = url?.trim();
+  if (!cleanUrl || typeof Image === 'undefined') {
+    onFailed();
+    return () => {};
+  }
+  const hit = getCachedCorsCoverImage(cleanUrl);
+  if (hit) {
+    onLoaded(hit);
+    return () => {};
+  }
+
+  let cancelled = false;
+  const waiter = {
+    onLoaded: (img: HTMLImageElement) => {
+      if (!cancelled) onLoaded(img);
+    },
+    onFailed: () => {
+      if (!cancelled) onFailed();
+    },
+  };
+
+  let waiters = sharedCorsCoverWaiters.get(cleanUrl);
+  if (waiters) {
+    waiters.add(waiter);
+    return () => {
+      cancelled = true;
+      waiters?.delete(waiter);
+    };
+  }
+
+  waiters = new Set([waiter]);
+  sharedCorsCoverWaiters.set(cleanUrl, waiters);
+
+  let settled = false;
+  const finishOk = (img: HTMLImageElement) => {
+    if (settled) return;
+    settled = true;
+    rememberSharedCorsCover(cleanUrl, img);
+    const list = sharedCorsCoverWaiters.get(cleanUrl);
+    sharedCorsCoverWaiters.delete(cleanUrl);
+    if (list) {
+      for (const w of list) w.onLoaded(img);
+    }
+  };
+  const finishFail = () => {
+    if (settled) return;
+    settled = true;
+    const list = sharedCorsCoverWaiters.get(cleanUrl);
+    sharedCorsCoverWaiters.delete(cleanUrl);
+    if (list) {
+      for (const w of list) w.onFailed();
+    }
+  };
+
+  const offlineUrl = getCachedOfflineCoverUrl(undefined, cleanUrl);
+  const attempt = (srcUrl: string, allowProxyRetry: boolean) => {
+    if (settled) return;
+    const img = new Image();
+    if (!srcUrl.startsWith('data:') && !srcUrl.startsWith('blob:')) {
+      img.crossOrigin = 'anonymous';
+    }
+    img.decoding = 'async';
+    img.onload = () => {
+      if (settled) return;
+      if (img.naturalWidth > 0) {
+        finishOk(img);
+      } else if (allowProxyRetry && canUseCoverProxyUrl(cleanUrl)) {
+        attempt(toCoverProxyUrl(cleanUrl), false);
+      } else {
+        finishFail();
+      }
+    };
+    img.onerror = () => {
+      if (settled) return;
+      if (allowProxyRetry && canUseCoverProxyUrl(cleanUrl)) {
+        attempt(toCoverProxyUrl(cleanUrl), false);
+      } else {
+        finishFail();
+      }
+    };
+    img.src = srcUrl;
+    if (img.complete && img.naturalWidth > 0 && !settled) {
+      finishOk(img);
+    }
+  };
+
+  attempt(offlineUrl ?? cleanUrl, !offlineUrl);
+  return () => {
+    cancelled = true;
+    waiters?.delete(waiter);
+  };
+}
+
+export function prefetchSharedCorsCoverImage(url?: string | null): void {
+  const cleanUrl = url?.trim();
+  if (!cleanUrl || typeof Image === 'undefined') return;
+  if (getCachedCorsCoverImage(cleanUrl)) return;
+  loadSharedCorsCoverImage(
+    cleanUrl,
+    () => {},
+    () => {}
+  );
+}
 
 function rgbCss(rgb: RgbTriple): string {
   return `rgb(${Math.round(rgb[0])}, ${Math.round(rgb[1])}, ${Math.round(rgb[2])})`;
@@ -215,10 +440,7 @@ function transitionToPalette(
   targetLuma?: number,
   targetQuad?: PaletteQuad
 ): void {
-  if (paletteAnimRafId && typeof cancelAnimationFrame === 'function') {
-    cancelAnimationFrame(paletteAnimRafId);
-    paletteAnimRafId = 0;
-  }
+  syncLivePaletteNow();
 
   const nextLuma =
     typeof targetLuma === 'number' && Number.isFinite(targetLuma)
@@ -230,82 +452,40 @@ function transitionToPalette(
     typeof document !== 'undefined' &&
     document.documentElement.classList.contains('pm-reduced-motion');
 
-  if (durationMs <= 0 || reduced || typeof requestAnimationFrame !== 'function') {
+  if (durationMs <= 0 || reduced) {
+    paletteAnimActive = false;
     liveLuminance = nextLuma;
-    liveQuad = [
-      [...resolvedTargetQuad[0]],
-      [...resolvedTargetQuad[1]],
-      [...resolvedTargetQuad[2]],
-      [...resolvedTargetQuad[3]],
-    ];
+    copyQuad(liveQuad, resolvedTargetQuad);
     applyRgbTripletToRoot(target, 0);
     return;
   }
 
-  const fromLuma = liveLuminance;
-  const from: PaletteTriplet = [
-    [liveRgb[0][0], liveRgb[0][1], liveRgb[0][2]],
-    [liveRgb[1][0], liveRgb[1][1], liveRgb[1][2]],
-    [liveRgb[2][0], liveRgb[2][1], liveRgb[2][2]],
-  ];
-  const fromQuad: PaletteQuad = [
-    [liveQuad[0][0], liveQuad[0][1], liveQuad[0][2]],
-    [liveQuad[1][0], liveQuad[1][1], liveQuad[1][2]],
-    [liveQuad[2][0], liveQuad[2][1], liveQuad[2][2]],
-    [liveQuad[3][0], liveQuad[3][1], liveQuad[3][2]],
-  ];
+  animFromLuma = liveLuminance;
+  animToLuma = nextLuma;
+  copyTriplet(animFromRgb, liveRgb);
+  copyTriplet(animToRgb, target);
+  copyQuad(animFromQuad, liveQuad);
+  copyQuad(animToQuad, resolvedTargetQuad);
 
-  // Trigger native CSS @property GPU transition ONCE instead of mutating :root every 60ms
+  // Trigger native CSS @property GPU transition ONCE instead of mutating :root every frame
   applyCssPaletteToRoot(target, durationMs);
 
-  const startMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
-
-  const step = (now: number) => {
-    const rawT = Math.max(0, Math.min(1, (now - startMs) / durationMs));
-    const lerp = (a: number, b: number) => a + (b - a) * rawT;
-    liveLuminance = lerp(fromLuma, nextLuma);
-    liveQuad = [
-      [
-        lerp(fromQuad[0][0], resolvedTargetQuad[0][0]),
-        lerp(fromQuad[0][1], resolvedTargetQuad[0][1]),
-        lerp(fromQuad[0][2], resolvedTargetQuad[0][2]),
-      ],
-      [
-        lerp(fromQuad[1][0], resolvedTargetQuad[1][0]),
-        lerp(fromQuad[1][1], resolvedTargetQuad[1][1]),
-        lerp(fromQuad[1][2], resolvedTargetQuad[1][2]),
-      ],
-      [
-        lerp(fromQuad[2][0], resolvedTargetQuad[2][0]),
-        lerp(fromQuad[2][1], resolvedTargetQuad[2][1]),
-        lerp(fromQuad[2][2], resolvedTargetQuad[2][2]),
-      ],
-      [
-        lerp(fromQuad[3][0], resolvedTargetQuad[3][0]),
-        lerp(fromQuad[3][1], resolvedTargetQuad[3][1]),
-        lerp(fromQuad[3][2], resolvedTargetQuad[3][2]),
-      ],
-    ];
-    liveRgb = [
-      [lerp(from[0][0], target[0][0]), lerp(from[0][1], target[0][1]), lerp(from[0][2], target[0][2])],
-      [lerp(from[1][0], target[1][0]), lerp(from[1][1], target[1][1]), lerp(from[1][2], target[1][2])],
-      [lerp(from[2][0], target[2][0]), lerp(from[2][1], target[2][1]), lerp(from[2][2], target[2][2])],
-    ];
-    if (rawT < 1) {
-      paletteAnimRafId = requestAnimationFrame(step);
-    } else {
-      paletteAnimRafId = 0;
-    }
-  };
-
-  paletteAnimRafId = requestAnimationFrame(step);
+  paletteAnimStartMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  paletteAnimDurMs = durationMs;
+  paletteAnimActive = true;
 }
 
 export function getActiveAmbientTrackKey(): string {
   return activePaletteTrackKey;
 }
 
+export function getLiveAmbientRgbRef(): PaletteTriplet {
+  syncLivePaletteNow();
+  return liveRgb;
+}
+
 export function getLiveAmbientRgb(): PaletteTriplet {
+  syncLivePaletteNow();
   return [
     [liveRgb[0][0], liveRgb[0][1], liveRgb[0][2]],
     [liveRgb[1][0], liveRgb[1][1], liveRgb[1][2]],
@@ -313,7 +493,13 @@ export function getLiveAmbientRgb(): PaletteTriplet {
   ];
 }
 
+export function getLiveAmbientQuadRef(): PaletteQuad {
+  syncLivePaletteNow();
+  return liveQuad;
+}
+
 export function getLiveAmbientQuad(): PaletteQuad {
+  syncLivePaletteNow();
   return [
     [liveQuad[0][0], liveQuad[0][1], liveQuad[0][2]],
     [liveQuad[1][0], liveQuad[1][1], liveQuad[1][2]],
@@ -323,6 +509,7 @@ export function getLiveAmbientQuad(): PaletteQuad {
 }
 
 export function getLiveAmbientLuminance(): number {
+  syncLivePaletteNow();
   return liveLuminance;
 }
 
@@ -472,6 +659,7 @@ export function trimBackdropMemoryCaches(): void {
   }
   prebakedBackdropCache.clear();
   prebakedBackdropInFlight.clear();
+  sharedCorsCoverCache.clear();
   for (const fn of backdropCleanupHooks) {
     try {
       fn();
@@ -670,71 +858,116 @@ export function animateAmbientPaletteFromCover(track: Track | null, durationMs =
 
   const startedAtMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const token = ++activeExtractToken;
-  const loadSample = (srcUrl: string, allowProxyRetry: boolean) => {
-    try {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => {
-        if (token !== activeExtractToken) return;
-        const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAtMs;
-        const remainingMs = durationMs <= 0 ? 0 : Math.max(280, durationMs - elapsed);
-        try {
-          const canvas = document.createElement('canvas');
-          canvas.width = 24;
-          canvas.height = 24;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) return;
-          ctx.drawImage(img, 0, 0, 24, 24);
-          const { data } = ctx.getImageData(0, 0, 24, 24);
+  loadSharedCorsCoverImage(
+    imgUrl,
+    (img) => {
+      if (token !== activeExtractToken) return;
+      const elapsed =
+        (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAtMs;
+      const remainingMs = durationMs <= 0 ? 0 : Math.max(280, durationMs - elapsed);
+      try {
+        if (!paletteSampleCanvas) {
+          paletteSampleCanvas = document.createElement('canvas');
+          paletteSampleCanvas.width = 24;
+          paletteSampleCanvas.height = 24;
+        }
+        const ctx = paletteSampleCanvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) return;
+        ctx.clearRect(0, 0, 24, 24);
+        ctx.drawImage(img, 0, 0, 24, 24);
+        const { data } = ctx.getImageData(0, 0, 24, 24);
 
-          const { quad, avgL, perceptualLuma, brightFraction } = extractCoverEssenceQuad(data);
-          const extracted: PaletteTriplet = [quad[0], quad[1], quad[3]];
-          paletteCache.set(imgUrl, {
-            triplet: extracted,
-            quad,
-            luma: avgL,
-            perceptualLuma,
-            brightFraction,
-          });
-          if (paletteCache.size > 32) {
-            const oldest = paletteCache.keys().next().value;
-            if (oldest) paletteCache.delete(oldest);
-          }
-          updateLiveCoverBrightness(perceptualLuma, brightFraction);
-          transitionToPalette(extracted, remainingMs, avgL, quad);
-        } catch {
-          updateLiveCoverBrightness(0.22, 0.1);
-          transitionToPalette(fallback, remainingMs);
+        const { quad, avgL, perceptualLuma, brightFraction } = extractCoverEssenceQuad(data);
+        const extracted: PaletteTriplet = [quad[0], quad[1], quad[3]];
+        paletteCache.set(imgUrl, {
+          triplet: extracted,
+          quad,
+          luma: avgL,
+          perceptualLuma,
+          brightFraction,
+        });
+        if (paletteCache.size > 32) {
+          const oldest = paletteCache.keys().next().value;
+          if (oldest) paletteCache.delete(oldest);
         }
-      };
-      img.onerror = () => {
-        if (token !== activeExtractToken) return;
-        const isProxyEligible =
-          allowProxyRetry &&
-          srcUrl.startsWith('https://') &&
-          typeof window !== 'undefined' &&
-          window.location?.hostname !== 'appassets.pmusic.local' &&
-          (window.location?.protocol === 'http:' || window.location?.protocol === 'https:');
-        if (isProxyEligible) {
-          loadSample(`/api/cover-proxy?url=${encodeURIComponent(srcUrl)}`, false);
-          return;
-        }
-        const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAtMs;
-        const remainingMs = durationMs <= 0 ? 0 : Math.max(280, durationMs - elapsed);
+        updateLiveCoverBrightness(perceptualLuma, brightFraction);
+        transitionToPalette(extracted, remainingMs, avgL, quad);
+      } catch {
         updateLiveCoverBrightness(0.22, 0.1);
         transitionToPalette(fallback, remainingMs);
-      };
-      img.src = srcUrl;
-    } catch {
+      }
+    },
+    () => {
+      if (token !== activeExtractToken) return;
+      const elapsed =
+        (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAtMs;
+      const remainingMs = durationMs <= 0 ? 0 : Math.max(280, durationMs - elapsed);
       updateLiveCoverBrightness(0.22, 0.1);
-      transitionToPalette(fallback, durationMs);
+      transitionToPalette(fallback, remainingMs);
     }
-  };
-  loadSample(imgUrl, true);
+  );
 }
 
 export function applyAmbientPaletteFromCover(track: Track | null, durationMs = 1100): void {
   animateAmbientPaletteFromCover(track, durationMs);
+}
+
+const palettePrefetchInFlight = new Set<string>();
+let paletteSampleCanvas: HTMLCanvasElement | null = null;
+
+/**
+ * Quietly pre-extracts cover palette into `paletteCache` ahead of time (e.g. for next queued track)
+ * so crossfade start at t=0 hits cache in 0.00ms without `getImageData` or image decode stalls.
+ */
+export function prefetchAmbientPaletteFromCover(imgUrl?: string | null): void {
+  const cleanUrl = imgUrl?.trim();
+  if (
+    !cleanUrl ||
+    typeof document === 'undefined' ||
+    typeof Image === 'undefined' ||
+    paletteCache.has(cleanUrl) ||
+    palettePrefetchInFlight.has(cleanUrl)
+  ) {
+    return;
+  }
+  palettePrefetchInFlight.add(cleanUrl);
+  loadSharedCorsCoverImage(
+    cleanUrl,
+    (img) => {
+      palettePrefetchInFlight.delete(cleanUrl);
+      if (paletteCache.has(cleanUrl)) return;
+      try {
+        if (!paletteSampleCanvas) {
+          paletteSampleCanvas = document.createElement('canvas');
+          paletteSampleCanvas.width = 24;
+          paletteSampleCanvas.height = 24;
+        }
+        const ctx = paletteSampleCanvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) return;
+        ctx.clearRect(0, 0, 24, 24);
+        ctx.drawImage(img, 0, 0, 24, 24);
+        const { data } = ctx.getImageData(0, 0, 24, 24);
+        const { quad, avgL, perceptualLuma, brightFraction } = extractCoverEssenceQuad(data);
+        const extracted: PaletteTriplet = [quad[0], quad[1], quad[3]];
+        paletteCache.set(cleanUrl, {
+          triplet: extracted,
+          quad,
+          luma: avgL,
+          perceptualLuma,
+          brightFraction,
+        });
+        if (paletteCache.size > 32) {
+          const oldest = paletteCache.keys().next().value;
+          if (oldest) paletteCache.delete(oldest);
+        }
+      } catch {
+        // ignore tainted prefetch
+      }
+    },
+    () => {
+      palettePrefetchInFlight.delete(cleanUrl);
+    }
+  );
 }
 
 const characteristicColorCache = new Map<string, RgbTriple>();

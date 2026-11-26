@@ -17,7 +17,14 @@ import { PMusicLogo } from './PMusicLogo.tsx';
 
 type CarBrowseTab = 'para-ti' | 'playlists' | 'me-gusta';
 
-export const CarModeView: React.FC = () => {
+export const CarModeView: React.FC = React.memo(() => {
+  const carModeOpen = usePMusicStore((s) => s.carModeOpen);
+  if (!carModeOpen) return null;
+  return <CarModeViewInner />;
+});
+CarModeView.displayName = 'CarModeView';
+
+const CarModeViewInner: React.FC = () => {
   const {
     carModeOpen,
     setCarModeOpen,

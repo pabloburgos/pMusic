@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { Link2, Loader2, Play, Plus, Users, X } from 'lucide-react';
 import type { Track } from '@pmusic/core';
 import { getSyncSupabaseClient, usePMusicStore } from '../store/usePMusicStore.ts';
@@ -13,6 +14,15 @@ import {
 export const SharedPlaylistLinkModal: React.FC<{
   shareCode: string | null;
   onClose: () => void;
+}> = React.memo(({ shareCode, onClose }) => {
+  if (!shareCode) return null;
+  return <SharedPlaylistLinkModalInner shareCode={shareCode} onClose={onClose} />;
+});
+SharedPlaylistLinkModal.displayName = 'SharedPlaylistLinkModal';
+
+const SharedPlaylistLinkModalInner: React.FC<{
+  shareCode: string;
+  onClose: () => void;
 }> = ({ shareCode, onClose }) => {
   const {
     authState,
@@ -22,7 +32,17 @@ export const SharedPlaylistLinkModal: React.FC<{
     searchTracksForPlaylist,
     setAuthOnboardingOpen,
     showToast,
-  } = usePMusicStore();
+  } = usePMusicStore(
+    useShallow((s) => ({
+      authState: s.authState,
+      userProfile: s.userProfile,
+      playCollection: s.playCollection,
+      createPlaylist: s.createPlaylist,
+      searchTracksForPlaylist: s.searchTracksForPlaylist,
+      setAuthOnboardingOpen: s.setAuthOnboardingOpen,
+      showToast: s.showToast,
+    }))
+  );
 
   const [playlist, setPlaylist] = useState<SharedPlaylistRecord | null>(null);
   const [loading, setLoading] = useState(false);

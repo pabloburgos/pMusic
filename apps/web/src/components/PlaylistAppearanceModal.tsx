@@ -10,7 +10,14 @@ import {
   generatePlaylistCoverDataUrl,
 } from '../utils/playlist-artwork.ts';
 
-export const PlaylistAppearanceModal: React.FC = () => {
+export const PlaylistAppearanceModal: React.FC = React.memo(() => {
+  const open = usePMusicStore((s) => Boolean(s.playlistAppearanceModal));
+  if (!open) return null;
+  return <PlaylistAppearanceModalInner />;
+});
+PlaylistAppearanceModal.displayName = 'PlaylistAppearanceModal';
+
+const PlaylistAppearanceModalInner: React.FC = () => {
   const {
     playlistAppearanceModal,
     playlists,

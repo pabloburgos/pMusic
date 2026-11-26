@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   Check,
   Copy,
@@ -25,7 +26,7 @@ import {
 } from '../services/social-service.ts';
 import { UserAvatar } from './UserAvatar.tsx';
 
-export const SocialScreen: React.FC = () => {
+export const SocialScreen: React.FC = React.memo(() => {
   const {
     authState,
     userProfile,
@@ -54,7 +55,37 @@ export const SocialScreen: React.FC = () => {
     playCollection,
     setAuthOnboardingOpen,
     showToast,
-  } = usePMusicStore();
+  } = usePMusicStore(
+    useShallow((s) => ({
+      authState: s.authState,
+      userProfile: s.userProfile,
+      socialSubTab: s.socialSubTab,
+      friends: s.friends,
+      sharedPlaylists: s.sharedPlaylists,
+      activeJamSession: s.activeJamSession,
+      activeJamRole: s.activeJamRole,
+      activeJamRequests: s.activeJamRequests,
+      setSocialSubTab: s.setSocialSubTab,
+      hydrateSocialAndSubscribe: s.hydrateSocialAndSubscribe,
+      startJam: s.startJam,
+      joinJamInApp: s.joinJamInApp,
+      leaveOrEndJam: s.leaveOrEndJam,
+      approveJamRequest: s.approveJamRequest,
+      rejectJamRequest: s.rejectJamRequest,
+      updateJamSettings: s.updateJamSettings,
+      setJamInviteModalOpen: s.setJamInviteModalOpen,
+      setNowPlayingOpen: s.setNowPlayingOpen,
+      setNowPlayingTab: s.setNowPlayingTab,
+      sendFriendRequestToUser: s.sendFriendRequestToUser,
+      respondToFriendRequest: s.respondToFriendRequest,
+      createBlendWithFriend: s.createBlendWithFriend,
+      createCollaborativePlaylist: s.createCollaborativePlaylist,
+      openSharedPlaylistDetail: s.openSharedPlaylistDetail,
+      playCollection: s.playCollection,
+      setAuthOnboardingOpen: s.setAuthOnboardingOpen,
+      showToast: s.showToast,
+    }))
+  );
 
   const [socialError, setSocialError] = useState<string | null>(null);
   const [friendSearch, setFriendSearch] = useState('');
@@ -699,4 +730,5 @@ export const SocialScreen: React.FC = () => {
       )}
     </div>
   );
-};
+});
+SocialScreen.displayName = 'SocialScreen';

@@ -26,7 +26,14 @@ function GoogleLogo() {
   );
 }
 
-export const AuthOnboardingModal: React.FC = () => {
+export const AuthOnboardingModal: React.FC = React.memo(() => {
+  const open = usePMusicStore((s) => s.authOnboardingOpen || s.needsProfileSetup);
+  if (!open) return null;
+  return <AuthOnboardingModalInner />;
+});
+AuthOnboardingModal.displayName = 'AuthOnboardingModal';
+
+const AuthOnboardingModalInner: React.FC = () => {
   const {
     authOnboardingOpen,
     needsProfileSetup,

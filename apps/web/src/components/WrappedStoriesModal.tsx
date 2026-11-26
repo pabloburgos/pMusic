@@ -276,7 +276,14 @@ async function downloadWrappedStoryCard(
   link.click();
 }
 
-export const WrappedStoriesModal: React.FC = () => {
+export const WrappedStoriesModal: React.FC = React.memo(() => {
+  const wrappedModalOpen = usePMusicStore((s) => s.wrappedModalOpen);
+  if (!wrappedModalOpen) return null;
+  return <WrappedStoriesModalInner />;
+});
+WrappedStoriesModal.displayName = 'WrappedStoriesModal';
+
+const WrappedStoriesModalInner: React.FC = () => {
   const {
     wrappedModalOpen,
     wrappedSummary,

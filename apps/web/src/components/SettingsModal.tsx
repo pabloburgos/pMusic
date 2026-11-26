@@ -78,7 +78,14 @@ const SwitchRow: React.FC<{
   </div>
 );
 
-export const SettingsModal: React.FC = () => {
+export const SettingsModal: React.FC = React.memo(() => {
+  const settingsOpen = usePMusicStore((s) => s.settingsOpen);
+  if (!settingsOpen) return null;
+  return <SettingsModalInner />;
+});
+SettingsModal.displayName = 'SettingsModal';
+
+const SettingsModalInner: React.FC = () => {
   const {
     settingsOpen,
     settingsInitialCategory,

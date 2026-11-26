@@ -21,7 +21,14 @@ import { getSyncSupabaseClient, usePMusicStore } from '../store/usePMusicStore.t
 import { buildPlaylistShareUrl, publishOrUpdateSharedPlaylistLink } from '../services/social-service.ts';
 import { formatPlaylistDuration, generatePlaylistCoverDataUrl } from '../utils/playlist-artwork.ts';
 
-export const PlaylistOptionsMenu: React.FC = () => {
+export const PlaylistOptionsMenu: React.FC = React.memo(() => {
+  const open = usePMusicStore((s) => Boolean(s.playlistContextMenu));
+  if (!open) return null;
+  return <PlaylistOptionsMenuInner />;
+});
+PlaylistOptionsMenu.displayName = 'PlaylistOptionsMenu';
+
+const PlaylistOptionsMenuInner: React.FC = () => {
   const {
     playlistContextMenu,
     playlists,
