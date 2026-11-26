@@ -331,4 +331,48 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
     expect(appUpdaterSrc).toContain('downloadAndInstallOtaBundle');
     expect(otaScriptSrc).toContain('pMusic-web-bundle.zip');
   });
+
+  it('isolates fullscreen Queue in memoized NowPlayingQueuePanel without positionSec subscription and throttles canvas FPS', () => {
+    const t1 = makeTrack(101);
+    const t2 = makeTrack(102);
+    const t3 = makeTrack(103);
+    act(() => {
+      usePMusicStore.setState({
+        nowPlayingOpen: true,
+        nowPlayingTab: 'Cola',
+        currentTrack: t1,
+        queue: [t1, t2],
+        queueIndex: 0,
+        recommendedQueue: [t3],
+      });
+    });
+
+    render(<App />);
+    const queueView = screen.getByTestId('queue-view');
+    expect(queueView).toBeTruthy();
+    expect(screen.getByTestId('user-queue-section')).toBeTruthy();
+    expect(screen.getByTestId('recommended-queue-section')).toBeTruthy();
+
+    const listItems = queueView.querySelectorAll('[role="listitem"]');
+    expect(listItems.length).toBeGreaterThanOrEqual(3);
+    const firstNextRow = listItems[1] as HTMLElement;
+    expect(firstNextRow.style.contentVisibility).toBe('auto');
+
+    const firstImg = queueView.querySelector('[data-testid="user-queue-section"] img') as HTMLImageElement | null;
+    expect(firstImg?.getAttribute('loading')).toBe('lazy');
+
+    const queuePanelSrc = readFileSync(
+      resolve(__dirname, '../components/NowPlayingQueuePanel.tsx'),
+      'utf-8'
+    );
+    expect(queuePanelSrc).toContain('React.memo');
+    expect(queuePanelSrc.includes('s.positionSec')).toBe(false);
+    expect(queuePanelSrc.includes('smoothPosSec')).toBe(false);
+
+    const canvasSrc = readFileSync(
+      resolve(__dirname, '../components/ExoticBackdropCanvas.tsx'),
+      'utf-8'
+    );
+    expect(canvasSrc).toContain('throttleFps');
+  });
 });

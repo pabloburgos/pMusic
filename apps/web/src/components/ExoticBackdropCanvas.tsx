@@ -14,6 +14,7 @@ interface ExoticBackdropCanvasProps {
   isPlaying: boolean;
   ambientMotionEnabled: boolean;
   reducedMotionPref: boolean;
+  throttleFps?: boolean;
 }
 
 const TEX_SIZE = 128;
@@ -291,12 +292,15 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = ({
   isPlaying,
   ambientMotionEnabled,
   reducedMotionPref,
+  throttleFps = false,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const styleRef = useRef<ExoticBackdropStyle>(style);
   styleRef.current = style;
   const isPlayingRef = useRef(isPlaying);
   isPlayingRef.current = isPlaying;
+  const throttleFpsRef = useRef(throttleFps);
+  throttleFpsRef.current = throttleFps;
 
   // Shared cover-texture & crossfade state between GL/2D render loop and coverUrl loader
   const coverMediaRef = useRef<{
@@ -509,7 +513,13 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = ({
         rafId = 0;
         return;
       }
-      const frameBudgetMs = staticMode ? 120 : isMobileLike ? 30 : 16;
+      const frameBudgetMs = staticMode
+        ? 120
+        : isMobileLike
+          ? 30
+          : throttleFpsRef.current
+            ? 42
+            : 16;
       if (now - lastDrawMs < frameBudgetMs && lastDrawMs > 0) {
         if (!staticMode && typeof requestAnimationFrame === 'function') {
           rafId = requestAnimationFrame(renderFrame);
