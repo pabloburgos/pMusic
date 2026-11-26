@@ -511,7 +511,7 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
     expect(inkSrc).not.toContain('buildInkField');
 
     const cssSrc = readFileSync(resolve(__dirname, '../styles/index.css'), 'utf-8');
-    expect(cssSrc).toContain('#22242c');
+    expect(cssSrc).toContain('#000000');
     expect(cssSrc).toContain('.pm-indicator-dot');
     expect(cssSrc).toContain('.pm-np-light-surface input[type="range"].pm-range-pill');
     expect(cssSrc).toContain('--pm-ink-transition-ms');
@@ -743,5 +743,38 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
     expect(playlistPlayBtn.className).toContain('sm:h-[86px]');
     expect(moreBtn.parentElement?.className).toContain('justify-end');
     cleanup();
+  });
+
+  it('v0.23.10 clears stale crossfade/dock animation on foreground resume, disables Electron background throttling on restore/show, and uses pure black light-surface ink', () => {
+    const electronSrc = readFileSync(
+      resolve(__dirname, '../../../desktop/scripts/build-electron.mjs'),
+      'utf-8'
+    );
+    expect(electronSrc).toContain('setBackgroundThrottling(false)');
+    expect(electronSrc).toContain('.invalidate()');
+
+    const appSrc = readFileSync(resolve(__dirname, '../App.tsx'), 'utf-8');
+    expect(appSrc).toContain('!isAppHidden &&');
+
+    const tOut = makeTrack(801);
+    const tIn = makeTrack(802);
+    act(() => {
+      usePMusicStore.setState({
+        isAppHidden: true,
+        isTransitioning: true,
+        transitionProgress01: 0.8,
+        outgoingTransitionTrack: tOut,
+        incomingTransitionTrack: tIn,
+        currentTrack: tIn,
+      });
+    });
+
+    act(() => {
+      usePMusicStore.getState().setAppHidden(false);
+    });
+    expect(usePMusicStore.getState().isAppHidden).toBe(false);
+    expect(usePMusicStore.getState().isTransitioning).toBe(false);
+    expect(usePMusicStore.getState().outgoingTransitionTrack).toBeNull();
+    expect(usePMusicStore.getState().incomingTransitionTrack).toBeNull();
   });
 });

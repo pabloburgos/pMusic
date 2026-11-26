@@ -950,6 +950,62 @@ export const NowPlayingSheet: React.FC = () => {
   }, [showRemainingTime, durationSec, sheetDisplayDurSec]);
 
   useEffect(() => {
+    if (isAppHidden || !nowPlayingOpen) return;
+    const now = typeof performance !== 'undefined' ? performance.now() : 0;
+    const live = getLivePlaybackPosition();
+    const useIncoming = Boolean(
+      live.isTransitioning &&
+        live.transitionProgress01 >= 0.5 &&
+        typeof live.incomingPositionSec === 'number' &&
+        typeof live.incomingDurationSec === 'number' &&
+        live.incomingDurationSec > 0
+    );
+    const effDur = useIncoming
+      ? live.incomingDurationSec!
+      : Math.max(1, live.durationSec || sheetDurationSecRef.current);
+    const rawPos = useIncoming
+      ? live.incomingPositionSec!
+      : Number.isFinite(live.positionSec)
+        ? live.positionSec
+        : syncClockRef.current.posSec;
+    const clampedPos = Math.max(0, Math.min(effDur, rawPos));
+    const pct = Math.min(100, Math.max(0, (clampedPos / effDur) * 100));
+
+    sheetBarRewindRef.current = null;
+    if (sheetRewindGlowRef.current) {
+      sheetRewindGlowRef.current.style.opacity = '0';
+    }
+    sheetDisplayDurSecRef.current = effDur;
+    setSheetDisplayDurSec(effDur);
+    lastSheetBarPctRef.current = pct;
+    if (sheetFillRef.current) {
+      sheetFillRef.current.style.transform = `translate3d(${(pct - 100).toFixed(4)}%, 0, 0)`;
+    }
+    syncClockRef.current = {
+      posSec: clampedPos,
+      renderedPosSec: clampedPos,
+      trackId: sheetTrackIdRef.current,
+      atMs: now,
+    };
+    lyricClockRef.current = {
+      lastRawPos: clampedPos,
+      lastWallMs: now,
+      smoothedPos: clampedPos,
+      trackId: sheetTrackIdRef.current,
+    };
+    lastWholeSecRef.current = Math.floor(clampedPos);
+    setSmoothPosSec(clampedPos);
+    if (progressTimeRef.current) {
+      progressTimeRef.current.textContent = formatDurationSec(clampedPos);
+    }
+    if (progressRemainRef.current) {
+      progressRemainRef.current.textContent = showRemainingTimeRef.current
+        ? `-${formatDurationSec(Math.max(0, effDur - clampedPos))}`
+        : formatDurationSec(effDur);
+    }
+  }, [isAppHidden, nowPlayingOpen]);
+
+  useEffect(() => {
     if (
       !nowPlayingOpen ||
       !isPlaying ||

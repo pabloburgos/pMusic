@@ -3537,9 +3537,9 @@ html.pm-reduced-motion .pm-heart-liquid-pop {
   }
 }
 
-/* ── Adaptive Soft Charcoal Ink Surface for White / Very Bright Cover Backdrops ── */
+/* ── Adaptive Pure Black Ink Surface for White / Very Bright Cover Backdrops ── */
 .pm-np-light-surface {
-  color: #22242c;
+  color: #000000;
 }
 
 [data-testid="now-playing-sheet"] :is(h1, p, span, button, svg, .pm-indicator-dot, [data-testid="nowplaying-progress-fill"]):not(.pm-hud-dark):not(.pm-hud-dark *):not(.pm-sing-word) {
@@ -3563,23 +3563,23 @@ html.pm-reduced-motion .pm-heart-liquid-pop {
 .pm-np-light-surface h1,
 .pm-np-light-surface [data-testid="nowplaying-play-btn"],
 .pm-np-light-surface [data-testid="focus-lyrics-stage"] {
-  color: #22242c;
+  color: #000000;
 }
 
 .pm-np-light-surface :is(.text-white, .text-white\/95, .text-white\/92, .text-white\/90, .text-white\/85, .text-white\/80, .text-\[\#F5F5F7\], .text-\[\#E5E5EA\]):not(.pm-hud-dark *):not([aria-pressed="true"].bg-white) {
-  color: #22242c !important;
+  color: #000000 !important;
 }
 
 .pm-np-light-surface :is(.text-white\/75, .text-white\/70, .text-white\/65, .text-white\/60, .text-\[\#D4D4E0\], .text-\[\#D1D1DC\]):not(.pm-hud-dark *) {
-  color: rgba(34, 36, 44, 0.72) !important;
+  color: rgba(0, 0, 0, 0.72) !important;
 }
 
 .pm-np-light-surface :is(.text-white\/55, .text-white\/50, .text-white\/40, .text-white\/35, .text-\[\#B4B4BE\], .text-\[\#A1A1AE\]):not(.pm-hud-dark *) {
-  color: rgba(34, 36, 44, 0.54) !important;
+  color: rgba(0, 0, 0, 0.54) !important;
 }
 
 .pm-np-light-surface [data-testid="nowplaying-bottom-nav"] button[aria-pressed="true"] {
-  background-color: #22242c !important;
+  background-color: #000000 !important;
   color: #ffffff !important;
 }
 
@@ -3588,42 +3588,42 @@ html.pm-reduced-motion .pm-heart-liquid-pop {
 }
 
 .pm-np-light-surface :is(.bg-white\/\[0\.06\], .bg-white\/\[0\.08\], .bg-white\/\[0\.10\], .bg-white\/\[0\.12\], .bg-white\/\[0\.16\], .bg-white\/\[0\.18\], .bg-white\/10, .bg-white\/15, .bg-white\/18, .bg-white\/35):not(.pm-hud-dark *):not([data-testid="nowplaying-progress-fill"]):not(.pm-indicator-dot) {
-  background-color: rgba(34, 36, 44, 0.13) !important;
+  background-color: rgba(0, 0, 0, 0.12) !important;
 }
 
 .pm-np-light-surface [data-testid="nowplaying-progress-fill"],
 .pm-np-light-surface .pm-lyric-dot,
 .pm-np-light-surface .pm-indicator-dot {
-  background-color: #22242c !important;
+  background-color: #000000 !important;
 }
 
 .pm-np-light-surface input[type="range"].pm-range-pill::-webkit-slider-runnable-track {
   background: linear-gradient(
     to right,
-    rgba(34, 36, 44, 0.86) var(--pm-fill, 0%),
-    rgba(34, 36, 44, 0.18) var(--pm-fill, 0%)
+    rgba(0, 0, 0, 0.92) var(--pm-fill, 0%),
+    rgba(0, 0, 0, 0.18) var(--pm-fill, 0%)
   ) !important;
 }
 
 .pm-np-light-surface input[type="range"].pm-range-pill::-moz-range-track {
-  background: rgba(34, 36, 44, 0.18) !important;
+  background: rgba(0, 0, 0, 0.18) !important;
 }
 
 .pm-np-light-surface input[type="range"].pm-range-pill::-moz-range-progress {
-  background: rgba(34, 36, 44, 0.86) !important;
+  background: rgba(0, 0, 0, 0.92) !important;
 }
 
 .pm-np-light-surface [data-lyric-state="active"] {
-  color: #22242c !important;
+  color: #000000 !important;
 }
 
 .pm-np-light-surface [data-lyric-state="inactive"] {
-  color: rgba(34, 36, 44, 0.45) !important;
+  color: rgba(0, 0, 0, 0.44) !important;
 }
 
 .pm-np-light-surface .pm-sing-word {
-  color: rgba(34, 36, 44, 0.34);
-  background-image: linear-gradient(90deg, #22242c 0%, #22242c 50%, rgba(34, 36, 44, 0.32) 50.5%, rgba(34, 36, 44, 0.32) 100%);
+  color: rgba(0, 0, 0, 0.32);
+  background-image: linear-gradient(90deg, #000000 0%, #000000 50%, rgba(0, 0, 0, 0.30) 50.5%, rgba(0, 0, 0, 0.30) 100%);
   -webkit-background-clip: text;
   background-clip: text;
 }
@@ -3631,12 +3631,12 @@ html.pm-reduced-motion .pm-heart-liquid-pop {
 .pm-np-light-surface .pm-kinetic-rhyme,
 .pm-np-light-surface .pm-kinetic-punch,
 .pm-np-light-surface .pm-poster-accent {
-  color: #1f222a !important;
+  color: #000000 !important;
   text-shadow: 0 1px 10px rgba(255, 255, 255, 0.45);
 }
 
 .pm-np-light-surface input[type="range"]:not(.pm-hud-dark *) {
-  color: #22242c;
+  color: #000000;
 }
 
 .pm-np-light-surface .text-\[\#FB7185\] {

@@ -173,7 +173,7 @@ import { Client as DiscordRpcClient } from '@xhayper/discord-rpc';
 import type { DiscordPresenceState, DiscordRpcStatus } from '@pmusic/core';
 import { createPMusicApiHandler } from '@pmusic/providers';
 
-const PMUSIC_DESKTOP_VERSION = '0.23.9';
+const PMUSIC_DESKTOP_VERSION = '0.23.10';
 
 function getOtaRootDir(): string {
   return join(app.getPath('userData'), 'ota_web');
@@ -1330,9 +1330,13 @@ async function createMainWindow(): Promise<void> {
     mainWindow?.webContents.send('pmusic:window-visibility', false);
   });
   mainWindow.on('restore', () => {
+    mainWindow?.webContents.setBackgroundThrottling(false);
+    mainWindow?.webContents.invalidate();
     mainWindow?.webContents.send('pmusic:window-visibility', true);
   });
   mainWindow.on('show', () => {
+    mainWindow?.webContents.setBackgroundThrottling(false);
+    mainWindow?.webContents.invalidate();
     mainWindow?.webContents.send('pmusic:window-visibility', true);
   });
   mainWindow.on('enter-full-screen', () => {

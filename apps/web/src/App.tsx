@@ -395,6 +395,11 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
   }, []);
 
   useEffect(() => {
+    if (isAppHidden) {
+      if (dockHeartPhaseTimerRef.current) clearTimeout(dockHeartPhaseTimerRef.current);
+      setDockHeartPhase('idle');
+      return;
+    }
     const cfNow = Boolean(
       isTransitioning &&
         outgoingTransitionTrack &&
@@ -417,7 +422,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     } else if (lastDockCrossfadeIdRef.current && lastDockCrossfadeIdRef.current !== currentTrack.id) {
       lastDockCrossfadeIdRef.current = null;
     }
-  }, [isTransitioning, outgoingTransitionTrack, incomingTransitionTrack, currentTrack.id, reducedMotionPref]);
+  }, [isTransitioning, outgoingTransitionTrack, incomingTransitionTrack, currentTrack.id, reducedMotionPref, isAppHidden]);
 
   useEffect(() => {
     const q = sidebarSearchQuery.trim();
@@ -486,6 +491,17 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
         smoothedPos: clampedPos,
         trackId: currentTrack.id,
       };
+      if (isAppHidden) {
+        if (dockColorWaveTimerRef.current) clearTimeout(dockColorWaveTimerRef.current);
+        dockRecedeRef.current = null;
+        setIsDockReceding(false);
+        setDockColorWave(null);
+        dockClockRef.current.renderedPosSec = clampedPos;
+        lastRenderedPctRef.current = targetPct;
+        applyDockFillTransform(targetPct);
+        setSmoothDockPosSec(clampedPos);
+        return;
+      }
       if (typeof document !== 'undefined' && !reducedMotionPref) {
         const prevColor = getComputedStyle(document.documentElement)
           .getPropertyValue('--pm-ambient-1')
@@ -542,7 +558,77 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
         applyDockFillTransform(targetPct);
       }
     }
-  }, [positionSec, currentTrack.id, isPlaying, isMobileViewport, durationSec, reducedMotionPref]);
+  }, [positionSec, currentTrack.id, isPlaying, isMobileViewport, durationSec, reducedMotionPref, isAppHidden]);
+
+  const prevAppHiddenRef = useRef(isAppHidden);
+  useEffect(() => {
+    const wasHidden = prevAppHiddenRef.current;
+    prevAppHiddenRef.current = isAppHidden;
+    if (isAppHidden) {
+      if (dockColorWaveTimerRef.current) clearTimeout(dockColorWaveTimerRef.current);
+      if (dockHeartPhaseTimerRef.current) clearTimeout(dockHeartPhaseTimerRef.current);
+      dockRecedeRef.current = null;
+      setIsDockReceding(false);
+      setDockColorWave(null);
+      setDockHeartPhase('idle');
+      lastDockCrossfadeIdRef.current = null;
+      return;
+    }
+    if (wasHidden && !isAppHidden) {
+      const now = typeof performance !== 'undefined' ? performance.now() : 0;
+      if (dockColorWaveTimerRef.current) clearTimeout(dockColorWaveTimerRef.current);
+      if (dockHeartPhaseTimerRef.current) clearTimeout(dockHeartPhaseTimerRef.current);
+      dockRecedeRef.current = null;
+      setIsDockReceding(false);
+      setDockColorWave(null);
+      setDockHeartPhase('idle');
+      lastDockCrossfadeIdRef.current = null;
+
+      const live = getLivePlaybackPosition();
+      const stNow = usePMusicStore.getState();
+      const useIncoming = Boolean(
+        live.isTransitioning &&
+          live.transitionProgress01 >= 0.5 &&
+          typeof live.incomingPositionSec === 'number' &&
+          typeof live.incomingDurationSec === 'number' &&
+          live.incomingDurationSec > 0
+      );
+      const effDur = useIncoming
+        ? live.incomingDurationSec!
+        : Math.max(1, live.durationSec || stNow.durationSec || 1);
+      const rawPos = useIncoming
+        ? live.incomingPositionSec!
+        : Number.isFinite(live.positionSec)
+          ? live.positionSec
+          : stNow.positionSec;
+      const clampedPos = Math.max(0, Math.min(effDur, rawPos));
+      const pct = Math.max(0, Math.min(100, (clampedPos / effDur) * 100));
+
+      dockDisplayDurSecRef.current = effDur;
+      setDockDisplayDurSec(effDur);
+      dockClockRef.current = {
+        posSec: clampedPos,
+        renderedPosSec: clampedPos,
+        trackId: stNow.currentTrack.id,
+        atMs: now,
+      };
+      dockExtrapRef.current = {
+        lastRawPos: clampedPos,
+        lastWallMs: now,
+        smoothedPos: clampedPos,
+        trackId: stNow.currentTrack.id,
+      };
+      lastRenderedPctRef.current = pct;
+      applyDockFillTransform(pct);
+      setSmoothDockPosSec(clampedPos);
+      const posLabel = formatDurationSec(clampedPos);
+      const durLabel = formatDurationSec(effDur);
+      if (dockTimeRef.current) dockTimeRef.current.textContent = posLabel;
+      if (classicTimeRef.current) classicTimeRef.current.textContent = posLabel;
+      if (dockDurRef.current) dockDurRef.current.textContent = durLabel;
+      if (classicDurRef.current) classicDurRef.current.textContent = durLabel;
+    }
+  }, [isAppHidden]);
 
   useEffect(() => {
     if ((!isPlaying && !dockRecedeRef.current) || isMobileViewport || isAppHidden || typeof requestAnimationFrame !== 'function') {
@@ -1079,7 +1165,8 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       ? Math.max(0, Math.round(activeTransitionPlan.cueOutSec - liveDockPosSec))
       : null;
   const crossfadePairActive = Boolean(
-    isTransitioning &&
+    !isAppHidden &&
+      isTransitioning &&
       outgoingTransitionTrack &&
       incomingTransitionTrack &&
       outgoingTransitionTrack.id !== incomingTransitionTrack.id

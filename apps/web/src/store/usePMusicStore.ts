@@ -4259,7 +4259,21 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       trimBackdropMemoryCaches();
     } else {
       audioEngine.recoverAfterAppResume();
-      checkLivePlaybackTriggers(audioEngine.getState());
+      const eng = audioEngine.getState();
+      const stNow = get();
+      if (
+        !eng.isTransitioning &&
+        (stNow.outgoingTransitionTrack || stNow.incomingTransitionTrack || stNow.isTransitioning)
+      ) {
+        set({
+          isTransitioning: false,
+          outgoingTransitionTrack: null,
+          incomingTransitionTrack: null,
+          transitionProgress01: 0,
+        });
+      }
+      checkLivePlaybackTriggers(eng);
+      applyAmbientPaletteFromCover(get().currentTrack, 0);
     }
   },
   playFromVoiceQuery: async (query) => {

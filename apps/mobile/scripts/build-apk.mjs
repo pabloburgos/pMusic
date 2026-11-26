@@ -436,8 +436,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="53"
-    android:versionName="0.23.9">
+    android:versionCode="54"
+    android:versionName="0.23.10">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 

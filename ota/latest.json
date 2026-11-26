@@ -1,7 +1,7 @@
 {
-  "version": "0.23.9",
+  "version": "0.23.10",
   "minNativeVersion": "0.23.2",
   "bundleUrl": "https://raw.githubusercontent.com/pabloburgos/pMusic/main/ota/pMusic-web-bundle.zip",
-  "sizeBytes": 1598189,
-  "publishedAt": "2026-11-26T21:09:47.915Z"
+  "sizeBytes": 1598632,
+  "publishedAt": "2026-11-26T21:17:29.696Z"
 }
