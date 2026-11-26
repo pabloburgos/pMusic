@@ -676,7 +676,7 @@ export class HttpProxyMusicProvider implements IMusicProvider {
       // 1. Fast Vercel Release Radar endpoint FIRST (returns 150+ pre-built playable tracks in 1 request across all APK versions)
       try {
         const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-        const timer = ctrl ? setTimeout(() => ctrl.abort(), 5000) : null;
+        const timer = ctrl ? setTimeout(() => ctrl.abort(), 10000) : null;
         const onOuter = () => ctrl?.abort();
         signal?.addEventListener('abort', onOuter, { once: true });
         try {

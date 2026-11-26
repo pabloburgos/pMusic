@@ -5,6 +5,7 @@ import {
   getCachedOfflineCoverUrl,
   resolveOfflineCoverUrl,
 } from '../utils/offline-covers.ts';
+import { optimizeArtworkUrl, type ArtworkSlot } from '../utils/image-opt.ts';
 
 export interface TrackArtworkProps {
   trackId?: string;
@@ -33,6 +34,13 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
 }) => {
   const isOfflineNetwork = usePMusicStore((s) => s.isOfflineNetwork);
   const cleanSrc = (src ?? '').trim();
+  const artworkSlot: ArtworkSlot =
+    variant === 'nowplaying'
+      ? 'nowplaying'
+      : variant === 'card'
+        ? 'card'
+        : 'row';
+  const optimizedSrc = optimizeArtworkUrl(cleanSrc, artworkSlot);
 
   const isEagerVariant = variant === 'nowplaying' || variant === 'mini';
   const effectiveLoading = loading ?? (isEagerVariant ? 'eager' : 'lazy');
@@ -41,7 +49,7 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
     if (cached) return cached;
     if (cleanSrc.startsWith('data:') || cleanSrc.startsWith('blob:')) return cleanSrc;
     if (isOfflineNetwork) return null;
-    return cleanSrc || null;
+    return optimizedSrc || null;
   });
   const [displayedSrc, setDisplayedSrc] = useState<string | null>(resolvedSrc);
   const [failed, setFailed] = useState<boolean>(false);
@@ -115,16 +123,16 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
       };
     }
 
-    // Online fast-path: begin loading immediately while IDB cache check runs in parallel
-    if (!isOfflineNetwork && cleanSrc) {
-      commitSrc(cleanSrc);
+    // Online fast-path: begin loading immediately with bandwidth-optimized CDN dimensions while IDB cache check runs in parallel
+    if (!isOfflineNetwork && optimizedSrc) {
+      commitSrc(optimizedSrc);
     }
 
     void resolveOfflineCoverUrl(trackId, cleanSrc).then((idbUrl) => {
       if (!active) return;
       if (idbUrl) {
         commitSrc(idbUrl);
-      } else if (isOfflineNetwork || !cleanSrc) {
+      } else if (isOfflineNetwork || !optimizedSrc) {
         commitSrc(null);
       }
     });
@@ -132,7 +140,7 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
     return () => {
       active = false;
     };
-  }, [trackId, cleanSrc, isOfflineNetwork, isEagerVariant, onUnavailableChange]);
+  }, [trackId, cleanSrc, optimizedSrc, isOfflineNetwork, isEagerVariant, onUnavailableChange]);
 
   const handleImgError = () => {
     void resolveOfflineCoverUrl(trackId, cleanSrc).then((idbUrl) => {
@@ -190,6 +198,7 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
         src={renderSrc}
         alt={alt}
         loading={effectiveLoading}
+        decoding="async"
         draggable={draggable}
         onError={handleImgError}
         className={imgClassName}

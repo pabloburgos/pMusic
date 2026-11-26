@@ -9,6 +9,18 @@ import { SettingsModal } from '../components/SettingsModal.tsx';
 import { TrackArtwork } from '../components/TrackArtwork.tsx';
 import { compareSemver } from '../utils/app-updater.ts';
 import { shouldUseDarkInkOnBackdrop } from '../utils/cover-color.ts';
+import { optimizeArtworkUrl } from '../utils/image-opt.ts';
+import {
+  evolveDailyPlaylistForNewDay,
+  getLocalDayKey,
+  getRollingDaysAgoIso,
+  mergeCloudEditorialMixes,
+  mergeIncrementalDescubrePool,
+  mergeProtectedEditorialShelves,
+  readPersistedArtistCache,
+  toCompactSyncedTrack,
+  writePersistedArtistCache,
+} from '../utils/editorial-cache.ts';
 import { usePMusicStore } from '../store/usePMusicStore.ts';
 import type { PlaylistRecord, Track } from '@pmusic/core';
 
@@ -456,5 +468,170 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
         backdropStyle: 'pulse',
       })
     ).toBe(true);
+  });
+
+  it('optimizes CDN artwork URLs for cellular data, uses GPU crossfade without ImageData loops, and polishes charcoal dark ink + dots + volume bar', () => {
+    const dz1000 = 'https://cdn-images.dzcdn.net/images/cover/abc123/1000x1000-000000-80-0-0.jpg';
+    expect(optimizeArtworkUrl(dz1000, 'row', true)).toBe(
+      'https://cdn-images.dzcdn.net/images/cover/abc123/120x120-000000-75-0-0.jpg'
+    );
+    expect(optimizeArtworkUrl(dz1000, 'card', true)).toBe(
+      'https://cdn-images.dzcdn.net/images/cover/abc123/250x250-000000-80-0-0.jpg'
+    );
+    expect(optimizeArtworkUrl(dz1000, 'banner', true)).toBe(
+      'https://cdn-images.dzcdn.net/images/cover/abc123/500x500-000000-80-0-0.jpg'
+    );
+    expect(optimizeArtworkUrl(dz1000, 'banner', false)).toBe(
+      'https://cdn-images.dzcdn.net/images/cover/abc123/1000x1000-000000-80-0-0.jpg'
+    );
+
+    const ytmBanner = 'https://lh3.googleusercontent.com/xyz987=w1440-h600-p-l90-rj';
+    expect(optimizeArtworkUrl(ytmBanner, 'banner', true)).toBe(
+      'https://lh3.googleusercontent.com/xyz987=w800-h400-p-l80-rj'
+    );
+    // Untouched non-CDN URL
+    expect(optimizeArtworkUrl('https://example.com/thumb.jpg', 'row', true)).toBe(
+      'https://example.com/thumb.jpg'
+    );
+
+    const inkSrc = readFileSync(
+      resolve(__dirname, '../components/InkBleedCoverTransition.tsx'),
+      'utf-8'
+    );
+    expect(inkSrc).not.toContain('putImageData');
+    expect(inkSrc).not.toContain('buildInkField');
+
+    const cssSrc = readFileSync(resolve(__dirname, '../styles/index.css'), 'utf-8');
+    expect(cssSrc).toContain('#22242c');
+    expect(cssSrc).toContain('.pm-indicator-dot');
+    expect(cssSrc).toContain('.pm-np-light-surface input[type="range"].pm-range-pill');
+    expect(cssSrc).toContain('--pm-ink-transition-ms');
+  });
+
+  it('maintains incremental 15-day Descubre pool, locks 24h Daily Mix/Discover, evolves across days, syncs cloud mixes, and caches artists', () => {
+    const today = new Date();
+    const todayIso = getLocalDayKey(today.getTime());
+    const threeDaysAgo = getRollingDaysAgoIso(3, today);
+    const twentyDaysAgo = getRollingDaysAgoIso(20, today);
+    const yesterdayIso = getRollingDaysAgoIso(1, today);
+
+    const tFreshKept = { ...makeTrack(501), id: 'dz_kept', releaseDate: threeDaysAgo };
+    const tExpired = { ...makeTrack(502), id: 'dz_old', releaseDate: twentyDaysAgo };
+    const tNewAdded = { ...makeTrack(503), id: 'dz_new', title: 'Nuevo Tema', artists: [{ name: 'Quevedo' }], releaseDate: todayIso };
+
+    const mergedPool = mergeIncrementalDescubrePool(
+      [toCompactSyncedTrack(tFreshKept, threeDaysAgo), toCompactSyncedTrack(tExpired, twentyDaysAgo)],
+      [tNewAdded],
+      today,
+      ['Quevedo']
+    );
+    expect(mergedPool.some((t) => t.id === 'dz_old')).toBe(false);
+    expect(mergedPool.some((t) => t.id === 'dz_kept')).toBe(true);
+    expect(mergedPool[0]?.id).toBe('dz_new');
+
+    const thirtyPrev = Array.from({ length: 40 }, (_, i) =>
+      toCompactSyncedTrack({ ...makeTrack(600 + i), id: `dm_prev_${i}` })
+    );
+    const fortyFresh = Array.from({ length: 40 }, (_, i) => ({
+      ...makeTrack(700 + i),
+      id: `dm_fresh_${i}`,
+    }));
+
+    // Same calendar day stays 100% locked identical
+    const lockedSameDay = evolveDailyPlaylistForNewDay(
+      { dayKey: todayIso, generatedAt: 1000, subtitle: 'Today Mix', tracks: thirtyPrev },
+      fortyFresh,
+      'Fresh Sub',
+      todayIso,
+      0.65
+    );
+    expect(lockedSameDay.tracks.map((t) => t.id)).toEqual(thirtyPrev.map((t) => t.id));
+
+    // Cellular failure (<15 tracks) must NOT overwrite existing healthy 40-track mix even on a new day
+    const protectedWeak = mergeProtectedEditorialShelves(
+      [
+        {
+          id: 'sh_mixes',
+          kind: 'mixes_for_you',
+          title: 'Mixes para ti',
+          mixes: [
+            {
+              id: 'mix_descubre_lo_nuevo',
+              title: 'Descubre lo Nuevo',
+              subtitle: '',
+              badge: 'ÚLTIMOS 15 DÍAS',
+              coverUrl: '',
+              accentColor: '#fff',
+              tracks: thirtyPrev.map((c) => ({ ...c, source: 'ytmusic' })),
+            },
+          ],
+        },
+      ],
+      [
+        {
+          id: 'sh_mixes',
+          kind: 'mixes_for_you',
+          title: 'Mixes para ti',
+          mixes: [
+            {
+              id: 'mix_descubre_lo_nuevo',
+              title: 'Descubre lo Nuevo',
+              subtitle: '',
+              badge: 'ÚLTIMOS 15 DÍAS',
+              coverUrl: '',
+              accentColor: '#fff',
+              tracks: [makeTrack(999)],
+            },
+          ],
+        },
+      ]
+    );
+    expect(protectedWeak[0]?.mixes?.[0]?.tracks.length).toBe(40);
+
+    // New day rotates ~35% fresh tracks while retaining ~65% continuity
+    const evolvedNewDay = evolveDailyPlaylistForNewDay(
+      { dayKey: yesterdayIso, generatedAt: 1000, subtitle: 'Yesterday', tracks: thirtyPrev },
+      fortyFresh,
+      'Today Evolved',
+      todayIso,
+      0.65
+    );
+    expect(evolvedNewDay.dayKey).toBe(todayIso);
+    expect(evolvedNewDay.tracks.some((t) => t.id.startsWith('dm_prev_'))).toBe(true);
+    expect(evolvedNewDay.tracks.some((t) => t.id.startsWith('dm_fresh_'))).toBe(true);
+
+    // Cloud merge combines Descubre tracks from both devices and picks today's locked Daily Mix
+    const cloudMerged = mergeCloudEditorialMixes(
+      {
+        version: 1,
+        ownerUserId: 'u1',
+        updatedAt: 2000,
+        descubre: { lastScanAt: 2000, lastScanDay: todayIso, tracks: [toCompactSyncedTrack(tFreshKept)] },
+        dailyMix: { dayKey: yesterdayIso, generatedAt: 1000, subtitle: 'Old', tracks: thirtyPrev },
+        dailyDiscover: null,
+      },
+      {
+        version: 1,
+        ownerUserId: 'u1',
+        updatedAt: 2500,
+        descubre: { lastScanAt: 2500, lastScanDay: todayIso, tracks: [toCompactSyncedTrack(tNewAdded)] },
+        dailyMix: { dayKey: todayIso, generatedAt: 2500, subtitle: 'Today PC', tracks: thirtyPrev },
+        dailyDiscover: null,
+      },
+      today,
+      ['Quevedo']
+    );
+    expect(cloudMerged?.descubre.tracks.length).toBe(2);
+    expect(cloudMerged?.dailyMix?.dayKey).toBe(todayIso);
+
+    // Persisted artist detail cache round-trips cleanly
+    writePersistedArtistCache('artist:6705223', {
+      artist: { id: '6705223', name: 'Quevedo', thumbnailUrl: 'https://example.com/q.jpg' },
+      topSongs: [tNewAdded],
+      albums: [],
+      singles: [],
+      relatedArtists: [],
+    });
+    expect(readPersistedArtistCache('artist:6705223')?.data.artist.name).toBe('Quevedo');
   });
 });

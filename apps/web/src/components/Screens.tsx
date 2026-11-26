@@ -62,6 +62,7 @@ import {
 import { ArtistLinks } from './ArtistLinks.tsx';
 import { TrackArtwork } from './TrackArtwork.tsx';
 import { RoundedPauseIcon, RoundedPlayIcon } from './TransportIcons.tsx';
+import { optimizeArtworkUrl } from '../utils/image-opt.ts';
 
 function getSpanishGreeting(): string {
   const hour = new Date().getHours();
@@ -469,9 +470,10 @@ const CoverCard: React.FC<{
           }`}
         >
           <img
-            src={image}
+            src={optimizeArtworkUrl(image, round ? 'avatar' : 'card')}
             alt={title}
             loading="lazy"
+            decoding="async"
             className={`pm-elevated aspect-square w-full object-cover shadow-[0_10px_24px_rgba(0,0,0,0.42)] ring-1 ring-white/[0.08] transition-transform duration-300 ease-out group-hover:scale-[1.04] ${
               round ? 'rounded-full object-[50%_20%]' : 'rounded-[12px] sm:rounded-[8px]'
             }`}
@@ -646,6 +648,7 @@ export const DetailViewPanel: React.FC = () => {
   const [artistStickyVisible, setArtistStickyVisible] = useState(false);
   const [artistHeaderRgb, setArtistHeaderRgb] = useState<RgbTriple | null>(null);
   const [heroCandidateIdx, setHeroCandidateIdx] = useState(0);
+  const [heroLoadedUrl, setHeroLoadedUrl] = useState<string | null>(null);
   const recTrackIdsRef = useRef<{ plId: string; ids: Set<string> }>({
     plId: '',
     ids: new Set(),
@@ -664,13 +667,18 @@ export const DetailViewPanel: React.FC = () => {
     setArtistStickyVisible(false);
     setArtistHeaderRgb(null);
     setHeroCandidateIdx(0);
+    setHeroLoadedUrl(null);
   }, [activeArtistDetailId]);
 
   useEffect(() => {
     setHeroCandidateIdx(0);
+    setHeroLoadedUrl(null);
     if (!activeArtistDetailId) return;
     let cancelled = false;
-    void extractCharacteristicImageColor([activeArtistBannerUrl, activeArtistThumbUrl]).then((rgb) => {
+    void extractCharacteristicImageColor([
+      optimizeArtworkUrl(activeArtistBannerUrl, 'row'),
+      optimizeArtworkUrl(activeArtistThumbUrl, 'row'),
+    ]).then((rgb) => {
       if (!cancelled && rgb) setArtistHeaderRgb(rgb);
     });
     return () => {
@@ -817,7 +825,11 @@ export const DetailViewPanel: React.FC = () => {
       new Set([bannerUrl, artist.thumbnailUrl].filter(isValidHeroUrl))
     );
     const activeHeroImage = heroCandidates[heroCandidateIdx] ?? null;
-    const hasHeroPhoto = Boolean(activeHeroImage);
+    const optimizedHeroUrl = activeHeroImage ? optimizeArtworkUrl(activeHeroImage, 'banner') : null;
+    const lowResHeroPlaceholder = artist.thumbnailUrl
+      ? optimizeArtworkUrl(artist.thumbnailUrl, 'row')
+      : null;
+    const hasHeroPhoto = Boolean(optimizedHeroUrl || lowResHeroPlaceholder);
 
     const allReleases = [
       ...albums.map((al) => ({ ...al, releaseKind: 'Álbum' as const })),
@@ -1001,18 +1013,30 @@ export const DetailViewPanel: React.FC = () => {
               : 'relative -mx-4 flex min-h-0 flex-col justify-end overflow-hidden bg-[var(--pm-bg-canvas)] px-5 pt-[calc(4.7rem+var(--pm-safe-top,env(safe-area-inset-top)))] pb-3 sm:-mx-7 sm:px-7 sm:pt-7 sm:pb-3'
           }
         >
-          {activeHeroImage && (
+          {(optimizedHeroUrl || lowResHeroPlaceholder) && (
             <>
-              <img
-                src={activeHeroImage}
-                alt=""
-                aria-hidden="true"
-                referrerPolicy="no-referrer"
-                decoding="async"
-                fetchPriority="high"
-                onError={() => setHeroCandidateIdx((i) => i + 1)}
-                className="pointer-events-none absolute inset-0 h-full w-full scale-[1.02] object-cover object-[50%_22%]"
-              />
+              {lowResHeroPlaceholder && heroLoadedUrl !== optimizedHeroUrl && (
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 h-full w-full scale-110 bg-cover bg-[50%_22%] blur-xl opacity-80"
+                  style={{ backgroundImage: `url("${lowResHeroPlaceholder}")` }}
+                />
+              )}
+              {optimizedHeroUrl && (
+                <img
+                  src={optimizedHeroUrl}
+                  alt=""
+                  aria-hidden="true"
+                  referrerPolicy="no-referrer"
+                  decoding="async"
+                  fetchPriority="high"
+                  onLoad={() => setHeroLoadedUrl(optimizedHeroUrl)}
+                  onError={() => setHeroCandidateIdx((i) => i + 1)}
+                  className={`pointer-events-none absolute inset-0 h-full w-full scale-[1.02] object-cover object-[50%_22%] transition-opacity duration-300 ${
+                    heroLoadedUrl === optimizedHeroUrl || !lowResHeroPlaceholder ? 'opacity-100' : 'opacity-0'
+                  }`}
+                />
+              )}
               <div
                 aria-hidden="true"
                 className="pointer-events-none absolute inset-0"
@@ -1178,8 +1202,10 @@ export const DetailViewPanel: React.FC = () => {
                         className="pm-surface-card pm-card-lift group flex w-full items-center gap-4 rounded-[18px] p-4 text-left"
                       >
                         <img
-                          src={latestRelease.thumbnailUrl}
+                          src={optimizeArtworkUrl(latestRelease.thumbnailUrl, 'card')}
                           alt={latestRelease.title}
+                          loading="lazy"
+                          decoding="async"
                           className="h-24 w-24 shrink-0 rounded-[12px] object-cover shadow-lg transition-transform duration-300 group-hover:scale-[1.04]"
                         />
                         <div className="min-w-0 flex-1 space-y-1">
@@ -1215,8 +1241,10 @@ export const DetailViewPanel: React.FC = () => {
                           className="pm-surface-card pm-card-lift group flex w-full items-center gap-4 rounded-[18px] p-4 text-left"
                         >
                           <img
-                            src={latestAppearance.thumbnailHighUrl ?? latestAppearance.thumbnailUrl}
+                            src={optimizeArtworkUrl(latestAppearance.thumbnailUrl, 'card')}
                             alt={latestAppearance.title}
+                            loading="lazy"
+                            decoding="async"
                             className="h-24 w-24 shrink-0 rounded-[12px] object-cover shadow-lg transition-transform duration-300 group-hover:scale-[1.04]"
                           />
                           <div className="min-w-0 flex-1 space-y-1">
@@ -1251,8 +1279,10 @@ export const DetailViewPanel: React.FC = () => {
                             className="pm-surface-card pm-card-lift group flex w-full items-center gap-4 rounded-[18px] p-4 text-left"
                           >
                             <img
-                              src={latestRelease.thumbnailUrl}
+                              src={optimizeArtworkUrl(latestRelease.thumbnailUrl, 'card')}
                               alt={latestRelease.title}
+                              loading="lazy"
+                              decoding="async"
                               className="h-24 w-24 shrink-0 rounded-[12px] object-cover shadow-lg transition-transform duration-300 group-hover:scale-[1.04]"
                             />
                             <div className="min-w-0 flex-1 space-y-1">

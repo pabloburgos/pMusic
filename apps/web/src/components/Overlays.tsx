@@ -78,6 +78,7 @@ import {
 } from '../platform/web-bridge.ts';
 import { getThemeDefinition } from '../utils/themes.ts';
 import {
+  animateAmbientPaletteFromCover,
   getCachedPaletteCss,
   getLiveCoverBrightness,
   getPrebakedMobileBackdrop,
@@ -266,7 +267,6 @@ export const NowPlayingSheet: React.FC = () => {
     durationSec,
     volume,
     isTransitioning,
-    transitionProgress01,
     transitionDurationSec,
     djMode,
     activeTransitionPlan,
@@ -662,6 +662,15 @@ export const NowPlayingSheet: React.FC = () => {
   cfActiveBackdropRef.current = cfActiveBackdrop;
   const cfDurBackdropSecRef = useRef<number>(cfDurBackdropSec);
   cfDurBackdropSecRef.current = cfDurBackdropSec;
+
+  useEffect(() => {
+    if (cfActiveBackdrop && incomingTransitionTrack) {
+      animateAmbientPaletteFromCover(
+        incomingTransitionTrack,
+        Math.round(cfDurBackdropSecRef.current * 1000)
+      );
+    }
+  }, [cfActiveBackdrop, incomingTransitionTrack]);
 
   // Prefetch next queued track cover into backdrop & prebaked cache so crossfades start at t=0 with zero snap
   const nextQueuedTrack = queue[queueIndex + 1] ?? recommendedQueue[0] ?? null;
@@ -1774,7 +1783,7 @@ export const NowPlayingSheet: React.FC = () => {
           {shuffleEnabled && (
             <span
               aria-hidden="true"
-              className="absolute bottom-0.5 h-1 w-1 rounded-full bg-white"
+              className="pm-indicator-dot absolute bottom-0.5 h-1 w-1 rounded-full bg-white"
             />
           )}
         </button>
@@ -1871,7 +1880,7 @@ export const NowPlayingSheet: React.FC = () => {
           {repeatMode !== 'off' && (
             <span
               aria-hidden="true"
-              className="absolute bottom-0.5 h-1 w-1 rounded-full bg-white"
+              className="pm-indicator-dot absolute bottom-0.5 h-1 w-1 rounded-full bg-white"
             />
           )}
         </button>
@@ -1917,11 +1926,16 @@ export const NowPlayingSheet: React.FC = () => {
       aria-label="Reproduciendo ahora"
       data-testid="now-playing-sheet"
       data-light-backdrop={isLightBackdrop ? 'true' : 'false'}
+      style={
+        {
+          '--pm-ink-transition-ms': `${cfActiveBackdrop ? Math.round(cfDurBackdropSec * 1000) : 650}ms`,
+        } as React.CSSProperties
+      }
       onScroll={(e) => {
         if (e.currentTarget.scrollTop !== 0) e.currentTarget.scrollTop = 0;
         if (e.currentTarget.scrollLeft !== 0) e.currentTarget.scrollLeft = 0;
       }}
-      className={`pm-sheet-spring-in pm-dark-sliders fixed inset-0 z-50 flex h-dvh w-screen flex-col overflow-hidden bg-[#070709] text-[#F5F5F7] transition-colors duration-500 ${
+      className={`pm-sheet-spring-in pm-dark-sliders fixed inset-0 z-50 flex h-dvh w-screen flex-col overflow-hidden bg-[#070709] text-[#F5F5F7] ${
         isLightBackdrop ? 'pm-np-light-surface' : ''
       }`}
     >
@@ -2030,7 +2044,7 @@ export const NowPlayingSheet: React.FC = () => {
               isPlaying={isPlaying}
               ambientMotionEnabled={ambientMotionEnabled}
               reducedMotionPref={reducedMotionPref}
-              throttleFps={nowPlayingTab === 'Cola'}
+              throttleFps={nowPlayingTab === 'Cola' || cfActiveBackdrop}
             />
           </div>
         )}
@@ -2353,7 +2367,7 @@ export const NowPlayingSheet: React.FC = () => {
                   <div
                     key={`lyrics-body-${currentTrack.id}`}
                     style={{
-                      opacity: cfActive && transitionProgress01 > 0.35 && transitionProgress01 < 0.58 ? 0.55 : 1,
+                      opacity: cfActive ? 0.86 : 1,
                       transition: 'opacity 320ms ease',
                     }}
                     className={

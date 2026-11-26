@@ -1268,7 +1268,7 @@ export class RecommendationEngine implements IRecommendationEngine {
           this.musicProvider!.getRelated(t.id, signal)
         ),
         typeof this.musicProvider.getReleaseRadar === 'function'
-          ? withTimeout(this.musicProvider.getReleaseRadar(signal), 8000).then((r) => r ?? [])
+          ? withTimeout(this.musicProvider.getReleaseRadar(signal), 12000).then((r) => r ?? [])
           : Promise.resolve([] as ExternalReleaseCandidate[]),
       ]);
 

@@ -1766,10 +1766,11 @@ export class DeezerCatalog {
     };
 
     try {
+      const ytmStartedAt = Date.now();
       const searchJson = await ytmPost('search', {
         query: cleanName,
         params: 'EgWKAQIgAWoMEAMQBBAJEAoQBRAV',
-      }, 1700);
+      }, 1150);
       if (!searchJson) return null;
 
       const items = collectObjectsByKey(searchJson, 'musicResponsiveListItemRenderer');
@@ -1829,7 +1830,7 @@ export class DeezerCatalog {
         return searchAvatarUrl ? { avatarUrl: searchAvatarUrl } : null;
       }
 
-      const browseJson = await ytmPost('browse', { browseId }, 1700);
+      const browseJson = await ytmPost('browse', { browseId }, 1150);
       const header =
         browseJson?.header?.musicImmersiveHeaderRenderer ??
         browseJson?.header?.musicVisualHeaderRenderer ??
@@ -1881,11 +1882,11 @@ export class DeezerCatalog {
         if (moreId) moreBrowseIds.add(moreId);
       }
 
-      if (moreBrowseIds.size > 0) {
+      if (moreBrowseIds.size > 0 && Date.now() - ytmStartedAt < 1300) {
         const moreResults = await Promise.allSettled(
           Array.from(moreBrowseIds)
             .slice(0, 2)
-            .map((mid) => ytmPost('browse', { browseId: mid }, 1000))
+            .map((mid) => ytmPost('browse', { browseId: mid }, 750))
         );
         for (const r of moreResults) {
           if (r.status !== 'fulfilled' || !r.value) continue;
@@ -1987,7 +1988,7 @@ export class DeezerCatalog {
           mergedRawTop.map((t: Json) => this.mapTrack(t)),
           6,
           signal,
-          1000
+          700
         );
       });
 
@@ -2009,18 +2010,18 @@ export class DeezerCatalog {
             )
             .catch(() => '');
 
-      const appearancesPromise = (async (): Promise<Track[]> => {
+      const rawAppearancesPromise = (async (): Promise<Track[]> => {
         try {
           const targetName = (await lookupNamePromise).trim();
           if (!targetName) return [];
           const searchQ = targetName === 'Cruzzi' ? 'Cruz Cafuné' : targetName;
           const searchController = new AbortController();
-          const timer = setTimeout(() => searchController.abort(), 2800);
+          const timer = setTimeout(() => searchController.abort(), 1600);
           const onOuterAbort = () => searchController.abort();
           signal?.addEventListener('abort', onOuterAbort, { once: true });
 
           const itunesController = new AbortController();
-          const itunesTimer = setTimeout(() => itunesController.abort(), 1800);
+          const itunesTimer = setTimeout(() => itunesController.abort(), 1200);
           const onOuterItunes = () => itunesController.abort();
           signal?.addEventListener('abort', onOuterItunes, { once: true });
 
@@ -2130,11 +2131,22 @@ export class DeezerCatalog {
                   .replace(/\s*\((?:feat\.?|ft\.?|with|con)\b[^)]*\)/gi, '')
                   .trim();
                 const firstArtist = it.artistName.split(/\s*(?:,|&|\bx\b)\s*/i)[0]?.trim() ?? '';
-                const r = await this.get(
-                  `/search/track?q=${encodeURIComponent(`${firstArtist} ${cleanTitle}`)}&limit=3`,
-                  signal
-                );
-                return Array.isArray(r?.data) ? (r.data as Json[]) : [];
+                const subCtrl = new AbortController();
+                const subTimer = setTimeout(() => subCtrl.abort(), 900);
+                const onOuterSub = () => subCtrl.abort();
+                signal?.addEventListener('abort', onOuterSub, { once: true });
+                try {
+                  const r = await this.get(
+                    `/search/track?q=${encodeURIComponent(`${firstArtist} ${cleanTitle}`)}&limit=3`,
+                    subCtrl.signal
+                  );
+                  return Array.isArray(r?.data) ? (r.data as Json[]) : [];
+                } catch {
+                  return [] as Json[];
+                } finally {
+                  clearTimeout(subTimer);
+                  signal?.removeEventListener('abort', onOuterSub);
+                }
               })
             );
             const seenRawIds = new Set(rawHits.map((t) => String(t?.id ?? '')));
@@ -2171,7 +2183,7 @@ export class DeezerCatalog {
             candidates.map((t) => this.mapTrack(t)),
             8,
             signal,
-            2000
+            900
           );
 
           const itunesDateByTitle = new Map<string, string>();
@@ -2225,6 +2237,11 @@ export class DeezerCatalog {
           return [];
         }
       })();
+
+      const appearancesPromise = Promise.race([
+        rawAppearancesPromise,
+        new Promise<Track[]>((resolve) => setTimeout(() => resolve([]), 2200)),
+      ]);
 
       const [a, topSongs, mergedRawReleases, related, ytmVisuals, appearances] =
         await Promise.all([

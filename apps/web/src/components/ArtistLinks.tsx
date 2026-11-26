@@ -24,6 +24,7 @@ export const ArtistLinks: React.FC<ArtistLinksProps> = ({
   singleLine = true,
 }) => {
   const openArtistDetail = usePMusicStore((s) => s.openArtistDetail);
+  const prefetchArtistDetail = usePMusicStore((s) => s.prefetchArtistDetail);
 
   const list = artists.length > 0 ? artists : [{ name: 'Artista' }];
 
@@ -43,6 +44,12 @@ export const ArtistLinks: React.FC<ArtistLinksProps> = ({
               role="link"
               tabIndex={0}
               aria-label={`Ir al artista ${artist.name}`}
+              onMouseEnter={() => {
+                if (target) prefetchArtistDetail(target, { name: artist.name });
+              }}
+              onTouchStart={() => {
+                if (target) prefetchArtistDetail(target, { name: artist.name });
+              }}
               onClick={(e) => {
                 if (stopPropagation) e.stopPropagation();
                 onBeforeNavigate?.();

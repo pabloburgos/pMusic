@@ -6,6 +6,27 @@ import {
   saveOfflineCover,
 } from '../utils/offline-covers.ts';
 import {
+  DESCUBRE_RESCAN_INTERVAL_MS,
+  DETAIL_STALE_REFRESH_MS,
+  applySyncedMixesToShelves,
+  evolveDailyPlaylistForNewDay,
+  getLocalDayKey,
+  getRollingDaysAgoIso,
+  hasHealthyDailyMixes,
+  mergeCloudEditorialMixes,
+  mergeIncrementalDescubrePool,
+  mergeProtectedEditorialShelves,
+  readPersistedAlbumCache,
+  readPersistedArtistCache,
+  readSyncedEditorialMixes,
+  toCompactSyncedTrack,
+  writePersistedAlbumCache,
+  writePersistedArtistCache,
+  writeSyncedEditorialMixes,
+  type SyncedEditorialMixesState,
+} from '../utils/editorial-cache.ts';
+import { optimizeArtworkUrl } from '../utils/image-opt.ts';
+import {
   DEFAULT_DJ_MODE_CONFIG,
   DEFAULT_SAFE_CROSSFADE_CONFIG,
   DEFAULT_SPANISH_URBAN_SEEDS,
@@ -219,6 +240,7 @@ export type ActiveDetailView =
 const DETAIL_CLIENT_CACHE_TTL_MS = 15 * 60_000;
 const artistClientCache = new Map<string, { at: number; data: ArtistDetail }>();
 const albumClientCache = new Map<string, { at: number; data: AlbumDetail }>();
+const inFlightArtistPrefetch = new Set<string>();
 let detailRequestSeq = 0;
 
 function readClientCache<T>(map: Map<string, { at: number; data: T }>, key: string): T | null {
@@ -529,7 +551,7 @@ function canonicalizeTrackArtists(track: Track): Track {
 }
 
 const HOME_SHELVES_CACHE_KEY = 'pmusic_home_shelves_cache_v3';
-const HOME_SHELVES_CACHE_TTL_MS = 30 * 60 * 1000;
+const HOME_SHELVES_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 interface CachedHomeShelvesEntry {
   ownerUserId: string | null;
@@ -668,7 +690,7 @@ async function preloadTopHomeCovers(shelves: HomeEditorialShelf[]): Promise<void
   const seen = new Set<string>();
   for (const shelf of shelves) {
     for (const t of shelf.tracks ?? []) {
-      const u = t.thumbnailUrl;
+      const u = optimizeArtworkUrl(t.thumbnailUrl, 'row');
       if (u && !seen.has(u)) {
         seen.add(u);
         urls.push(u);
@@ -1161,6 +1183,10 @@ export interface PMusicStoreState {
     artistId: string,
     hint?: { name?: string; thumbnailUrl?: string }
   ) => Promise<void>;
+  prefetchArtistDetail: (
+    artistId: string,
+    hint?: { name?: string; thumbnailUrl?: string }
+  ) => void;
   openAlbumDetail: (
     albumId: string,
     hint?: { title?: string; artist?: string; thumbnailUrl?: string }
@@ -2756,6 +2782,87 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }
   }
 
+  let activeEditorialMixesState: SyncedEditorialMixesState | null = null;
+
+  function syncEditorialMixesFromShelves(
+    shelves: HomeEditorialShelf[],
+    ownerKey: string | null,
+    opts?: { forceReset?: boolean; markDescubreScan?: boolean }
+  ): HomeEditorialShelf[] {
+    const todayKey = getLocalDayKey();
+    const favNames = get().favoriteArtists.map((fa) => fa.artistName);
+    const mixes = shelves.flatMap((s) => s.mixes ?? []);
+    const dlnMix = mixes.find((m) => m.id === 'mix_descubre_lo_nuevo');
+    const dmMix = mixes.find((m) => m.id === 'mix_daily_mix');
+    const ddMix = mixes.find((m) => m.id === 'mix_daily_discover');
+
+    const prev = opts?.forceReset ? null : activeEditorialMixesState ?? readSyncedEditorialMixes(ownerKey);
+    const nextDescubreTracks = mergeIncrementalDescubrePool(
+      prev?.descubre?.tracks ?? [],
+      dlnMix?.tracks ?? [],
+      new Date(),
+      favNames
+    );
+    const prevDm = prev?.dailyMix;
+    const prevDd = prev?.dailyDiscover;
+    const nextDailyMix = dmMix
+      ? evolveDailyPlaylistForNewDay(prevDm, dmMix.tracks ?? [], dmMix.subtitle ?? '', todayKey, 0.65)
+      : prevDm ?? null;
+    const nextDailyDiscover = ddMix
+      ? evolveDailyPlaylistForNewDay(prevDd, ddMix.tracks ?? [], ddMix.subtitle ?? '', todayKey, 0.6)
+      : prevDd ?? null;
+
+    const nowMs = Date.now();
+    const nextState: SyncedEditorialMixesState = {
+      version: 1,
+      ownerUserId: ownerKey,
+      updatedAt: nowMs,
+      descubre: {
+        lastScanAt: opts?.markDescubreScan ? nowMs : prev?.descubre?.lastScanAt ?? nowMs,
+        lastScanDay: opts?.markDescubreScan ? todayKey : prev?.descubre?.lastScanDay ?? todayKey,
+        tracks:
+          nextDescubreTracks.length > 0
+            ? nextDescubreTracks
+            : (dlnMix?.tracks ?? []).slice(0, 50).map((t) => toCompactSyncedTrack(t, todayKey)),
+      },
+      dailyMix: nextDailyMix,
+      dailyDiscover: nextDailyDiscover,
+    };
+    activeEditorialMixesState = nextState;
+    writeSyncedEditorialMixes(nextState);
+    return applySyncedMixesToShelves(shelves, nextState);
+  }
+
+  function feedPassiveDescubreTracks(candidateTracks: readonly Track[], ownerKey: string | null): void {
+    const cutoff15 = getRollingDaysAgoIso(15);
+    const freshOnes = candidateTracks.filter((t) => t.releaseDate && t.releaseDate >= cutoff15);
+    if (freshOnes.length === 0) return;
+
+    const prev = activeEditorialMixesState ?? readSyncedEditorialMixes(ownerKey);
+    if (!prev) return;
+
+    const prevIds = prev.descubre.tracks.map((t) => t.id).join('|');
+    const favNames = get().favoriteArtists.map((fa) => fa.artistName);
+    const mergedTracks = mergeIncrementalDescubrePool(prev.descubre.tracks, freshOnes, new Date(), favNames);
+    const nextIds = mergedTracks.map((t) => t.id).join('|');
+    if (mergedTracks.length === 0 || prevIds === nextIds) return;
+
+    const nextState: SyncedEditorialMixesState = {
+      ...prev,
+      updatedAt: Date.now(),
+      descubre: {
+        ...prev.descubre,
+        tracks: mergedTracks,
+      },
+    };
+    activeEditorialMixesState = nextState;
+    writeSyncedEditorialMixes(nextState);
+    const updatedShelves = applySyncedMixesToShelves(get().homeShelves, nextState);
+    saveCachedHomeShelves(updatedShelves, ownerKey);
+    set({ homeShelves: updatedShelves });
+    persistPrefsFromStore();
+  }
+
   function flushCloudPrefsNow(): void {
     if (!pendingCloudPrefsPayload || !get().authState.connected) return;
     if (cloudPrefsSaveTimer) {
@@ -2822,6 +2929,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       playlistAppearances: st.playlistAppearances,
       playlistPlayCounts: st.playlistPlayCounts,
       tasteProfile,
+      ...(activeEditorialMixesState ? { editorialMixes: activeEditorialMixesState } : {}),
     };
     const compactJson = JSON.stringify(payload);
     void defaultPlatformBridge.preferencesStorage
@@ -3003,6 +3111,21 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           (a) => Boolean(a?.artistId && a?.artistName)
         )
       );
+    }
+    if (prefs.editorialMixes && typeof prefs.editorialMixes === 'object') {
+      const mergedMixes = mergeCloudEditorialMixes(
+        activeEditorialMixesState ?? readSyncedEditorialMixes(get().authState.userId ?? null),
+        prefs.editorialMixes,
+        new Date(),
+        get().favoriteArtists.map((a) => a.artistName)
+      );
+      if (mergedMixes) {
+        activeEditorialMixesState = mergedMixes;
+        writeSyncedEditorialMixes(mergedMixes);
+        set((prev) => ({
+          homeShelves: applySyncedMixesToShelves(prev.homeShelves, mergedMixes),
+        }));
+      }
     }
   }
 
@@ -3779,28 +3902,23 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     };
 
     const ownerKey = restoredAuth.connected ? restoredAuth.userId : null;
+    activeEditorialMixesState = readSyncedEditorialMixes(ownerKey);
     const cachedHomeEntry = readCachedHomeShelves(ownerKey);
-    const cachedHome = cachedHomeEntry?.shelves ?? null;
-    const cachedRadarMix = cachedHome
-      ?.flatMap((s) => s.mixes ?? [])
-      .find((m) => m.id === 'mix_descubre_lo_nuevo');
-    const todayLocalIso = (() => {
-      const d = new Date();
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    })();
-    const cachedDayIso = cachedHomeEntry?.savedAt
-      ? (() => {
-          const d = new Date(cachedHomeEntry.savedAt);
-          return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-        })()
-      : '';
+    const cachedHomeRaw = cachedHomeEntry?.shelves ?? null;
+    const cachedHome = cachedHomeRaw
+      ? applySyncedMixesToShelves(cachedHomeRaw, activeEditorialMixesState)
+      : null;
+    const todayLocalIso = getLocalDayKey();
+    const cachedDayIso = cachedHomeEntry?.savedAt ? getLocalDayKey(cachedHomeEntry.savedAt) : '';
     const hasWarmHome = Boolean(cachedHome && cachedHome.length > 0);
+    const isSameLocalDay = cachedDayIso === todayLocalIso;
+    const cachedMixesHealthy = Boolean(cachedHome && hasHealthyDailyMixes(cachedHome));
     const hasFreshHomeCache = Boolean(
       cachedHomeEntry &&
         cachedHomeEntry.shelves.length >= 2 &&
         Date.now() - cachedHomeEntry.savedAt < HOME_SHELVES_CACHE_TTL_MS &&
-        cachedDayIso === todayLocalIso &&
-        (cachedRadarMix?.tracks?.length ?? 0) >= 30
+        isSameLocalDay &&
+        cachedMixesHealthy
     );
     const hasWarmAccount =
       !restoredAuth.connected ||
@@ -3912,29 +4030,37 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         return;
       }
 
-      if (hasFreshHomeCache && cachedHome) {
-        await commitShelvesAndSeedPlayer(cachedHome);
+      if (hasWarmHome && cachedHome) {
+        const syncedCachedHome = applySyncedMixesToShelves(cachedHome, activeEditorialMixesState);
+        await commitShelvesAndSeedPlayer(syncedCachedHome);
+        const syncedNow = activeEditorialMixesState;
+        const isLockedDailyHealthy = Boolean(
+          syncedNow &&
+            syncedNow.dailyMix?.dayKey === todayLocalIso &&
+            syncedNow.dailyMix.tracks.length >= 25 &&
+            syncedNow.dailyDiscover?.dayKey === todayLocalIso &&
+            syncedNow.dailyDiscover.tracks.length >= 25 &&
+            syncedNow.descubre.tracks.length >= 35 &&
+            Date.now() - syncedNow.descubre.lastScanAt < DESCUBRE_RESCAN_INTERVAL_MS
+        );
+        if (isLockedDailyHealthy || (isSameLocalDay && hasHealthyDailyMixes(syncedCachedHome))) {
+          return;
+        }
         if (isOnline && isLiveRuntime()) {
-          // Silently refresh cache and upgrade homeShelves mixes in-place if Descubre lo Nuevo grew or updated
+          // New 24h day, incomplete pool (<35), or >6h incremental radar refresh: protect & evolve cleanly
           void recommendationEngine
             .buildHomeShelves()
             .then((fresh) => {
-              const canonicalFresh = canonicalizeShelves(fresh);
-              saveCachedHomeShelves(canonicalFresh, ownerKey);
-              const freshRadar = canonicalFresh
-                .flatMap((s) => s.mixes ?? [])
-                .find((m) => m.id === 'mix_descubre_lo_nuevo');
-              const curRadar = get()
-                .homeShelves.flatMap((s) => s.mixes ?? [])
-                .find((m) => m.id === 'mix_descubre_lo_nuevo');
-              if (
-                freshRadar &&
-                (!curRadar ||
-                  freshRadar.tracks.length > curRadar.tracks.length ||
-                  freshRadar.tracks[0]?.id !== curRadar.tracks[0]?.id)
-              ) {
-                set({ homeShelves: canonicalFresh, homeFeedReady: true });
-              }
+              const protectedShelves = mergeProtectedEditorialShelves(
+                syncedCachedHome,
+                canonicalizeShelves(fresh)
+              );
+              const syncedShelves = syncEditorialMixesFromShelves(protectedShelves, ownerKey, {
+                markDescubreScan: true,
+              });
+              saveCachedHomeShelves(syncedShelves, ownerKey);
+              set({ homeShelves: syncedShelves, homeFeedReady: true });
+              if (get().authState.connected) persistPrefsFromStore();
             })
             .catch(() => {});
         }
@@ -3944,8 +4070,16 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       const freshShelves = await recommendationEngine
         .buildHomeShelves()
         .then((built) => {
-          saveCachedHomeShelves(built, ownerKey);
-          return built;
+          const protectedShelves = mergeProtectedEditorialShelves(
+            cachedHome,
+            canonicalizeShelves(built)
+          );
+          const syncedShelves = syncEditorialMixesFromShelves(protectedShelves, ownerKey, {
+            markDescubreScan: true,
+          });
+          saveCachedHomeShelves(syncedShelves, ownerKey);
+          if (get().authState.connected) persistPrefsFromStore();
+          return syncedShelves;
         })
         .catch(() => cachedHome ?? get().homeShelves);
       if (shelfEpoch === homeShelvesBuildEpoch) {
@@ -4229,38 +4363,134 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     const effectiveHintName = canonHint.name || hint?.name;
     const normKey = `artist:${cleanId.toLowerCase()}`;
     const nameKey = effectiveHintName ? `artist:${effectiveHintName.trim().toLowerCase()}` : null;
-    const cached =
+    const memCached =
       readClientCache(artistClientCache, normKey) ??
       (nameKey ? readClientCache(artistClientCache, nameKey) : null);
+    const persistedCached = !memCached
+      ? readPersistedArtistCache(normKey) ?? (nameKey ? readPersistedArtistCache(nameKey) : null)
+      : null;
 
     const prev = get().activeDetailView;
     const seq = ++detailRequestSeq;
     const transitionKey = cleanId || effectiveHintName || 'artist';
 
-    if (cached) {
+    const saveArtistBoth = (detail: ArtistDetail) => {
+      writeClientCache(artistClientCache, normKey, detail);
+      writeClientCache(artistClientCache, `artist:${detail.artist.id.toLowerCase()}`, detail);
+      writeClientCache(artistClientCache, `artist:${detail.artist.name.trim().toLowerCase()}`, detail);
+      writePersistedArtistCache(normKey, detail);
+      writePersistedArtistCache(`artist:${detail.artist.id.toLowerCase()}`, detail);
+      writePersistedArtistCache(`artist:${detail.artist.name.trim().toLowerCase()}`, detail);
+    };
+
+    const isFallbackArtist = (detail: ArtistDetail) =>
+      Boolean(detail.description?.includes('Escena urbana y tendencias en pMusic')) ||
+      (detail.topSongs.length > 0 &&
+        detail.topSongs.length <= 5 &&
+        detail.topSongs.every((t) => !t.id.startsWith('dz:')));
+
+    if (memCached) {
       set((s) => ({
         detailViewHistory:
-          prev && !(prev.kind === 'artist' && prev.data.artist.id === cached.artist.id)
+          prev && !(prev.kind === 'artist' && prev.data.artist.id === memCached.artist.id)
             ? [...s.detailViewHistory, prev].slice(-12)
             : s.detailViewHistory,
-        activeDetailView: { kind: 'artist', data: cached, isLoading: false, transitionKey },
+        activeDetailView: { kind: 'artist', data: memCached, isLoading: false, transitionKey },
         spotlightOpen: false,
         nowPlayingOpen: false,
       }));
       return;
     }
 
+    if (persistedCached) {
+      const cachedData = persistedCached.data;
+      writeClientCache(artistClientCache, normKey, cachedData);
+      set((s) => ({
+        detailViewHistory:
+          prev && !(prev.kind === 'artist' && prev.data.artist.id === cachedData.artist.id)
+            ? [...s.detailViewHistory, prev].slice(-12)
+            : s.detailViewHistory,
+        activeDetailView: { kind: 'artist', data: cachedData, isLoading: false, transitionKey },
+        spotlightOpen: false,
+        nowPlayingOpen: false,
+      }));
+      if (Date.now() - persistedCached.at >= DETAIL_STALE_REFRESH_MS && !get().isOfflineNetwork) {
+        void musicProvider
+          .getArtist(cleanId, undefined, effectiveHintName ? { name: effectiveHintName } : undefined)
+          .then((freshData) => {
+            if (!isFallbackArtist(freshData)) {
+              saveArtistBoth(freshData);
+              if (seq === detailRequestSeq) {
+                set((s) =>
+                  s.activeDetailView?.kind === 'artist'
+                    ? {
+                        activeDetailView: {
+                          kind: 'artist',
+                          data: freshData,
+                          isLoading: false,
+                          transitionKey: s.activeDetailView.transitionKey ?? transitionKey,
+                        },
+                      }
+                    : {}
+                );
+              }
+            }
+          })
+          .catch(() => {});
+      }
+      return;
+    }
+
     const displayName =
       effectiveHintName?.trim() ||
       (!/^\d+$/.test(cleanId) && !cleanId.startsWith('UC') ? cleanId : 'Cargando artista…');
+    const stNow = get();
+    const targetNameNorm = (effectiveHintName ?? displayName).trim().toLowerCase();
+    const inMemoryMatchesMap = new Map<string, Track>();
+    const candidatePools: Track[] = [
+      ...stNow.likedTracks.map((l) => l.track),
+      ...stNow.playlists.flatMap((p) => p.tracks),
+      ...stNow.playHistory.map((h) => h.track),
+      ...stNow.homeShelves.flatMap((sh) => [
+        ...(sh.tracks ?? []),
+        ...(sh.mixes ?? []).flatMap((m) => m.tracks ?? []),
+      ]),
+      ...stNow.queue,
+    ];
+    for (const tr of candidatePools) {
+      if (!tr?.id || inMemoryMatchesMap.has(tr.id)) continue;
+      const matchesArtist = tr.artists.some(
+        (ar) =>
+          (ar.id && ar.id === cleanId) ||
+          (targetNameNorm && ar.name.trim().toLowerCase() === targetNameNorm)
+      );
+      if (matchesArtist) inMemoryMatchesMap.set(tr.id, tr);
+      if (inMemoryMatchesMap.size >= 10) break;
+    }
+    const optimisticTopSongs = Array.from(inMemoryMatchesMap.values());
+    const knownThumb =
+      hint?.thumbnailUrl?.trim() ||
+      stNow.favoriteArtists.find(
+        (fa) =>
+          fa.artistId === cleanId ||
+          (targetNameNorm && fa.artistName.trim().toLowerCase() === targetNameNorm)
+      )?.thumbnailUrl ||
+      stNow.searchResults.artists.find(
+        (ar) =>
+          ar.id === cleanId ||
+          (targetNameNorm && ar.name.trim().toLowerCase() === targetNameNorm)
+      )?.thumbnailUrl ||
+      optimisticTopSongs[0]?.thumbnailUrl ||
+      '';
+
     const optimisticData: ArtistDetail = {
       artist: {
         id: cleanId,
         name: displayName,
-        thumbnailUrl: hint?.thumbnailUrl ?? '',
+        thumbnailUrl: knownThumb,
       },
-      bannerUrl: hint?.thumbnailUrl || undefined,
-      topSongs: [],
+      bannerUrl: knownThumb || undefined,
+      topSongs: optimisticTopSongs,
       albums: [],
       singles: [],
       relatedArtists: [],
@@ -4286,15 +4516,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       undefined,
       effectiveHintName ? { name: effectiveHintName } : undefined
     );
-    const isFallbackStub =
-      Boolean(data.description?.includes('Escena urbana y tendencias en pMusic')) ||
-      (data.topSongs.length > 0 &&
-        data.topSongs.length <= 5 &&
-        data.topSongs.every((t) => !t.id.startsWith('dz:')));
-    if (!isFallbackStub) {
-      writeClientCache(artistClientCache, normKey, data);
-      writeClientCache(artistClientCache, `artist:${data.artist.id.toLowerCase()}`, data);
-      writeClientCache(artistClientCache, `artist:${data.artist.name.trim().toLowerCase()}`, data);
+    if (!isFallbackArtist(data)) {
+      saveArtistBoth(data);
+      const ownerForPassive = get().authState.connected ? get().authState.userId : null;
+      feedPassiveDescubreTracks([...(data.appearances ?? []), ...data.topSongs], ownerForPassive);
     }
 
     if (seq !== detailRequestSeq) return;
@@ -4310,15 +4535,65 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       };
     });
   },
+  prefetchArtistDetail: (artistId, hint) => {
+    if (get().isOfflineNetwork) return;
+    const canonHint = canonicalizeArtistRefName(artistId, hint?.name ?? '');
+    const rawTrim = artistId.trim();
+    const cleanId =
+      canonHint.id && (rawTrim === '10125390' || !/^\d+$/.test(rawTrim) || canonHint.name === 'Cruzzi')
+        ? canonHint.id
+        : rawTrim;
+    if (!cleanId) return;
+    const effectiveHintName = canonHint.name || hint?.name;
+    const normKey = `artist:${cleanId.toLowerCase()}`;
+    const nameKey = effectiveHintName ? `artist:${effectiveHintName.trim().toLowerCase()}` : null;
+    if (readClientCache(artistClientCache, normKey) || (nameKey && readClientCache(artistClientCache, nameKey))) {
+      return;
+    }
+    const persisted =
+      readPersistedArtistCache(normKey) ?? (nameKey ? readPersistedArtistCache(nameKey) : null);
+    if (persisted && Date.now() - persisted.at < DETAIL_STALE_REFRESH_MS) {
+      return;
+    }
+    if (inFlightArtistPrefetch.has(normKey)) return;
+    inFlightArtistPrefetch.add(normKey);
+    void musicProvider
+      .getArtist(cleanId, undefined, effectiveHintName ? { name: effectiveHintName } : undefined)
+      .then((data) => {
+        const isFallback =
+          Boolean(data.description?.includes('Escena urbana y tendencias en pMusic')) ||
+          (data.topSongs.length > 0 &&
+            data.topSongs.length <= 5 &&
+            data.topSongs.every((t) => !t.id.startsWith('dz:')));
+        if (isFallback) return;
+        writeClientCache(artistClientCache, normKey, data);
+        writeClientCache(artistClientCache, `artist:${data.artist.id.toLowerCase()}`, data);
+        writeClientCache(artistClientCache, `artist:${data.artist.name.trim().toLowerCase()}`, data);
+        writePersistedArtistCache(normKey, data);
+        writePersistedArtistCache(`artist:${data.artist.id.toLowerCase()}`, data);
+        writePersistedArtistCache(`artist:${data.artist.name.trim().toLowerCase()}`, data);
+        const heroUrl = optimizeArtworkUrl(data.bannerUrl ?? data.artist.thumbnailUrl, 'banner');
+        if (heroUrl && typeof Image !== 'undefined') {
+          const pre = new Image();
+          pre.decoding = 'async';
+          pre.src = heroUrl;
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        inFlightArtistPrefetch.delete(normKey);
+      });
+  },
   openAlbumDetail: async (albumId, hint) => {
     const cleanId = albumId.trim();
     const normKey = `album:${cleanId.toLowerCase()}`;
-    const cached = readClientCache(albumClientCache, normKey);
+    const cached = readClientCache(albumClientCache, normKey) ?? readPersistedAlbumCache(normKey)?.data ?? null;
     const prev = get().activeDetailView;
     const seq = ++detailRequestSeq;
     const transitionKey = cleanId || hint?.title || 'album';
 
     if (cached) {
+      writeClientCache(albumClientCache, normKey, cached);
       set((s) => ({
         detailViewHistory:
           prev && !(prev.kind === 'album' && prev.data.album.id === cached.album.id)
@@ -4357,6 +4632,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
     const data = await musicProvider.getAlbum(albumId, undefined, hint);
     writeClientCache(albumClientCache, normKey, data);
+    writePersistedAlbumCache(normKey, data);
     if (seq !== detailRequestSeq) return;
     set((s) => {
       if (s.activeDetailView?.kind !== 'album') return {};
@@ -6586,7 +6862,17 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       await libraryStore.setPlayHistory([]);
     }
     syncUserLibraryContextToEngine();
-    const shelves = await recommendationEngine.buildHomeShelves();
+    const rawShelves = await recommendationEngine.buildHomeShelves();
+    const ownerForRefresh = get().authState.connected ? get().authState.userId : null;
+    const mergedRaw = clearHistory
+      ? rawShelves
+      : mergeProtectedEditorialShelves(get().homeShelves, rawShelves);
+    const shelves = syncEditorialMixesFromShelves(mergedRaw, ownerForRefresh, {
+      forceReset: clearHistory,
+      markDescubreScan: true,
+    });
+    saveCachedHomeShelves(shelves, ownerForRefresh);
+    if (get().authState.connected) persistPrefsFromStore();
     const allRealTracks = Array.from(
       new Map(shelves.flatMap((s) => s.tracks ?? []).map((t) => [t.id, t])).values()
     );

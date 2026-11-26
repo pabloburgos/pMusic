@@ -251,7 +251,7 @@ function transitionToPalette(
 
   const step = (now: number) => {
     const rawT = Math.max(0, Math.min(1, (now - startMs) / durationMs));
-    if (now - lastPaintMs >= 33 || rawT >= 1) {
+    if (now - lastPaintMs >= 60 || rawT >= 1) {
       lastPaintMs = now;
       const lerp = (a: number, b: number) => a + (b - a) * rawT;
       liveLuminance = lerp(fromLuma, nextLuma);
