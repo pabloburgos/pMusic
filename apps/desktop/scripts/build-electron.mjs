@@ -173,7 +173,7 @@ import { Client as DiscordRpcClient } from '@xhayper/discord-rpc';
 import type { DiscordPresenceState, DiscordRpcStatus } from '@pmusic/core';
 import { createPMusicApiHandler } from '@pmusic/providers';
 
-const PMUSIC_DESKTOP_VERSION = '0.24.1';
+const PMUSIC_DESKTOP_VERSION = '0.24.2';
 
 function getOtaRootDir(): string {
   return join(app.getPath('userData'), 'ota_web');
@@ -1209,6 +1209,19 @@ ipcMain.handle('pmusic:get-desktop-tray-prefs', () => readDesktopTrayPrefs());
 ipcMain.handle('pmusic:set-desktop-tray-prefs', (_event, patch: Partial<DesktopTrayPrefs>) =>
   writeDesktopTrayPrefs(patch ?? {})
 );
+ipcMain.handle('pmusic:show-notification', (_event, payload: { title?: string; body?: string }) => {
+  try {
+    if (!Notification.isSupported()) return;
+    const notif = new Notification({
+      title: String(payload?.title || 'Nuevo lanzamiento en pMusic'),
+      body: String(payload?.body || ''),
+    });
+    notif.on('click', () => showAndFocusMainWindow());
+    notif.show();
+  } catch {
+    // ignore notification error
+  }
+});
 ipcMain.handle('pmusic:open-external-url', async (_event, url: string) => {
   if (typeof url === 'string' && /^https?:\\/\\//i.test(url)) {
     await shell.openExternal(url);

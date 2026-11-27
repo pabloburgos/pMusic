@@ -1,9 +1,10 @@
-import React, { useEffect, useId, useMemo, useState } from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { PMusicLogo } from './PMusicLogo.tsx';
 import { usePMusicStore } from '../store/usePMusicStore.ts';
 import {
   getCachedOfflineCoverUrl,
   resolveOfflineCoverUrl,
+  saveOfflineCover,
 } from '../utils/offline-covers.ts';
 import {
   getCachedArtistArtwork,
@@ -138,9 +139,10 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
   const optimizedSrc = optimizeArtworkUrl(cleanSrc, artworkSlot, isDataSaver ? true : undefined);
 
   const isEagerVariant = variant === 'nowplaying' || variant === 'mini';
+  const requireHdOffline = !isOfflineNetwork && (variant === 'nowplaying' || variant === 'card');
   const effectiveLoading = loading ?? (isEagerVariant ? 'eager' : 'lazy');
   const [resolvedSrc, setResolvedSrc] = useState<string | null>(() => {
-    const cached = getCachedOfflineCoverUrl(trackId, cleanSrc);
+    const cached = getCachedOfflineCoverUrl(trackId, cleanSrc, { requireHd: requireHdOffline });
     if (cached) return cached;
     if (cleanSrc.startsWith('data:') || cleanSrc.startsWith('blob:')) return cleanSrc;
     if (isOfflineNetwork) return null;
@@ -156,6 +158,14 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
     artistName ? getCachedArtistArtwork(artistName) : null
   );
   const [artistArtFailed, setArtistArtFailed] = useState<boolean>(false);
+  const hdHealAttemptedRef = useRef<Set<string>>(new Set());
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const displayTitle = (title ?? alt ?? 'pMusic').trim() || 'pMusic';
   const primaryArtist = (artistName ?? '').trim();
@@ -221,7 +231,7 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
       }
     };
 
-    const mem = getCachedOfflineCoverUrl(trackId, cleanSrc);
+    const mem = getCachedOfflineCoverUrl(trackId, cleanSrc, { requireHd: requireHdOffline });
     if (mem) {
       commitSrc(mem);
       return () => {
@@ -241,7 +251,7 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
       commitSrc(optimizedSrc);
     }
 
-    void resolveOfflineCoverUrl(trackId, cleanSrc).then((idbUrl) => {
+    void resolveOfflineCoverUrl(trackId, cleanSrc, { requireHd: requireHdOffline }).then((idbUrl) => {
       if (!active) return;
       if (idbUrl) {
         commitSrc(idbUrl);
@@ -272,6 +282,7 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
     optimizedSrc,
     artworkSlot,
     isDataSaver,
+    requireHdOffline,
     displayTitle,
     primaryArtist,
     isOfflineNetwork,
@@ -523,6 +534,35 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
     );
   }
 
+  const handleImgLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget;
+    if (
+      isOfflineNetwork ||
+      isDataSaver ||
+      (variant !== 'nowplaying' && variant !== 'card') ||
+      img.naturalWidth <= 0 ||
+      img.naturalWidth >= 260
+    ) {
+      return;
+    }
+    const healKey = `${trackId ?? ''}::${renderSrc ?? ''}`;
+    if (hdHealAttemptedRef.current.has(healKey)) return;
+    hdHealAttemptedRef.current.add(healKey);
+    void resolveRecoveredTrackCover(trackId, displayTitle, primaryArtist).then((recUrl) => {
+      if (!mountedRef.current || !recUrl) return;
+      const hdRec = optimizeArtworkUrl(recUrl, artworkSlot, false);
+      if (hdRec && hdRec !== (displayedSrc ?? resolvedSrc)) {
+        setResolvedSrc(hdRec);
+        setDisplayedSrc(hdRec);
+        setFailed(false);
+        onUnavailableChange?.(false);
+        if (trackId) {
+          void saveOfflineCover(trackId, hdRec).catch(() => false);
+        }
+      }
+    });
+  };
+
   return (
     <>
       <img
@@ -531,6 +571,7 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
         loading={effectiveLoading}
         decoding="async"
         draggable={draggable}
+        onLoad={handleImgLoad}
         onError={handleImgError}
         className={imgClassName}
       />

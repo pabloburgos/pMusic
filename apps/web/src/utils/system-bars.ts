@@ -20,6 +20,21 @@ export interface NativeSystemBarOptions {
 export function syncNativeSystemBars(opts: NativeSystemBarOptions): void {
   if (typeof window === 'undefined') return;
   try {
+    const bg = THEME_SOLID_BG[opts.themeId] ?? '#070709';
+    const isLightTheme = opts.themeId === 'nordic-light';
+    const targetThemeColor = opts.nowPlayingOpen
+      ? opts.isLightBackdrop
+        ? '#FFFFFF'
+        : '#070709'
+      : bg;
+
+    if (typeof document !== 'undefined') {
+      const metaTheme = document.querySelector('meta[name="theme-color"]');
+      if (metaTheme) {
+        metaTheme.setAttribute('content', targetThemeColor);
+      }
+    }
+
     const nativeBridge = (
       window as unknown as {
         PMusicNative?: {
@@ -38,8 +53,6 @@ export function syncNativeSystemBars(opts: NativeSystemBarOptions): void {
       return;
     }
 
-    const bg = THEME_SOLID_BG[opts.themeId] ?? '#070709';
-    const isLightTheme = opts.themeId === 'nordic-light';
     nativeBridge.setSystemBarsAppearance(isLightTheme, bg, bg);
   } catch {
     // ignore non-Android environments

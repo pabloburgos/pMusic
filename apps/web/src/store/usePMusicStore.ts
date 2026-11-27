@@ -26,8 +26,15 @@ import {
   writeSyncedEditorialMixes,
   type SyncedEditorialMixesState,
 } from '../utils/editorial-cache.ts';
-import { optimizeArtworkUrl, setDataSaverMode } from '../utils/image-opt.ts';
+import { optimizeArtworkUrl, setDataSaverMode, upgradeCoverUrlToHd } from '../utils/image-opt.ts';
 import { findPlaylistDuplicates, getTrackDuplicateKey } from '../utils/playlist-tools.ts';
+import {
+  checkArtistNewReleases,
+  extractPriorityArtists,
+  loadReleaseNotificationsState,
+  saveReleaseNotificationsState,
+  type ReleaseNotificationItem,
+} from '../utils/release-notifications.ts';
 
 const WIFI_ONLY_STORAGE_KEY = 'pmusic.offline.wifiOnly';
 const AUTO_OFFLINE_PLAYLISTS_KEY = 'pmusic.offline.autoPlaylists';
@@ -217,6 +224,7 @@ import {
   getDesktopTrayPrefs,
   isElectronDesktopRuntime,
   setDesktopTrayPrefs,
+  showNativeReleaseNotification,
 } from '../platform/web-bridge.ts';
 import {
   applyAmbientPaletteFromCover,
@@ -1253,6 +1261,10 @@ export interface PMusicStoreState {
   personalTopStats: Record<TopStatsWindow, PeriodTopStats | null>;
   minimizeToTrayOnClose: boolean;
   desktopTrackNotifications: boolean;
+  releaseNotificationsEnabled: boolean;
+  releaseNotifications: ReleaseNotificationItem[];
+  releaseNotificationsChecking: boolean;
+  notificationsPanelOpen: boolean;
   activeJamCode: string | null;
   activeJamSession: JamSessionRecord | null;
   activeJamRole: 'host' | 'guest' | null;
@@ -1525,6 +1537,12 @@ export interface PMusicStoreState {
   closeWrappedModal: () => void;
   setMinimizeToTrayOnClose: (enabled: boolean) => void;
   setDesktopTrackNotifications: (enabled: boolean) => void;
+  setReleaseNotificationsEnabled: (enabled: boolean) => void;
+  setNotificationsPanelOpen: (open: boolean) => void;
+  checkNewArtistReleases: (force?: boolean) => Promise<void>;
+  markReleaseNotificationRead: (id: string) => void;
+  markAllReleaseNotificationsRead: () => void;
+  playReleaseNotification: (item: ReleaseNotificationItem) => Promise<void>;
   setShareListeningActivity: (enabled: boolean) => void;
   loadPersonalTopStats: (window: TopStatsWindow) => Promise<PeriodTopStats>;
   playFriendActivityTrack: (activity: FriendListeningActivity) => Promise<void>;
@@ -3789,6 +3807,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   personalTopStats: { '7d': null, '30d': null },
   minimizeToTrayOnClose: true,
   desktopTrackNotifications: false,
+  releaseNotificationsEnabled: loadReleaseNotificationsState().enabled,
+  releaseNotifications: loadReleaseNotificationsState().items,
+  releaseNotificationsChecking: false,
+  notificationsPanelOpen: false,
   activeJamCode: null,
   activeJamSession: null,
   activeJamRole: null,
@@ -4606,6 +4628,19 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           }
         })
         .catch(() => {});
+    }
+
+    const isTestEnvRel =
+      Boolean((import.meta as any).vitest) ||
+      (import.meta as any).env?.MODE === 'test';
+    if (!isTestEnvRel && typeof window !== 'undefined') {
+      window.setTimeout(() => {
+        void get().checkNewArtistReleases(false);
+      }, 6000);
+      window.setInterval(() => {
+        if (typeof document !== 'undefined' && document.hidden) return;
+        void get().checkNewArtistReleases(false);
+      }, 60 * 60_000);
     }
   },
 
@@ -8177,13 +8212,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         buf,
         res.headers.get('content-type') ?? 'audio/mp4'
       );
-      const coverUrl = track.thumbnailHighUrl ?? track.thumbnailUrl;
-      await Promise.allSettled([
-        coverUrl ? saveOfflineCover(track.id, coverUrl) : Promise.resolve(false),
-        track.thumbnailUrl && track.thumbnailUrl !== coverUrl
-          ? saveOfflineCover(track.id, track.thumbnailUrl)
-          : Promise.resolve(false),
-      ]);
+      const hdCoverUrl = upgradeCoverUrlToHd(track.thumbnailHighUrl ?? track.thumbnailUrl);
+      if (hdCoverUrl) {
+        await saveOfflineCover(track.id, hdCoverUrl).catch(() => false);
+      }
       const entries = await defaultPlatformBridge.offlineStorage.listOfflineIds();
       const verified = entries.some((e) => e.trackId === track.id);
       if (!verified) throw new Error('persist_failed');
@@ -8964,6 +8996,132 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   setDesktopTrackNotifications: (enabled) => {
     set({ desktopTrackNotifications: enabled });
     void setDesktopTrayPrefs({ notifyOnTrackChange: enabled });
+  },
+
+  setReleaseNotificationsEnabled: (enabled) => {
+    const cur = loadReleaseNotificationsState();
+    saveReleaseNotificationsState({
+      ...cur,
+      enabled,
+      items: get().releaseNotifications,
+    });
+    set({ releaseNotificationsEnabled: enabled });
+  },
+
+  setNotificationsPanelOpen: (open) => set({ notificationsPanelOpen: open }),
+
+  checkNewArtistReleases: async (force = false) => {
+    const st = get();
+    if (!st.releaseNotificationsEnabled && !force) return;
+    if (st.releaseNotificationsChecking) return;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+
+    const persisted = loadReleaseNotificationsState();
+    if (!force && persisted.lastCheckedAt > 0 && Date.now() - persisted.lastCheckedAt < 30 * 60_000) {
+      return;
+    }
+
+    const priorityArtists = extractPriorityArtists(st.likedTracks, st.playHistory, 12);
+    if (priorityArtists.length === 0) {
+      saveReleaseNotificationsState({ ...persisted, lastCheckedAt: Date.now() });
+      return;
+    }
+
+    set({ releaseNotificationsChecking: true });
+    try {
+      const incoming = await checkArtistNewReleases(priorityArtists, persisted.seenIds);
+      const existingMap = new Map(st.releaseNotifications.map((item) => [item.id, item]));
+      const newlyDiscovered: ReleaseNotificationItem[] = [];
+      for (const item of incoming) {
+        if (!existingMap.has(item.id)) {
+          newlyDiscovered.push(item);
+          existingMap.set(item.id, item);
+        }
+      }
+      const mergedList = Array.from(existingMap.values())
+        .sort((a, b) => b.releaseDate.localeCompare(a.releaseDate))
+        .slice(0, 40);
+      const nextSeenIds = Array.from(
+        new Set([...persisted.seenIds, ...newlyDiscovered.map((x) => x.id)])
+      );
+      saveReleaseNotificationsState({
+        enabled: st.releaseNotificationsEnabled,
+        lastCheckedAt: Date.now(),
+        seenIds: nextSeenIds,
+        items: mergedList,
+      });
+      set({ releaseNotifications: mergedList });
+
+      if (newlyDiscovered.length > 0 && st.releaseNotificationsEnabled) {
+        const newest = newlyDiscovered[0]!;
+        get().showToast(
+          newlyDiscovered.length === 1
+            ? `Nuevo lanzamiento de ${newest.artistName}: ${newest.title}`
+            : `${newlyDiscovered.length} nuevos lanzamientos de tus artistas favoritos`
+        );
+        for (const rel of newlyDiscovered.slice(0, 2)) {
+          showNativeReleaseNotification(
+            `Nuevo de ${rel.artistName}`,
+            rel.title,
+            rel.trackId ?? rel.albumId ?? ''
+          );
+        }
+      } else if (force) {
+        get().showToast('No hay nuevos lanzamientos recientes de tus artistas');
+      }
+    } finally {
+      set({ releaseNotificationsChecking: false });
+    }
+  },
+
+  markReleaseNotificationRead: (id) => {
+    const cur = get().releaseNotifications;
+    const next = cur.map((n) => (n.id === id ? { ...n, read: true } : n));
+    const persisted = loadReleaseNotificationsState();
+    saveReleaseNotificationsState({
+      ...persisted,
+      enabled: get().releaseNotificationsEnabled,
+      items: next,
+    });
+    set({ releaseNotifications: next });
+  },
+
+  markAllReleaseNotificationsRead: () => {
+    const next = get().releaseNotifications.map((n) => ({ ...n, read: true }));
+    const persisted = loadReleaseNotificationsState();
+    saveReleaseNotificationsState({
+      ...persisted,
+      enabled: get().releaseNotificationsEnabled,
+      items: next,
+    });
+    set({ releaseNotifications: next });
+  },
+
+  playReleaseNotification: async (item) => {
+    get().markReleaseNotificationRead(item.id);
+    set({ notificationsPanelOpen: false });
+    if (item.track) {
+      await get().playTrack(item.track, [item.track]);
+      return;
+    }
+    if (item.albumId) {
+      await get().openAlbumDetail(item.albumId, {
+        title: item.title,
+        artist: item.artistName,
+        thumbnailUrl: item.coverUrl,
+      });
+      const dv = get().activeDetailView;
+      if (dv?.kind === 'album' && dv.data.tracks.length > 0) {
+        await get().playTrack(dv.data.tracks[0]!, dv.data.tracks);
+      }
+      return;
+    }
+    const found = await get().searchTracksForPlaylist(`${item.artistName} ${item.title}`);
+    if (found.length > 0) {
+      await get().playTrack(found[0]!, found);
+    } else {
+      get().showToast(`No se pudo cargar «${item.title}» ahora mismo`);
+    }
   },
 
   setShareListeningActivity: (enabled) => {

@@ -29,25 +29,27 @@ export function isConstrainedNetwork(): boolean {
       if (conn.effectiveType && ['slow-2g', '2g', '3g'].includes(conn.effectiveType)) {
         return true;
       }
-      if (conn.type === 'cellular') return true;
     }
-  }
-  if (typeof window !== 'undefined' && window.innerWidth > 0 && window.innerWidth < 768) {
-    return true;
   }
   return false;
 }
 
 const DEEZER_IMG_RE =
-  /^(https?:\/\/[^/]*dzcdn\.net\/images\/[^/]+\/[^/]+\/)(\d+x\d+-\d+-\d+-\d+-\d+)\.(jpg|jpeg|png|webp)(\?.*)?$/i;
+  /^(https?:\/\/[^/]*dzcdn\.net\/images\/[^/]+\/[^/]+\/)(\d+x\d+(?:-\d+-\d+-\d+-\d+)?)\.(jpg|jpeg|png|webp)(\?.*)?$/i;
+const DEEZER_API_IMG_RE =
+  /^(https?:\/\/api\.deezer\.com\/(?:album|artist|playlist|track)\/[^/]+\/image(?:\?.*)?)size=(small|medium|big|xl)(.*)$/i;
 const GOOGLE_IMG_RE =
   /^(https?:\/\/[^/]*(?:googleusercontent\.com|ggpht\.com)\/[^\s=]+)=([a-z0-9-]+)(\?.*)?$/i;
+const APPLE_IMG_RE =
+  /^(https?:\/\/[^/]*mzstatic\.com\/image\/thumb\/.+\/)(\d+x\d+[a-z0-9-]*)\.(jpg|jpeg|png|webp)(\?.*)?$/i;
+const SPOTIFY_IMG_RE =
+  /^(https?:\/\/i\.scdn\.co\/image\/)(ab67616d0000(?:4851|1e02|b273))([a-f0-9]+)(\?.*)?$/i;
+const YOUTUBE_IMG_RE =
+  /^(https?:\/\/(?:i|img)\.ytimg\.com\/vi\/[^/]+\/)(default|mqdefault|hqdefault|sddefault|maxresdefault)\.(jpg|webp)(\?.*)?$/i;
 
 /**
- * Rewrites Deezer and Google/YouTube Music CDN artwork URLs to fit the target UI slot
- * and current network conditions while leaving non-CDN URLs (data:, blob:, /api/*) untouched.
- * Only official guaranteed Deezer specs (56x56, 250x250, 500x500, 1000x1000 with -000000-80-0-0)
- * are emitted to prevent CDN 404/broken cover images.
+ * Rewrites Deezer, Google/YouTube Music, Apple Music, Spotify, and YouTube CDN artwork URLs
+ * to sharp HD dimensions matching the target UI slot while leaving local/inline URLs untouched.
  */
 export function optimizeArtworkUrl(
   rawUrl: string | null | undefined,
@@ -78,11 +80,37 @@ export function optimizeArtworkUrl(
     } else if (slot === 'card' || slot === 'avatar') {
       spec = dataSaver || constrained ? '250x250-000000-80-0-0' : '500x500-000000-80-0-0';
     } else if (slot === 'banner') {
-      spec = dataSaver ? '250x250-000000-80-0-0' : constrained ? '500x500-000000-80-0-0' : '1000x1000-000000-80-0-0';
+      spec = dataSaver
+        ? '250x250-000000-80-0-0'
+        : constrained
+          ? '500x500-000000-80-0-0'
+          : '1000x1000-000000-80-0-0';
     } else {
-      spec = dataSaver ? '250x250-000000-80-0-0' : constrained ? '500x500-000000-80-0-0' : '1000x1000-000000-80-0-0';
+      spec = dataSaver
+        ? '250x250-000000-80-0-0'
+        : constrained
+          ? '500x500-000000-80-0-0'
+          : '1000x1000-000000-80-0-0';
     }
     return `${prefix}${spec}.${ext}${query}`;
+  }
+
+  const dzApiMatch = clean.match(DEEZER_API_IMG_RE);
+  if (dzApiMatch) {
+    const prefix = dzApiMatch[1]!;
+    const suffix = dzApiMatch[3] ?? '';
+    const sizeParam = dataSaver
+      ? 'medium'
+      : constrained
+        ? slot === 'nowplaying' || slot === 'banner'
+          ? 'big'
+          : 'medium'
+        : slot === 'nowplaying' || slot === 'banner'
+          ? 'xl'
+          : slot === 'card' || slot === 'avatar'
+            ? 'big'
+            : 'medium';
+    return `${prefix}size=${sizeParam}${suffix}`;
   }
 
   const gMatch = clean.match(GOOGLE_IMG_RE);
@@ -93,7 +121,7 @@ export function optimizeArtworkUrl(
     if (dataSaver) {
       param = slot === 'row' ? 'w64-h64-l70-rj' : slot === 'card' || slot === 'avatar' ? 'w240-h240-l75-rj' : 'w320-h320-l75-rj';
     } else if (slot === 'row') {
-      param = 'w120-h120-l80-rj';
+      param = 'w256-h256-l85-rj';
     } else if (slot === 'card' || slot === 'avatar') {
       param = constrained ? 'w300-h300-l80-rj' : 'w544-h544-l90-rj';
     } else if (slot === 'banner') {
@@ -104,5 +132,52 @@ export function optimizeArtworkUrl(
     return `${base}=${param}${query}`;
   }
 
+  const appleMatch = clean.match(APPLE_IMG_RE);
+  if (appleMatch) {
+    const prefix = appleMatch[1]!;
+    const ext = appleMatch[3]!;
+    const query = appleMatch[4] ?? '';
+    const dim = dataSaver
+      ? '200x200bb'
+      : slot === 'nowplaying' || slot === 'banner'
+        ? '1000x1000bb'
+        : slot === 'card' || slot === 'avatar'
+          ? '600x600bb'
+          : '300x300bb';
+    return `${prefix}${dim}.${ext}${query}`;
+  }
+
+  const spMatch = clean.match(SPOTIFY_IMG_RE);
+  if (spMatch) {
+    const prefix = spMatch[1]!;
+    const currentHashPrefix = spMatch[2]!;
+    const hashSuffix = spMatch[3]!;
+    const query = spMatch[4] ?? '';
+    const targetPrefix = dataSaver
+      ? currentHashPrefix
+      : slot === 'nowplaying' || slot === 'card' || slot === 'banner'
+        ? 'ab67616d0000b273'
+        : currentHashPrefix === 'ab67616d00004851'
+          ? 'ab67616d00001e02'
+          : currentHashPrefix;
+    return `${prefix}${targetPrefix}${hashSuffix}${query}`;
+  }
+
+  const ytMatch = clean.match(YOUTUBE_IMG_RE);
+  if (ytMatch) {
+    const prefix = ytMatch[1]!;
+    const currentName = ytMatch[2]!.toLowerCase();
+    const ext = ytMatch[3]!;
+    const query = ytMatch[4] ?? '';
+    if (!dataSaver && (currentName === 'default' || currentName === 'mqdefault' || currentName === 'hqdefault')) {
+      const nextName = slot === 'nowplaying' || slot === 'card' ? 'sddefault' : 'hqdefault';
+      return `${prefix}${nextName}.${ext}${query}`;
+    }
+  }
+
   return clean;
+}
+
+export function upgradeCoverUrlToHd(url?: string | null): string {
+  return optimizeArtworkUrl(url, 'nowplaying', false);
 }

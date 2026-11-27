@@ -139,6 +139,7 @@ const SettingsModalInner: React.FC = () => {
     shareListeningActivity,
     minimizeToTrayOnClose,
     desktopTrackNotifications,
+    releaseNotificationsEnabled,
     setDevicesSheetOpen,
     setDeviceName,
     signInWithGoogle,
@@ -192,6 +193,8 @@ const SettingsModalInner: React.FC = () => {
     setShareListeningActivity,
     setMinimizeToTrayOnClose,
     setDesktopTrackNotifications,
+    setReleaseNotificationsEnabled,
+    setNotificationsPanelOpen,
     setActiveTab,
     setSocialSubTab,
     exportLibraryJson,
@@ -1866,6 +1869,30 @@ const SettingsModalInner: React.FC = () => {
                         onChange={() => setShareListeningActivity(!shareListeningActivity)}
                         ariaLabel="Compartir lo que escucho con amigos"
                         testId="settings-share-listening-toggle"
+                      />
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-between gap-3 border-t pm-border pt-3">
+                      <div>
+                        <div className="text-xs font-bold pm-text-primary">
+                          Avisos de nuevos lanzamientos
+                        </div>
+                        <div className="text-[11px] pm-text-secondary">
+                          Notifica cuando tus artistas con Me gusta o más escuchados sacan música nueva
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setNotificationsPanelOpen(true)}
+                          className="mt-1 text-[11px] font-bold pm-text-primary underline opacity-85 hover:opacity-100"
+                        >
+                          Ver bandeja de novedades
+                        </button>
+                      </div>
+                      <PMusicSwitch
+                        checked={releaseNotificationsEnabled}
+                        onChange={() => setReleaseNotificationsEnabled(!releaseNotificationsEnabled)}
+                        ariaLabel="Avisos de nuevos lanzamientos"
+                        testId="settings-release-notifications-toggle"
                       />
                     </div>
 

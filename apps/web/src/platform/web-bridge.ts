@@ -58,6 +58,8 @@ interface ElectronDesktopWindowBridge {
   readPrefsFile?: () => Promise<string | null>;
   writePrefsFile?: (jsonText: string) => Promise<void>;
   clearAuthState?: () => Promise<void>;
+  showDesktopNotification?: (title: string, body: string) => Promise<void>;
+  openExternalUrl?: (url: string) => Promise<void>;
 }
 
 function createElectronVaultPreferencesStorage(
@@ -136,6 +138,60 @@ export async function setDesktopTrayPrefs(patch: {
   const win = window as unknown as { pmusicDesktop?: ElectronDesktopWindowBridge };
   if (!win.pmusicDesktop?.setDesktopTrayPrefs) return null;
   return win.pmusicDesktop.setDesktopTrayPrefs(patch);
+}
+
+export async function openExternalUrl(url: string): Promise<void> {
+  if (typeof window === 'undefined' || !/^https?:\/\//i.test(url)) return;
+  const win = window as unknown as {
+    pmusicDesktop?: ElectronDesktopWindowBridge;
+    PMusicNative?: { openExternalUrl?: (u: string) => void };
+  };
+  if (win.pmusicDesktop?.openExternalUrl) {
+    await win.pmusicDesktop.openExternalUrl(url);
+    return;
+  }
+  if (win.PMusicNative?.openExternalUrl) {
+    try {
+      win.PMusicNative.openExternalUrl(url);
+      return;
+    } catch {
+      // fall back to window.open
+    }
+  }
+  window.open(url, '_blank', 'noopener,noreferrer');
+}
+
+export function showNativeReleaseNotification(
+  title: string,
+  body: string,
+  trackId?: string
+): void {
+  if (typeof window === 'undefined') return;
+  const win = window as unknown as {
+    pmusicDesktop?: ElectronDesktopWindowBridge;
+    PMusicNative?: {
+      showReleaseNotification?: (t: string, b: string, tid: string) => void;
+    };
+  };
+  if (win.PMusicNative?.showReleaseNotification) {
+    try {
+      win.PMusicNative.showReleaseNotification(title, body, trackId ?? '');
+      return;
+    } catch {
+      // fall through
+    }
+  }
+  if (win.pmusicDesktop?.showDesktopNotification) {
+    void win.pmusicDesktop.showDesktopNotification(title, body).catch(() => {});
+    return;
+  }
+  if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+    try {
+      new Notification(title, { body });
+    } catch {
+      // ignore Notification constructor restrictions
+    }
+  }
 }
 
 let androidFullscreenState = false;

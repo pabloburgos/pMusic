@@ -2,6 +2,7 @@ import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
   ArrowLeft,
+  Bell,
   Check,
   Compass,
   Disc3,
@@ -76,6 +77,7 @@ import { TrackInfoModal } from './components/TrackInfoModal.tsx';
 import { AuthOnboardingModal } from './components/AuthOnboardingModal.tsx';
 import { AddToPlaylistModal } from './components/AddToPlaylistModal.tsx';
 import { UserAvatar } from './components/UserAvatar.tsx';
+import { ReleaseNotificationsModal } from './components/ReleaseNotificationsModal.tsx';
 import { syncNativeSystemBars } from './utils/system-bars.ts';
 
 const PlaylistAppearanceModal = lazy(() =>
@@ -300,6 +302,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     friendActivities,
     activeJamSession,
     activeJamRole,
+    releaseNotifications,
     setAuthOnboardingOpen,
     setActiveTab,
     setSidebarCollapsed,
@@ -340,6 +343,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     modifyJamQueueAsGuest,
     joinJamInApp,
     setJamInviteModalOpen,
+    setNotificationsPanelOpen,
     searchTracksForPlaylist,
     openTrackMenu,
     showToast,
@@ -404,6 +408,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       friendActivities: s.friendActivities,
       activeJamSession: s.activeJamSession,
       activeJamRole: s.activeJamRole,
+      releaseNotifications: s.releaseNotifications,
       setAuthOnboardingOpen: s.setAuthOnboardingOpen,
       setActiveTab: s.setActiveTab,
       setSidebarCollapsed: s.setSidebarCollapsed,
@@ -444,6 +449,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       modifyJamQueueAsGuest: s.modifyJamQueueAsGuest,
       joinJamInApp: s.joinJamInApp,
       setJamInviteModalOpen: s.setJamInviteModalOpen,
+      setNotificationsPanelOpen: s.setNotificationsPanelOpen,
       searchTracksForPlaylist: s.searchTracksForPlaylist,
       openTrackMenu: s.openTrackMenu,
       showToast: s.showToast,
@@ -514,6 +520,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
   );
   const isElectronDesktop = isElectronDesktopRuntime();
   const showBuffering = useDelayedBuffering(isBuffering, 500);
+  const unreadReleaseCount = releaseNotifications.filter((n) => !n.read).length;
 
   useEffect(() => {
     let active = true;
@@ -1641,6 +1648,25 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
           >
             <button
               type="button"
+              data-testid="desktop-notifications-btn"
+              aria-label="Novedades de tus artistas"
+              title="Novedades de tus artistas"
+              onClick={() => setNotificationsPanelOpen(true)}
+              className="pm-no-drag pm-btn-secondary pm-pressable relative inline-flex h-8 w-8 items-center justify-center rounded-full"
+            >
+              <Bell className="h-3.5 w-3.5" />
+              {unreadReleaseCount > 0 && (
+                <span
+                  data-testid="desktop-notifications-badge"
+                  className="absolute -right-0.5 -top-0.5 inline-flex min-w-[15px] items-center justify-center rounded-full bg-white px-1 text-[9px] font-black leading-[15px] text-[#070709] shadow"
+                >
+                  {unreadReleaseCount > 9 ? '9+' : unreadReleaseCount}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
               data-testid="desktop-fullscreen-btn"
               aria-label={isRealFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}
               title={isRealFullscreen ? 'Salir de pantalla completa (F11)' : 'Pantalla completa (F11)'}
@@ -1747,7 +1773,24 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
             )}
           </div>
 
-          <div className="flex items-center">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              data-testid="mobile-notifications-btn"
+              aria-label="Novedades de tus artistas"
+              onClick={() => setNotificationsPanelOpen(true)}
+              className="pm-glass-chip pm-pressable relative inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-primary"
+            >
+              <Bell className="h-4 w-4" />
+              {unreadReleaseCount > 0 && (
+                <span
+                  data-testid="mobile-notifications-badge"
+                  className="absolute -right-0.5 -top-0.5 inline-flex min-w-[15px] items-center justify-center rounded-full bg-white px-1 text-[9px] font-black leading-[15px] text-[#070709] shadow"
+                >
+                  {unreadReleaseCount > 9 ? '9+' : unreadReleaseCount}
+                </span>
+              )}
+            </button>
             <button
               type="button"
               data-testid="mobile-profile-btn"
@@ -4056,6 +4099,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       <DjPopover />
       <DevicesConnectSheet />
       <JamInviteModal />
+      <ReleaseNotificationsModal />
       {carModeOpen && (
         <Suspense fallback={null}>
           <CarModeView />

@@ -1,15 +1,19 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
+  Copy,
   GripVertical,
   Loader2,
+  MessageCircle,
   MoreHorizontal,
   Plus,
   QrCode,
   Radio,
   RefreshCw,
   Search,
+  Share2,
   Shuffle,
+  SlidersHorizontal,
   Sparkles,
   Trash2,
   X,
@@ -20,7 +24,12 @@ import { ArtistLinks } from './ArtistLinks.tsx';
 import { LiquidHeartIcon } from './LiquidHeartIcon.tsx';
 import { TrackArtwork } from './TrackArtwork.tsx';
 import { UserAvatar } from './UserAvatar.tsx';
-import { isJamQueueOpRequest } from '../services/social-service.ts';
+import {
+  buildJamShareUrl,
+  buildJamWhatsAppUrl,
+  isJamQueueOpRequest,
+} from '../services/social-service.ts';
+import { openExternalUrl } from '../platform/web-bridge.ts';
 import { clearDraggedTrack, setDraggedTrack } from '../utils/track-dnd.ts';
 
 const ROW_PERF_STYLE: React.CSSProperties = {
@@ -414,6 +423,7 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
   const setNowPlayingOpen = usePMusicStore((s) => s.setNowPlayingOpen);
   const setJamInviteModalOpen = usePMusicStore((s) => s.setJamInviteModalOpen);
   const startJam = usePMusicStore((s) => s.startJam);
+  const updateJamSettings = usePMusicStore((s) => s.updateJamSettings);
   const leaveOrEndJam = usePMusicStore((s) => s.leaveOrEndJam);
   const toggleShuffle = usePMusicStore((s) => s.toggleShuffle);
   const clearUpNextQueue = usePMusicStore((s) => s.clearUpNextQueue);
@@ -440,6 +450,8 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
   const [queueSearchQuery, setQueueSearchQuery] = useState('');
   const [queueSearchResults, setQueueSearchResults] = useState<Track[]>([]);
   const [isQueueSearching, setIsQueueSearching] = useState(false);
+  const [jamQuickSettingsOpen, setJamQuickSettingsOpen] = useState(false);
+  const [jamLinkCopied, setJamLinkCopied] = useState(false);
   const [recentlyMovedKey, setRecentlyMovedKey] = useState<string | null>(null);
   const [recentlyDisplacedKey, setRecentlyDisplacedKey] = useState<string | null>(null);
 
@@ -698,8 +710,11 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
               {isJamActive ? 'Cola de Jam' : 'Cola de reproducción'}
             </h2>
             {isJamActive && activeJamSession && (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/35 bg-emerald-500/20 px-2.5 py-0.5 text-[10.5px] font-bold text-emerald-300">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span
+                data-testid="queue-jam-live-badge"
+                className="pm-jam-live-badge inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10.5px] font-extrabold tracking-wide"
+              >
+                <span className="pm-jam-live-dot h-1.5 w-1.5 rounded-full animate-pulse" />
                 EN VIVO · {activeJamSession.code}
               </span>
             )}
@@ -712,20 +727,36 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
-          {isJamActive ? (
+          {isJamActive && activeJamSession ? (
             <>
               <button
                 type="button"
                 onClick={() => setJamInviteModalOpen(true)}
-                className="pm-pressable inline-flex h-8 items-center gap-1.5 rounded-full bg-white px-3 text-[11px] font-bold text-[#0A0A0D] hover:opacity-90"
+                className="pm-pressable inline-flex h-8 items-center gap-1.5 rounded-full bg-white px-3 text-[11px] font-bold text-[#0A0A0D] shadow-sm hover:opacity-90"
               >
                 <QrCode className="h-3.5 w-3.5" />
                 Invitar
               </button>
+              {isHostInJam && (
+                <button
+                  type="button"
+                  data-testid="queue-jam-settings-btn"
+                  aria-expanded={jamQuickSettingsOpen}
+                  onClick={() => setJamQuickSettingsOpen((v) => !v)}
+                  className={`pm-pressable inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-[11px] font-semibold transition-colors ${
+                    jamQuickSettingsOpen
+                      ? 'bg-white text-[#0A0A0D]'
+                      : 'bg-white/[0.10] text-white hover:bg-white/[0.18]'
+                  }`}
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                  Ajustes
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => void leaveOrEndJam()}
-                className="pm-pressable inline-flex h-8 items-center gap-1 rounded-full bg-rose-500/20 px-3 text-[11px] font-semibold text-rose-300 hover:bg-rose-500/30"
+                className="pm-pressable pm-jam-end-btn inline-flex h-8 items-center gap-1 rounded-full bg-rose-500/20 px-3 text-[11px] font-bold text-rose-300 hover:bg-rose-500/30"
               >
                 {isHostInJam ? 'Finalizar' : 'Salir'}
               </button>
@@ -734,11 +765,12 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
             <>
               <button
                 type="button"
+                data-testid="queue-create-jam-btn"
                 onClick={() => void startJam({ openSheet: true })}
-                className="pm-pressable inline-flex h-8 items-center gap-1.5 rounded-full bg-emerald-500/20 px-3 text-[11px] font-bold text-emerald-300 hover:bg-emerald-500/30"
+                className="pm-pressable pm-jam-trigger-btn inline-flex h-8 items-center gap-1.5 rounded-full px-3.5 text-[11px] font-bold transition-all"
               >
                 <Radio className="h-3.5 w-3.5" />
-                Jam
+                Crear Jam
               </button>
               <button
                 type="button"
@@ -766,6 +798,112 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
           )}
         </div>
       </div>
+
+      {/* pMusic Active Jam Quick Share & Settings Bar */}
+      {isJamActive && activeJamSession && (
+        <div
+          data-testid="queue-jam-control-strip"
+          className="pm-jam-live-card space-y-2.5 rounded-[16px] px-3 py-2.5"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                data-testid="queue-jam-whatsapp-btn"
+                onClick={() =>
+                  void openExternalUrl(
+                    buildJamWhatsAppUrl(activeJamSession.hostName, activeJamSession.code)
+                  )
+                }
+                className="pm-pressable inline-flex h-7 items-center gap-1.5 rounded-full bg-[#25D366]/20 px-2.5 text-[11px] font-bold text-[#4ADE80] hover:bg-[#25D366]/30"
+              >
+                <MessageCircle className="h-3.5 w-3.5" />
+                WhatsApp
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const url = buildJamShareUrl(activeJamSession.code);
+                  void navigator.clipboard?.writeText(url);
+                  setJamLinkCopied(true);
+                  window.setTimeout(() => setJamLinkCopied(false), 1600);
+                  showToast('Enlace de Jam copiado');
+                }}
+                className="pm-pressable inline-flex h-7 items-center gap-1.5 rounded-full bg-white/[0.10] px-2.5 text-[11px] font-semibold text-white hover:bg-white/[0.18]"
+              >
+                {jamLinkCopied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                {jamLinkCopied ? 'Copiado' : 'Copiar enlace'}
+              </button>
+              {typeof navigator !== 'undefined' && typeof navigator.share === 'function' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void navigator
+                      .share({
+                        title: `Jam de ${activeJamSession.hostName} · pMusic`,
+                        text: `Únete a la Jam (${activeJamSession.code}) en pMusic`,
+                        url: buildJamShareUrl(activeJamSession.code),
+                      })
+                      .catch(() => {});
+                  }}
+                  className="pm-pressable inline-flex h-7 items-center gap-1.5 rounded-full bg-white/[0.10] px-2.5 text-[11px] font-semibold text-white hover:bg-white/[0.18]"
+                >
+                  <Share2 className="h-3 w-3" />
+                  Compartir
+                </button>
+              )}
+            </div>
+            <span className="text-[10.5px] font-semibold text-white/70">
+              {activeJamSession.allowGuestDirectAdd ? 'Entrada directa' : 'Con aprobación'}
+            </span>
+          </div>
+
+          {isHostInJam && jamQuickSettingsOpen && (
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-2">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10.5px] font-semibold text-white/75">Cola:</span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void updateJamSettings({
+                      allowGuestDirectAdd: !activeJamSession.allowGuestDirectAdd,
+                    })
+                  }
+                  className={`pm-pressable rounded-full px-2.5 py-1 text-[10.5px] font-bold ${
+                    activeJamSession.allowGuestDirectAdd
+                      ? 'bg-white text-[#070709]'
+                      : 'bg-white/[0.12] text-white'
+                  }`}
+                >
+                  {activeJamSession.allowGuestDirectAdd ? 'Añaden directo' : 'Aprobar peticiones'}
+                </button>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="mr-1 text-[10.5px] font-semibold text-white/75">Límite:</span>
+                {[
+                  { val: 0, label: '∞' },
+                  { val: 3, label: '3' },
+                  { val: 5, label: '5' },
+                  { val: 10, label: '10' },
+                ].map((opt) => (
+                  <button
+                    key={opt.val}
+                    type="button"
+                    onClick={() => void updateJamSettings({ maxRequestsPerGuest: opt.val })}
+                    className={`pm-pressable rounded-full px-2 py-0.5 text-[10.5px] font-bold ${
+                      activeJamSession.maxRequestsPerGuest === opt.val
+                        ? 'bg-white text-[#070709]'
+                        : 'bg-white/[0.10] text-white/80 hover:bg-white/[0.18]'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Quick Inline Search to Add Songs Directly to Queue or Active Jam */}
       <div className="space-y-2">
@@ -1096,7 +1234,7 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
               return (
                 <React.Fragment key={rowKey}>
                   {showUserQueueBadge && (
-                    <div className="px-1 pt-0.5 text-[10px] font-bold uppercase tracking-[0.09em] text-emerald-300/90">
+                    <div className="pm-jam-queue-accent px-1 pt-0.5 text-[10px] font-bold uppercase tracking-[0.09em]">
                       Añadidas a tu cola ({Math.min(userQueueCount, upNextTracks.length)})
                     </div>
                   )}

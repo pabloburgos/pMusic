@@ -282,6 +282,13 @@ export default async function handler(req, res) {
         if (!title || !artistName || !releaseDate || releaseDate < cutoff15Iso || releaseDate > todayIso) continue;
         const artists = splitCandidateArtists(artistName);
         if (artists.length === 0) continue;
+        const rawArt100 = typeof item?.artworkUrl100 === 'string' ? item.artworkUrl100.trim() : '';
+        const appleThumbMed = rawArt100
+          ? rawArt100.replace(/\/\d+x\d+[a-z0-9-]*\.(jpg|jpeg|png|webp)(\?.*)?$/i, '/600x600bb.$1$2')
+          : '';
+        const appleThumbHigh = rawArt100
+          ? rawArt100.replace(/\/\d+x\d+[a-z0-9-]*\.(jpg|jpeg|png|webp)(\?.*)?$/i, '/1000x1000bb.$1$2')
+          : '';
         out.push({
           title,
           artists,
@@ -289,7 +296,9 @@ export default async function handler(req, res) {
           kind: 'track',
           source: 'apple_es_top',
           priority: 98,
-          ...(item.artworkUrl100 ? { thumbnailUrl: item.artworkUrl100 } : {}),
+          ...(appleThumbHigh || appleThumbMed
+            ? { thumbnailUrl: appleThumbMed || appleThumbHigh, thumbnailHighUrl: appleThumbHigh || appleThumbMed }
+            : {}),
         });
       }
       return out;

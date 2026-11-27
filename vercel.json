@@ -11,6 +11,7 @@
     { "source": "/terminos", "destination": "/terms.html" },
     { "source": "/jam/assets/(.*)", "destination": "/assets/$1" },
     { "source": "/jam/favicon.svg", "destination": "/favicon.svg" },
+    { "source": "/jam/:code([A-Za-z0-9_-]{3,16})", "destination": "/api/jam-page?code=:code" },
     { "source": "/playlist/assets/(.*)", "destination": "/assets/$1" },
     { "source": "/playlist/favicon.svg", "destination": "/favicon.svg" },
     { "source": "/(.*)", "destination": "/index.html" }

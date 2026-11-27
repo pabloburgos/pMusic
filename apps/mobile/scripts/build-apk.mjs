@@ -57,6 +57,7 @@ const resDir = resolve(workDir, 'res');
 const valuesDir = resolve(resDir, 'values');
 const drawableDir = resolve(resDir, 'drawable');
 const xmlDir = resolve(resDir, 'xml');
+const xmlV31Dir = resolve(resDir, 'xml-v31');
 const layoutDir = resolve(resDir, 'layout');
 const assetsPublicDir = resolve(workDir, 'assets/public');
 const javaSrcDir = resolve(workDir, 'java/es/pmusic/app');
@@ -66,6 +67,7 @@ const dexDir = resolve(workDir, 'dex');
 mkdirSync(valuesDir, { recursive: true });
 mkdirSync(drawableDir, { recursive: true });
 mkdirSync(xmlDir, { recursive: true });
+mkdirSync(xmlV31Dir, { recursive: true });
 mkdirSync(layoutDir, { recursive: true });
 mkdirSync(assetsPublicDir, { recursive: true });
 mkdirSync(javaSrcDir, { recursive: true });
@@ -403,6 +405,10 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">pMusic</string>
+    <string name="widget_name">pMusic · Reproductor</string>
+    <string name="widget_desc">Portada y controles en directo en tu pantalla de inicio</string>
+    <string name="widget_compact_name">pMusic · Mini</string>
+    <string name="widget_compact_desc">Barra compacta con portada y controles rápidos</string>
 </resources>
 `,
   'utf-8'
@@ -485,15 +491,178 @@ writeFileSync(
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:minWidth="250dp"
     android:minHeight="110dp"
-    android:minResizeWidth="220dp"
+    android:minResizeWidth="180dp"
+    android:minResizeHeight="72dp"
+    android:resizeMode="horizontal|vertical"
+    android:updatePeriodMillis="0"
+    android:initialLayout="@layout/widget_pmusic"
+    android:previewImage="@drawable/ic_launcher"
+    android:widgetCategory="home_screen" />
+`,
+  'utf-8'
+);
+
+writeFileSync(
+  resolve(xmlV31Dir, 'pmusic_widget_info.xml'),
+  `<?xml version="1.0" encoding="utf-8"?>
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="250dp"
+    android:minHeight="110dp"
+    android:minResizeWidth="180dp"
     android:minResizeHeight="72dp"
     android:targetCellWidth="4"
     android:targetCellHeight="2"
     android:resizeMode="horizontal|vertical"
     android:updatePeriodMillis="0"
     android:initialLayout="@layout/widget_pmusic"
+    android:previewLayout="@layout/widget_pmusic"
+    android:previewImage="@drawable/ic_launcher"
+    android:description="@string/widget_desc"
+    android:widgetCategory="home_screen" />
+`,
+  'utf-8'
+);
+
+writeFileSync(
+  resolve(xmlDir, 'pmusic_widget_compact_info.xml'),
+  `<?xml version="1.0" encoding="utf-8"?>
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="250dp"
+    android:minHeight="48dp"
+    android:minResizeWidth="180dp"
+    android:minResizeHeight="48dp"
+    android:resizeMode="horizontal"
+    android:updatePeriodMillis="0"
+    android:initialLayout="@layout/widget_pmusic_compact"
     android:previewImage="@drawable/ic_launcher"
     android:widgetCategory="home_screen" />
+`,
+  'utf-8'
+);
+
+writeFileSync(
+  resolve(xmlV31Dir, 'pmusic_widget_compact_info.xml'),
+  `<?xml version="1.0" encoding="utf-8"?>
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="250dp"
+    android:minHeight="48dp"
+    android:minResizeWidth="180dp"
+    android:minResizeHeight="48dp"
+    android:targetCellWidth="4"
+    android:targetCellHeight="1"
+    android:resizeMode="horizontal"
+    android:updatePeriodMillis="0"
+    android:initialLayout="@layout/widget_pmusic_compact"
+    android:previewLayout="@layout/widget_pmusic_compact"
+    android:previewImage="@drawable/ic_launcher"
+    android:description="@string/widget_compact_desc"
+    android:widgetCategory="home_screen" />
+`,
+  'utf-8'
+);
+
+writeFileSync(
+  resolve(layoutDir, 'widget_pmusic_compact.xml'),
+  `<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_bg_default">
+
+    <ImageView
+        android:id="@+id/widget_bg_image"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="fitXY"
+        android:contentDescription="@null" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp">
+
+        <ImageView
+            android:id="@+id/widget_cover"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:scaleType="centerCrop"
+            android:background="@drawable/widget_cover_bg"
+            android:src="@drawable/ic_launcher"
+            android:contentDescription="Portada actual" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:paddingStart="10dp"
+            android:paddingEnd="8dp">
+
+            <TextView
+                android:id="@+id/widget_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="pMusic"
+                android:textSize="14sp"
+                android:textColor="#FFFFFFFF"
+                android:textStyle="bold"
+                android:maxLines="1"
+                android:ellipsize="end" />
+
+            <TextView
+                android:id="@+id/widget_artist"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Toca para reproducir"
+                android:textSize="11sp"
+                android:textColor="#B8FFFFFF"
+                android:maxLines="1"
+                android:ellipsize="end" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <ImageButton
+                android:id="@+id/widget_prev"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:background="@drawable/widget_btn_subtle_bg"
+                android:src="@drawable/ic_media_prev"
+                android:scaleType="centerInside"
+                android:contentDescription="Anterior" />
+
+            <ImageButton
+                android:id="@+id/widget_toggle"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:layout_marginStart="5dp"
+                android:layout_marginEnd="5dp"
+                android:background="@drawable/widget_btn_play_bg"
+                android:src="@drawable/ic_media_play"
+                android:scaleType="centerInside"
+                android:contentDescription="Reproducir o pausar" />
+
+            <ImageButton
+                android:id="@+id/widget_next"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:background="@drawable/widget_btn_subtle_bg"
+                android:src="@drawable/ic_media_next"
+                android:scaleType="centerInside"
+                android:contentDescription="Siguiente" />
+        </LinearLayout>
+    </LinearLayout>
+</RelativeLayout>
 `,
   'utf-8'
 );
@@ -617,8 +786,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="62"
-    android:versionName="0.24.1">
+    android:versionCode="63"
+    android:versionName="0.24.2">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -687,14 +856,28 @@ writeFileSync(
 
         <receiver
             android:name="es.pmusic.app.PMusicWidgetProvider"
+            android:enabled="true"
             android:exported="true"
-            android:label="pMusic">
+            android:label="@string/widget_name">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/pmusic_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name="es.pmusic.app.PMusicCompactWidgetProvider"
+            android:enabled="true"
+            android:exported="true"
+            android:label="@string/widget_compact_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/pmusic_widget_compact_info" />
         </receiver>
     </application>
 </manifest>
@@ -1253,6 +1436,7 @@ public class PMusicPlaybackService extends Service {
                 nm.notify(NOTIFICATION_ID, notif);
             }
             PMusicWidgetProvider.updateAllWidgets(this, sTitle, sArtist, sIsPlaying, artBmp);
+            PMusicCompactWidgetProvider.updateAllWidgets(this, sTitle, sArtist, sIsPlaying, artBmp);
         } catch (Throwable ignored) {
         }
     }
@@ -1586,7 +1770,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 public class MainActivity extends Activity {
-    private static final String NATIVE_APP_VERSION = "0.23.2";
+    private static final String NATIVE_APP_VERSION = "0.24.2";
     private volatile File activeOtaDir = null;
 
     private static int compareSemverNative(String a, String b) {
@@ -1760,6 +1944,9 @@ public class MainActivity extends Activity {
     private String pendingAuthCallbackUrl = null;
     private int safeInsetTopDp = 0;
     private int safeInsetBottomDp = 0;
+    private boolean lastDarkIcons = false;
+    private String lastStatusBarHex = "#070709";
+    private String lastNavBarHex = "#070709";
     private ServerSocket localStreamServer = null;
     private volatile int localStreamPort = 0;
     private volatile boolean streamServerRunning = false;
@@ -2242,44 +2429,54 @@ public class MainActivity extends Activity {
 
             @android.webkit.JavascriptInterface
             public void setSystemBarsAppearance(final boolean darkIcons, final String statusBarHex, final String navBarHex) {
+                lastDarkIcons = darkIcons;
+                lastStatusBarHex = statusBarHex != null ? statusBarHex : "#070709";
+                lastNavBarHex = navBarHex != null ? navBarHex : "#070709";
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        Window w = getWindow();
-                        if (w == null || Build.VERSION.SDK_INT < 21) return;
+                        applySystemBarsAppearance(darkIcons, lastStatusBarHex, lastNavBarHex);
+                    }
+                });
+            }
+
+            @android.webkit.JavascriptInterface
+            public void showReleaseNotification(final String title, final String body, final String trackId) {
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
                         try {
-                            int sbColor = (statusBarHex == null || "transparent".equalsIgnoreCase(statusBarHex))
-                                    ? Color.TRANSPARENT
-                                    : Color.parseColor(statusBarHex);
-                            int nbColor = (navBarHex == null || "transparent".equalsIgnoreCase(navBarHex))
-                                    ? Color.TRANSPARENT
-                                    : Color.parseColor(navBarHex);
-                            w.setStatusBarColor(sbColor);
-                            w.setNavigationBarColor(nbColor);
+                            android.app.NotificationManager nm = (android.app.NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                            if (nm == null) return;
+                            String channelId = "pmusic_releases_channel";
+                            if (Build.VERSION.SDK_INT >= 26) {
+                                android.app.NotificationChannel ch = new android.app.NotificationChannel(
+                                        channelId,
+                                        "Nuevos lanzamientos",
+                                        android.app.NotificationManager.IMPORTANCE_DEFAULT
+                                );
+                                nm.createNotificationChannel(ch);
+                            }
+                            Intent openIntent = new Intent(MainActivity.this, MainActivity.class);
+                            openIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                            if (trackId != null && !trackId.trim().isEmpty()) {
+                                openIntent.putExtra("pmusic_release_track_id", trackId.trim());
+                            }
+                            int piFlags = Build.VERSION.SDK_INT >= 23
+                                    ? android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE
+                                    : android.app.PendingIntent.FLAG_UPDATE_CURRENT;
+                            android.app.PendingIntent pi = android.app.PendingIntent.getActivity(MainActivity.this, 5101, openIntent, piFlags);
+                            android.app.Notification.Builder nb = Build.VERSION.SDK_INT >= 26
+                                    ? new android.app.Notification.Builder(MainActivity.this, channelId)
+                                    : new android.app.Notification.Builder(MainActivity.this);
+                            nb.setSmallIcon(R.drawable.ic_stat_pmusic)
+                                    .setContentTitle(title != null && !title.trim().isEmpty() ? title : "Nuevo lanzamiento")
+                                    .setContentText(body != null ? body : "")
+                                    .setAutoCancel(true)
+                                    .setContentIntent(pi);
+                            int notifId = 5100 + Math.abs((title + "|" + body).hashCode() % 400);
+                            nm.notify(notifId, nb.build());
                         } catch (Throwable ignored) {
-                        }
-                        if (Build.VERSION.SDK_INT >= 30) {
-                            android.view.WindowInsetsController ctrl = w.getInsetsController();
-                            if (ctrl != null) {
-                                int mask = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
-                                        | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
-                                ctrl.setSystemBarsAppearance(darkIcons ? mask : 0, mask);
-                            }
-                        } else if (Build.VERSION.SDK_INT >= 23) {
-                            View decor = w.getDecorView();
-                            int flags = decor.getSystemUiVisibility();
-                            if (darkIcons) {
-                                flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
-                                if (Build.VERSION.SDK_INT >= 26) {
-                                    flags |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
-                                }
-                            } else {
-                                flags &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
-                                if (Build.VERSION.SDK_INT >= 26) {
-                                    flags &= ~View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
-                                }
-                            }
-                            decor.setSystemUiVisibility(flags);
                         }
                     }
                 });
@@ -2739,9 +2936,84 @@ public class MainActivity extends Activity {
         dispatchAppBackgroundedToJs(true);
     }
 
+    private void applySystemBarsAppearance(final boolean darkIcons, final String statusBarHex, final String navBarHex) {
+        final Window w = getWindow();
+        if (w == null || Build.VERSION.SDK_INT < 21) return;
+        final View decor = w.getDecorView();
+        w.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS | WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);
+        w.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+        if (Build.VERSION.SDK_INT >= 29) {
+            try {
+                w.setStatusBarContrastEnforced(false);
+                w.setNavigationBarContrastEnforced(false);
+            } catch (Throwable ignored) {
+            }
+        }
+        try {
+            int sbColor = (statusBarHex == null || "transparent".equalsIgnoreCase(statusBarHex))
+                    ? Color.TRANSPARENT
+                    : Color.parseColor(statusBarHex);
+            int nbColor = (navBarHex == null || "transparent".equalsIgnoreCase(navBarHex))
+                    ? Color.TRANSPARENT
+                    : Color.parseColor(navBarHex);
+            w.setStatusBarColor(sbColor);
+            w.setNavigationBarColor(nbColor);
+        } catch (Throwable ignored) {
+        }
+        if (Build.VERSION.SDK_INT >= 30) {
+            try {
+                int mask = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                        | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+                android.view.WindowInsetsController wCtrl = w.getInsetsController();
+                if (wCtrl != null) {
+                    wCtrl.setSystemBarsAppearance(darkIcons ? mask : 0, mask);
+                }
+                android.view.WindowInsetsController dCtrl = decor != null ? decor.getWindowInsetsController() : null;
+                if (dCtrl != null && dCtrl != wCtrl) {
+                    dCtrl.setSystemBarsAppearance(darkIcons ? mask : 0, mask);
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        if (Build.VERSION.SDK_INT >= 23 && decor != null) {
+            int flags = decor.getSystemUiVisibility()
+                    | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+            if (darkIcons) {
+                flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+                if (Build.VERSION.SDK_INT >= 26) {
+                    flags |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+                }
+            } else {
+                flags &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+                if (Build.VERSION.SDK_INT >= 26) {
+                    flags &= ~View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+                }
+            }
+            decor.setSystemUiVisibility(flags);
+            if (!decor.isAttachedToWindow()) {
+                decor.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        applySystemBarsAppearance(lastDarkIcons, lastStatusBarHex, lastNavBarHex);
+                    }
+                });
+            }
+        }
+        try {
+            Class<?> miuiLp = Class.forName("android.view.MiuiWindowManager$LayoutParams");
+            int darkModeFlag = miuiLp.getField("EXTRA_FLAG_STATUS_BAR_DARK_MODE").getInt(miuiLp);
+            java.lang.reflect.Method extraFlagMethod = w.getClass().getMethod("setExtraFlags", int.class, int.class);
+            extraFlagMethod.invoke(w, darkIcons ? darkModeFlag : 0, darkModeFlag);
+        } catch (Throwable ignored) {
+        }
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
+        applySystemBarsAppearance(lastDarkIcons, lastStatusBarHex, lastNavBarHex);
         dispatchAppBackgroundedToJs(false);
         if (webView != null) {
             try {
@@ -2752,6 +3024,14 @@ public class MainActivity extends Activity {
                 }
             } catch (Throwable ignored) {
             }
+        }
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            applySystemBarsAppearance(lastDarkIcons, lastStatusBarHex, lastNavBarHex);
         }
     }
 
@@ -4348,7 +4628,7 @@ public class PMusicWidgetProvider extends AppWidgetProvider {
         return PendingIntent.getBroadcast(ctx, reqCode, i, flags);
     }
 
-    private static Bitmap createRoundedCoverBitmap(Bitmap src, int sizePx, float radiusPx) {
+    public static Bitmap createRoundedCoverBitmap(Bitmap src, int sizePx, float radiusPx) {
         try {
             Bitmap scaled = Bitmap.createScaledBitmap(src, sizePx, sizePx, true);
             Bitmap out = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888);
@@ -4366,7 +4646,7 @@ public class PMusicWidgetProvider extends AppWidgetProvider {
         }
     }
 
-    private static Bitmap createTintedBackgroundBitmap(Bitmap src) {
+    public static Bitmap createTintedBackgroundBitmap(Bitmap src) {
         try {
             Bitmap tiny = Bitmap.createScaledBitmap(src, 8, 8, true);
             long rSum = 0L, gSum = 0L, bSum = 0L;
@@ -4398,6 +4678,111 @@ public class PMusicWidgetProvider extends AppWidgetProvider {
         } catch (Throwable t) {
             return null;
         }
+    }
+}
+`,
+  'utf-8'
+);
+
+writeFileSync(
+  resolve(javaSrcDir, 'PMusicCompactWidgetProvider.java'),
+  `package es.pmusic.app;
+
+import android.app.PendingIntent;
+import android.appwidget.AppWidgetManager;
+import android.appwidget.AppWidgetProvider;
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
+import android.graphics.Bitmap;
+import android.os.Build;
+import android.widget.RemoteViews;
+
+public class PMusicCompactWidgetProvider extends AppWidgetProvider {
+    @Override
+    public void onUpdate(Context context, AppWidgetManager appWidgetManager, int[] appWidgetIds) {
+        updateWidgetIds(
+                context,
+                appWidgetManager,
+                appWidgetIds,
+                PMusicPlaybackService.getWidgetTitle(),
+                PMusicPlaybackService.getWidgetArtist(),
+                PMusicPlaybackService.isCurrentlyPlaying(),
+                PMusicPlaybackService.getWidgetCoverBitmap()
+        );
+    }
+
+    public static void updateAllWidgets(
+            Context ctx,
+            String title,
+            String artist,
+            boolean isPlaying,
+            Bitmap coverBmp
+    ) {
+        if (ctx == null) return;
+        try {
+            AppWidgetManager mgr = AppWidgetManager.getInstance(ctx);
+            if (mgr == null) return;
+            ComponentName cn = new ComponentName(ctx, PMusicCompactWidgetProvider.class);
+            int[] ids = mgr.getAppWidgetIds(cn);
+            if (ids == null || ids.length == 0) return;
+            updateWidgetIds(ctx, mgr, ids, title, artist, isPlaying, coverBmp);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void updateWidgetIds(
+            Context ctx,
+            AppWidgetManager mgr,
+            int[] ids,
+            String title,
+            String artist,
+            boolean isPlaying,
+            Bitmap coverBmp
+    ) {
+        if (ids == null || ids.length == 0) return;
+        String safeTitle = (title != null && !title.trim().isEmpty()) ? title.trim() : "pMusic";
+        String safeArtist = (artist != null && !artist.trim().isEmpty()) ? artist.trim() : "Toca para reproducir";
+
+        Bitmap bgBmp = coverBmp != null ? PMusicWidgetProvider.createTintedBackgroundBitmap(coverBmp) : null;
+        Bitmap roundedCover = coverBmp != null ? PMusicWidgetProvider.createRoundedCoverBitmap(coverBmp, 112, 18f) : null;
+
+        int piFlags = Build.VERSION.SDK_INT >= 23
+                ? PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                : PendingIntent.FLAG_UPDATE_CURRENT;
+
+        Intent openIntent = new Intent(ctx, MainActivity.class);
+        openIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        PendingIntent openPi = PendingIntent.getActivity(ctx, 210, openIntent, piFlags);
+
+        PendingIntent prevPi = makeActionBroadcast(ctx, PMusicWidgetProvider.ACTION_WIDGET_PREV, 211, piFlags);
+        PendingIntent togglePi = makeActionBroadcast(ctx, PMusicWidgetProvider.ACTION_WIDGET_TOGGLE, 212, piFlags);
+        PendingIntent nextPi = makeActionBroadcast(ctx, PMusicWidgetProvider.ACTION_WIDGET_NEXT, 213, piFlags);
+
+        for (int appWidgetId : ids) {
+            RemoteViews rv = new RemoteViews(ctx.getPackageName(), R.layout.widget_pmusic_compact);
+            rv.setTextViewText(R.id.widget_title, safeTitle);
+            rv.setTextViewText(R.id.widget_artist, safeArtist);
+            rv.setImageViewResource(R.id.widget_toggle, isPlaying ? R.drawable.ic_media_pause : R.drawable.ic_media_play);
+            rv.setImageViewBitmap(R.id.widget_bg_image, bgBmp);
+            if (roundedCover != null) {
+                rv.setImageViewBitmap(R.id.widget_cover, roundedCover);
+            } else {
+                rv.setImageViewResource(R.id.widget_cover, R.drawable.ic_launcher);
+            }
+            rv.setOnClickPendingIntent(R.id.widget_root, openPi);
+            rv.setOnClickPendingIntent(R.id.widget_cover, openPi);
+            rv.setOnClickPendingIntent(R.id.widget_prev, prevPi);
+            rv.setOnClickPendingIntent(R.id.widget_toggle, togglePi);
+            rv.setOnClickPendingIntent(R.id.widget_next, nextPi);
+            mgr.updateAppWidget(appWidgetId, rv);
+        }
+    }
+
+    private static PendingIntent makeActionBroadcast(Context ctx, String action, int reqCode, int flags) {
+        Intent i = new Intent(ctx, PMusicWidgetProvider.class);
+        i.setAction(action);
+        return PendingIntent.getBroadcast(ctx, reqCode, i, flags);
     }
 }
 `,
@@ -4444,6 +4829,7 @@ execFileSync(
     resolve(javaSrcDir, 'PMusicPlaybackService.java'),
     resolve(javaSrcDir, 'PMusicMediaBrowserService.java'),
     resolve(javaSrcDir, 'PMusicWidgetProvider.java'),
+    resolve(javaSrcDir, 'PMusicCompactWidgetProvider.java'),
     resolve(javaSrcDir, 'PMusicApkProvider.java'),
     resolve(javaSrcDir, 'MainActivity.java'),
   ],

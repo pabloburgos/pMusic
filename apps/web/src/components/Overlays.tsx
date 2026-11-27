@@ -15,6 +15,7 @@ import {
   Loader2,
   Lock,
   Maximize,
+  MessageCircle,
   MessageSquareQuote,
   Mic2,
   Minimize,
@@ -27,6 +28,7 @@ import {
   Repeat,
   Repeat1,
   Search,
+  Send,
   Share2,
   Shuffle,
   Sliders,
@@ -59,7 +61,13 @@ import { MarqueeText } from './MarqueeText.tsx';
 import { TrackArtwork } from './TrackArtwork.tsx';
 import { NowPlayingQueuePanel } from './NowPlayingQueuePanel.tsx';
 import { syncNativeSystemBars } from '../utils/system-bars.ts';
-import { buildJamQrImageUrl, buildJamShareUrl } from '../services/social-service.ts';
+import {
+  buildJamQrImageUrl,
+  buildJamShareUrl,
+  buildJamTelegramUrl,
+  buildJamWhatsAppUrl,
+} from '../services/social-service.ts';
+import { openExternalUrl } from '../platform/web-bridge.ts';
 import { useDelayedBuffering } from '../hooks/useDelayedBuffering.ts';
 import {
   USER_EQ_FREQUENCIES_HZ,
@@ -455,7 +463,11 @@ const NowPlayingSheetInner: React.FC = () => {
   useEffect(() => {
     if (!nowPlayingOpen) return;
     syncNativeSystemBars({ nowPlayingOpen: true, isLightBackdrop, themeId });
-  }, [nowPlayingOpen, isLightBackdrop, themeId]);
+    const t = window.setTimeout(() => {
+      syncNativeSystemBars({ nowPlayingOpen: true, isLightBackdrop, themeId });
+    }, 140);
+    return () => window.clearTimeout(t);
+  }, [nowPlayingOpen, isLightBackdrop, themeId, currentTrack.id]);
 
   useEffect(() => {
     if (!nowPlayingOpen || nowPlayingTab !== 'Letras') {
@@ -4289,8 +4301,8 @@ const JamInviteModalInner: React.FC = () => {
         className="pm-glass-frosted-neutral pm-hud-dark pm-modal-pop relative z-10 w-full max-w-sm space-y-4 rounded-[26px] border border-white/15 p-6 text-center shadow-2xl"
       >
         <div className="flex items-center justify-between">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/20 px-3 py-1 text-[11px] font-bold text-emerald-300">
-            <Radio className="h-3.5 w-3.5 animate-pulse" />
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-extrabold tracking-wide text-white">
+            <Radio className="h-3.5 w-3.5 animate-pulse text-[#C4B5FD]" />
             JAM ACTIVA
           </span>
           <button
@@ -4308,19 +4320,56 @@ const JamInviteModalInner: React.FC = () => {
             Invita a añadir canciones
           </h3>
           <p className="mt-1 text-xs text-white/70">
-            Escanea el QR o comparte el enlace: en la web podrán añadir temas rápido sin descargar la app.
+            Comparte el enlace o escanea el QR: tus amigos añaden canciones directo desde la web o la app.
           </p>
         </div>
 
-        <div className="mx-auto inline-flex flex-col items-center gap-2 rounded-2xl border border-white/15 bg-[#050507] p-3">
+        <button
+          type="button"
+          onClick={() => {
+            void navigator.clipboard?.writeText(activeJamSession.code);
+            showToast(`Código ${activeJamSession.code} copiado`);
+          }}
+          className="mx-auto inline-flex flex-col items-center gap-2 rounded-2xl border border-white/15 bg-[#050507] p-3 transition hover:border-white/30"
+          title="Toca para copiar el código"
+        >
           <img
             src={qrUrl}
             alt={`Código QR Jam ${activeJamSession.code}`}
-            className="h-44 w-44 rounded-xl"
+            className="h-40 w-40 rounded-xl"
           />
           <span className="font-mono text-base font-black tracking-[0.22em] text-white">
             {activeJamSession.code}
           </span>
+        </button>
+
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            data-testid="jam-invite-whatsapp-btn"
+            onClick={() =>
+              void openExternalUrl(
+                buildJamWhatsAppUrl(activeJamSession.hostName, activeJamSession.code)
+              )
+            }
+            className="pm-pressable inline-flex items-center justify-center gap-1.5 rounded-full bg-[#25D366] py-2.5 text-xs font-extrabold text-[#05180D] hover:opacity-95"
+          >
+            <MessageCircle className="h-3.5 w-3.5" />
+            WhatsApp
+          </button>
+          <button
+            type="button"
+            data-testid="jam-invite-telegram-btn"
+            onClick={() =>
+              void openExternalUrl(
+                buildJamTelegramUrl(activeJamSession.hostName, activeJamSession.code)
+              )
+            }
+            className="pm-pressable inline-flex items-center justify-center gap-1.5 rounded-full bg-[#229ED9]/25 py-2.5 text-xs font-bold text-[#7DD3FC] hover:bg-[#229ED9]/35"
+          >
+            <Send className="h-3.5 w-3.5" />
+            Telegram
+          </button>
         </div>
 
         <div className="flex gap-2">
@@ -4343,6 +4392,7 @@ const JamInviteModalInner: React.FC = () => {
               onClick={() => {
                 void navigator.share({
                   title: `Únete a la Jam de ${activeJamSession.hostName} en pMusic`,
+                  text: `Entra a la Jam (${activeJamSession.code}) para añadir canciones en directo`,
                   url: shareUrl,
                 }).catch(() => {});
               }}
@@ -4355,30 +4405,59 @@ const JamInviteModalInner: React.FC = () => {
         </div>
 
         {isHost && (
-          <div className="flex items-center justify-between rounded-2xl border border-white/12 bg-white/[0.04] px-3.5 py-2.5 text-left">
-            <div>
-              <div className="text-xs font-bold text-white">Peticiones de invitados</div>
-              <div className="text-[11px] text-white/65">
-                {activeJamSession.allowGuestDirectAdd
-                  ? 'Entran directo a la cola'
-                  : 'Aprobar antes de añadir'}
+          <div className="space-y-2.5 rounded-2xl border border-white/12 bg-white/[0.04] px-3.5 py-3 text-left">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <div className="text-xs font-bold text-white">Peticiones de invitados</div>
+                <div className="text-[11px] text-white/65">
+                  {activeJamSession.allowGuestDirectAdd
+                    ? 'Entran directo a la cola'
+                    : 'Aprobar antes de añadir'}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  void updateJamSettings({
+                    allowGuestDirectAdd: !activeJamSession.allowGuestDirectAdd,
+                  })
+                }
+                className={`rounded-full px-3 py-1 text-[11px] font-bold ${
+                  activeJamSession.allowGuestDirectAdd
+                    ? 'bg-white text-[#070709]'
+                    : 'bg-amber-500/25 text-amber-300'
+                }`}
+              >
+                {activeJamSession.allowGuestDirectAdd ? 'Directo' : 'Moderar'}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between gap-2 border-t border-white/10 pt-2">
+              <span className="text-[11px] font-semibold text-white/75">
+                Límite por invitado
+              </span>
+              <div className="flex items-center gap-1">
+                {[
+                  { val: 0, label: 'Sin límite' },
+                  { val: 3, label: '3' },
+                  { val: 5, label: '5' },
+                  { val: 10, label: '10' },
+                ].map((opt) => (
+                  <button
+                    key={opt.val}
+                    type="button"
+                    onClick={() => void updateJamSettings({ maxRequestsPerGuest: opt.val })}
+                    className={`rounded-full px-2.5 py-1 text-[10.5px] font-bold ${
+                      activeJamSession.maxRequestsPerGuest === opt.val
+                        ? 'bg-white text-[#070709]'
+                        : 'bg-white/10 text-white/75 hover:bg-white/20'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() =>
-                void updateJamSettings({
-                  allowGuestDirectAdd: !activeJamSession.allowGuestDirectAdd,
-                })
-              }
-              className={`rounded-full px-3 py-1 text-[11px] font-bold ${
-                activeJamSession.allowGuestDirectAdd
-                  ? 'bg-emerald-500/20 text-emerald-300'
-                  : 'bg-amber-500/20 text-amber-300'
-              }`}
-            >
-              {activeJamSession.allowGuestDirectAdd ? 'Directo' : 'Moderar'}
-            </button>
           </div>
         )}
 

@@ -37,6 +37,8 @@ contextBridge.exposeInMainWorld('pmusicDesktop', {
     minimizeToTrayOnClose: boolean;
     notifyOnTrackChange: boolean;
   }> => ipcRenderer.invoke('pmusic:set-desktop-tray-prefs', patch),
+  showDesktopNotification: (title: string, body: string): Promise<void> =>
+    ipcRenderer.invoke('pmusic:show-notification', { title, body }),
   toggleFullscreen: (): Promise<boolean> => ipcRenderer.invoke('pmusic:toggle-fullscreen'),
   getFullscreen: (): Promise<boolean> => ipcRenderer.invoke('pmusic:get-fullscreen'),
   onFullscreenChange: (cb: (isFs: boolean) => void): (() => void) => {

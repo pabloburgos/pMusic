@@ -3790,3 +3790,78 @@ html.pm-reduced-motion .pm-heart-liquid-pop {
 .pm-np-light-surface .text-\[\#34D399\] {
   color: #059669 !important;
 }
+
+.pm-jam-trigger-btn {
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+}
+
+.pm-jam-trigger-btn:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.pm-jam-live-badge {
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+}
+
+.pm-jam-live-dot {
+  background-color: #c4b5fd;
+}
+
+.pm-jam-live-card {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.pm-jam-queue-accent {
+  color: #e9d5ff;
+}
+
+.pm-np-light-surface .pm-jam-trigger-btn {
+  background: #09090b !important;
+  color: #ffffff !important;
+  border-color: rgba(0, 0, 0, 0.22) !important;
+}
+
+.pm-np-light-surface .pm-jam-trigger-btn svg {
+  color: #ffffff !important;
+}
+
+.pm-np-light-surface .pm-jam-live-badge {
+  background: #09090b !important;
+  color: #ffffff !important;
+  border-color: rgba(0, 0, 0, 0.22) !important;
+}
+
+.pm-np-light-surface .pm-jam-live-dot {
+  background-color: #a78bfa !important;
+}
+
+.pm-np-light-surface .pm-jam-live-card {
+  background: rgba(0, 0, 0, 0.08) !important;
+  border-color: rgba(0, 0, 0, 0.16) !important;
+}
+
+.pm-np-light-surface .pm-jam-queue-accent {
+  color: #09090b !important;
+}
+
+.pm-np-light-surface :is(.text-emerald-300, .text-emerald-400) {
+  color: #047857 !important;
+}
+
+.pm-np-light-surface :is(.text-rose-300, .pm-jam-end-btn) {
+  color: #be123c !important;
+  background-color: rgba(225, 29, 72, 0.14) !important;
+}
+
+.pm-np-light-surface .text-amber-300 {
+  color: #b45309 !important;
+}
+
+.pm-np-light-surface .text-\[\#4ADE80\] {
+  color: #15803d !important;
+}

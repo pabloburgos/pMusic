@@ -142,9 +142,10 @@ export async function resolveRecoveredTrackCover(
       const dzNum = cleanId.slice(3);
       if (/^\d+$/.test(dzNum)) {
         const direct = await fetchDzProxyJson<{
-          album?: { cover_big?: string; cover_medium?: string; cover?: string };
+          album?: { cover_xl?: string; cover_big?: string; cover_medium?: string; cover?: string };
         }>(`/track/${encodeURIComponent(dzNum)}`);
         const cand =
+          direct?.album?.cover_xl ??
           direct?.album?.cover_big ??
           direct?.album?.cover_medium ??
           direct?.album?.cover;
@@ -163,12 +164,13 @@ export async function resolveRecoveredTrackCover(
       const searched = await fetchDzProxyJson<{
         data?: Array<{
           title?: string;
-          album?: { cover_big?: string; cover_medium?: string; cover?: string };
+          album?: { cover_xl?: string; cover_big?: string; cover_medium?: string; cover?: string };
         }>;
       }>(`/search?q=${encodeURIComponent(query)}&limit=3`);
       const items = Array.isArray(searched?.data) ? searched.data : [];
       for (const item of items) {
         const cand =
+          item?.album?.cover_xl ??
           item?.album?.cover_big ??
           item?.album?.cover_medium ??
           item?.album?.cover;

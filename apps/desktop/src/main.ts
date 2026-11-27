@@ -774,6 +774,22 @@ ipcMain.handle('pmusic:get-desktop-tray-prefs', () => readDesktopTrayPrefs());
 ipcMain.handle('pmusic:set-desktop-tray-prefs', (_event, patch: Partial<DesktopTrayPrefs>) =>
   writeDesktopTrayPrefs(patch ?? {})
 );
+ipcMain.handle(
+  'pmusic:show-notification',
+  (_event, payload: { title?: string; body?: string }) => {
+    try {
+      if (!Notification.isSupported()) return;
+      const notif = new Notification({
+        title: String(payload?.title || 'Nuevo lanzamiento en pMusic'),
+        body: String(payload?.body || ''),
+      });
+      notif.on('click', () => showAndFocusMainWindow());
+      notif.show();
+    } catch {
+      // ignore notification failure
+    }
+  }
+);
 ipcMain.handle('pmusic:configure-discord', async (_event, clientId: string) => {
   return discordRpc.configureAndReconnect(clientId ?? '');
 });
@@ -988,7 +1004,7 @@ ipcMain.handle('pmusic:check-and-apply-update', async () => {
     const clean = (v: string) =>
       v.replace(/^v/i, '').split('-')[0]?.split('.').map((n) => parseInt(n, 10) || 0) ?? [0, 0, 0];
     const r = clean(latestVer);
-    const l = clean(app.getVersion() || '0.24.1');
+    const l = clean(app.getVersion() || '0.24.2');
     const newer = [0, 1, 2].some((i, _a, arr) => {
       for (let j = 0; j < i; j++) if ((r[j] ?? 0) !== (l[j] ?? 0)) return false;
       return (r[i] ?? 0) > (l[i] ?? 0);

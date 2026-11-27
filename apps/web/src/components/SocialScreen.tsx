@@ -9,11 +9,13 @@ import {
   Link2,
   ListMusic,
   Loader2,
+  MessageCircle,
   Play,
   Plus,
   QrCode,
   Radio,
   Search,
+  Send,
   Sparkles,
   UserPlus,
   Users,
@@ -25,10 +27,13 @@ import type { TopStatsWindow } from '../lib/wrapped-stats.ts';
 import {
   buildJamQrImageUrl,
   buildJamShareUrl,
+  buildJamTelegramUrl,
+  buildJamWhatsAppUrl,
   buildPlaylistShareUrl,
   isJamQueueOpRequest,
   searchProfilesByUsername,
 } from '../services/social-service.ts';
+import { openExternalUrl } from '../platform/web-bridge.ts';
 import { PMusicSwitch } from './PMusicSwitch.tsx';
 import { TrackArtwork } from './TrackArtwork.tsx';
 import { UserAvatar } from './UserAvatar.tsx';
@@ -351,6 +356,32 @@ export const SocialScreen: React.FC = React.memo(() => {
                     <QrCode className="h-3.5 w-3.5" />
                     Abrir Cola de Jam en el reproductor
                   </button>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void openExternalUrl(
+                          buildJamWhatsAppUrl(activeJamSession.hostName, activeJamSession.code)
+                        )
+                      }
+                      className="pm-pressable flex items-center justify-center gap-1.5 rounded-full bg-[#25D366] py-2 text-xs font-extrabold text-[#05180D]"
+                    >
+                      <MessageCircle className="h-3.5 w-3.5" />
+                      WhatsApp
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void openExternalUrl(
+                          buildJamTelegramUrl(activeJamSession.hostName, activeJamSession.code)
+                        )
+                      }
+                      className="pm-pressable flex items-center justify-center gap-1.5 rounded-full bg-[#229ED9]/25 py-2 text-xs font-bold text-[#7DD3FC]"
+                    >
+                      <Send className="h-3.5 w-3.5" />
+                      Telegram
+                    </button>
+                  </div>
                   <div className="flex gap-2">
                     <button
                       type="button"

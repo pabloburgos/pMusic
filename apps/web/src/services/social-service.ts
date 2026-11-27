@@ -167,6 +167,30 @@ export function buildJamShareUrl(code: string): string {
   return `${PUBLIC_WEB_BASE_URL}/jam/${code.toUpperCase()}`;
 }
 
+export function buildJamShareMessage(hostName: string | undefined | null, code: string): string {
+  const cleanHost = (hostName ?? '').trim();
+  const cleanCode = code.trim().toUpperCase();
+  const url = buildJamShareUrl(cleanCode);
+  return cleanHost
+    ? `Únete a la Jam de ${cleanHost} en pMusic y pon canciones en la cola en directo (${cleanCode}): ${url}`
+    : `Únete a esta Jam en pMusic y pon canciones en la cola en directo (${cleanCode}): ${url}`;
+}
+
+export function buildJamWhatsAppUrl(hostName: string | undefined | null, code: string): string {
+  const msg = buildJamShareMessage(hostName, code);
+  return `https://wa.me/?text=${encodeURIComponent(msg)}`;
+}
+
+export function buildJamTelegramUrl(hostName: string | undefined | null, code: string): string {
+  const cleanCode = code.trim().toUpperCase();
+  const url = buildJamShareUrl(cleanCode);
+  const cleanHost = (hostName ?? '').trim();
+  const text = cleanHost
+    ? `Únete a la Jam de ${cleanHost} en pMusic (${cleanCode})`
+    : `Únete a esta Jam en pMusic (${cleanCode})`;
+  return `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}`;
+}
+
 export function buildJamQrImageUrl(code: string): string {
   const url = buildJamShareUrl(code);
   return `https://api.qrserver.com/v1/create-qr-code/?size=240x240&bgcolor=050507&color=FFFFFF&margin=12&data=${encodeURIComponent(url)}`;

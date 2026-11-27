@@ -1,7 +1,9 @@
 import { defaultPlatformBridge } from '../platform/web-bridge.ts';
+import { upgradeCoverUrlToHd } from './image-opt.ts';
 
 const OFFLINE_COVERS_DB_NAME = 'pmusic_offline_covers_v1';
 const OFFLINE_COVERS_STORE = 'covers';
+const MIN_HD_COVER_BYTES = 20_000;
 
 interface StoredCoverEntry {
   key: string;
@@ -9,10 +11,17 @@ interface StoredCoverEntry {
   coverUrl: string;
   blob: Blob;
   savedAt: number;
+  hd?: boolean;
 }
 
 const memoryCoverUrls = new Map<string, string>();
+const memoryCoverIsHd = new Map<string, boolean>();
 let coverDbPromise: Promise<IDBDatabase | null> | null = null;
+
+function isCoverBlobHd(blob: Blob, markedHd?: boolean): boolean {
+  if (markedHd === true && blob.size >= MIN_HD_COVER_BYTES) return true;
+  return blob.size >= MIN_HD_COVER_BYTES;
+}
 
 export function normalizeCoverKey(url?: string | null): string {
   const raw = (url ?? '').trim();
@@ -25,10 +34,16 @@ export function normalizeCoverKey(url?: string | null): string {
   }
 }
 
-function registerMemoryCover(trackId: string | undefined, coverUrl: string | undefined | null, blob: Blob): string | null {
+function registerMemoryCover(
+  trackId: string | undefined,
+  coverUrl: string | undefined | null,
+  blob: Blob,
+  hd?: boolean
+): string | null {
   if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return null;
   try {
     const objUrl = URL.createObjectURL(blob);
+    const isHd = isCoverBlobHd(blob, hd);
     if (trackId) {
       const prev = memoryCoverUrls.get(`track:${trackId}`);
       if (prev && prev !== objUrl) {
@@ -39,10 +54,12 @@ function registerMemoryCover(trackId: string | undefined, coverUrl: string | und
         }
       }
       memoryCoverUrls.set(`track:${trackId}`, objUrl);
+      memoryCoverIsHd.set(`track:${trackId}`, isHd);
     }
     const norm = normalizeCoverKey(coverUrl);
     if (norm) {
       memoryCoverUrls.set(`url:${norm}`, objUrl);
+      memoryCoverIsHd.set(`url:${norm}`, isHd);
     }
     return objUrl;
   } catch {
@@ -73,25 +90,33 @@ function openCoverDb(): Promise<IDBDatabase | null> {
 
 export function getCachedOfflineCoverUrl(
   trackId?: string,
-  coverUrl?: string | null
+  coverUrl?: string | null,
+  opts?: { requireHd?: boolean }
 ): string | null {
+  const requireHd = Boolean(opts?.requireHd);
   if (trackId) {
     const byId = memoryCoverUrls.get(`track:${trackId}`);
-    if (byId) return byId;
+    if (byId && (!requireHd || memoryCoverIsHd.get(`track:${trackId}`))) {
+      return byId;
+    }
   }
   const norm = normalizeCoverKey(coverUrl);
   if (norm) {
     const byUrl = memoryCoverUrls.get(`url:${norm}`);
-    if (byUrl) return byUrl;
+    if (byUrl && (!requireHd || memoryCoverIsHd.get(`url:${norm}`))) {
+      return byUrl;
+    }
   }
   return null;
 }
 
 export async function resolveOfflineCoverUrl(
   trackId?: string,
-  coverUrl?: string | null
+  coverUrl?: string | null,
+  opts?: { requireHd?: boolean }
 ): Promise<string | null> {
-  const cached = getCachedOfflineCoverUrl(trackId, coverUrl);
+  const requireHd = Boolean(opts?.requireHd);
+  const cached = getCachedOfflineCoverUrl(trackId, coverUrl, opts);
   if (cached) return cached;
 
   const db = await openCoverDb();
@@ -112,14 +137,20 @@ export async function resolveOfflineCoverUrl(
   if (trackId) {
     const entry = await readByKey(`track:${trackId}`);
     if (entry?.blob) {
-      return registerMemoryCover(trackId, entry.coverUrl || coverUrl, entry.blob);
+      const entryHd = isCoverBlobHd(entry.blob, entry.hd);
+      if (!requireHd || entryHd) {
+        return registerMemoryCover(trackId, entry.coverUrl || coverUrl, entry.blob, entryHd);
+      }
     }
   }
   const norm = normalizeCoverKey(coverUrl);
   if (norm) {
     const entry = await readByKey(`url:${norm}`);
     if (entry?.blob) {
-      return registerMemoryCover(trackId || entry.trackId, coverUrl, entry.blob);
+      const entryHd = isCoverBlobHd(entry.blob, entry.hd);
+      if (!requireHd || entryHd) {
+        return registerMemoryCover(trackId || entry.trackId, coverUrl, entry.blob, entryHd);
+      }
     }
   }
   return null;
@@ -170,7 +201,8 @@ export async function saveOfflineCover(
   trackId: string,
   coverUrl?: string | null
 ): Promise<boolean> {
-  const cleanUrl = (coverUrl ?? '').trim();
+  const rawClean = (coverUrl ?? '').trim();
+  const cleanUrl = upgradeCoverUrlToHd(rawClean) || rawClean;
   if (!trackId || !cleanUrl) return false;
 
   if (typeof window !== 'undefined') {
@@ -184,17 +216,34 @@ export async function saveOfflineCover(
     }
   }
 
-  // Already persisted in memory for this track
-  const existingMem = memoryCoverUrls.get(`track:${trackId}`);
-  if (existingMem) return true;
+  // Only skip if an HD cover is already stored for this track
+  const existingMemHd = getCachedOfflineCoverUrl(trackId, cleanUrl, { requireHd: true });
+  if (existingMemHd) return true;
 
-  const existingDb = await resolveOfflineCoverUrl(trackId, cleanUrl);
-  if (existingDb) return true;
+  const existingDbHd = await resolveOfflineCoverUrl(trackId, cleanUrl, { requireHd: true });
+  if (existingDbHd) return true;
 
   const blob = await fetchCoverBlobWithFallback(cleanUrl);
-  if (!blob) return false;
+  if (!blob) {
+    const anyExisting = await resolveOfflineCoverUrl(trackId, cleanUrl);
+    return Boolean(anyExisting);
+  }
 
-  registerMemoryCover(trackId, cleanUrl, blob);
+  const hd = isCoverBlobHd(blob, true);
+  // Never overwrite an already-HD cover with a low-res blob
+  if (!hd && (memoryCoverIsHd.get(`track:${trackId}`) || getCachedOfflineCoverUrl(trackId, cleanUrl))) {
+    return true;
+  }
+
+  registerMemoryCover(trackId, cleanUrl, blob, hd);
+  if (rawClean && rawClean !== cleanUrl) {
+    const rawNorm = normalizeCoverKey(rawClean);
+    const objUrl = memoryCoverUrls.get(`track:${trackId}`);
+    if (rawNorm && objUrl) {
+      memoryCoverUrls.set(`url:${rawNorm}`, objUrl);
+      memoryCoverIsHd.set(`url:${rawNorm}`, hd);
+    }
+  }
 
   const db = await openCoverDb();
   if (!db) return true;
@@ -210,6 +259,7 @@ export async function saveOfflineCover(
         coverUrl: cleanUrl,
         blob,
         savedAt: now,
+        hd,
       } satisfies StoredCoverEntry);
       const norm = normalizeCoverKey(cleanUrl);
       if (norm) {
@@ -219,6 +269,7 @@ export async function saveOfflineCover(
           coverUrl: cleanUrl,
           blob,
           savedAt: now,
+          hd,
         } satisfies StoredCoverEntry);
       }
       tx.oncomplete = () => resolve();
@@ -242,7 +293,7 @@ export async function hydrateOfflineCoversMemory(): Promise<void> {
         const list = (req.result as StoredCoverEntry[] | undefined) ?? [];
         for (const item of list) {
           if (item?.blob && !memoryCoverUrls.has(item.key)) {
-            registerMemoryCover(item.trackId, item.coverUrl, item.blob);
+            registerMemoryCover(item.trackId, item.coverUrl, item.blob, item.hd);
           }
         }
         resolve();
