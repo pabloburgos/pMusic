@@ -60,6 +60,7 @@ import { TrackArtwork } from './TrackArtwork.tsx';
 import { NowPlayingQueuePanel } from './NowPlayingQueuePanel.tsx';
 import { TelegramIcon, WhatsAppIcon } from './SocialBrandIcons.tsx';
 import { syncNativeSystemBars } from '../utils/system-bars.ts';
+import { getAutoQualityStatusLabel } from '../utils/network-quality.ts';
 import {
   buildJamQrImageUrl,
   buildJamShareUrl,
@@ -3415,17 +3416,20 @@ const AudioStudioSheetInner: React.FC = () => {
             <div className="mt-3.5 space-y-2.5 border-t border-white/10 pt-3">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs font-bold">Calidad de sonido</span>
-                <span className="text-[11px] opacity-70">
-                  {streamQuality === 'high'
-                    ? 'Máxima · 48 kHz'
-                    : streamQuality === 'medium'
-                      ? 'Alta · 128k'
-                      : 'Normal · 64k'}
+                <span className="truncate text-[11px] opacity-70">
+                  {streamQuality === 'auto'
+                    ? getAutoQualityStatusLabel()
+                    : streamQuality === 'high'
+                      ? 'Máxima · 48 kHz'
+                      : streamQuality === 'medium'
+                        ? 'Alta · 128k'
+                        : 'Normal · 64k'}
                 </span>
               </div>
-              <div className="grid grid-cols-3 gap-1.5">
+              <div className="grid grid-cols-4 gap-1.5">
                 {(
                   [
+                    { id: 'auto', label: 'Auto' },
                     { id: 'low', label: 'Normal' },
                     { id: 'medium', label: 'Alta' },
                     { id: 'high', label: 'Máxima' },
@@ -3436,6 +3440,7 @@ const AudioStudioSheetInner: React.FC = () => {
                     <button
                       key={q.id}
                       type="button"
+                      data-testid={`audio-studio-quality-${q.id}`}
                       aria-pressed={selected}
                       onClick={() => setStreamQuality(q.id as AudioStreamQuality)}
                       className={`rounded-[10px] py-1.5 text-[11px] font-bold transition-all ${

@@ -17,6 +17,8 @@ import {
 
 export interface DualDeckAudioEngineOptions {
   resolveStreamUrl?: (track: Track) => Promise<string>;
+  resolveFallbackStreamUrl?: (track: Track, failedSrc: string) => Promise<string | null>;
+  onStreamTelemetry?: (durationMs: number, failed: boolean) => void;
 }
 
 interface DeckChannelNodes {
@@ -63,15 +65,63 @@ function setAudioParamSmooth(
 ): void {
   if (!param) return;
   if (ctx && typeof param.setTargetAtTime === 'function') {
+    const now = ctx.currentTime;
+    const tc = Math.max(0.008, timeConstantSec);
     try {
-      param.cancelScheduledValues?.(ctx.currentTime);
-      param.setTargetAtTime(value, ctx.currentTime, timeConstantSec);
+      const holdFn = (param as AudioParam & { cancelAndHoldAtTime?: (t: number) => AudioParam })
+        .cancelAndHoldAtTime;
+      if (typeof holdFn === 'function') {
+        holdFn.call(param, now);
+      } else {
+        const cur = Number.isFinite(param.value) ? param.value : value;
+        param.cancelScheduledValues?.(now);
+        param.setValueAtTime?.(cur, now);
+      }
+      param.setTargetAtTime(value, now, tc);
       return;
     } catch {
       // fall through
     }
   }
   param.value = value;
+}
+
+function setPlaybackRateIfChanged(audio: HTMLAudioElement, rate: number): void {
+  const safeRate = Math.max(0.5, Math.min(2.0, Number.isFinite(rate) ? rate : 1.0));
+  if (Math.abs((audio.playbackRate || 1) - safeRate) > 0.001) {
+    audio.playbackRate = safeRate;
+  }
+}
+
+function setPreservesPitchIfChanged(audio: HTMLAudioElement, preserves: boolean): void {
+  try {
+    const pitchAudio = audio as HTMLAudioElement & {
+      preservesPitch?: boolean;
+      webkitPreservesPitch?: boolean;
+    };
+    if (typeof pitchAudio.preservesPitch === 'boolean') {
+      if (pitchAudio.preservesPitch !== preserves) {
+        pitchAudio.preservesPitch = preserves;
+      }
+    } else {
+      pitchAudio.preservesPitch = preserves;
+    }
+    if (typeof pitchAudio.webkitPreservesPitch === 'boolean') {
+      if (pitchAudio.webkitPreservesPitch !== preserves) {
+        pitchAudio.webkitPreservesPitch = preserves;
+      }
+    } else {
+      pitchAudio.webkitPreservesPitch = preserves;
+    }
+  } catch {
+    // ignore on unsupported/mock engines
+  }
+}
+
+function setLoopIfChanged(audio: HTMLAudioElement, loop: boolean): void {
+  if (Boolean(audio.loop) !== loop) {
+    audio.loop = loop;
+  }
 }
 
 function setFilterTypeSafe(
@@ -218,6 +268,12 @@ export interface LivePlaybackSnapshot {
 
 export class DualDeckAudioEngine implements IAudioEngine {
   private readonly resolveStreamUrlFn: (track: Track) => Promise<string>;
+  private readonly resolveFallbackStreamUrlFn?: (
+    track: Track,
+    failedSrc: string
+  ) => Promise<string | null>;
+  private readonly onStreamTelemetryFn?: (durationMs: number, failed: boolean) => void;
+  private readonly loadStartWallByDeck = new Map<DeckId, number>();
   private audioCtx: AudioContext | null = null;
   private userEqNodes: BiquadFilterNode[] = [];
   private masterGainNode: GainNode | null = null;
@@ -291,6 +347,8 @@ export class DualDeckAudioEngine implements IAudioEngine {
     this.resolveStreamUrlFn =
       options.resolveStreamUrl ??
       (async (track: Track) => `/api/stream/${encodeURIComponent(track.id)}?quality=high`);
+    this.resolveFallbackStreamUrlFn = options.resolveFallbackStreamUrl;
+    this.onStreamTelemetryFn = options.onStreamTelemetry;
   }
 
   public unlockAudioContext(): void {
@@ -681,6 +739,10 @@ export class DualDeckAudioEngine implements IAudioEngine {
           return;
         }
         this.isBuffering = false;
+        const startedMs = this.loadStartWallByDeck.get(id) ?? 0;
+        const elapsedMs = startedMs > 0 ? Math.max(0, Date.now() - startedMs) : 3500;
+        this.loadStartWallByDeck.delete(id);
+        this.onStreamTelemetryFn?.(elapsedMs, true);
         const realDur =
           Number.isFinite(audio.duration) && audio.duration > 1
             ? audio.duration
@@ -700,40 +762,62 @@ export class DualDeckAudioEngine implements IAudioEngine {
           !audio.src.startsWith('blob:') &&
           isOnline
         ) {
-          const retryKey =
-            (id === 'A' ? this.deckA?.track?.id : this.deckB?.track?.id) ?? audio.src;
+          const activeTrack = id === 'A' ? this.deckA?.track : this.deckB?.track;
+          const retryKey = activeTrack?.id ?? audio.src;
           const retries = this.streamRetryCount.get(retryKey) ?? 0;
           if (retries < 2) {
             this.streamRetryCount.set(retryKey, retries + 1);
-            const cleanBase = audio.src.replace(/([?&])fresh=\d+(&|$)/g, (_, sep, tail) =>
-              tail === '&' ? sep : ''
-            );
-            const refreshedUrl = `${cleanBase}${cleanBase.includes('?') ? '&' : '?'}fresh=1`;
             this.isBuffering = true;
             this.emitState();
-            audio.crossOrigin = 'anonymous';
-            audio.src = refreshedUrl;
-            try {
-              audio.load();
-            } catch {
-              // ignore
-            }
-            if (curPos > 0.5) {
-              audio.addEventListener(
-                'loadedmetadata',
-                () => {
-                  try {
-                    if (Math.abs((audio.currentTime || 0) - curPos) > 0.8) {
-                      audio.currentTime = curPos;
+            const failedSrc = audio.src;
+            const applyRetrySrc = (nextSrc: string) => {
+              if (this.activeDeck !== id || !this.isPlaying) return;
+              this.loadStartWallByDeck.set(id, Date.now());
+              audio.crossOrigin = 'anonymous';
+              audio.src = nextSrc;
+              try {
+                audio.load();
+              } catch {
+                // ignore
+              }
+              if (curPos > 0.5) {
+                audio.addEventListener(
+                  'loadedmetadata',
+                  () => {
+                    try {
+                      if (Math.abs((audio.currentTime || 0) - curPos) > 0.8) {
+                        audio.currentTime = curPos;
+                      }
+                    } catch {
+                      // ignore
                     }
-                  } catch {
-                    // ignore
-                  }
-                },
-                { once: true }
-              );
+                  },
+                  { once: true }
+                );
+              }
+              void audio.play()?.catch?.(() => undefined);
+            };
+            if (activeTrack && this.resolveFallbackStreamUrlFn) {
+              void this.resolveFallbackStreamUrlFn(activeTrack, failedSrc)
+                .then((fallbackUrl) => {
+                  const cleanBase = (fallbackUrl || failedSrc).replace(
+                    /([?&])fresh=\d+(&|$)/g,
+                    (_, sep, tail) => (tail === '&' ? sep : '')
+                  );
+                  applyRetrySrc(`${cleanBase}${cleanBase.includes('?') ? '&' : '?'}fresh=1`);
+                })
+                .catch(() => {
+                  const cleanBase = failedSrc.replace(/([?&])fresh=\d+(&|$)/g, (_, sep, tail) =>
+                    tail === '&' ? sep : ''
+                  );
+                  applyRetrySrc(`${cleanBase}${cleanBase.includes('?') ? '&' : '?'}fresh=1`);
+                });
+              return;
             }
-            void audio.play()?.catch?.(() => undefined);
+            const cleanBase = failedSrc.replace(/([?&])fresh=\d+(&|$)/g, (_, sep, tail) =>
+              tail === '&' ? sep : ''
+            );
+            applyRetrySrc(`${cleanBase}${cleanBase.includes('?') ? '&' : '?'}fresh=1`);
             return;
           }
         }
@@ -849,18 +933,9 @@ export class DualDeckAudioEngine implements IAudioEngine {
   }
 
   private resetDeckDsp(deck: DeckChannelNodes, gainValue = 1.0): void {
-    deck.audio.loop = false;
-    deck.audio.playbackRate = this.playbackRate;
-    try {
-      const pitchAudio = deck.audio as HTMLAudioElement & {
-        preservesPitch?: boolean;
-        webkitPreservesPitch?: boolean;
-      };
-      pitchAudio.preservesPitch = this.preservesPitch;
-      pitchAudio.webkitPreservesPitch = this.preservesPitch;
-    } catch {
-      // ignore on unsupported engines
-    }
+    setLoopIfChanged(deck.audio, false);
+    setPlaybackRateIfChanged(deck.audio, this.playbackRate);
+    setPreservesPitchIfChanged(deck.audio, this.preservesPitch);
     deck.audio.volume =
       this.audioCtx && deck.sourceNode
         ? 1.0
@@ -874,12 +949,43 @@ export class DualDeckAudioEngine implements IAudioEngine {
       resetAudioParam(deck.sweepFilterNode.frequency, this.audioCtx, 1000);
       resetAudioParam(deck.sweepFilterNode.Q, this.audioCtx, 0.707);
       resetAudioParam(deck.sweepFilterNode.gain, this.audioCtx, 0);
-      deck.sweepFilterNode.type = 'peaking';
+      if (deck.sweepFilterNode.type !== 'peaking') {
+        deck.sweepFilterNode.type = 'peaking';
+      }
     }
     resetAudioParam(deck.trimGainNode?.gain, this.audioCtx, 1.0);
     resetAudioParam(deck.gainNode?.gain, this.audioCtx, gainValue);
     resetAudioParam(deck.delaySendNode?.gain, this.audioCtx, 0);
     resetAudioParam(deck.delayFeedbackNode?.gain, this.audioCtx, 0);
+  }
+
+  /**
+   * Transitions a live, audible incoming deck back to neutral full-fidelity parameters
+   * WITHOUT cancelling active audio automation, flipping live filter types unnecessarily,
+   * or re-assigning unchanged playbackRate/preservesPitch (which causes WebView WSOLA ~0.05s rewinds).
+   */
+  private finalizeLiveIncomingDeck(deck: DeckChannelNodes, preservedTrim: number): void {
+    setLoopIfChanged(deck.audio, false);
+    setPlaybackRateIfChanged(deck.audio, this.playbackRate);
+    setPreservesPitchIfChanged(deck.audio, this.preservesPitch);
+    if (!this.audioCtx || !deck.sourceNode) {
+      deck.audio.volume = volumeToPerceptualGain(this.volume);
+    }
+    setAudioParamSmooth(deck.lowEqNode?.gain, this.audioCtx, 0, 0.025);
+    setAudioParamSmooth(deck.midEqNode?.gain, this.audioCtx, 0, 0.025);
+    setAudioParamSmooth(deck.midEqNode?.frequency, this.audioCtx, 1000, 0.025);
+    setAudioParamSmooth(deck.midEqNode?.Q, this.audioCtx, 0.8, 0.025);
+    setAudioParamSmooth(deck.highEqNode?.gain, this.audioCtx, 0, 0.025);
+    if (deck.sweepFilterNode && deck.sweepFilterNode.type !== 'peaking') {
+      const neutralHz = deck.sweepFilterNode.type === 'lowpass' ? 20000 : 20;
+      setAudioParamSmooth(deck.sweepFilterNode.frequency, this.audioCtx, neutralHz, 0.025);
+      setAudioParamSmooth(deck.sweepFilterNode.Q, this.audioCtx, 0.707, 0.025);
+      setAudioParamSmooth(deck.sweepFilterNode.gain, this.audioCtx, 0, 0.025);
+    }
+    setAudioParamSmooth(deck.trimGainNode?.gain, this.audioCtx, preservedTrim, 0.025);
+    setAudioParamSmooth(deck.gainNode?.gain, this.audioCtx, 1.0, 0.025);
+    setAudioParamSmooth(deck.delaySendNode?.gain, this.audioCtx, 0, 0.025);
+    setAudioParamSmooth(deck.delayFeedbackNode?.gain, this.audioCtx, 0, 0.025);
   }
 
   public async loadAndPlay(track: Track, startSec = 0): Promise<void> {
@@ -907,11 +1013,24 @@ export class DualDeckAudioEngine implements IAudioEngine {
       this.bufferedPct = 0;
       this.emitState();
 
+      this.loadStartWallByDeck.set(this.activeDeck, Date.now());
       const streamUrl = await this.resolveStreamUrlFn(track);
       if (loadGen !== this.loadGeneration || !this.deckA || !this.deckB) return;
 
       deck.audio.crossOrigin = 'anonymous';
       deck.audio.src = streamUrl;
+      const startedAtWall = this.loadStartWallByDeck.get(this.activeDeck) ?? Date.now();
+      deck.audio.addEventListener(
+        'canplay',
+        () => {
+          if (this.loadStartWallByDeck.has(this.activeDeck)) {
+            const ms = Math.max(0, Date.now() - startedAtWall);
+            this.loadStartWallByDeck.delete(this.activeDeck);
+            this.onStreamTelemetryFn?.(ms, false);
+          }
+        },
+        { once: true }
+      );
       this.durationSec = track.durationSec > 0 ? track.durationSec : 195;
       this.positionSec = Math.max(0, startSec);
       this.resetEofTracking(this.positionSec);
@@ -1126,17 +1245,8 @@ export class DualDeckAudioEngine implements IAudioEngine {
     this.preservesPitch = preservesPitch;
     for (const deck of [this.deckA, this.deckB]) {
       if (!deck) continue;
-      deck.audio.playbackRate = clamped;
-      try {
-        const pitchAudio = deck.audio as HTMLAudioElement & {
-          preservesPitch?: boolean;
-          webkitPreservesPitch?: boolean;
-        };
-        pitchAudio.preservesPitch = preservesPitch;
-        pitchAudio.webkitPreservesPitch = preservesPitch;
-      } catch {
-        // ignore
-      }
+      setPlaybackRateIfChanged(deck.audio, clamped);
+      setPreservesPitchIfChanged(deck.audio, preservesPitch);
     }
   }
 
@@ -1237,22 +1347,12 @@ export class DualDeckAudioEngine implements IAudioEngine {
       const outTargetRate = this.djModeConfig.tempoMatching
         ? Math.max(0.94, Math.min(1.06, plan.choreography?.outTempoTargetRate ?? 1.0))
         : 1.0;
-      incoming.audio.playbackRate = startRate;
-      try {
-        const outPitch = outgoing.audio as HTMLAudioElement & {
-          preservesPitch?: boolean;
-          webkitPreservesPitch?: boolean;
-        };
-        const inPitch = incoming.audio as HTMLAudioElement & {
-          preservesPitch?: boolean;
-          webkitPreservesPitch?: boolean;
-        };
-        outPitch.preservesPitch = true;
-        outPitch.webkitPreservesPitch = true;
-        inPitch.preservesPitch = true;
-        inPitch.webkitPreservesPitch = true;
-      } catch {
-        // ignore in mock DOM
+      // Reset incoming DSP cleanly before fading in (paused/silent incoming deck only; never touch live outgoing preservesPitch unless DJ tempo matching is active)
+      this.resetDeckDsp(incoming, 0);
+      setPlaybackRateIfChanged(incoming.audio, startRate);
+      setPreservesPitchIfChanged(incoming.audio, this.preservesPitch);
+      if (this.djModeConfig.tempoMatching && Math.abs(outTargetRate - 1.0) > 0.002) {
+        setPreservesPitchIfChanged(outgoing.audio, true);
       }
 
       const ch = plan.choreography;
@@ -1260,9 +1360,6 @@ export class DualDeckAudioEngine implements IAudioEngine {
         ? Math.pow(10, Math.max(-5, Math.min(5, ch.loudnessTrimDb)) / 20)
         : 1.0;
 
-      // Reset incoming DSP cleanly before fading in
-      this.resetDeckDsp(incoming, 0);
-      incoming.audio.playbackRate = startRate;
       setAudioParamSmooth(incoming.trimGainNode?.gain, this.audioCtx, incomingTrimLinear, 0.01);
       if (ch?.stemAutomation) {
         setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, ch.stemAutomation.outLowCutDb, 0.01);
@@ -1288,7 +1385,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
             1.2
           );
         }
-      } else if (plan.transitionType === 'eq_swap') {
+      } else if (!plan.isPlainCrossfade && plan.transitionType === 'eq_swap') {
         // Club Drum-Safe EQ Swap on incoming deck: tame lows & bright hats first, blend mids cleanly
         setAudioParamSmooth(incoming.lowEqNode?.gain, this.audioCtx, -30, 0.01);
         setAudioParamSmooth(incoming.midEqNode?.frequency, this.audioCtx, 1200, 0.01);
@@ -1296,7 +1393,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
         setAudioParamSmooth(incoming.midEqNode?.gain, this.audioCtx, -2.0, 0.01);
         setAudioParamSmooth(incoming.highEqNode?.gain, this.audioCtx, -9.0, 0.01);
         setFilterTypeSafe(incoming.sweepFilterNode, this.audioCtx, 'highpass', 300, 0.75);
-      } else if (plan.transitionType === 'filter_sweep' && incoming.sweepFilterNode) {
+      } else if (!plan.isPlainCrossfade && plan.transitionType === 'filter_sweep' && incoming.sweepFilterNode) {
         setFilterTypeSafe(incoming.sweepFilterNode, this.audioCtx, 'lowpass', 260, 1.25);
       }
 
@@ -1366,10 +1463,66 @@ export class DualDeckAudioEngine implements IAudioEngine {
       }
 
       // Snap outgoing filter cleanly to transparent 20 Hz highpass before the curve starts so there is zero start glitch
-      if (!ch && plan.transitionType === 'eq_swap') {
+      if (!ch && !plan.isPlainCrossfade && plan.transitionType === 'eq_swap') {
         setAudioParamSmooth(outgoing.midEqNode?.frequency, this.audioCtx, 1200, 0.01);
         setAudioParamSmooth(outgoing.midEqNode?.Q, this.audioCtx, 0.78, 0.01);
         setFilterTypeSafe(outgoing.sweepFilterNode, this.audioCtx, 'highpass', 20, 0.707);
+      }
+
+      // Schedule pure Safe Crossfade directly on the Web Audio render thread via setValueCurveAtTime
+      // so mobile main-thread jitter can never cause crackling or stepped ramps.
+      let hardwareGainCurveActive = false;
+      if (
+        !ch &&
+        plan.isPlainCrossfade &&
+        this.audioCtx &&
+        typeof outgoing.gainNode?.gain?.setValueCurveAtTime === 'function' &&
+        typeof incoming.gainNode?.gain?.setValueCurveAtTime === 'function'
+      ) {
+        try {
+          const steps = 64;
+          const outCurve = new Float32Array(steps + 1);
+          const inCurve = new Float32Array(steps + 1);
+          const rawOutVal = outgoing.gainNode.gain.value;
+          const outStart = Math.max(0.05, Math.min(1, Number.isFinite(rawOutVal) ? rawOutVal : 1));
+          for (let i = 0; i <= steps; i++) {
+            const p = i / steps;
+            let og = outStart * Math.cos(p * 0.5 * Math.PI);
+            let ig = Math.sin(p * 0.5 * Math.PI);
+            const powerSum = Math.hypot(og, ig);
+            if (powerSum > 1.0) {
+              og /= powerSum;
+              ig /= powerSum;
+            }
+            const linearSum = og + ig;
+            if (linearSum > 1.04) {
+              const atten = 1.04 / linearSum;
+              og *= atten;
+              ig *= atten;
+            }
+            outCurve[i] = Math.max(0, og);
+            inCurve[i] = Math.max(0, ig);
+          }
+          const t0 = this.audioCtx.currentTime + 0.015;
+          const durSec = Math.max(0.15, totalMs / 1000);
+          for (const [param, startVal, curve] of [
+            [outgoing.gainNode.gain, outCurve[0]!, outCurve],
+            [incoming.gainNode.gain, inCurve[0]!, inCurve],
+          ] as const) {
+            const holdFn = (param as AudioParam & { cancelAndHoldAtTime?: (t: number) => AudioParam })
+              .cancelAndHoldAtTime;
+            if (typeof holdFn === 'function') {
+              holdFn.call(param, t0);
+            } else {
+              param.cancelScheduledValues?.(t0);
+            }
+            param.setValueAtTime?.(startVal, t0);
+            param.setValueCurveAtTime(curve, t0, durSec);
+          }
+          hardwareGainCurveActive = true;
+        } catch {
+          hardwareGainCurveActive = false;
+        }
       }
 
       let lastEmitMs = 0;
@@ -1498,11 +1651,17 @@ export class DualDeckAudioEngine implements IAudioEngine {
           if (this.djModeConfig.tempoMatching) {
             if (Math.abs(outTargetRate - 1.0) > 0.002) {
               const ramp = Math.min(1, p / 0.75);
-              outgoing.audio.playbackRate = Number((1.0 + (outTargetRate - 1.0) * ramp).toFixed(3));
+              setPlaybackRateIfChanged(
+                outgoing.audio,
+                Number((1.0 + (outTargetRate - 1.0) * ramp).toFixed(3))
+              );
             }
             if (Math.abs(startRate - 1.0) > 0.002) {
               const glide = p <= 0.46 ? 0 : Math.min(1, (p - 0.46) / 0.54);
-              incoming.audio.playbackRate = Number((startRate + (1.0 - startRate) * glide).toFixed(3));
+              setPlaybackRateIfChanged(
+                incoming.audio,
+                Number((startRate + (1.0 - startRate) * glide).toFixed(3))
+              );
             }
           }
         } else if (ch && ch.techniqueMode === 'vocal_over_beat') {
@@ -1636,7 +1795,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
             outGain = p < 0.55 ? 1 - 0.18 * (p / 0.55) : 0.82 * Math.cos(((p - 0.55) / 0.45) * 0.5 * Math.PI);
             inGain = p < 0.55 ? Math.sin((p / 0.55) * 0.5 * Math.PI) * 0.92 : 0.92 + 0.08 * ((p - 0.55) / 0.45);
           }
-        } else if (plan.transitionType === 'eq_swap') {
+        } else if (!plan.isPlainCrossfade && plan.transitionType === 'eq_swap') {
           // Drum-Safe Club EQ Swap:
           // Phase 1 (0–40%): Kick-free & hat-tamed incoming entry over outgoing groove.
           // Phase 2 (40–60%): Smooth S-curve bass & drum handover centered at p = 0.50.
@@ -1780,17 +1939,22 @@ export class DualDeckAudioEngine implements IAudioEngine {
           }
         }
 
-        setAudioParamSmooth(outgoing.gainNode?.gain, this.audioCtx, outGain);
-        setAudioParamSmooth(incoming.gainNode?.gain, this.audioCtx, inGain);
+        if (!hardwareGainCurveActive) {
+          setAudioParamSmooth(outgoing.gainNode?.gain, this.audioCtx, outGain);
+          setAudioParamSmooth(incoming.gainNode?.gain, this.audioCtx, inGain);
+        }
         if (!this.audioCtx) {
           const masterGain = volumeToPerceptualGain(this.volume);
           outgoing.audio.volume = masterGain * outGain;
           incoming.audio.volume = masterGain * inGain;
         }
 
-        if (this.djModeConfig.tempoMatching && Math.abs(startRate - 1.0) > 0.001) {
+        if (this.djModeConfig.tempoMatching && Math.abs(startRate - 1.0) > 0.002) {
           const glide = p <= 0.5 ? 0 : (p - 0.5) * 2;
-          incoming.audio.playbackRate = Number((startRate + (1.0 - startRate) * glide).toFixed(3));
+          setPlaybackRateIfChanged(
+            incoming.audio,
+            Number((startRate + (1.0 - startRate) * glide).toFixed(3))
+          );
         }
 
         const nowMs = Date.now();
@@ -1826,10 +1990,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
             : 1.0;
           outgoing.audio.pause();
           this.resetDeckDsp(outgoing, 0);
-          this.resetDeckDsp(incoming, 1.0);
-          if (this.normalizationEnabled && Math.abs(preservedTrim - 1.0) > 0.001) {
-            resetAudioParam(incoming.trimGainNode?.gain, this.audioCtx, preservedTrim);
-          }
+          this.finalizeLiveIncomingDeck(incoming, preservedTrim);
           this.activeDeck = incomingId;
           this.isTransitioning = false;
           this.incomingStartedPlaying = false;
@@ -1868,7 +2029,9 @@ export class DualDeckAudioEngine implements IAudioEngine {
         (this.transitionSafetyTimer as { unref?: () => void }).unref?.();
 
         const startedAt = Date.now();
-        const stepMs = Math.max(15, Math.min(25, Math.floor(totalMs / 16)));
+        const stepMs = hardwareGainCurveActive
+          ? Math.max(40, Math.min(80, Math.floor(totalMs / 10)))
+          : Math.max(36, Math.min(50, Math.floor(totalMs / 16)));
         this.transitionTimer = setInterval(() => {
           if (settled) return;
           const p = Math.min(1, (Date.now() - startedAt) / totalMs);

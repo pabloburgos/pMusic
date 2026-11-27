@@ -73,7 +73,7 @@ import { ArtistLinks } from './ArtistLinks.tsx';
 import { TrackArtwork } from './TrackArtwork.tsx';
 import { SwipeableTrackRow } from './SwipeableTrackRow.tsx';
 import { RoundedPauseIcon, RoundedPlayIcon } from './TransportIcons.tsx';
-import { optimizeArtworkUrl } from '../utils/image-opt.ts';
+import { getLowResPreviewUrl, optimizeArtworkUrl } from '../utils/image-opt.ts';
 import { buildSearchHomeRecommendations } from '../utils/instant-search.ts';
 
 const SPANISH_SHORT_MONTHS = [
@@ -692,7 +692,8 @@ const CoverCard: React.FC<{
             alt={title}
             loading="lazy"
             decoding="async"
-            className={`pm-elevated aspect-square w-full object-cover shadow-[0_10px_24px_rgba(0,0,0,0.42)] ring-1 ring-white/[0.08] transition-transform duration-300 ease-out group-hover:scale-[1.04] ${
+            fetchPriority="low"
+            className={`pm-skeleton-shimmer aspect-square w-full object-cover shadow-[0_10px_24px_rgba(0,0,0,0.42)] ring-1 ring-white/[0.08] transition-transform duration-300 ease-out group-hover:scale-[1.04] ${
               round ? 'rounded-full object-[50%_20%]' : 'rounded-[12px] sm:rounded-[8px]'
             }`}
           />
@@ -1139,8 +1140,10 @@ export const DetailViewPanel: React.FC = React.memo(() => {
     const activeHeroImage = heroCandidates[heroCandidateIdx] ?? null;
     const optimizedHeroUrl = activeHeroImage ? optimizeArtworkUrl(activeHeroImage, 'banner') : null;
     const lowResHeroPlaceholder = artist.thumbnailUrl
-      ? optimizeArtworkUrl(artist.thumbnailUrl, 'row')
-      : null;
+      ? getLowResPreviewUrl(artist.thumbnailUrl)
+      : activeHeroImage
+        ? getLowResPreviewUrl(activeHeroImage)
+        : null;
     const hasHeroPhoto = Boolean(optimizedHeroUrl || lowResHeroPlaceholder);
 
     const dedupedSingles = (() => {
@@ -1488,16 +1491,20 @@ export const DetailViewPanel: React.FC = React.memo(() => {
                 )}
               </div>
               {isArtistLoading && visiblePopularSongs.length === 0 ? (
-                <div className="space-y-2 py-1" aria-label="Cargando canciones populares">
+                <div
+                  data-testid="artist-loading-skeleton"
+                  className="space-y-2 py-1"
+                  aria-label="Cargando canciones populares"
+                >
                   {[0, 1, 2, 3, 4].map((row) => (
                     <div
                       key={row}
                       className="flex items-center gap-3 rounded-[10px] bg-white/[0.03] px-2.5 py-2"
                     >
-                      <div className="h-10 w-10 shrink-0 animate-pulse rounded-[7px] bg-white/[0.08]" />
+                      <div className="pm-skeleton-shimmer h-10 w-10 shrink-0 rounded-[7px]" />
                       <div className="min-w-0 flex-1 space-y-1.5">
-                        <div className="h-3.5 w-44 animate-pulse rounded bg-white/[0.09]" />
-                        <div className="h-2.5 w-28 animate-pulse rounded bg-white/[0.06]" />
+                        <div className="pm-skeleton-shimmer h-3.5 w-44 rounded" />
+                        <div className="pm-skeleton-shimmer h-2.5 w-28 rounded" />
                       </div>
                     </div>
                   ))}
@@ -1521,11 +1528,11 @@ export const DetailViewPanel: React.FC = React.memo(() => {
                 <div className="space-y-2">
                   <h2 className="text-[20px] font-bold pm-text-primary">Último lanzamiento</h2>
                   <div className="pm-surface-card flex items-center gap-4 rounded-[18px] p-4">
-                    <div className="h-24 w-24 shrink-0 animate-pulse rounded-[12px] bg-white/[0.08]" />
+                    <div className="pm-skeleton-shimmer h-24 w-24 shrink-0 rounded-[12px]" />
                     <div className="min-w-0 flex-1 space-y-2">
-                      <div className="h-4 w-20 animate-pulse rounded-full bg-white/[0.08]" />
-                      <div className="h-4 w-40 animate-pulse rounded bg-white/[0.09]" />
-                      <div className="h-3 w-24 animate-pulse rounded bg-white/[0.06]" />
+                      <div className="pm-skeleton-shimmer h-4 w-20 rounded-full" />
+                      <div className="pm-skeleton-shimmer h-4 w-40 rounded" />
+                      <div className="pm-skeleton-shimmer h-3 w-24 rounded" />
                     </div>
                   </div>
                 </div>
@@ -2087,16 +2094,16 @@ export const DetailViewPanel: React.FC = React.memo(() => {
         </section>
 
         {isAlbumLoading && tracks.length === 0 ? (
-          <div className="space-y-2">
+          <div data-testid="album-loading-skeleton" className="space-y-2">
             {[0, 1, 2, 3, 4, 5].map((i) => (
               <div
                 key={i}
                 className="flex items-center gap-3 rounded-[10px] bg-white/[0.03] px-3 py-2.5"
               >
-                <div className="h-9 w-9 shrink-0 animate-pulse rounded-[7px] bg-white/[0.08]" />
+                <div className="pm-skeleton-shimmer h-9 w-9 shrink-0 rounded-[7px]" />
                 <div className="flex-1 space-y-1.5">
-                  <div className="h-3.5 w-48 animate-pulse rounded bg-white/[0.09]" />
-                  <div className="h-2.5 w-28 animate-pulse rounded bg-white/[0.06]" />
+                  <div className="pm-skeleton-shimmer h-3.5 w-48 rounded" />
+                  <div className="pm-skeleton-shimmer h-2.5 w-28 rounded" />
                 </div>
               </div>
             ))}
@@ -3567,6 +3574,7 @@ export const HomeScreen: React.FC = React.memo(() => {
   const {
     currentTrack,
     isPlaying,
+    homeFeedReady,
     homeShelves,
     playlists,
     sharedPlaylists,
@@ -3592,6 +3600,7 @@ export const HomeScreen: React.FC = React.memo(() => {
     useShallow((s) => ({
       currentTrack: s.currentTrack,
       isPlaying: s.isPlaying,
+      homeFeedReady: s.homeFeedReady,
       homeShelves: s.homeShelves,
       playlists: s.playlists,
       sharedPlaylists: s.sharedPlaylists,
@@ -3784,6 +3793,61 @@ export const HomeScreen: React.FC = React.memo(() => {
         </div>
       )}
 
+      {/* Sleek Home Skeleton while initial shelves load on cellular/cold boot */}
+      {!isOfflineNetwork && (!homeFeedReady || isRefreshingHome) && !listen && !mixes && (
+        <div
+          data-testid="home-loading-skeleton"
+          aria-label="Cargando recomendaciones de inicio"
+          className="space-y-6"
+        >
+          <div className="grid grid-cols-2 gap-2 sm:gap-2.5 lg:grid-cols-3">
+            {[0, 1, 2, 3, 4, 5].map((i) => (
+              <div
+                key={`sk-tile-${i}`}
+                className="pm-surface-card flex items-center gap-2.5 overflow-hidden rounded-[10px] pr-2.5 sm:gap-3 sm:rounded-[8px]"
+              >
+                <div className="pm-skeleton-shimmer h-[52px] w-[52px] shrink-0 sm:h-14 sm:w-14" />
+                <div className="min-w-0 flex-1 space-y-1.5 py-1">
+                  <div className="pm-skeleton-shimmer h-3.5 w-3/4 rounded" />
+                  <div className="pm-skeleton-shimmer hidden h-2.5 w-1/2 rounded sm:block" />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <section className="space-y-3">
+            <div className="pm-skeleton-shimmer h-6 w-36 rounded-md" />
+            <div className="flex gap-3.5 overflow-hidden">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <div
+                  key={`sk-card-${i}`}
+                  className="pm-surface-card w-[144px] shrink-0 space-y-2 rounded-[14px] p-2.5 sm:w-[166px] sm:rounded-[12px] md:w-[178px]"
+                >
+                  <div className="pm-skeleton-shimmer aspect-square w-full rounded-[10px]" />
+                  <div className="pm-skeleton-shimmer h-3.5 w-4/5 rounded" />
+                  <div className="pm-skeleton-shimmer h-2.5 w-3/5 rounded" />
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="space-y-3">
+            <div className="pm-skeleton-shimmer h-6 w-44 rounded-md" />
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-2 md:gap-x-6">
+              {[0, 1, 2, 3, 4, 5].map((i) => (
+                <div key={`sk-row-${i}`} className="flex items-center gap-3 rounded-[10px] py-1.5">
+                  <div className="pm-skeleton-shimmer h-11 w-11 shrink-0 rounded-[8px]" />
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    <div className="pm-skeleton-shimmer h-3.5 w-2/3 rounded" />
+                    <div className="pm-skeleton-shimmer h-2.5 w-1/3 rounded" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
+
       {/* 2x3 Compact Quick-Access Grid (Promotes Frequently Played Playlists + Top Songs) */}
       {chip === 'Todo' && (quick.length > 0 || frequentPlaylists.length > 0) && (
         <section aria-label="Escuchar de nuevo">
@@ -3808,12 +3872,15 @@ export const HomeScreen: React.FC = React.memo(() => {
                   }}
                   className="pm-quick-tile pm-card-lift group flex cursor-pointer items-center gap-2.5 overflow-hidden rounded-[10px] pr-2.5 sm:gap-3 sm:rounded-[8px]"
                 >
-                  <div className="h-[52px] w-[52px] shrink-0 overflow-hidden sm:h-14 sm:w-14">
+                  <div className="h-[52px] w-[52px] shrink-0 overflow-hidden bg-white/[0.05] sm:h-14 sm:w-14">
                     {plCover ? (
                       <img
-                        src={plCover}
+                        src={optimizeArtworkUrl(plCover, 'thumb')}
                         alt={pl.name}
-                        className="h-full w-full object-cover"
+                        loading="lazy"
+                        decoding="async"
+                        fetchPriority="low"
+                        className="pm-skeleton-shimmer h-full w-full object-cover"
                       />
                     ) : (
                       <div className="pm-elevated flex h-full w-full items-center justify-center text-sm font-bold pm-text-secondary">
@@ -3872,11 +3939,14 @@ export const HomeScreen: React.FC = React.memo(() => {
                   }}
                   className="pm-quick-tile pm-card-lift group flex cursor-pointer items-center gap-2.5 overflow-hidden rounded-[10px] pr-2.5 sm:gap-3 sm:rounded-[8px]"
                 >
-                  <div className="h-[52px] w-[52px] shrink-0 overflow-hidden sm:h-14 sm:w-14">
+                  <div className="h-[52px] w-[52px] shrink-0 overflow-hidden bg-white/[0.05] sm:h-14 sm:w-14">
                     <img
-                      src={t.thumbnailUrl}
+                      src={optimizeArtworkUrl(t.thumbnailUrl, 'thumb')}
                       alt={t.title}
-                      className="h-full w-full object-cover"
+                      loading="lazy"
+                      decoding="async"
+                      fetchPriority="low"
+                      className="pm-skeleton-shimmer h-full w-full object-cover"
                     />
                   </div>
                   <div className="min-w-0 flex-1 py-1">

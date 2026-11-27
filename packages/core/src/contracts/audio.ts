@@ -169,6 +169,8 @@ export interface DeckTransitionPlan {
   compatibilityScore: number;
   /** Adaptive pairwise stem choreography */
   choreography?: DjStemChoreography;
+  /** Pure equal-power Safe Crossfade without DJ EQ/filter coloration */
+  isPlainCrossfade?: boolean;
 }
 
 export interface DjModeConfig {

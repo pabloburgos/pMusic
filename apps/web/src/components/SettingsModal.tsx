@@ -28,6 +28,8 @@ import {
 } from '../utils/themes.ts';
 import { PMusicSwitch } from './PMusicSwitch.tsx';
 import { isElectronDesktopRuntime } from '../platform/web-bridge.ts';
+import { APP_VERSION } from '../utils/app-updater.ts';
+import { getAutoQualityStatusLabel } from '../utils/network-quality.ts';
 import { UserAvatar } from './UserAvatar.tsx';
 
 type SettingsCategoryId =
@@ -302,6 +304,22 @@ const SettingsModalInner: React.FC = () => {
     URL.revokeObjectURL(url);
     showToast('Copia de seguridad descargada');
   };
+
+  const nativeBridge =
+    typeof window !== 'undefined'
+      ? (window as unknown as { PMusicNative?: { getAppVersion?: () => string } }).PMusicNative
+      : undefined;
+  const nativeVersion =
+    typeof nativeBridge?.getAppVersion === 'function' ? nativeBridge.getAppVersion() : undefined;
+  const platformLabel = nativeBridge
+    ? 'Android'
+    : isElectronDesktopRuntime()
+      ? 'Windows'
+      : 'Web';
+  const versionSummary =
+    nativeVersion && nativeVersion !== APP_VERSION
+      ? `v${APP_VERSION} · Nativa v${nativeVersion}`
+      : `v${APP_VERSION}`;
 
   const settingsSections = (
     <>
@@ -812,9 +830,10 @@ const SettingsModalInner: React.FC = () => {
                     <div className="text-sm font-bold pm-text-primary">
                       Calidad de streaming
                     </div>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                       {(
                         [
+                          { id: 'auto', label: 'Auto' },
                           { id: 'high', label: 'Alta (Máxima)' },
                           { id: 'medium', label: 'Equilibrada' },
                           { id: 'low', label: 'Ahorro datos' },
@@ -823,6 +842,7 @@ const SettingsModalInner: React.FC = () => {
                         <button
                           key={q.id}
                           type="button"
+                          data-testid={`settings-stream-quality-${q.id}`}
                           onClick={() => setStreamQuality(q.id)}
                           className={`rounded-[12px] py-2 text-xs font-bold ${
                             streamQuality === q.id ? 'pm-btn-primary' : 'pm-btn-secondary'
@@ -832,12 +852,25 @@ const SettingsModalInner: React.FC = () => {
                         </button>
                       ))}
                     </div>
-                    <div className="text-[11px] pm-text-secondary">
-                      {streamQuality === 'high'
-                        ? 'Hasta Opus 160 kbps · 48 kHz (máximo disponible sin pérdida de rango dinámico)'
-                        : streamQuality === 'medium'
-                          ? 'AAC ~128 kbps · 44.1 kHz (equilibrio entre fidelidad y datos)'
-                          : 'Modo 3G / E · Audio ultraligero (~32–64 kbps), portadas mínimas y sin precargas'}
+                    <div className="space-y-1 text-[11px] pm-text-secondary">
+                      <div>
+                        {streamQuality === 'auto'
+                          ? 'Se adapta automáticamente a tu señal y prioriza reproducir al instante sin cortes'
+                          : streamQuality === 'high'
+                            ? 'Hasta Opus 160 kbps · 48 kHz (máximo disponible sin pérdida de rango dinámico)'
+                            : streamQuality === 'medium'
+                              ? 'AAC ~128 kbps · 44.1 kHz (equilibrio entre fidelidad y datos)'
+                              : 'Modo 3G / E · Audio ultraligero (~32–64 kbps), portadas mínimas y sin precargas'}
+                      </div>
+                      {streamQuality === 'auto' && (
+                        <div
+                          data-testid="settings-auto-quality-status"
+                          className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.06] px-2.5 py-0.5 text-[10.5px] font-semibold pm-text-primary"
+                        >
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                          <span>{getAutoQualityStatusLabel()}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -2095,7 +2128,7 @@ const SettingsModalInner: React.FC = () => {
                   </div>
 
                   <div className="flex flex-wrap items-center justify-between gap-2 border-t pm-border pt-3 text-[11.5px] pm-text-secondary">
-                    <span>Información legal · pMusic</span>
+                    <span>pMusic {versionSummary} · {platformLabel}</span>
                     <div className="flex items-center gap-3">
                       <a
                         href="https://pmusic-olive.vercel.app/privacy"
@@ -2142,17 +2175,25 @@ const SettingsModalInner: React.FC = () => {
             <span>{activeCategoryMeta.label}</span>
           </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              setSettingsOpen(false);
-              setDevicesSheetOpen(true);
-            }}
-            className="pm-btn-secondary inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold"
-          >
-            <Laptop className="h-3.5 w-3.5 text-emerald-400" />
-            <span>{onlineDevices.length}</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <span
+              data-testid="settings-app-version"
+              className="rounded-full bg-white/[0.07] px-2.5 py-1 text-[11px] font-bold tracking-tight pm-text-secondary"
+            >
+              pMusic {versionSummary}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setSettingsOpen(false);
+                setDevicesSheetOpen(true);
+              }}
+              className="pm-btn-secondary inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold"
+            >
+              <Laptop className="h-3.5 w-3.5 text-emerald-400" />
+              <span>{onlineDevices.length}</span>
+            </button>
+          </div>
         </header>
 
         <nav
@@ -2239,25 +2280,36 @@ const SettingsModalInner: React.FC = () => {
             aria-label="Categorías de ajustes"
             className="flex shrink-0 gap-1.5 overflow-x-auto border-b pm-border px-3.5 py-2.5 md:w-[232px] md:flex-col md:gap-1 md:border-r md:border-b-0 md:p-3 pm-no-scrollbar"
           >
-            {CATEGORIES.map((cat) => {
-              const active = activeCategory === cat.id;
-              return (
-                <button
-                  key={cat.id}
-                  type="button"
-                  role="tab"
-                  data-testid={`settings-category-${cat.id}`}
-                  aria-selected={active}
-                  onClick={() => setActiveCategory(cat.id)}
-                  className={`flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-left text-xs font-bold transition-all md:rounded-[12px] md:px-3 md:py-2.5 ${
-                    active ? 'pm-btn-primary shadow-sm' : 'pm-text-secondary pm-hover'
-                  }`}
-                >
-                  {cat.icon}
-                  <span className="whitespace-nowrap">{cat.label}</span>
-                </button>
-              );
-            })}
+            <div className="flex shrink-0 flex-row gap-1.5 overflow-x-auto md:flex-1 md:flex-col md:gap-1 pm-no-scrollbar">
+              {CATEGORIES.map((cat) => {
+                const active = activeCategory === cat.id;
+                return (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    role="tab"
+                    data-testid={`settings-category-${cat.id}`}
+                    aria-selected={active}
+                    onClick={() => setActiveCategory(cat.id)}
+                    className={`flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-left text-xs font-bold transition-all md:rounded-[12px] md:px-3 md:py-2.5 ${
+                      active ? 'pm-btn-primary shadow-sm' : 'pm-text-secondary pm-hover'
+                    }`}
+                  >
+                    {cat.icon}
+                    <span className="whitespace-nowrap">{cat.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div
+              data-testid="settings-app-version"
+              className="hidden items-center justify-between gap-2 rounded-[12px] border pm-border bg-white/[0.03] px-3 py-2 text-[11px] md:flex"
+            >
+              <span className="font-bold pm-text-primary">pMusic {versionSummary}</span>
+              <span className="rounded-full bg-white/[0.08] px-2 py-0.5 text-[10px] font-semibold pm-text-secondary">
+                {platformLabel}
+              </span>
+            </div>
           </nav>
 
           <div

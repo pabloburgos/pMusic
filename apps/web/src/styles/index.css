@@ -2553,6 +2553,17 @@ html.pm-solid-modern .pm-mobile-glass-header {
   animation: pmBufferShimmer 1.2s linear infinite;
 }
 
+.pm-skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.045) 0%,
+    rgba(255, 255, 255, 0.115) 50%,
+    rgba(255, 255, 255, 0.045) 100%
+  );
+  background-size: 200% 100%;
+  animation: pmBufferShimmer 1.35s ease-in-out infinite;
+}
+
 .pm-lyrics-mask {
   -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 88%, transparent 100%);
   mask-image: linear-gradient(180deg, #000 0%, #000 88%, transparent 100%);
@@ -3106,6 +3117,7 @@ html.pm-solid-modern .pm-mobile-glass-header {
   .pm-view-transition,
   .pm-sheet-spring-in,
   .pm-buffer-shimmer,
+  .pm-skeleton-shimmer,
   .pm-backdrop-in-next,
   .pm-backdrop-in-prev,
   .pm-backdrop-out-next,
@@ -3202,6 +3214,7 @@ html.pm-reduced-motion .pm-caret-blink,
 html.pm-reduced-motion .pm-view-transition,
 html.pm-reduced-motion .pm-sheet-spring-in,
 html.pm-reduced-motion .pm-buffer-shimmer,
+html.pm-reduced-motion .pm-skeleton-shimmer,
 html.pm-reduced-motion .pm-backdrop-in-next,
 html.pm-reduced-motion .pm-backdrop-in-prev,
 html.pm-reduced-motion .pm-backdrop-out-next,

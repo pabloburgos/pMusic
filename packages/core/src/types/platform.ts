@@ -1,7 +1,7 @@
 import type { PlatformRuntime, Track } from './music.ts';
 import type { Unsubscribe } from './utility.ts';
 
-export type AudioStreamQuality = 'high' | 'medium' | 'low';
+export type AudioStreamQuality = 'auto' | 'high' | 'medium' | 'low';
 
 export interface NativeFetchRequest {
   method?: string;

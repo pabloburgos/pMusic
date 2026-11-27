@@ -786,8 +786,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="65"
-    android:versionName="0.24.4">
+    android:versionCode="66"
+    android:versionName="0.24.5">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -1776,7 +1776,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 public class MainActivity extends Activity {
-    private static final String NATIVE_APP_VERSION = "0.24.4";
+    private static final String NATIVE_APP_VERSION = "0.24.5";
     private volatile File activeOtaDir = null;
 
     private static int compareSemverNative(String a, String b) {
@@ -1890,6 +1890,7 @@ public class MainActivity extends Activity {
     private static String normalizeStreamQuality(String rawQuality) {
         if ("low".equalsIgnoreCase(rawQuality)) return "low";
         if ("medium".equalsIgnoreCase(rawQuality)) return "medium";
+        if ("auto".equalsIgnoreCase(rawQuality)) return "auto";
         return "high";
     }
 
@@ -2535,6 +2536,11 @@ public class MainActivity extends Activity {
                         }
                     }
                 });
+            }
+
+            @android.webkit.JavascriptInterface
+            public String getAppVersion() {
+                return NATIVE_APP_VERSION;
             }
 
             @android.webkit.JavascriptInterface
@@ -3945,13 +3951,13 @@ public class MainActivity extends Activity {
                             if (aBps != bBps) return Long.compare(aBps, bBps);
                             return Integer.compare(isOpusJsonFormat(b) ? 1 : 0, isOpusJsonFormat(a) ? 1 : 0);
                         }
-                        if ("medium".equals(qual)) {
+                        if ("medium".equals(qual) || "auto".equals(qual)) {
                             int aTier = (isAacJsonFormat(a) && aBps >= 96000L && aBps <= 165000L) ? 3
                                     : (isOpusJsonFormat(a) && aBps >= 64000L && aBps <= 170000L ? 2 : (aBps >= 55000L ? 1 : 0));
                             int bTier = (isAacJsonFormat(b) && bBps >= 96000L && bBps <= 165000L) ? 3
                                     : (isOpusJsonFormat(b) && bBps >= 64000L && bBps <= 170000L ? 2 : (bBps >= 55000L ? 1 : 0));
                             if (aTier != bTier) return Integer.compare(bTier, aTier);
-                            return Long.compare(bBps, aBps);
+                            return "auto".equals(qual) ? Long.compare(aBps, bBps) : Long.compare(bBps, aBps);
                         }
                         // high: Opus >= 110k (48 kHz) first, then AAC >= 110k, then highest adaptive bitrate
                         int aTier = (isOpusJsonFormat(a) && aBps >= 110000L) ? 4
@@ -3970,7 +3976,7 @@ public class MainActivity extends Activity {
             final String normalizedQ = normalizeStreamQuality(qQuality);
             final List<JSONObject> orderedJson = new ArrayList<JSONObject>();
             final List<Boolean> orderedIsAdap = new ArrayList<Boolean>();
-            if ("medium".equals(normalizedQ)) {
+            if ("medium".equals(normalizedQ) || "auto".equals(normalizedQ)) {
                 List<JSONObject> medTail = new ArrayList<JSONObject>();
                 for (int i = 0; i < sortedAdap.size(); i++) {
                     JSONObject f = sortedAdap.get(i);
@@ -5229,7 +5235,7 @@ public class PMusicReleaseCheckJobService extends JobService {
             conn.setConnectTimeout(3500);
             conn.setReadTimeout(4500);
             conn.setInstanceFollowRedirects(true);
-            conn.setRequestProperty("User-Agent", "pMusic-Android/0.24.4");
+            conn.setRequestProperty("User-Agent", "pMusic-Android/0.24.5");
             if (conn.getResponseCode() < 200 || conn.getResponseCode() >= 300) return null;
             InputStream in = conn.getInputStream();
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
@@ -5253,7 +5259,7 @@ public class PMusicReleaseCheckJobService extends JobService {
             conn.setConnectTimeout(timeoutMs);
             conn.setReadTimeout(timeoutMs);
             conn.setInstanceFollowRedirects(true);
-            conn.setRequestProperty("User-Agent", "pMusic-Android/0.24.4");
+            conn.setRequestProperty("User-Agent", "pMusic-Android/0.24.5");
             if (conn.getResponseCode() < 200 || conn.getResponseCode() >= 300) return null;
             InputStream in = conn.getInputStream();
             ByteArrayOutputStream bos = new ByteArrayOutputStream();

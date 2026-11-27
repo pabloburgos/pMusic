@@ -132,7 +132,7 @@ export function rankStreamFormatsForQuality<T extends StreamFormatLike>(
     return [...adaptiveLow, ...progressiveSorted];
   }
 
-  if (quality === 'medium') {
+  if (quality === 'medium' || quality === 'auto') {
     const goodMedium: T[] = [];
     const lowTail: T[] = [];
     for (const f of adaptiveAudioFormats) {
@@ -155,7 +155,7 @@ export function rankStreamFormatsForQuality<T extends StreamFormatLike>(
             ? 2
             : 1;
       if (aTier !== bTier) return bTier - aTier;
-      return bBps - aBps;
+      return quality === 'auto' ? aBps - bBps : bBps - aBps;
     });
     lowTail.sort((a, b) => getEffectiveBitrate(b) - getEffectiveBitrate(a));
     return [...goodMedium, ...progressiveSorted, ...lowTail];

@@ -15,7 +15,11 @@ import {
   isBrokenCoverUrl,
   resolveRecoveredTrackCover,
 } from '../utils/track-artwork.ts';
-import { optimizeArtworkUrl, type ArtworkSlot } from '../utils/image-opt.ts';
+import {
+  getLowResPreviewUrl,
+  optimizeArtworkUrl,
+  type ArtworkSlot,
+} from '../utils/image-opt.ts';
 
 export interface TrackArtworkProps {
   trackId?: string;
@@ -135,7 +139,7 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
       ? 'nowplaying'
       : variant === 'card'
         ? 'card'
-        : 'row';
+        : 'thumb';
   const optimizedSrc = optimizeArtworkUrl(cleanSrc, artworkSlot, isDataSaver ? true : undefined);
 
   const isEagerVariant = variant === 'nowplaying' || variant === 'mini';
@@ -153,7 +157,9 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
       : null;
   });
   const [displayedSrc, setDisplayedSrc] = useState<string | null>(resolvedSrc);
+  const [imgLoaded, setImgLoaded] = useState<boolean>(false);
   const [failed, setFailed] = useState<boolean>(false);
+  const imgRef = useRef<HTMLImageElement | null>(null);
   const [artistArtUrl, setArtistArtUrl] = useState<string | null>(() =>
     artistName ? getCachedArtistArtwork(artistName) : null
   );
@@ -348,6 +354,23 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
   };
 
   const renderSrc = displayedSrc ?? resolvedSrc;
+  const lowResPreviewSrc =
+    variant === 'nowplaying' &&
+    renderSrc &&
+    !renderSrc.startsWith('data:') &&
+    !renderSrc.startsWith('blob:') &&
+    !isOfflineNetwork
+      ? getLowResPreviewUrl(renderSrc)
+      : '';
+  useEffect(() => {
+    const img = imgRef.current;
+    if (img && img.complete && img.naturalWidth > 0) {
+      setImgLoaded(true);
+    } else {
+      setImgLoaded(false);
+    }
+  }, [renderSrc]);
+
   if (failed || !renderSrc) {
     const showArtistBg = Boolean(artistArtUrl && !artistArtFailed);
     const isLarge = variant === 'nowplaying' || variant === 'card';
@@ -535,6 +558,7 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
   }
 
   const handleImgLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    setImgLoaded(true);
     const img = e.currentTarget;
     if (
       isOfflineNetwork ||
@@ -565,11 +589,26 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
 
   return (
     <>
+      {!imgLoaded && (
+        <span
+          aria-hidden="true"
+          className="pm-skeleton-shimmer pointer-events-none absolute inset-0 rounded-[inherit]"
+        />
+      )}
+      {!imgLoaded && lowResPreviewSrc && lowResPreviewSrc !== renderSrc && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 h-full w-full scale-105 bg-cover bg-center blur-md opacity-85"
+          style={{ backgroundImage: `url("${lowResPreviewSrc}")` }}
+        />
+      )}
       <img
+        ref={imgRef}
         src={renderSrc}
         alt={alt}
         loading={effectiveLoading}
         decoding="async"
+        fetchPriority={variant === 'nowplaying' ? 'high' : 'low'}
         draggable={draggable}
         onLoad={handleImgLoad}
         onError={handleImgError}

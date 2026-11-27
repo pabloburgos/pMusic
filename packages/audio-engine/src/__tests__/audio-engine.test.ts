@@ -972,4 +972,179 @@ describe('@pmusic/audio-engine', () => {
       (globalThis as { window?: unknown }).window = prevWindow;
     }
   });
+
+  it('uses cancelAndHoldAtTime, hardware equal-power setValueCurveAtTime, and zero redundant playbackRate/preservesPitch writes during Safe Crossfade', async () => {
+    const prevWindow = (globalThis as { window?: unknown }).window;
+    const prevDoc = (globalThis as { document?: unknown }).document;
+    const holdCalls: number[] = [];
+    const valueCurveCalls: Array<{ length: number; startTime: number; duration: number }> = [];
+    const playbackRateWrites: Array<{ deckIdx: number; value: number }> = [];
+    const preservesPitchWrites: Array<{ deckIdx: number; value: boolean }> = [];
+    let filterTypeWrites = 0;
+
+    function createTrackedParam(initial = 1) {
+      return {
+        value: initial,
+        cancelAndHoldAtTime(t: number) {
+          holdCalls.push(t);
+        },
+        cancelScheduledValues() {},
+        setValueAtTime() {},
+        setTargetAtTime(v: number) {
+          this.value = v;
+        },
+        setValueCurveAtTime(values: Float32Array, startTime: number, duration: number) {
+          valueCurveCalls.push({ length: values.length, startTime, duration });
+        },
+      };
+    }
+
+    class MockWebAudioContext {
+      public currentTime = 1.0;
+      public state = 'running';
+      public destination = {};
+      public createBiquadFilter() {
+        let currentType = 'lowpass';
+        return {
+          get type() {
+            return currentType;
+          },
+          set type(next: string) {
+            filterTypeWrites += 1;
+            currentType = next;
+          },
+          frequency: createTrackedParam(1000),
+          Q: createTrackedParam(0.707),
+          gain: createTrackedParam(0),
+          connect: () => {},
+        };
+      }
+      public createDynamicsCompressor() {
+        return {
+          threshold: createTrackedParam(-24),
+          knee: createTrackedParam(30),
+          ratio: createTrackedParam(12),
+          attack: createTrackedParam(0.003),
+          release: createTrackedParam(0.25),
+          connect: () => {},
+        };
+      }
+      public createGain() {
+        return { gain: createTrackedParam(1), connect: () => {} };
+      }
+      public createStereoPanner() {
+        return { pan: createTrackedParam(0), connect: () => {} };
+      }
+      public createAnalyser() {
+        return { fftSize: 256, smoothingTimeConstant: 0.8, connect: () => {}, getByteFrequencyData: () => {} };
+      }
+      public createMediaElementSource() {
+        return { connect: () => {} };
+      }
+      public createDelay() {
+        return { delayTime: createTrackedParam(0), connect: () => {} };
+      }
+      public close() {
+        return Promise.resolve();
+      }
+    }
+
+    let createdCount = 0;
+    (globalThis as { window?: unknown }).window = {
+      AudioContext: MockWebAudioContext,
+    };
+    (globalThis as { document?: unknown }).document = {
+      createElement: () => {
+        const deckIdx = createdCount++;
+        let curRate = 1;
+        let curPreserves = true;
+        const el: Record<string, any> = {
+          crossOrigin: 'anonymous',
+          preload: 'auto',
+          src: '',
+          readyState: 4,
+          currentTime: 0,
+          duration: 180,
+          volume: 1,
+          paused: true,
+          ended: false,
+          seeking: false,
+          loop: false,
+          dataset: {},
+          style: {},
+          get playbackRate() {
+            return curRate;
+          },
+          set playbackRate(v: number) {
+            playbackRateWrites.push({ deckIdx, value: v });
+            curRate = v;
+          },
+          get preservesPitch() {
+            return curPreserves;
+          },
+          set preservesPitch(v: boolean) {
+            preservesPitchWrites.push({ deckIdx, value: v });
+            curPreserves = v;
+          },
+          play: async () => {
+            el.paused = false;
+          },
+          pause: () => {
+            el.paused = true;
+          },
+          load: () => {},
+          remove: () => {},
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          setAttribute: () => {},
+        };
+        return el;
+      },
+      body: { appendChild: () => {} },
+    };
+
+    const engine = new DualDeckAudioEngine();
+    try {
+      await engine.init();
+      await engine.loadAndPlay(SAMPLE_TRACKS[0]!, 0);
+      await engine.preloadNextDeck(SAMPLE_TRACKS[1]!, 0);
+
+      // Clear boot/preload counts before measuring the live transition itself
+      playbackRateWrites.length = 0;
+      preservesPitchWrites.length = 0;
+      holdCalls.length = 0;
+      valueCurveCalls.length = 0;
+      const filterWritesBefore = filterTypeWrites;
+
+      await engine.executeTransition({
+        fromTrackId: 'trk_1',
+        toTrackId: 'trk_2',
+        cueInSec: 0,
+        cueOutSec: 170,
+        transitionDurationSec: 0.35,
+        transitionBars: 4,
+        transitionType: 'eq_swap',
+        tempoNudgeRate: 1.0,
+        echoSubdivision: 0.5,
+        compatibilityScore: 0.85,
+        isPlainCrossfade: true,
+      });
+
+      // Safe Crossfade schedules hardware equal-power curve & holds params without abrupt snapping
+      expect(valueCurveCalls).toHaveLength(2);
+      expect(valueCurveCalls[0]?.length).toBe(65);
+      expect(holdCalls.length).toBeGreaterThanOrEqual(2);
+      // Neither deck receives redundant playbackRate/preservesPitch writes when already 1.0/true
+      expect(playbackRateWrites).toHaveLength(0);
+      expect(preservesPitchWrites).toHaveLength(0);
+      // Sweep filter was already 'peaking' so finishing crossfade never flips live filter types
+      expect(filterTypeWrites).toBe(filterWritesBefore);
+      expect(engine.getState().activeDeck).toBe('B');
+      expect(engine.getState().isPlaying).toBe(true);
+    } finally {
+      await engine.dispose();
+      (globalThis as { window?: unknown }).window = prevWindow;
+      (globalThis as { document?: unknown }).document = prevDoc;
+    }
+  });
 });

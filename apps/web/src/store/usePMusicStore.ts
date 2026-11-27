@@ -79,30 +79,12 @@ function writeOfflineAutoPlaylistIds(ids: string[]): void {
   }
 }
 
-function isMeteredOrCellularNetwork(): boolean {
-  try {
-    const win =
-      typeof window !== 'undefined'
-        ? (window as unknown as {
-            PMusicNative?: { isMeteredNetwork?: () => boolean };
-          })
-        : null;
-    if (typeof win?.PMusicNative?.isMeteredNetwork === 'function') {
-      return Boolean(win.PMusicNative.isMeteredNetwork());
-    }
-    const nav =
-      typeof navigator !== 'undefined'
-        ? (navigator as unknown as {
-            connection?: { type?: string; saveData?: boolean };
-          })
-        : null;
-    const conn = nav?.connection;
-    if (!conn) return false;
-    return conn.type === 'cellular' || Boolean(conn.saveData);
-  } catch {
-    return false;
-  }
-}
+import {
+  isMeteredOrCellularNetwork,
+  recordStreamLoadTelemetry,
+  resolveEffectiveStreamQuality,
+  type ConcreteStreamQuality,
+} from '../utils/network-quality.ts';
 import {
   DEFAULT_DJ_MODE_CONFIG,
   DEFAULT_SAFE_CROSSFADE_CONFIG,
@@ -392,8 +374,11 @@ const recommendationEngine = new RecommendationEngine({
   },
 });
 
-async function resolveTrackStreamUrl(track: Track): Promise<string> {
-  const quality = currentStreamQualityPref;
+async function resolveTrackStreamUrl(
+  track: Track,
+  overrideQuality?: ConcreteStreamQuality
+): Promise<string> {
+  const quality = overrideQuality ?? resolveEffectiveStreamQuality(currentStreamQualityPref);
   const baseUrl = await defaultPlatformBridge.buildStreamUrl(track.id, quality);
   if (baseUrl.startsWith('blob:') || baseUrl.startsWith('data:')) {
     return baseUrl;
@@ -411,6 +396,15 @@ let currentStreamQualityPref: AudioStreamQuality = 'high';
 const djPlanner = new DjCuePlanner();
 const audioEngine = new DualDeckAudioEngine({
   resolveStreamUrl: resolveTrackStreamUrl,
+  onStreamTelemetry: (durationMs, failed) => {
+    recordStreamLoadTelemetry(durationMs, failed);
+  },
+  resolveFallbackStreamUrl: async (track, failedSrc) => {
+    if (currentStreamQualityPref === 'auto' && !failedSrc.includes('quality=low')) {
+      return resolveTrackStreamUrl(track, 'low');
+    }
+    return null;
+  },
 });
 
 export function getLiveAnalyserData(): AudioAnalyserData {
@@ -1885,6 +1879,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
               tempoNudgeRate: 1.0,
               echoSubdivision: 0.5,
               compatibilityScore: 0.85,
+              isPlainCrossfade: true,
             };
             void executeDjTransition(cfPlan, nextTrack, nextIdx, true);
             return;
@@ -5406,13 +5401,17 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       if (
         isLiveRuntime() &&
         !offlineNow &&
-        get().streamQuality !== 'low' &&
+        resolveEffectiveStreamQuality(get().streamQuality) !== 'low' &&
         (get().recommendedQueue.length < 5 || (newQueue && newQueue.length === 1))
       ) {
         void get().replenishRecommendedQueue(Boolean(newQueue && newQueue.length === 1));
       }
       const nextCandidate = getUpcomingDjTarget(get())?.track;
-      if (nextCandidate && nextCandidate.id !== track.id && get().streamQuality !== 'low') {
+      if (
+        nextCandidate &&
+        nextCandidate.id !== track.id &&
+        resolveEffectiveStreamQuality(get().streamQuality) !== 'low'
+      ) {
         const nextAna =
           get().trackAnalyses[nextCandidate.id] ??
           (await djPlanner.analyzeTrack(nextCandidate.id, null, nextCandidate.durationSec));
