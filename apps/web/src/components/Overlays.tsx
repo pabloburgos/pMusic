@@ -302,10 +302,12 @@ const NowPlayingSheetInner: React.FC = () => {
     openAlbumDetail,
     activeJamSession,
     activeJamRole,
+    streamQuality,
   } = usePMusicStore(
     useShallow((s) => {
       const nextTrackCand = s.queue[s.queueIndex + 1] ?? s.recommendedQueue[0] ?? null;
       return {
+        streamQuality: s.streamQuality,
         nowPlayingOpen: s.nowPlayingOpen,
         nowPlayingTab: s.nowPlayingTab,
         setNowPlayingOpen: s.setNowPlayingOpen,
@@ -576,12 +578,13 @@ const NowPlayingSheetInner: React.FC = () => {
   }, [cfActiveBackdrop, incomingTransitionTrack, targetBackdropUrl]);
 
   // Prefetch next queued track cover via ONE shared deduplicated CORS fetch into ink-bleed, WebGL fluid, exotic & palette caches
+  // Skipped in 3G/EDGE Data-Saver mode ('low') to conserve cellular bandwidth
   useEffect(() => {
-    if (!nextPrefetchUrl || typeof Image === 'undefined') return;
+    if (streamQuality === 'low' || !nextPrefetchUrl || typeof Image === 'undefined') return;
     prefetchInkCoverImage(nextPrefetchUrl);
     prefetchFluidBackdropCover(nextPrefetchUrl);
     prefetchAmbientPaletteFromCover(nextPrefetchUrl);
-  }, [nextPrefetchUrl]);
+  }, [nextPrefetchUrl, streamQuality]);
 
   useEffect(() => {
     if (
@@ -3397,10 +3400,10 @@ const AudioStudioSheetInner: React.FC = () => {
                 <span className="text-xs font-bold">Calidad de sonido</span>
                 <span className="text-[11px] opacity-70">
                   {streamQuality === 'high'
-                    ? 'Máxima'
+                    ? 'Máxima · 48 kHz'
                     : streamQuality === 'medium'
-                      ? 'Alta'
-                      : 'Normal'}
+                      ? 'Alta · 128k'
+                      : 'Normal · 64k'}
                 </span>
               </div>
               <div className="grid grid-cols-3 gap-1.5">

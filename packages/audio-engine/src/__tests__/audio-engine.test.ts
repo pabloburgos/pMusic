@@ -879,4 +879,97 @@ describe('@pmusic/audio-engine', () => {
     expect(first).toBe(second);
     await engine.dispose();
   });
+
+  it('configures transparent brickwall safety limiter (-0.3 dB / knee 0) and zero-roll-off idle sweep filters with playback AudioContext hint', async () => {
+    const prevWindow = (globalThis as { window?: unknown }).window;
+    const createdCompressors: Array<{
+      threshold: { value: number };
+      knee: { value: number };
+      ratio: { value: number };
+      attack: { value: number };
+      release: { value: number };
+      connect: () => void;
+    }> = [];
+    const createdFilters: Array<{
+      type: string;
+      frequency: { value: number };
+      Q: { value: number };
+      gain: { value: number };
+      connect: () => void;
+    }> = [];
+    let capturedCtxOpts: unknown;
+
+    class MockAudioContext {
+      public currentTime = 0;
+      public state = 'running';
+      public destination = {};
+      public constructor(opts?: unknown) {
+        capturedCtxOpts = opts;
+      }
+      public createBiquadFilter() {
+        const node = {
+          type: 'lowpass',
+          frequency: { value: 350 },
+          Q: { value: 1 },
+          gain: { value: 0 },
+          connect: () => {},
+        };
+        createdFilters.push(node);
+        return node;
+      }
+      public createDynamicsCompressor() {
+        const comp = {
+          threshold: { value: -24 },
+          knee: { value: 30 },
+          ratio: { value: 12 },
+          attack: { value: 0.003 },
+          release: { value: 0.25 },
+          connect: () => {},
+        };
+        createdCompressors.push(comp);
+        return comp;
+      }
+      public createGain() {
+        return { gain: { value: 1 }, connect: () => {} };
+      }
+      public createStereoPanner() {
+        return { pan: { value: 0 }, connect: () => {} };
+      }
+      public createAnalyser() {
+        return { fftSize: 256, smoothingTimeConstant: 0.8, connect: () => {}, getByteFrequencyData: () => {} };
+      }
+      public createMediaElementSource() {
+        return { connect: () => {} };
+      }
+      public createDelay() {
+        return { delayTime: { value: 0 }, connect: () => {} };
+      }
+      public close() {
+        return Promise.resolve();
+      }
+    }
+
+    (globalThis as { window?: unknown }).window = {
+      AudioContext: MockAudioContext,
+    };
+
+    const engine = new DualDeckAudioEngine();
+    try {
+      await engine.init();
+      expect(capturedCtxOpts).toEqual({ latencyHint: 'playback' });
+      expect(createdCompressors).toHaveLength(1);
+      expect(createdCompressors[0]?.threshold.value).toBe(-0.3);
+      expect(createdCompressors[0]?.knee.value).toBe(0);
+      expect(createdCompressors[0]?.ratio.value).toBe(20);
+
+      // Both deck sweep filters should idle at flat peaking 0 dB instead of lowpass 20 kHz
+      const peakingSweepNodes = createdFilters.filter(
+        (f) => f.type === 'peaking' && f.frequency.value === 1000 && f.Q.value === 0.707 && f.gain.value === 0
+      );
+      expect(peakingSweepNodes.length).toBeGreaterThanOrEqual(2);
+    } finally {
+      await engine.dispose();
+      (globalThis as { window?: unknown }).window = prevWindow;
+    }
+  });
 });

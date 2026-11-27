@@ -6,11 +6,22 @@ interface NetworkInfoLike {
   type?: string;
 }
 
+let dataSaverEnabled = false;
+
+export function setDataSaverMode(enabled: boolean): void {
+  dataSaverEnabled = Boolean(enabled);
+}
+
+export function isDataSaverMode(): boolean {
+  return dataSaverEnabled;
+}
+
 /**
  * Returns true when running on cellular / bandwidth-constrained connections or mobile viewports
  * so artwork fetches request crisp, lightweight dimensions instead of heavy 1000x1000+ assets.
  */
 export function isConstrainedNetwork(): boolean {
+  if (dataSaverEnabled) return true;
   if (typeof navigator !== 'undefined') {
     const conn = (navigator as unknown as { connection?: NetworkInfoLike }).connection;
     if (conn) {
@@ -35,6 +46,8 @@ const GOOGLE_IMG_RE =
 /**
  * Rewrites Deezer and Google/YouTube Music CDN artwork URLs to fit the target UI slot
  * and current network conditions while leaving non-CDN URLs (data:, blob:, /api/*) untouched.
+ * Only official guaranteed Deezer specs (56x56, 250x250, 500x500, 1000x1000 with -000000-80-0-0)
+ * are emitted to prevent CDN 404/broken cover images.
  */
 export function optimizeArtworkUrl(
   rawUrl: string | null | undefined,
@@ -51,6 +64,7 @@ export function optimizeArtworkUrl(
     return clean;
   }
 
+  const dataSaver = dataSaverEnabled;
   const constrained = forceConstrained ?? isConstrainedNetwork();
 
   const dzMatch = clean.match(DEEZER_IMG_RE);
@@ -60,13 +74,13 @@ export function optimizeArtworkUrl(
     const query = dzMatch[4] ?? '';
     let spec: string;
     if (slot === 'row') {
-      spec = '120x120-000000-75-0-0';
+      spec = dataSaver ? '56x56-000000-80-0-0' : '250x250-000000-80-0-0';
     } else if (slot === 'card' || slot === 'avatar') {
-      spec = constrained ? '250x250-000000-80-0-0' : '500x500-000000-80-0-0';
+      spec = dataSaver || constrained ? '250x250-000000-80-0-0' : '500x500-000000-80-0-0';
     } else if (slot === 'banner') {
-      spec = constrained ? '500x500-000000-80-0-0' : '1000x1000-000000-80-0-0';
+      spec = dataSaver ? '250x250-000000-80-0-0' : constrained ? '500x500-000000-80-0-0' : '1000x1000-000000-80-0-0';
     } else {
-      spec = constrained ? '500x500-000000-85-0-0' : '1000x1000-000000-80-0-0';
+      spec = dataSaver ? '250x250-000000-80-0-0' : constrained ? '500x500-000000-80-0-0' : '1000x1000-000000-80-0-0';
     }
     return `${prefix}${spec}.${ext}${query}`;
   }
@@ -76,7 +90,9 @@ export function optimizeArtworkUrl(
     const base = gMatch[1]!;
     const query = gMatch[3] ?? '';
     let param: string;
-    if (slot === 'row') {
+    if (dataSaver) {
+      param = slot === 'row' ? 'w64-h64-l70-rj' : slot === 'card' || slot === 'avatar' ? 'w240-h240-l75-rj' : 'w320-h320-l75-rj';
+    } else if (slot === 'row') {
       param = 'w120-h120-l80-rj';
     } else if (slot === 'card' || slot === 'avatar') {
       param = constrained ? 'w300-h300-l80-rj' : 'w544-h544-l90-rj';

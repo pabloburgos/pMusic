@@ -17,6 +17,7 @@ import {
   parseSpotifyEmbedPlaylistHtml,
   parseYouTubeDescriptionCredits,
   parseYtmAudienceCount,
+  rankStreamFormatsForQuality,
   sanitizeArtistImageUrl,
   scoreAudioCandidate,
   searchFallbackCatalog,
@@ -1952,5 +1953,139 @@ describe('@pmusic/providers', () => {
     });
     expect(lrcDoc.status).toBe('plain');
     expect(lrcDoc.plainLines[0]).toContain('Soy mejor');
+  });
+
+  it('ranks audio formats strictly by quality tier (Opus 48 kHz #1 in high, AAC 128k in medium, Opus 48-64k in low) and exposes CORS stream quality headers', async () => {
+    const progressive = [{ itag: 18, mime_type: 'video/mp4; codecs="avc1.42001E, mp4a.40.2"', bitrate: 444_000, audio_sample_rate: 44100 }];
+    const adaptive = [
+      { itag: 139, mime_type: 'audio/mp4; codecs="mp4a.40.5"', bitrate: 50_000, average_bitrate: 48_800, audio_sample_rate: 22050 },
+      { itag: 140, mime_type: 'audio/mp4; codecs="mp4a.40.2"', bitrate: 130_757, average_bitrate: 129_487, audio_sample_rate: 44100 },
+      { itag: 249, mime_type: 'audio/webm; codecs="opus"', bitrate: 61_709, average_bitrate: 56_231, audio_sample_rate: 48000 },
+      { itag: 250, mime_type: 'audio/webm; codecs="opus"', bitrate: 80_644, average_bitrate: 73_708, audio_sample_rate: 48000 },
+      { itag: 251, mime_type: 'audio/webm; codecs="opus"', bitrate: 156_848, average_bitrate: 144_322, audio_sample_rate: 48000 },
+    ];
+
+    const highRanked = rankStreamFormatsForQuality(progressive, adaptive, 'high');
+    expect(highRanked.map((f) => f.itag)).toEqual([251, 140, 250, 249, 139, 18]);
+
+    const medRanked = rankStreamFormatsForQuality(progressive, adaptive, 'medium');
+    expect(medRanked[0]?.itag).toBe(140);
+    expect(medRanked[1]?.itag).toBe(251);
+    expect(medRanked.indexOf(progressive[0]!)).toBeLessThan(medRanked.findIndex((f) => f.itag === 139));
+
+    const lowRanked = rankStreamFormatsForQuality(progressive, adaptive, 'low');
+    expect(lowRanked[0]?.itag).toBe(139);
+    expect(lowRanked[1]?.itag).toBe(249);
+    expect(lowRanked[lowRanked.length - 1]?.itag).toBe(18);
+
+    // 3G/EDGE mode prioritizes ultra-compact ~32-56 kbps streams (itag 599/600/249) first
+    const lowWithUltraCompact = rankStreamFormatsForQuality(progressive, [
+      ...adaptive,
+      { itag: 599, mime_type: 'audio/mp4; codecs="mp4a.40.5"', bitrate: 32_250, average_bitrate: 30_813, audio_sample_rate: 22050 },
+      { itag: 600, mime_type: 'audio/webm; codecs="opus"', bitrate: 33_774, average_bitrate: 31_247, audio_sample_rate: 48000 },
+    ], 'low');
+    expect([599, 600]).toContain(lowWithUltraCompact[0]?.itag);
+
+    // Verify OPTIONS CORS exposes quality/codec/bitrate/sampleRate headers
+    const apiHandler = createPMusicApiHandler();
+    const headersMap: Record<string, string> = {};
+    const mockRes = {
+      statusCode: 0,
+      setHeader: (k: string, v: string) => {
+        headersMap[k.toLowerCase()] = String(v);
+      },
+      end: () => {},
+    } as any;
+    await apiHandler({ url: '/api/stream/test123?quality=high', method: 'OPTIONS', headers: {} } as any, mockRes);
+    const exposed = headersMap['access-control-expose-headers'] ?? '';
+    expect(exposed).toContain('X-PMusic-Stream-Quality');
+    expect(exposed).toContain('X-PMusic-Stream-Codec');
+    expect(exposed).toContain('X-PMusic-Stream-Bitrate');
+    expect(exposed).toContain('X-PMusic-Stream-SampleRate');
+  });
+
+  it('strictly filters Release Radar to verified <= 15 day releases and drops old playlist tracks like LA VILLA (2025-10-23)', async () => {
+    const now = new Date(2026, 10, 27, 12, 0, 0);
+    const handler = createPMusicApiHandler({
+      fetchFn: (async (input: RequestInfo | URL) => {
+        const u = String(input);
+        if (u.includes('api.deezer.com/search/playlist')) {
+          return new Response(JSON.stringify({ data: [{ id: 15987808083, title: 'Novedades Viernes España 27/11/26' }] }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        if (u.includes('api.deezer.com/playlist/15987808083/tracks')) {
+          return new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: 3613707422,
+                  title: 'LA VILLA',
+                  duration: 193,
+                  artist: { id: 1, name: 'Ryan Castro' },
+                  album: { id: 841932862, title: 'LA VILLA', cover_medium: 'https://cdn-images.dzcdn.net/images/cover/a/250x250-000000-80-0-0.jpg' },
+                },
+                {
+                  id: 4437886881,
+                  title: 'ESTRENO REAL',
+                  duration: 185,
+                  artist: { id: 2, name: 'Quevedo' },
+                  album: { id: 999001, title: 'ESTRENO REAL', cover_medium: 'https://cdn-images.dzcdn.net/images/cover/b/250x250-000000-80-0-0.jpg' },
+                },
+              ],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        if (u.includes('api.deezer.com/album/841932862')) {
+          return new Response(JSON.stringify({ id: 841932862, release_date: '2025-10-23' }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        if (u.includes('api.deezer.com/album/999001')) {
+          return new Response(JSON.stringify({ id: 999001, release_date: '2026-11-26' }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        if (u.includes('open.spotify.com/embed/playlist/')) {
+          return new Response(
+            `<script id="__NEXT_DATA__" type="application/json">${JSON.stringify({
+              props: { pageProps: { state: { data: { entity: { trackList: [{ title: 'Pista Sin Fecha', subtitle: 'Artista X' }] } } } } },
+            })}</script>`,
+            { status: 200, headers: { 'content-type': 'text/html' } }
+          );
+        }
+        return new Response(JSON.stringify({ data: [], feed: { results: [] } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }) as typeof fetch,
+    });
+
+    let bodyText = '';
+    await handler(
+      { url: '/api/release-radar', method: 'GET', headers: {} } as any,
+      {
+        statusCode: 200,
+        setHeader: () => {},
+        end: (chunk?: unknown) => {
+          bodyText =
+            chunk instanceof Uint8Array
+              ? Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength).toString('utf-8')
+              : String(chunk ?? '');
+        },
+      } as any
+    );
+    const parsed = JSON.parse(bodyText) as {
+      releases: Array<{ title: string; releaseDate?: string; track?: { releaseDate?: string } }>;
+    };
+    expect(now.getFullYear()).toBe(2026);
+    expect(parsed.releases.some((r) => r.title === 'LA VILLA')).toBe(false);
+    expect(parsed.releases.some((r) => r.title === 'ESTRENO REAL' && r.releaseDate === '2026-11-26')).toBe(true);
+    const spotifyHint = parsed.releases.find((r) => r.title === 'Pista Sin Fecha');
+    expect(spotifyHint?.releaseDate).toBeUndefined();
   });
 });

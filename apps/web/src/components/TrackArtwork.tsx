@@ -9,6 +9,11 @@ import {
   getCachedArtistArtwork,
   resolveArtistArtwork,
 } from '../utils/artist-artwork.ts';
+import {
+  getCachedRecoveredTrackCover,
+  isBrokenCoverUrl,
+  resolveRecoveredTrackCover,
+} from '../utils/track-artwork.ts';
 import { optimizeArtworkUrl, type ArtworkSlot } from '../utils/image-opt.ts';
 
 export interface TrackArtworkProps {
@@ -120,14 +125,17 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
 }) => {
   const uid = useId().replace(/[^a-zA-Z0-9_-]/g, '');
   const isOfflineNetwork = usePMusicStore((s) => s.isOfflineNetwork);
-  const cleanSrc = (src ?? '').trim();
+  const streamQuality = usePMusicStore((s) => s.streamQuality);
+  const isDataSaver = streamQuality === 'low';
+  const rawSrc = (src ?? '').trim();
+  const cleanSrc = isBrokenCoverUrl(rawSrc) ? '' : rawSrc;
   const artworkSlot: ArtworkSlot =
     variant === 'nowplaying'
       ? 'nowplaying'
       : variant === 'card'
         ? 'card'
         : 'row';
-  const optimizedSrc = optimizeArtworkUrl(cleanSrc, artworkSlot);
+  const optimizedSrc = optimizeArtworkUrl(cleanSrc, artworkSlot, isDataSaver ? true : undefined);
 
   const isEagerVariant = variant === 'nowplaying' || variant === 'mini';
   const effectiveLoading = loading ?? (isEagerVariant ? 'eager' : 'lazy');
@@ -136,7 +144,11 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
     if (cached) return cached;
     if (cleanSrc.startsWith('data:') || cleanSrc.startsWith('blob:')) return cleanSrc;
     if (isOfflineNetwork) return null;
-    return optimizedSrc || null;
+    if (optimizedSrc) return optimizedSrc;
+    const recoveredCached = getCachedRecoveredTrackCover(trackId, title ?? alt, artistName);
+    return recoveredCached
+      ? optimizeArtworkUrl(recoveredCached, artworkSlot, isDataSaver ? true : undefined)
+      : null;
   });
   const [displayedSrc, setDisplayedSrc] = useState<string | null>(resolvedSrc);
   const [failed, setFailed] = useState<boolean>(false);
@@ -233,21 +245,45 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
       if (!active) return;
       if (idbUrl) {
         commitSrc(idbUrl);
-      } else if (isOfflineNetwork || !optimizedSrc) {
+        return;
+      }
+      if (isOfflineNetwork) {
         commitSrc(null);
+        return;
+      }
+      if (!optimizedSrc) {
+        void resolveRecoveredTrackCover(trackId, displayTitle, primaryArtist).then((recUrl) => {
+          if (!active) return;
+          if (recUrl) {
+            commitSrc(optimizeArtworkUrl(recUrl, artworkSlot, isDataSaver ? true : undefined));
+          } else {
+            commitSrc(null);
+          }
+        });
       }
     });
 
     return () => {
       active = false;
     };
-  }, [trackId, cleanSrc, optimizedSrc, isOfflineNetwork, isEagerVariant, onUnavailableChange]);
+  }, [
+    trackId,
+    cleanSrc,
+    optimizedSrc,
+    artworkSlot,
+    isDataSaver,
+    displayTitle,
+    primaryArtist,
+    isOfflineNetwork,
+    isEagerVariant,
+    onUnavailableChange,
+  ]);
 
   const needsFallback = failed || !(displayedSrc ?? resolvedSrc);
 
   useEffect(() => {
     setArtistArtFailed(false);
-    if (!needsFallback || !primaryArtist || isOfflineNetwork) {
+    if (!needsFallback || !primaryArtist || isOfflineNetwork || isDataSaver) {
       setArtistArtUrl(primaryArtist ? getCachedArtistArtwork(primaryArtist) : null);
       return;
     }
@@ -263,19 +299,40 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
     return () => {
       active = false;
     };
-  }, [needsFallback, primaryArtist, artistId, isOfflineNetwork]);
+  }, [needsFallback, primaryArtist, artistId, isOfflineNetwork, isDataSaver]);
 
   const handleImgError = () => {
-    void resolveOfflineCoverUrl(trackId, cleanSrc).then((idbUrl) => {
+    const activeUrl = displayedSrc ?? resolvedSrc ?? '';
+    if (cleanSrc && activeUrl !== cleanSrc) {
+      setResolvedSrc(cleanSrc);
+      setDisplayedSrc(cleanSrc);
+      setFailed(false);
+      onUnavailableChange?.(false);
+      return;
+    }
+    void resolveOfflineCoverUrl(trackId, cleanSrc).then(async (idbUrl) => {
       if (idbUrl && idbUrl !== resolvedSrc) {
         setResolvedSrc(idbUrl);
         setDisplayedSrc(idbUrl);
         setFailed(false);
         onUnavailableChange?.(false);
-      } else {
-        setFailed(true);
-        onUnavailableChange?.(true);
+        return;
       }
+      if (!isOfflineNetwork) {
+        const recUrl = await resolveRecoveredTrackCover(trackId, displayTitle, primaryArtist);
+        if (recUrl) {
+          const optRec = optimizeArtworkUrl(recUrl, artworkSlot, isDataSaver ? true : undefined);
+          if (optRec !== activeUrl) {
+            setResolvedSrc(optRec);
+            setDisplayedSrc(optRec);
+            setFailed(false);
+            onUnavailableChange?.(false);
+            return;
+          }
+        }
+      }
+      setFailed(true);
+      onUnavailableChange?.(true);
     });
   };
 

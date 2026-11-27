@@ -62,6 +62,7 @@ import {
 } from '../utils/track-dnd.ts';
 import { ArtistLinks } from './ArtistLinks.tsx';
 import { TrackArtwork } from './TrackArtwork.tsx';
+import { SwipeableTrackRow } from './SwipeableTrackRow.tsx';
 import { RoundedPauseIcon, RoundedPlayIcon } from './TransportIcons.tsx';
 import { optimizeArtworkUrl } from '../utils/image-opt.ts';
 
@@ -174,6 +175,7 @@ export const TrackListRow: React.FC<{
     addToQueue,
     removeTrackFromPlaylist,
     openTrackMenu,
+    setAddToPlaylistModalTrack,
     recordPlaylistPlay,
   } = usePMusicStore(
     useShallow((s) => {
@@ -191,6 +193,7 @@ export const TrackListRow: React.FC<{
         addToQueue: s.addToQueue,
         removeTrackFromPlaylist: s.removeTrackFromPlaylist,
         openTrackMenu: s.openTrackMenu,
+        setAddToPlaylistModalTrack: s.setAddToPlaylistModalTrack,
         recordPlaylistPlay: s.recordPlaylistPlay,
       };
     })
@@ -213,7 +216,11 @@ export const TrackListRow: React.FC<{
   };
 
   return (
-    <div
+    <SwipeableTrackRow
+      onSwipeLeft={() => addToQueue(track)}
+      onSwipeRight={() => setAddToPlaylistModalTrack(track)}
+    >
+      <div
       role="row"
       data-surface="content"
       draggable
@@ -432,6 +439,7 @@ export const TrackListRow: React.FC<{
         </span>
       </div>
     </div>
+    </SwipeableTrackRow>
   );
 });
 TrackListRow.displayName = 'TrackListRow';

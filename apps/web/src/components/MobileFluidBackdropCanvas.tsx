@@ -704,9 +704,13 @@ export const MobileFluidBackdropCanvas: React.FC<MobileFluidBackdropCanvasProps>
         ctx2d.fillRect(0, 0, w, h * 0.38);
       };
 
+      const isBgSuspended = (): boolean =>
+        (typeof document !== 'undefined' && document.hidden) ||
+        Boolean((typeof window !== 'undefined' ? (window as any).__pmusicAppBackgrounded : false));
+
       const loop = (now: number) => {
         if (cancelled) return;
-        if (typeof document !== 'undefined' && document.hidden) {
+        if (isBgSuspended()) {
           rafId = 0;
           return;
         }
@@ -751,7 +755,7 @@ export const MobileFluidBackdropCanvas: React.FC<MobileFluidBackdropCanvasProps>
 
       const handleVisibility = () => {
         if (cancelled) return;
-        if (typeof document !== 'undefined' && document.hidden) {
+        if (isBgSuspended()) {
           if (rafId && typeof cancelAnimationFrame === 'function') {
             cancelAnimationFrame(rafId);
             rafId = 0;
@@ -768,11 +772,14 @@ export const MobileFluidBackdropCanvas: React.FC<MobileFluidBackdropCanvasProps>
       if (typeof document !== 'undefined') {
         document.addEventListener('visibilitychange', handleVisibility);
       }
+      if (typeof window !== 'undefined') {
+        window.addEventListener('pmusic-bg-change', handleVisibility);
+      }
 
       drawFrame(lastTick);
       if (
         typeof requestAnimationFrame === 'function' &&
-        !(typeof document !== 'undefined' && document.hidden) &&
+        !isBgSuspended() &&
         (motionRef.current || blendActiveRef.current)
       ) {
         rafId = requestAnimationFrame(loop);
@@ -789,6 +796,9 @@ export const MobileFluidBackdropCanvas: React.FC<MobileFluidBackdropCanvasProps>
         canvas.removeEventListener('webglcontextlost', handleContextLost, false);
         if (typeof document !== 'undefined') {
           document.removeEventListener('visibilitychange', handleVisibility);
+        }
+        if (typeof window !== 'undefined') {
+          window.removeEventListener('pmusic-bg-change', handleVisibility);
         }
         if (rafId && typeof cancelAnimationFrame === 'function') {
           cancelAnimationFrame(rafId);

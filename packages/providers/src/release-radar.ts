@@ -6,10 +6,10 @@ export const SPOTIFY_RELEASE_RADAR_PLAYLISTS: ReadonlyArray<{
   priority: number;
   stampEstimatedFridayDate: boolean;
 }> = [
-  { id: '37i9dQZF1DX6PYajiT4pAf', source: 'spotify_novedades_es', priority: 95, stampEstimatedFridayDate: true },
-  { id: '37i9dQZF1DX10zKzsJ2jva', source: 'spotify_novedades_latin', priority: 92, stampEstimatedFridayDate: true },
+  { id: '37i9dQZF1DX6PYajiT4pAf', source: 'spotify_novedades_es', priority: 95, stampEstimatedFridayDate: false },
+  { id: '37i9dQZF1DX10zKzsJ2jva', source: 'spotify_novedades_latin', priority: 92, stampEstimatedFridayDate: false },
   { id: '37i9dQZF1DX1HCSfq0nSal', source: 'spotify_pegao', priority: 86, stampEstimatedFridayDate: false },
-  { id: '37i9dQZF1DX4JAvHpjipBk', source: 'spotify_nmf', priority: 60, stampEstimatedFridayDate: true },
+  { id: '37i9dQZF1DX4JAvHpjipBk', source: 'spotify_nmf', priority: 60, stampEstimatedFridayDate: false },
 ];
 
 export const APPLE_MUSIC_ES_SONGS_URL =
@@ -245,7 +245,8 @@ function deezerRawToCandidate(
   t: any,
   source: 'deezer_novedades_es' | 'deezer_radar_weekly',
   priority: number,
-  fallbackDate: string
+  cutoff15Iso: string,
+  todayIso: string
 ): ExternalReleaseCandidate | null {
   const dzId = String(t?.id ?? '').trim();
   const title = decodeHtmlEntities(String(t?.title ?? t?.title_short ?? '')).trim();
@@ -254,10 +255,18 @@ function deezerRawToCandidate(
 
   const artists = splitCandidateArtists(mainArtistName);
   if (artists.length === 0) return null;
-  const releaseDate =
+  const rawTrackDate =
     typeof t?.release_date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(t.release_date)
       ? t.release_date.slice(0, 10)
-      : fallbackDate;
+      : '';
+  const rawAlbumDate =
+    typeof t?.album?.release_date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(t.album.release_date)
+      ? t.album.release_date.slice(0, 10)
+      : '';
+  const releaseDate = rawTrackDate || rawAlbumDate;
+  if (!releaseDate || releaseDate < cutoff15Iso || releaseDate > todayIso) {
+    return null;
+  }
   const releaseYear = Number.parseInt(releaseDate.slice(0, 4), 10) || new Date().getFullYear();
   const thumbMed =
     typeof t?.album?.cover_medium === 'string' && t.album.cover_medium
@@ -320,10 +329,8 @@ export async function fetchExternalReleaseRadar(
   }
 
   const fetchImpl = options.fetchFn ?? globalThis.fetch.bind(globalThis);
-  const fridayIso = getMostRecentFridayIso(now);
   const cutoff15Iso = toLocalIsoDate(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 15, 0, 0, 0, 0));
-  const cutoffDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30, 0, 0, 0, 0);
-  const cutoffIso = toLocalIsoDate(cutoffDate);
+  const todayIso = dayKey;
 
   const fetchSpotifyEntry = async (pl: (typeof SPOTIFY_RELEASE_RADAR_PLAYLISTS)[number]) => {
     const html = await fetchTextWithTimeout(
@@ -332,9 +339,7 @@ export async function fetchExternalReleaseRadar(
       4000,
       options.signal
     );
-    return html
-      ? parseSpotifyEmbedPlaylistHtml(html, pl.source, pl.stampEstimatedFridayDate ? fridayIso : undefined)
-      : [];
+    return html ? parseSpotifyEmbedPlaylistHtml(html, pl.source, undefined) : [];
   };
 
   const fetchAppleEsSongs = async (): Promise<ExternalReleaseCandidate[]> => {
@@ -348,7 +353,7 @@ export async function fetchExternalReleaseRadar(
       const title = decodeHtmlEntities(String(item?.name ?? '')).trim();
       const artistName = decodeHtmlEntities(String(item?.artistName ?? '')).trim();
       const releaseDate = typeof item?.releaseDate === 'string' ? item.releaseDate.slice(0, 10) : '';
-      if (!title || !artistName || !releaseDate || releaseDate < cutoff15Iso) continue;
+      if (!title || !artistName || !releaseDate || releaseDate < cutoff15Iso || releaseDate > todayIso) continue;
       const artists = splitCandidateArtists(artistName);
       if (artists.length === 0) continue;
       out.push({
@@ -362,6 +367,31 @@ export async function fetchExternalReleaseRadar(
       });
     }
     return out;
+  };
+
+  const resolveAlbumDates = async (albumIds: string[]): Promise<Map<string, string>> => {
+    const outMap = new Map<string, string>();
+    const unique = Array.from(new Set(albumIds.filter(Boolean))).slice(0, 60);
+    for (let i = 0; i < unique.length; i += 12) {
+      const batch = unique.slice(i, i + 12);
+      const resList = await Promise.all(
+        batch.map((alId) =>
+          fetchJsonWithTimeout<{ id?: number | string; release_date?: string }>(
+            `https://api.deezer.com/album/${encodeURIComponent(alId)}`,
+            fetchImpl,
+            2200,
+            options.signal
+          )
+        )
+      );
+      for (let j = 0; j < batch.length; j++) {
+        const rd = resList[j]?.release_date;
+        if (typeof rd === 'string' && /^\d{4}-\d{2}-\d{2}/.test(rd)) {
+          outMap.set(batch[j]!, rd.slice(0, 10));
+        }
+      }
+    }
+    return outMap;
   };
 
   const fetchDeezerPlaylists = async (): Promise<ExternalReleaseCandidate[]> => {
@@ -379,9 +409,9 @@ export async function fetchExternalReleaseRadar(
     const chosenNovPls = recentPls.length > 0 ? recentPls : datedPls.slice(0, 1);
 
     const [radarWeeklyData, ...novDatas] = await Promise.all([
-      fetchJsonWithTimeout<{ data?: unknown[] }>(DEEZER_RADAR_WEEKLY_TRACKS_URL, fetchImpl, 4000, options.signal),
+      fetchJsonWithTimeout<{ data?: any[] }>(DEEZER_RADAR_WEEKLY_TRACKS_URL, fetchImpl, 4000, options.signal),
       ...chosenNovPls.map((pl) =>
-        fetchJsonWithTimeout<{ data?: unknown[] }>(
+        fetchJsonWithTimeout<{ data?: any[] }>(
           `https://api.deezer.com/playlist/${encodeURIComponent(pl.id)}/tracks?limit=80`,
           fetchImpl,
           4000,
@@ -390,19 +420,38 @@ export async function fetchExternalReleaseRadar(
       ),
     ]);
 
-    const out: ExternalReleaseCandidate[] = [];
+    const rawNovTracks: any[] = [];
     for (let i = 0; i < chosenNovPls.length; i++) {
-      const plMeta = chosenNovPls[i]!;
-      const plRes = novDatas[i];
-      const tracks = Array.isArray(plRes?.data) ? plRes.data : [];
-      for (const rawT of tracks) {
-        const cand = deezerRawToCandidate(rawT, 'deezer_novedades_es', 96, plMeta.date ?? fridayIso);
-        if (cand) out.push(cand);
+      const tracks = Array.isArray(novDatas[i]?.data) ? novDatas[i]!.data! : [];
+      rawNovTracks.push(...tracks);
+    }
+    const rawRwTracks = (Array.isArray(radarWeeklyData?.data) ? radarWeeklyData!.data! : []).slice(0, 60);
+
+    // Verify exact album release_date from Deezer /album/:id for playlist items lacking inline release_date
+    const missingDateAlbumIds: string[] = [];
+    for (const rawT of [...rawNovTracks, ...rawRwTracks]) {
+      const hasTrackDate = typeof rawT?.release_date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(rawT.release_date);
+      const hasAlbumDate = typeof rawT?.album?.release_date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(rawT.album.release_date);
+      if (!hasTrackDate && !hasAlbumDate && rawT?.album?.id) {
+        missingDateAlbumIds.push(String(rawT.album.id));
       }
     }
-    const rwTracks = Array.isArray(radarWeeklyData?.data) ? radarWeeklyData.data : [];
-    for (const rawT of rwTracks.slice(0, 60)) {
-      const cand = deezerRawToCandidate(rawT, 'deezer_radar_weekly', 55, fridayIso);
+    const albumDateMap = missingDateAlbumIds.length > 0 ? await resolveAlbumDates(missingDateAlbumIds) : new Map<string, string>();
+
+    const stampVerifiedDate = (rawT: any) => {
+      if (rawT?.release_date || rawT?.album?.release_date) return rawT;
+      const alId = rawT?.album?.id ? String(rawT.album.id) : '';
+      const verified = alId ? albumDateMap.get(alId) : undefined;
+      return verified ? { ...rawT, album: { ...rawT.album, release_date: verified } } : rawT;
+    };
+
+    const out: ExternalReleaseCandidate[] = [];
+    for (const rawT of rawNovTracks) {
+      const cand = deezerRawToCandidate(stampVerifiedDate(rawT), 'deezer_novedades_es', 96, cutoff15Iso, todayIso);
+      if (cand) out.push(cand);
+    }
+    for (const rawT of rawRwTracks) {
+      const cand = deezerRawToCandidate(stampVerifiedDate(rawT), 'deezer_radar_weekly', 55, cutoff15Iso, todayIso);
       if (cand) out.push(cand);
     }
     return out;
@@ -431,13 +480,17 @@ export async function fetchExternalReleaseRadar(
   }
   if (lhNovHtml) {
     for (const item of parseLaHigueraNovedadesHtml(lhNovHtml, 'novedades')) {
-      if (!item.releaseDate || item.releaseDate >= cutoffIso) {
+      if (item.releaseDate && item.releaseDate >= cutoff15Iso && item.releaseDate <= todayIso) {
         raw.push(item);
       }
     }
   }
   if (lhCancHtml) {
-    raw.push(...parseLaHigueraNovedadesHtml(lhCancHtml, 'canciones', fridayIso));
+    for (const item of parseLaHigueraNovedadesHtml(lhCancHtml, 'canciones')) {
+      if (item.releaseDate && item.releaseDate >= cutoff15Iso && item.releaseDate <= todayIso) {
+        raw.push(item);
+      }
+    }
   }
 
   // Deduplicate by normalized title::primaryArtist while preserving highest priority, explicit date & pre-built track
@@ -482,10 +535,23 @@ export async function fetchExternalReleaseRadar(
     });
   }
 
-  const finalItems = Array.from(dedup.values()).sort((a, b) => {
-    if (b.priority !== a.priority) return b.priority - a.priority;
-    return (b.releaseDate ?? '').localeCompare(a.releaseDate ?? '');
-  });
+  const finalItems = Array.from(dedup.values())
+    .filter((item) => {
+      if (item.releaseDate && (item.releaseDate < cutoff15Iso || item.releaseDate > todayIso)) {
+        return false;
+      }
+      if (item.track) {
+        const trDate = item.track.releaseDate?.slice(0, 10) ?? '';
+        if (!trDate || trDate < cutoff15Iso || trDate > todayIso) {
+          return false;
+        }
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      if (b.priority !== a.priority) return b.priority - a.priority;
+      return (b.releaseDate ?? '').localeCompare(a.releaseDate ?? '');
+    });
 
   if (useCache && finalItems.length > 0) {
     cachedRadar = { dayKey, at: Date.now(), items: finalItems };

@@ -491,6 +491,7 @@ describe('@pmusic/recommendations', () => {
       thumbnailUrl: 'https://example.com/soy_mejor.jpg',
       source: 'ytmusic',
       releaseYear: Number(twoDaysAgo.slice(0, 4)),
+      releaseDate: twoDaysAgo,
     };
     const syntheticLeakTrack: Track = {
       id: 'cc_me_muevo_01',
@@ -1029,5 +1030,88 @@ describe('@pmusic/recommendations', () => {
     expect(titles).toContain('X (Official Video)');
     expect(ids.has('dz_lana_offgenre')).toBe(false);
     expect(ids.has('sp_dua_offgenre')).toBe(false);
+  });
+
+  it('never leaks songs older than 15 days or without verified dates into Descubre lo Nuevo even when no <=15d tracks exist', async () => {
+    const now = new Date();
+    const toIso = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const twentyDaysAgo = toIso(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 20));
+    const twoDaysAgo = toIso(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 2));
+
+    const mockProvider = {
+      search: async () => ({
+        query: '',
+        songs: [
+          {
+            id: 'tr_la_villa_old',
+            title: 'LA VILLA',
+            artists: [{ id: 'ar_rc', name: 'Ryan Castro' }],
+            durationSec: 193,
+            thumbnailUrl: 'https://example.com/lv.jpg',
+            source: 'ytmusic' as const,
+            releaseYear: Number(twentyDaysAgo.slice(0, 4)),
+            releaseDate: twentyDaysAgo,
+          },
+          {
+            id: 'tr_undated_song',
+            title: 'Undated Song',
+            artists: [{ id: 'ar_u', name: 'Quevedo' }],
+            durationSec: 180,
+            thumbnailUrl: 'https://example.com/u.jpg',
+            source: 'ytmusic' as const,
+          },
+        ],
+        videos: [],
+        artists: [],
+        albums: [],
+        playlists: [],
+      }),
+      getHomeFeed: async () => ({ shelves: [] }),
+      getRelated: async () => ({ tracks: [], artists: [] }),
+      getUpNext: async () => [],
+      getReleaseRadar: async () => [
+        {
+          title: 'LA VILLA',
+          artists: ['Ryan Castro'],
+          releaseDate: twoDaysAgo, // even if an upstream list lied about date, catalog date > 15d must block it!
+          kind: 'track' as const,
+          source: 'spotify_novedades_es' as const,
+          priority: 95,
+        },
+        {
+          title: 'Undated Song',
+          artists: ['Quevedo'],
+          releaseDate: twoDaysAgo,
+          kind: 'track' as const,
+          source: 'spotify_novedades_es' as const,
+          priority: 95,
+        },
+      ],
+    };
+
+    const engine = new RecommendationEngine({ musicProvider: mockProvider as any });
+    engine.setUserLibraryContext({
+      libraryTracks: [
+        {
+          id: 'owned_1',
+          title: 'Columbia',
+          artists: [{ id: 'ar_q', name: 'Quevedo' }],
+          durationSec: 180,
+          thumbnailUrl: 'https://example.com/c.jpg',
+          source: 'ytmusic',
+        },
+      ],
+    });
+    const shelves = await engine.buildHomeShelves();
+    const dln = shelves
+      .find((s) => s.kind === 'mixes_for_you')
+      ?.mixes?.find((m) => m.id === 'mix_descubre_lo_nuevo');
+    const rollingWin = getRollingDaysWindow(now, 15);
+    for (const tr of dln?.tracks ?? []) {
+      expect(isReleaseDateInWindow(tr.releaseDate, rollingWin.startIso, rollingWin.endIso)).toBe(true);
+    }
+    expect((dln?.tracks ?? []).some((t) => t.title === 'LA VILLA')).toBe(false);
+    expect((dln?.tracks ?? []).some((t) => t.title === 'Undated Song')).toBe(false);
   });
 });

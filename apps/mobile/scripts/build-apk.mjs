@@ -436,8 +436,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="57"
-    android:versionName="0.23.13">
+    android:versionCode="58"
+    android:versionName="0.23.14">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -1087,6 +1087,7 @@ public class PMusicPlaybackService extends Service {
         syncMediaSessionAndNotification();
     }
 
+    // WebView owns Android AudioFocus natively for HTMLAudio/WebAudio; do not steal focus from it here.
     private void updateLocks(boolean playing) {
         try {
             if (playing) {
@@ -1465,13 +1466,29 @@ public class MainActivity extends Activity {
         final String mime;
         final String userAgent;
         final long expiresAtMs;
+        final String codec;
+        final long bitrate;
+        final boolean isAdaptiveAudio;
 
         ResolvedStream(String url, String mime, String userAgent, long expiresAtMs) {
+            this(url, mime, userAgent, expiresAtMs, "", 0L, false);
+        }
+
+        ResolvedStream(String url, String mime, String userAgent, long expiresAtMs, String codec, long bitrate, boolean isAdaptiveAudio) {
             this.url = url;
             this.mime = mime;
             this.userAgent = userAgent;
             this.expiresAtMs = expiresAtMs;
+            this.codec = codec != null ? codec : "";
+            this.bitrate = bitrate;
+            this.isAdaptiveAudio = isAdaptiveAudio;
         }
+    }
+
+    private static String normalizeStreamQuality(String rawQuality) {
+        if ("low".equalsIgnoreCase(rawQuality)) return "low";
+        if ("medium".equalsIgnoreCase(rawQuality)) return "medium";
+        return "high";
     }
 
     private static final class Candidate {
@@ -2028,7 +2045,7 @@ public class MainActivity extends Activity {
                     corsHeaders.put("Access-Control-Allow-Origin", "*");
                     corsHeaders.put("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
                     corsHeaders.put("Access-Control-Allow-Headers", "Range, Content-Type, Accept");
-                    corsHeaders.put("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges");
+                    corsHeaders.put("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges, X-PMusic-Stream-Quality, X-PMusic-Stream-Codec, X-PMusic-Stream-Bitrate");
 
                     if ("/api/dz-proxy".equals(path)) {
                         String dzPath = uri.getQueryParameter("path");
@@ -2148,6 +2165,7 @@ public class MainActivity extends Activity {
                         String rawTrackId = Uri.decode(path.substring("/api/stream/".length()));
                         String qTitle = uri.getQueryParameter("title");
                         String qArtist = uri.getQueryParameter("artist");
+                        String qQuality = normalizeStreamQuality(uri.getQueryParameter("quality"));
                         String qDurStr = uri.getQueryParameter("durationSec");
                         int qDurSec = 0;
                         if (qDurStr != null && !qDurStr.trim().isEmpty()) {
@@ -2157,13 +2175,13 @@ public class MainActivity extends Activity {
                             }
                         }
 
-                        String cacheKey = (rawTrackId != null ? rawTrackId : "") + "::" + (qTitle != null ? qTitle.trim() : "");
+                        String cacheKey = (rawTrackId != null ? rawTrackId : "") + "::" + (qTitle != null ? qTitle.trim() : "") + "::" + qQuality;
                         if ("1".equals(uri.getQueryParameter("fresh"))) {
                             synchronized (fullStreamCache) {
                                 fullStreamCache.remove(cacheKey);
                             }
                         }
-                        ResolvedStream fullStream = getOrResolveFullStream(cacheKey, rawTrackId, qTitle, qArtist, qDurSec);
+                        ResolvedStream fullStream = getOrResolveFullStream(cacheKey, rawTrackId, qTitle, qArtist, qDurSec, qQuality);
                         if (fullStream != null) {
                             WebResourceResponse ytResp = proxyStreamResponse(
                                     fullStream,
@@ -2172,6 +2190,7 @@ public class MainActivity extends Activity {
                                     qTitle,
                                     qArtist,
                                     qDurSec,
+                                    qQuality,
                                     corsHeaders,
                                     request.getRequestHeaders(),
                                     Build.VERSION.SDK_INT >= 21 ? request.getMethod() : "GET"
@@ -2395,9 +2414,21 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void dispatchAppBackgroundedToJs(final boolean bg) {
+        if (webView == null || Build.VERSION.SDK_INT < 19) return;
+        final String js = "window.__pmusicSetAppBackgrounded && window.__pmusicSetAppBackgrounded(" + (bg ? "true" : "false") + ");";
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (webView != null) webView.evaluateJavascript(js, null);
+            }
+        });
+    }
+
     @Override
     protected void onPause() {
         super.onPause();
+        dispatchAppBackgroundedToJs(true);
         if (webView != null && PMusicPlaybackService.isCurrentlyPlaying()) {
             try {
                 webView.onResume();
@@ -2408,8 +2439,15 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onStop() {
+        super.onStop();
+        dispatchAppBackgroundedToJs(true);
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
+        dispatchAppBackgroundedToJs(false);
         if (webView != null) {
             try {
                 webView.onResume();
@@ -2500,7 +2538,7 @@ public class MainActivity extends Activity {
                         + "Access-Control-Allow-Origin: *\\r\\n"
                         + "Access-Control-Allow-Methods: GET, HEAD, OPTIONS\\r\\n"
                         + "Access-Control-Allow-Headers: Range, Content-Type, Accept\\r\\n"
-                        + "Access-Control-Expose-Headers: Content-Range, Content-Length, Accept-Ranges\\r\\n"
+                        + "Access-Control-Expose-Headers: Content-Range, Content-Length, Accept-Ranges, X-PMusic-Stream-Quality, X-PMusic-Stream-Codec, X-PMusic-Stream-Bitrate\\r\\n"
                         + "Connection: close\\r\\n\\r\\n";
                 out.write(optResp.getBytes(StandardCharsets.US_ASCII));
                 out.flush();
@@ -2518,6 +2556,7 @@ public class MainActivity extends Activity {
             String rawTrackId = Uri.decode(path.substring("/api/stream/".length()));
             String qTitle = uri.getQueryParameter("title");
             String qArtist = uri.getQueryParameter("artist");
+            String qQuality = normalizeStreamQuality(uri.getQueryParameter("quality"));
             String qDurStr = uri.getQueryParameter("durationSec");
             int qDurSec = 0;
             if (qDurStr != null && !qDurStr.trim().isEmpty()) {
@@ -2527,22 +2566,28 @@ public class MainActivity extends Activity {
                 }
             }
 
-            String cacheKey = (rawTrackId != null ? rawTrackId : "") + "::" + (qTitle != null ? qTitle.trim() : "");
+            String cacheKey = (rawTrackId != null ? rawTrackId : "") + "::" + (qTitle != null ? qTitle.trim() : "") + "::" + qQuality;
             if ("1".equals(uri.getQueryParameter("fresh"))) {
                 synchronized (fullStreamCache) {
                     fullStreamCache.remove(cacheKey);
                 }
             }
-            ResolvedStream fullStream = getOrResolveFullStream(cacheKey, rawTrackId, qTitle, qArtist, qDurSec);
+            ResolvedStream fullStream = getOrResolveFullStream(cacheKey, rawTrackId, qTitle, qArtist, qDurSec, qQuality);
             if (fullStream == null) {
                 out.write("HTTP/1.1 503 Service Unavailable\\r\\nAccess-Control-Allow-Origin: *\\r\\nContent-Type: application/json\\r\\nContent-Length: 30\\r\\nConnection: close\\r\\n\\r\\n{\\"error\\":\\"stream_unavailable\\"}".getBytes(StandardCharsets.UTF_8));
                 out.flush();
                 return;
             }
 
+            try {
+                client.setSendBufferSize(131072);
+            } catch (Exception ignoredBuf) {
+            }
             boolean isHead = "HEAD".equals(method);
             String clientRange = getHeaderIgnoreCase(reqHeaders, "range");
             boolean hasClientRange = clientRange != null && !clientRange.trim().isEmpty();
+            boolean isLowQuality = "low".equals(qQuality);
+            long chunkSpanBytes = isLowQuality ? 262143L : 1572863L;
             String rangeToSend = null;
             if (hasClientRange) {
                 rangeToSend = clientRange.trim();
@@ -2550,7 +2595,7 @@ public class MainActivity extends Activity {
                 if (om.matches()) {
                     try {
                         long startByte = Long.parseLong(om.group(1));
-                        long endByte = startByte + 1572863L;
+                        long endByte = startByte + chunkSpanBytes;
                         rangeToSend = "bytes=" + startByte + "-" + endByte;
                     } catch (Exception ignored) {
                     }
@@ -2561,8 +2606,8 @@ public class MainActivity extends Activity {
             for (int attempt = 0; attempt < 2; attempt++) {
                 conn = (HttpURLConnection) new URL(active.url).openConnection();
                 conn.setRequestMethod(isHead ? "HEAD" : "GET");
-                conn.setConnectTimeout(10000);
-                conn.setReadTimeout(25000);
+                conn.setConnectTimeout(isLowQuality ? 18000 : 10000);
+                conn.setReadTimeout(isLowQuality ? 45000 : 25000);
                 conn.setInstanceFollowRedirects(true);
                 conn.setRequestProperty("User-Agent", active.userAgent);
                 if (rangeToSend != null) {
@@ -2583,9 +2628,12 @@ public class MainActivity extends Activity {
                     sb.append("Access-Control-Allow-Origin: *\\r\\n");
                     sb.append("Access-Control-Allow-Methods: GET, HEAD, OPTIONS\\r\\n");
                     sb.append("Access-Control-Allow-Headers: Range, Content-Type, Accept\\r\\n");
-                    sb.append("Access-Control-Expose-Headers: Content-Range, Content-Length, Accept-Ranges\\r\\n");
+                    sb.append("Access-Control-Expose-Headers: Content-Range, Content-Length, Accept-Ranges, X-PMusic-Stream-Quality, X-PMusic-Stream-Codec, X-PMusic-Stream-Bitrate\\r\\n");
                     sb.append("Accept-Ranges: bytes\\r\\n");
                     sb.append("Cache-Control: no-cache\\r\\n");
+                    sb.append("X-PMusic-Stream-Quality: ").append(qQuality).append("\\r\\n");
+                    if (!active.codec.isEmpty()) sb.append("X-PMusic-Stream-Codec: ").append(active.codec).append("\\r\\n");
+                    if (active.bitrate > 0L) sb.append("X-PMusic-Stream-Bitrate: ").append(active.bitrate).append("\\r\\n");
                     sb.append("Content-Type: ").append(active.mime).append("\\r\\n");
                     if (upstreamLen != null) sb.append("Content-Length: ").append(upstreamLen).append("\\r\\n");
                     if (outStatus == 206 && upstreamRange != null) {
@@ -2596,7 +2644,7 @@ public class MainActivity extends Activity {
 
                     if (!isHead) {
                         InputStream in = conn.getInputStream();
-                        byte[] buf = new byte[16384];
+                        byte[] buf = new byte[65536];
                         int r;
                         while ((r = in.read(buf)) != -1) {
                             out.write(buf, 0, r);
@@ -2614,7 +2662,7 @@ public class MainActivity extends Activity {
                     synchronized (fullStreamCache) {
                         fullStreamCache.remove(cacheKey);
                     }
-                    ResolvedStream refreshed = getOrResolveFullStream(cacheKey, rawTrackId, qTitle, qArtist, qDurSec);
+                    ResolvedStream refreshed = getOrResolveFullStream(cacheKey, rawTrackId, qTitle, qArtist, qDurSec, qQuality);
                     if (refreshed == null) break;
                     active = refreshed;
                 } else {
@@ -2697,7 +2745,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private ResolvedStream getOrResolveFullStream(String cacheKey, String rawTrackId, String qTitle, String qArtist, int qDurationSec) {
+    private ResolvedStream getOrResolveFullStream(String cacheKey, String rawTrackId, String qTitle, String qArtist, int qDurationSec, String qQuality) {
         long now = System.currentTimeMillis();
         synchronized (fullStreamCache) {
             ResolvedStream cached = fullStreamCache.get(cacheKey);
@@ -2713,7 +2761,7 @@ public class MainActivity extends Activity {
                     return cached;
                 }
             }
-            ResolvedStream resolved = resolveFullLengthStream(rawTrackId, qTitle, qArtist, qDurationSec);
+            ResolvedStream resolved = resolveFullLengthStream(rawTrackId, qTitle, qArtist, qDurationSec, qQuality);
             if (resolved != null) {
                 synchronized (fullStreamCache) {
                     fullStreamCache.put(cacheKey, resolved);
@@ -2723,11 +2771,11 @@ public class MainActivity extends Activity {
         }
     }
 
-    private ResolvedStream resolveFullLengthStream(String rawTrackId, String qTitle, String qArtist, int qDurationSec) {
+    private ResolvedStream resolveFullLengthStream(String rawTrackId, String qTitle, String qArtist, int qDurationSec, String qQuality) {
         try {
             boolean ytAllowed = System.currentTimeMillis() >= ytBotCooldownUntilMs;
             if (ytAllowed && rawTrackId != null && YT_ID_PATTERN.matcher(rawTrackId).matches()) {
-                ResolvedStream direct = fetchYoutubeIosPlayerStream(rawTrackId, qDurationSec);
+                ResolvedStream direct = fetchYoutubeIosPlayerStream(rawTrackId, qDurationSec, qQuality);
                 if (direct != null) return direct;
             }
 
@@ -2761,7 +2809,7 @@ public class MainActivity extends Activity {
                 List<Candidate> ytmCandidates = searchYtMusicSongs(focusedQuery, strippedTitle, primaryArtist, targetDur);
                 for (int i = 0; i < Math.min(3, ytmCandidates.size()); i++) {
                     if (System.currentTimeMillis() < ytBotCooldownUntilMs) break;
-                    ResolvedStream rs = fetchYoutubeIosPlayerStream(ytmCandidates.get(i).videoId, targetDur);
+                    ResolvedStream rs = fetchYoutubeIosPlayerStream(ytmCandidates.get(i).videoId, targetDur, qQuality);
                     if (rs != null) return rs;
                 }
 
@@ -2779,7 +2827,7 @@ public class MainActivity extends Activity {
                     List<Candidate> ytCandidates = searchStandardYoutube(ytQueries[q], strippedTitle, primaryArtist, targetDur);
                     for (int i = 0; i < Math.min(3, ytCandidates.size()); i++) {
                         if (System.currentTimeMillis() < ytBotCooldownUntilMs) break;
-                        ResolvedStream rs = fetchYoutubeIosPlayerStream(ytCandidates.get(i).videoId, targetDur);
+                        ResolvedStream rs = fetchYoutubeIosPlayerStream(ytCandidates.get(i).videoId, targetDur, qQuality);
                         if (rs != null) return rs;
                     }
                 }
@@ -2854,7 +2902,10 @@ public class MainActivity extends Activity {
                         "https://api.audius.co/v1/tracks/" + URLEncoder.encode(bestId, "UTF-8") + "/stream?app_name=pMusic",
                         "audio/mpeg",
                         "pMusic-Android/0.13.0",
-                        System.currentTimeMillis() + STREAM_CACHE_TTL_MS
+                        System.currentTimeMillis() + STREAM_CACHE_TTL_MS,
+                        "mp3",
+                        320000L,
+                        false
                 );
             }
         } catch (Exception ignored) {
@@ -2995,7 +3046,25 @@ public class MainActivity extends Activity {
         return results;
     }
 
+    private boolean isAdaptiveFullStreamableUrl(String streamUrl, String userAgent, long contentLength) {
+        if (!isStreamableUrlRange(streamUrl, userAgent, "bytes=0-65535")) {
+            return false;
+        }
+        // YouTube often gates adaptive audio streams after ~1 MB while still returning 206 for the first 64 KB.
+        // Probe the tail (or open range) so gated 403 streams fail fast and fall back to a reliable stream.
+        if (contentLength > 65536L) {
+            long tailStart = Math.max(0L, contentLength - 65536L);
+            long tailEnd = contentLength - 1L;
+            return isStreamableUrlRange(streamUrl, userAgent, "bytes=" + tailStart + "-" + tailEnd);
+        }
+        return isStreamableUrlRange(streamUrl, userAgent, "bytes=0-");
+    }
+
     private boolean isStreamableUrl(String streamUrl, String userAgent) {
+        return isStreamableUrlRange(streamUrl, userAgent, "bytes=0-65535");
+    }
+
+    private boolean isStreamableUrlRange(String streamUrl, String userAgent, String rangeHeader) {
         HttpURLConnection conn = null;
         try {
             conn = (HttpURLConnection) new URL(streamUrl).openConnection();
@@ -3004,7 +3073,7 @@ public class MainActivity extends Activity {
             conn.setReadTimeout(3500);
             conn.setInstanceFollowRedirects(true);
             conn.setRequestProperty("User-Agent", userAgent);
-            conn.setRequestProperty("Range", "bytes=0-65535");
+            conn.setRequestProperty("Range", rangeHeader);
             conn.setRequestProperty("Accept", "*/*");
             conn.setRequestProperty("Connection", "close");
             int code = conn.getResponseCode();
@@ -3023,11 +3092,11 @@ public class MainActivity extends Activity {
         }
     }
 
-    private ResolvedStream fetchYoutubeIosPlayerStream(String videoId, int expectedDurSec) {
+    private ResolvedStream fetchYoutubeIosPlayerStream(String videoId, int expectedDurSec, String qQuality) {
         int[] botRejects = new int[] { 0 };
-        String[] modes = new String[] { "ANDROID", "ANDROID_21", "IOS", "ANDROID_VR", "MWEB" };
+        String[] modes = new String[] { "IOS", "ANDROID_VR", "ANDROID", "ANDROID_21", "MWEB" };
         for (int i = 0; i < modes.length; i++) {
-            ResolvedStream stream = fetchYoutubeClientPlayerStream(videoId, expectedDurSec, modes[i], botRejects);
+            ResolvedStream stream = fetchYoutubeClientPlayerStream(videoId, expectedDurSec, modes[i], qQuality, botRejects);
             if (stream != null) {
                 ytBotCooldownUntilMs = 0L;
                 return stream;
@@ -3047,7 +3116,33 @@ public class MainActivity extends Activity {
         return Math.abs(approxSec - expectedDurSec) <= Math.max(35.0, expectedDurSec * 0.4);
     }
 
-    private ResolvedStream fetchYoutubeClientPlayerStream(String videoId, int expectedDurSec, String clientMode, int[] botRejects) {
+    private static long effectiveFormatBitrate(JSONObject f) {
+        long avg = f.optLong("averageBitrate", 0L);
+        return avg > 0L ? avg : f.optLong("bitrate", 0L);
+    }
+
+    private static boolean isOpusJsonFormat(JSONObject f) {
+        int itag = f.optInt("itag", 0);
+        String mime = f.optString("mimeType", "").toLowerCase(Locale.ROOT);
+        return mime.contains("opus") || mime.contains("webm") || itag == 251 || itag == 250 || itag == 249 || itag == 774 || itag == 600;
+    }
+
+    private static boolean isAacJsonFormat(JSONObject f) {
+        int itag = f.optInt("itag", 0);
+        String mime = f.optString("mimeType", "").toLowerCase(Locale.ROOT);
+        return mime.contains("mp4") || mime.contains("mp4a") || itag == 140 || itag == 141 || itag == 139 || itag == 599;
+    }
+
+    private static String extractJsonCodecLabel(String mimeRaw) {
+        String lower = mimeRaw != null ? mimeRaw.toLowerCase(Locale.ROOT) : "";
+        if (lower.contains("opus") || lower.contains("webm")) return "opus";
+        if (lower.contains("mp4a.40.2")) return "aac-lc";
+        if (lower.contains("mp4a.40.5")) return "he-aac";
+        if (lower.contains("mp4")) return "aac";
+        return "audio";
+    }
+
+    private ResolvedStream fetchYoutubeClientPlayerStream(String videoId, int expectedDurSec, String clientMode, String qQuality, int[] botRejects) {
         try {
             JSONObject client = new JSONObject();
             JSONObject thirdParty = null;
@@ -3115,69 +3210,133 @@ public class MainActivity extends Activity {
             JSONObject streamingData = root.optJSONObject("streamingData");
             if (streamingData == null) return null;
 
-            List<Candidate> progOrder = new ArrayList<Candidate>();
-            final List<ResolvedStream> orderedCandidates = new ArrayList<ResolvedStream>();
-
-            // 1) Collect progressive formats (itag 18 / mp4) FIRST — verified 200/206 on YouTube CDN
+            final List<JSONObject> sortedProg = new ArrayList<JSONObject>();
             JSONArray progressive = streamingData.optJSONArray("formats");
             if (progressive != null) {
-                List<JSONObject> progList = new ArrayList<JSONObject>();
                 for (int i = 0; i < progressive.length(); i++) {
                     JSONObject f = progressive.optJSONObject(i);
                     if (f == null) continue;
                     String url = f.optString("url", "");
                     if (!url.startsWith("http") || !formatMatchesExpectedDuration(f, expectedDurSec)) continue;
-                    progList.add(f);
+                    sortedProg.add(f);
                 }
-                Collections.sort(progList, new Comparator<JSONObject>() {
+                Collections.sort(sortedProg, new Comparator<JSONObject>() {
                     @Override
                     public int compare(JSONObject a, JSONObject b) {
                         boolean aPref = a.optInt("itag", 0) == 18 || a.optString("mimeType", "").toLowerCase(Locale.ROOT).contains("mp4");
                         boolean bPref = b.optInt("itag", 0) == 18 || b.optString("mimeType", "").toLowerCase(Locale.ROOT).contains("mp4");
                         if (aPref != bPref) return bPref ? 1 : -1;
-                        return Long.compare(b.optLong("bitrate", 0L), a.optLong("bitrate", 0L));
+                        return Long.compare(effectiveFormatBitrate(b), effectiveFormatBitrate(a));
                     }
                 });
-                for (int i = 0; i < progList.size(); i++) {
-                    JSONObject f = progList.get(i);
-                    String mimeRaw = f.optString("mimeType", "").toLowerCase(Locale.ROOT);
-                    String mime = mimeRaw.isEmpty() ? "video/mp4" : mimeRaw.split(";")[0].trim();
-                    orderedCandidates.add(new ResolvedStream(f.optString("url", ""), mime, ua, System.currentTimeMillis() + STREAM_CACHE_TTL_MS));
-                }
             }
 
-            // 2) Fallback: adaptive audio formats (audio/mp4 preferred)
+            final List<JSONObject> sortedAdap = new ArrayList<JSONObject>();
             JSONArray adaptive = streamingData.optJSONArray("adaptiveFormats");
             if (adaptive != null) {
-                List<JSONObject> adapList = new ArrayList<JSONObject>();
                 for (int i = 0; i < adaptive.length(); i++) {
                     JSONObject f = adaptive.optJSONObject(i);
                     if (f == null) continue;
                     String url = f.optString("url", "");
                     String mimeRaw = f.optString("mimeType", "").toLowerCase(Locale.ROOT);
                     if (!url.startsWith("http") || !mimeRaw.startsWith("audio/") || !formatMatchesExpectedDuration(f, expectedDurSec)) continue;
-                    adapList.add(f);
+                    sortedAdap.add(f);
                 }
-                Collections.sort(adapList, new Comparator<JSONObject>() {
+                final String qual = normalizeStreamQuality(qQuality);
+                Collections.sort(sortedAdap, new Comparator<JSONObject>() {
                     @Override
                     public int compare(JSONObject a, JSONObject b) {
-                        boolean aMp4 = a.optString("mimeType", "").toLowerCase(Locale.ROOT).contains("mp4");
-                        boolean bMp4 = b.optString("mimeType", "").toLowerCase(Locale.ROOT).contains("mp4");
-                        if (aMp4 != bMp4) return bMp4 ? 1 : -1;
-                        return Long.compare(b.optLong("bitrate", 0L), a.optLong("bitrate", 0L));
+                        long aBps = effectiveFormatBitrate(a);
+                        long bBps = effectiveFormatBitrate(b);
+                        if ("low".equals(qual)) {
+                            int aTier = (aBps >= 24000L && aBps <= 56000L) ? 3
+                                    : (aBps > 56000L && aBps <= 85000L ? 2 : (aBps > 0L && aBps < 24000L ? 1 : 0));
+                            int bTier = (bBps >= 24000L && bBps <= 56000L) ? 3
+                                    : (bBps > 56000L && bBps <= 85000L ? 2 : (bBps > 0L && bBps < 24000L ? 1 : 0));
+                            if (aTier != bTier) return Integer.compare(bTier, aTier);
+                            if (aBps != bBps) return Long.compare(aBps, bBps);
+                            return Integer.compare(isOpusJsonFormat(b) ? 1 : 0, isOpusJsonFormat(a) ? 1 : 0);
+                        }
+                        if ("medium".equals(qual)) {
+                            int aTier = (isAacJsonFormat(a) && aBps >= 96000L && aBps <= 165000L) ? 3
+                                    : (isOpusJsonFormat(a) && aBps >= 64000L && aBps <= 170000L ? 2 : (aBps >= 55000L ? 1 : 0));
+                            int bTier = (isAacJsonFormat(b) && bBps >= 96000L && bBps <= 165000L) ? 3
+                                    : (isOpusJsonFormat(b) && bBps >= 64000L && bBps <= 170000L ? 2 : (bBps >= 55000L ? 1 : 0));
+                            if (aTier != bTier) return Integer.compare(bTier, aTier);
+                            return Long.compare(bBps, aBps);
+                        }
+                        // high: Opus >= 110k (48 kHz) first, then AAC >= 110k, then highest adaptive bitrate
+                        int aTier = (isOpusJsonFormat(a) && aBps >= 110000L) ? 4
+                                : (isAacJsonFormat(a) && aBps >= 110000L ? 3 : (aBps >= 85000L ? 2 : 1));
+                        int bTier = (isOpusJsonFormat(b) && bBps >= 110000L) ? 4
+                                : (isAacJsonFormat(b) && bBps >= 110000L ? 3 : (bBps >= 85000L ? 2 : 1));
+                        if (aTier != bTier) return Integer.compare(bTier, aTier);
+                        long aSr = a.optLong("audioSampleRate", 0L);
+                        long bSr = b.optLong("audioSampleRate", 0L);
+                        if (aSr != bSr) return Long.compare(bSr, aSr);
+                        return Long.compare(bBps, aBps);
                     }
                 });
-                for (int i = 0; i < adapList.size(); i++) {
-                    JSONObject f = adapList.get(i);
-                    String mimeRaw = f.optString("mimeType", "").toLowerCase(Locale.ROOT);
-                    orderedCandidates.add(new ResolvedStream(f.optString("url", ""), mimeRaw.split(";")[0].trim(), ua, System.currentTimeMillis() + STREAM_CACHE_TTL_MS));
+            }
+
+            final String normalizedQ = normalizeStreamQuality(qQuality);
+            final List<JSONObject> orderedJson = new ArrayList<JSONObject>();
+            final List<Boolean> orderedIsAdap = new ArrayList<Boolean>();
+            if ("medium".equals(normalizedQ)) {
+                List<JSONObject> medTail = new ArrayList<JSONObject>();
+                for (int i = 0; i < sortedAdap.size(); i++) {
+                    JSONObject f = sortedAdap.get(i);
+                    if (effectiveFormatBitrate(f) >= 55000L) {
+                        orderedJson.add(f);
+                        orderedIsAdap.add(Boolean.TRUE);
+                    } else {
+                        medTail.add(f);
+                    }
+                }
+                for (int i = 0; i < sortedProg.size(); i++) {
+                    orderedJson.add(sortedProg.get(i));
+                    orderedIsAdap.add(Boolean.FALSE);
+                }
+                for (int i = 0; i < medTail.size(); i++) {
+                    orderedJson.add(medTail.get(i));
+                    orderedIsAdap.add(Boolean.TRUE);
+                }
+            } else {
+                for (int i = 0; i < sortedAdap.size(); i++) {
+                    orderedJson.add(sortedAdap.get(i));
+                    orderedIsAdap.add(Boolean.TRUE);
+                }
+                for (int i = 0; i < sortedProg.size(); i++) {
+                    orderedJson.add(sortedProg.get(i));
+                    orderedIsAdap.add(Boolean.FALSE);
                 }
             }
 
-            for (int i = 0; i < orderedCandidates.size(); i++) {
-                ResolvedStream cand = orderedCandidates.get(i);
-                if (isStreamableUrl(cand.url, cand.userAgent)) {
-                    return cand;
+            for (int i = 0; i < orderedJson.size(); i++) {
+                JSONObject f = orderedJson.get(i);
+                boolean isAdap = orderedIsAdap.get(i).booleanValue();
+                String candUrl = f.optString("url", "");
+                long clen = 0L;
+                try {
+                    String clStr = f.optString("contentLength", "0");
+                    if (clStr != null && !clStr.isEmpty()) clen = Long.parseLong(clStr);
+                } catch (Exception ignored2) {
+                }
+                boolean ok = isAdap
+                        ? isAdaptiveFullStreamableUrl(candUrl, ua, clen)
+                        : isStreamableUrl(candUrl, ua);
+                if (ok) {
+                    String mimeRaw = f.optString("mimeType", "").toLowerCase(Locale.ROOT);
+                    String mime = mimeRaw.isEmpty() ? (isAdap ? "audio/mp4" : "video/mp4") : mimeRaw.split(";")[0].trim();
+                    return new ResolvedStream(
+                            candUrl,
+                            mime,
+                            ua,
+                            System.currentTimeMillis() + STREAM_CACHE_TTL_MS,
+                            extractJsonCodecLabel(mimeRaw),
+                            effectiveFormatBitrate(f),
+                            isAdap
+                    );
                 }
             }
         } catch (Exception ignored) {
@@ -3192,6 +3351,7 @@ public class MainActivity extends Activity {
             String qTitle,
             String qArtist,
             int qDurSec,
+            String qQuality,
             Map<String, String> baseCorsHeaders,
             Map<String, String> reqHeaders,
             String method
@@ -3199,13 +3359,15 @@ public class MainActivity extends Activity {
         String clientRange = getHeaderIgnoreCase(reqHeaders, "range");
         boolean hasClientRange = clientRange != null && !clientRange.trim().isEmpty();
         String rangeToSend = null;
+        boolean isLowQuality = "low".equals(qQuality);
+        long chunkSpanBytes = isLowQuality ? 262143L : 1572863L;
         if (hasClientRange) {
             rangeToSend = clientRange.trim();
             Matcher om = OPEN_RANGE_PATTERN.matcher(rangeToSend);
             if (om.matches()) {
                 try {
                     long startByte = Long.parseLong(om.group(1));
-                    long endByte = startByte + 1572863L;
+                    long endByte = startByte + chunkSpanBytes;
                     rangeToSend = "bytes=" + startByte + "-" + endByte;
                 } catch (Exception ignored) {
                 }
@@ -3220,8 +3382,8 @@ public class MainActivity extends Activity {
                 URL url = new URL(active.url);
                 conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestMethod(isHead ? "HEAD" : "GET");
-                conn.setConnectTimeout(10000);
-                conn.setReadTimeout(25000);
+                conn.setConnectTimeout(isLowQuality ? 18000 : 10000);
+                conn.setReadTimeout(isLowQuality ? 45000 : 25000);
                 conn.setInstanceFollowRedirects(true);
                 conn.setRequestProperty("User-Agent", active.userAgent);
                 if (rangeToSend != null) {
@@ -3236,6 +3398,9 @@ public class MainActivity extends Activity {
                     respHeaders.put("Accept-Ranges", "bytes");
                     respHeaders.put("Cache-Control", "no-cache");
                     respHeaders.put("X-PMusic-Stream-Source", "youtube-full-android");
+                    respHeaders.put("X-PMusic-Stream-Quality", qQuality);
+                    if (!active.codec.isEmpty()) respHeaders.put("X-PMusic-Stream-Codec", active.codec);
+                    if (active.bitrate > 0L) respHeaders.put("X-PMusic-Stream-Bitrate", String.valueOf(active.bitrate));
 
                     String upstreamLen = conn.getHeaderField("Content-Length");
                     String upstreamRange = conn.getHeaderField("Content-Range");
@@ -3263,7 +3428,7 @@ public class MainActivity extends Activity {
                     synchronized (fullStreamCache) {
                         fullStreamCache.remove(cacheKey);
                     }
-                    ResolvedStream refreshed = getOrResolveFullStream(cacheKey, rawTrackId, qTitle, qArtist, qDurSec);
+                    ResolvedStream refreshed = getOrResolveFullStream(cacheKey, rawTrackId, qTitle, qArtist, qDurSec, qQuality);
                     if (refreshed == null) return null;
                     active = refreshed;
                 } else {
@@ -3280,7 +3445,7 @@ public class MainActivity extends Activity {
                     synchronized (fullStreamCache) {
                         fullStreamCache.remove(cacheKey);
                     }
-                    ResolvedStream refreshed = getOrResolveFullStream(cacheKey, rawTrackId, qTitle, qArtist, qDurSec);
+                    ResolvedStream refreshed = getOrResolveFullStream(cacheKey, rawTrackId, qTitle, qArtist, qDurSec, qQuality);
                     if (refreshed == null) return null;
                     active = refreshed;
                 }

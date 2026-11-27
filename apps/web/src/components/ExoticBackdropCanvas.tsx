@@ -104,7 +104,8 @@ void main() {
   vec2 aspect = u_res / minDim;
   float isPortrait = step(u_res.x, u_res.y);
   vec2 centered = (v_uv - 0.5) * aspect;
-  vec2 uv = centered * mix(1.38, 1.08, isPortrait);
+  // On portrait mobile, zoom closer and tame motion amplitude so paint flows calmly like a zoomed slice of desktop
+  vec2 uv = centered * mix(1.38, 0.74, isPortrait);
   float t = u_time * 0.22;
 
   // Multi-directional wandering drift (incommensurate Lissajous orbits — never drifts in one fixed direction)
@@ -123,14 +124,15 @@ void main() {
             texture2D(u_noiseTex, (uv + 1.8 * r) * 0.13 + vec2(0.23, 0.41) - driftR * 0.07).g * 0.35;
 
   // Organic wandering painterly flow with gentle oscillating sway (no monotonous linear panning)
-  vec2 baseSample = centered * mix(0.62, 0.44, isPortrait);
-  vec2 wander1 = vec2(sin(t * 0.29 + 0.4), cos(t * 0.24 + 1.1)) * 0.11;
-  vec2 wander2 = vec2(cos(t * 0.21 + 2.2), sin(t * 0.27 + 0.8)) * 0.12;
-  vec2 wander3 = vec2(sin(t * 0.18 + 3.5), cos(t * 0.32 + 2.0)) * 0.10;
-  vec2 flow = (q - 0.5) * 0.46 + (r - 0.5) * 0.38;
-  vec2 coverUv1 = rot2(baseSample, 0.92 + sin(t * 0.19) * 0.42 + cos(t * 0.11) * 0.18) + vec2(0.28, 0.74) + flow + wander1;
-  vec2 coverUv2 = rot2(vec2(-baseSample.x, baseSample.y), -1.48 + cos(t * 0.17 + 1.0) * 0.38) * 0.94 + vec2(0.76, 0.26) + (r - 0.5) * 0.48 + wander2;
-  vec2 coverUv3 = rot2(baseSample, 2.35 + sin(t * 0.15 + 2.1) * 0.45) * 0.88 + vec2(0.68, 0.78) + (q.yx - 0.5) * 0.40 + wander3;
+  float motionScale = mix(1.0, 0.56, isPortrait);
+  vec2 baseSample = centered * mix(0.62, 0.26, isPortrait);
+  vec2 wander1 = vec2(sin(t * 0.29 + 0.4), cos(t * 0.24 + 1.1)) * (0.11 * motionScale);
+  vec2 wander2 = vec2(cos(t * 0.21 + 2.2), sin(t * 0.27 + 0.8)) * (0.12 * motionScale);
+  vec2 wander3 = vec2(sin(t * 0.18 + 3.5), cos(t * 0.32 + 2.0)) * (0.10 * motionScale);
+  vec2 flow = ((q - 0.5) * 0.46 + (r - 0.5) * 0.38) * motionScale;
+  vec2 coverUv1 = rot2(baseSample, 0.92 + (sin(t * 0.19) * 0.42 + cos(t * 0.11) * 0.18) * motionScale) + vec2(0.28, 0.74) + flow + wander1;
+  vec2 coverUv2 = rot2(vec2(-baseSample.x, baseSample.y), -1.48 + cos(t * 0.17 + 1.0) * (0.38 * motionScale)) * 0.94 + vec2(0.76, 0.26) + (r - 0.5) * (0.48 * motionScale) + wander2;
+  vec2 coverUv3 = rot2(baseSample, 2.35 + sin(t * 0.15 + 2.1) * (0.45 * motionScale)) * 0.88 + vec2(0.68, 0.78) + (q.yx - 0.5) * (0.40 * motionScale) + wander3;
 
   vec3 s1 = sampleCover(coverUv1);
   vec3 s2 = sampleCover(coverUv2);
@@ -193,7 +195,8 @@ void main() {
   float minDim = max(1.0, min(u_res.x, u_res.y));
   vec2 norm = u_res / minDim;
   float isPortrait = step(u_res.x, u_res.y);
-  vec2 p = (v_uv - 0.5) * norm * mix(1.0, 0.78, isPortrait);
+  // On portrait mobile, render a closer zoomed-in pulse core so the artwork texture fills gently without jerky wide framing
+  vec2 p = (v_uv - 0.5) * norm * mix(1.0, 0.44, isPortrait);
   float t = u_time * 0.28;
 
   float r = length(p);
@@ -211,10 +214,10 @@ void main() {
   float cA = cos(spinA);
   float sA = sin(spinA);
   vec2 spinP = vec2(p.x * cA - p.y * sA, p.x * sA + p.y * cA);
-  vec2 radialDrift = dir * (0.08 * sin(pulsePhase) + (n1 - 0.5) * 0.18);
+  vec2 radialDrift = dir * (0.08 * sin(pulsePhase) + (n1 - 0.5) * 0.18) * mix(1.0, 0.58, isPortrait);
 
-  vec2 uvA = p * (0.58 * breath) + 0.5 + radialDrift;
-  vec2 uvB = spinP * 0.52 + 0.5 + vec2(n2 - 0.5, n1 - 0.5) * 0.28;
+  vec2 uvA = p * (mix(0.58, 0.40, isPortrait) * breath) + 0.5 + radialDrift;
+  vec2 uvB = spinP * mix(0.52, 0.36, isPortrait) + 0.5 + vec2(n2 - 0.5, n1 - 0.5) * mix(0.28, 0.16, isPortrait);
 
   vec3 sAcol = sampleCover(uvA);
   vec3 sBcol = sampleCover(uvB);
@@ -557,15 +560,15 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = React.m
           rect.height || (typeof window !== 'undefined' ? window.innerHeight : 640)
         );
         if (glProg && gl) {
-          // Soft 18-22px painterly field looks identical at <=320px while cutting GPU fillrate ~2.5x
-          const scale = isMobileLike ? 0.26 : 0.30;
-          canvas.width = Math.min(320, Math.max(160, Math.round(baseW * scale)));
-          canvas.height = Math.min(320, Math.max(160, Math.round(baseH * scale)));
+          // Soft 18-22px painterly field looks identical at low fillrate; mobile keeps <=200x240 for silky WebGL FPS
+          const scale = isMobileLike ? 0.22 : 0.30;
+          canvas.width = Math.min(isMobileLike ? 200 : 320, Math.max(isMobileLike ? 128 : 160, Math.round(baseW * scale)));
+          canvas.height = Math.min(isMobileLike ? 240 : 320, Math.max(isMobileLike ? 128 : 160, Math.round(baseH * scale)));
           gl.viewport(0, 0, canvas.width, canvas.height);
         } else {
-          const scale = isMobileLike ? 0.42 : 0.52;
-          canvas.width = Math.min(640, Math.round(baseW * scale));
-          canvas.height = Math.min(640, Math.round(baseH * scale));
+          const scale = isMobileLike ? 0.34 : 0.52;
+          canvas.width = Math.min(isMobileLike ? 360 : 640, Math.round(baseW * scale));
+          canvas.height = Math.min(isMobileLike ? 480 : 640, Math.round(baseH * scale));
         }
       };
       resize();
@@ -581,9 +584,13 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = React.m
       let accumTimeSec = 0;
       let lastStepMs = startMs;
 
+      const isBgSuspended = (): boolean =>
+        (typeof document !== 'undefined' && document.hidden) ||
+        Boolean((typeof window !== 'undefined' ? (window as any).__pmusicAppBackgrounded : false));
+
       const renderFrame = (now: number) => {
         if (cancelled) return;
-        if (typeof document !== 'undefined' && document.hidden) {
+        if (isBgSuspended()) {
           rafId = 0;
           return;
         }
@@ -593,7 +600,9 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = React.m
             ? 32
             : throttleFpsRef.current
               ? 30
-              : 0;
+              : isMobileLike
+                ? 26
+                : 0;
         if (frameBudgetMs > 0 && now - lastDrawMs < frameBudgetMs && lastDrawMs > 0) {
           if (!staticMode && typeof requestAnimationFrame === 'function') {
             rafId = requestAnimationFrame(renderFrame);
@@ -644,14 +653,16 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = React.m
               if (alpha <= 0.005) return;
               const curStyle = styleRef.current;
               const minDim2d = Math.max(1, Math.min(w, h));
-              const coverDim2d = Math.max(w, h) * 1.12;
+              const isPortrait2d = h > w;
+              const coverDim2d = Math.max(w, h) * (isPortrait2d ? 1.55 : 1.12);
+              const motion2d = isPortrait2d ? 0.56 : 1.0;
               ctx2d!.save();
               ctx2d!.globalCompositeOperation = 'source-over';
               ctx2d!.globalAlpha = alpha;
               if (curStyle === 'paint') {
                 ctx2d!.save();
                 ctx2d!.translate(w * 0.5, h * 0.5);
-                ctx2d!.rotate(0.75 + Math.sin(t * 0.24) * 0.35);
+                ctx2d!.rotate(0.75 + Math.sin(t * 0.24) * 0.35 * motion2d);
                 ctx2d!.scale(1.42, -1.42);
                 ctx2d!.drawImage(source, -coverDim2d * 0.5, -coverDim2d * 0.5, coverDim2d, coverDim2d);
                 ctx2d!.restore();
@@ -659,10 +670,10 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = React.m
                 ctx2d!.save();
                 ctx2d!.globalAlpha = alpha * 0.58;
                 ctx2d!.translate(
-                  w * 0.5 + minDim2d * 0.14 * Math.cos(t * 0.36),
-                  h * 0.5 + minDim2d * 0.14 * Math.sin(t * 0.32)
+                  w * 0.5 + minDim2d * 0.14 * motion2d * Math.cos(t * 0.36),
+                  h * 0.5 + minDim2d * 0.14 * motion2d * Math.sin(t * 0.32)
                 );
-                ctx2d!.rotate(-1.1 + t * 0.22);
+                ctx2d!.rotate(-1.1 + t * 0.22 * motion2d);
                 ctx2d!.scale(-1.32, 1.32);
                 ctx2d!.drawImage(source, -coverDim2d * 0.5, -coverDim2d * 0.5, coverDim2d, coverDim2d);
                 ctx2d!.restore();
@@ -670,10 +681,10 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = React.m
                 ctx2d!.save();
                 ctx2d!.globalAlpha = alpha * 0.42;
                 ctx2d!.translate(
-                  w * 0.5 - minDim2d * 0.12 * Math.sin(t * 0.29),
-                  h * 0.5 + minDim2d * 0.12 * Math.cos(t * 0.34)
+                  w * 0.5 - minDim2d * 0.12 * motion2d * Math.sin(t * 0.29),
+                  h * 0.5 + minDim2d * 0.12 * motion2d * Math.cos(t * 0.34)
                 );
-                ctx2d!.rotate(2.2 - t * 0.18);
+                ctx2d!.rotate(2.2 - t * 0.18 * motion2d);
                 ctx2d!.scale(1.48, 1.48);
                 ctx2d!.drawImage(source, -coverDim2d * 0.5, -coverDim2d * 0.5, coverDim2d, coverDim2d);
                 ctx2d!.restore();
@@ -768,7 +779,7 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = React.m
 
       const handleVisibility = () => {
         if (cancelled || staticMode) return;
-        if (typeof document !== 'undefined' && document.hidden) {
+        if (isBgSuspended()) {
           if (rafId && typeof cancelAnimationFrame === 'function') {
             cancelAnimationFrame(rafId);
             rafId = 0;
@@ -781,12 +792,15 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = React.m
       if (typeof document !== 'undefined') {
         document.addEventListener('visibilitychange', handleVisibility);
       }
+      if (typeof window !== 'undefined') {
+        window.addEventListener('pmusic-bg-change', handleVisibility);
+      }
 
       if (staticMode) {
         renderFrame(startMs);
       } else if (
         typeof requestAnimationFrame === 'function' &&
-        !(typeof document !== 'undefined' && document.hidden)
+        !isBgSuspended()
       ) {
         rafId = requestAnimationFrame(renderFrame);
       } else {
@@ -802,6 +816,9 @@ export const ExoticBackdropCanvas: React.FC<ExoticBackdropCanvasProps> = React.m
         canvas.removeEventListener('webglcontextlost', handleContextLost, false);
         if (typeof document !== 'undefined') {
           document.removeEventListener('visibilitychange', handleVisibility);
+        }
+        if (typeof window !== 'undefined') {
+          window.removeEventListener('pmusic-bg-change', handleVisibility);
         }
         if (rafId && typeof cancelAnimationFrame === 'function') {
           cancelAnimationFrame(rafId);

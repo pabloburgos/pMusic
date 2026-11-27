@@ -5,9 +5,11 @@ import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { App } from '../App.tsx';
+import { AddToPlaylistModal } from '../components/AddToPlaylistModal.tsx';
 import { PMusicLogo } from '../components/PMusicLogo.tsx';
 import { PublicJamGuestPage } from '../components/PublicJamGuestPage.tsx';
 import { SettingsModal } from '../components/SettingsModal.tsx';
+import { SwipeableTrackRow } from '../components/SwipeableTrackRow.tsx';
 import { TrackArtwork } from '../components/TrackArtwork.tsx';
 import {
   InkBleedCoverTransition,
@@ -20,7 +22,7 @@ import {
   animateAmbientPaletteFromCover,
   shouldUseDarkInkOnBackdrop,
 } from '../utils/cover-color.ts';
-import { optimizeArtworkUrl } from '../utils/image-opt.ts';
+import { optimizeArtworkUrl, setDataSaverMode } from '../utils/image-opt.ts';
 import {
   DESCUBRE_ALGO_VERSION,
   evolveDailyPlaylistForNewDay,
@@ -492,7 +494,7 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
   it('optimizes CDN artwork URLs for cellular data, uses GPU crossfade without ImageData loops, and polishes charcoal dark ink + dots + volume bar', () => {
     const dz1000 = 'https://cdn-images.dzcdn.net/images/cover/abc123/1000x1000-000000-80-0-0.jpg';
     expect(optimizeArtworkUrl(dz1000, 'row', true)).toBe(
-      'https://cdn-images.dzcdn.net/images/cover/abc123/120x120-000000-75-0-0.jpg'
+      'https://cdn-images.dzcdn.net/images/cover/abc123/250x250-000000-80-0-0.jpg'
     );
     expect(optimizeArtworkUrl(dz1000, 'card', true)).toBe(
       'https://cdn-images.dzcdn.net/images/cover/abc123/250x250-000000-80-0-0.jpg'
@@ -1003,5 +1005,101 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
       localStorage.removeItem('pmusic.jam.guestPrefs');
       splashEl.remove();
     }
+  });
+
+  it('v0.23.14 enforces official Deezer cover specs & 3G/E data saver, strict 15-day Descubre pool, FIFO priority queue above playlist, and Spotify swipe gestures + AddToPlaylistModal', async () => {
+    // 1. Official Deezer CDN specs + Data Saver mode (56x56 rows, 250x250 cards)
+    const sampleDz = 'https://cdn-images.dzcdn.net/images/cover/afe01aaef4d2afd9ed5f6026669d9879/500x500-000000-80-0-0.jpg';
+    setDataSaverMode(false);
+    expect(optimizeArtworkUrl(sampleDz, 'row', false)).toContain('250x250-000000-80-0-0.jpg');
+    expect(optimizeArtworkUrl(sampleDz, 'nowplaying', false)).toContain('1000x1000-000000-80-0-0.jpg');
+    setDataSaverMode(true);
+    expect(optimizeArtworkUrl(sampleDz, 'row', true)).toContain('56x56-000000-80-0-0.jpg');
+    expect(optimizeArtworkUrl(sampleDz, 'nowplaying', true)).toContain('250x250-000000-80-0-0.jpg');
+    setDataSaverMode(false);
+
+    // 2. Strict <= 15-day rule in mergeIncrementalDescubrePool (never uses addedAtDay fallback or >15d tracks)
+    expect(DESCUBRE_ALGO_VERSION).toBeGreaterThanOrEqual(3);
+    const todayIso = getLocalDayKey();
+    const old20Iso = getRollingDaysAgoIso(20);
+    const poolResult = mergeIncrementalDescubrePool(
+      [
+        toCompactSyncedTrack({ ...makeTrack(1), id: 'old-villa', releaseDate: old20Iso }, todayIso),
+        toCompactSyncedTrack({ ...makeTrack(2), id: 'undated-item', releaseDate: undefined }, todayIso),
+      ],
+      [
+        { ...makeTrack(3), id: 'fresh-release', releaseDate: todayIso },
+      ],
+      new Date()
+    );
+    expect(poolResult.map((t) => t.id)).toEqual(['fresh-release']);
+
+    // 3. FIFO Priority User Queue while playing a playlist:
+    // Queue = [Playing, P1, P2]. addToQueue(A) -> [Playing, A, P1, P2]. addToQueue(B) -> [Playing, A, B, P1, P2].
+    const tNow = makeTrack(101);
+    const tP1 = makeTrack(102);
+    const tP2 = makeTrack(103);
+    const tA = makeTrack(104);
+    const tB = makeTrack(105);
+    const createdPlaylist = await usePMusicStore.getState().createPlaylist('Favs Urban');
+    await usePMusicStore.getState().addTrackToPlaylist(createdPlaylist.id, tP1);
+
+    usePMusicStore.setState({
+      currentTrack: tNow,
+      queue: [tNow, tP1, tP2],
+      queueIndex: 0,
+      userQueueCount: 0,
+      addToPlaylistModalTrack: null,
+    });
+
+    usePMusicStore.getState().addToQueue(tA);
+    usePMusicStore.getState().addToQueue(tB);
+    expect(usePMusicStore.getState().queue.map((t) => t.id)).toEqual([
+      tNow.id,
+      tA.id,
+      tB.id,
+      tP1.id,
+      tP2.id,
+    ]);
+    expect(usePMusicStore.getState().userQueueCount).toBe(2);
+
+    // 4. SwipeableTrackRow left swipe -> add to queue, right swipe -> open playlist modal
+    const onLeft = vi.fn();
+    const onRight = vi.fn();
+    render(
+      <SwipeableTrackRow onSwipeLeft={onLeft} onSwipeRight={onRight}>
+        <div>Row Content</div>
+      </SwipeableTrackRow>
+    );
+    const swipeWrap = screen.getByTestId('swipeable-track-row');
+    fireEvent.touchStart(swipeWrap, { touches: [{ clientX: 200, clientY: 100 }] });
+    fireEvent.touchMove(swipeWrap, { touches: [{ clientX: 100, clientY: 102 }] });
+    fireEvent.touchEnd(swipeWrap);
+    expect(onLeft).toHaveBeenCalledTimes(1);
+
+    fireEvent.touchStart(swipeWrap, { touches: [{ clientX: 50, clientY: 100 }] });
+    fireEvent.touchMove(swipeWrap, { touches: [{ clientX: 150, clientY: 102 }] });
+    fireEvent.touchEnd(swipeWrap);
+    expect(onRight).toHaveBeenCalledTimes(1);
+    cleanup();
+
+    // 5. AddToPlaylistModal interactive toggle
+    usePMusicStore.setState({ addToPlaylistModalTrack: tA });
+    render(<AddToPlaylistModal />);
+    expect(screen.getByTestId('add-to-playlist-modal')).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId(`playlist-picker-row-${createdPlaylist.id}`));
+    });
+    expect(
+      usePMusicStore.getState().playlists.find((p) => p.id === createdPlaylist.id)?.tracks.some((t) => t.id === tA.id)
+    ).toBe(true);
+    cleanup();
+    usePMusicStore.setState({ addToPlaylistModalTrack: null });
+
+    // 6. Verify ExoticBackdropCanvas portrait zoom + mobile FPS throttle + __pmusicAppBackgrounded hook
+    const exoticSrc = readFileSync(resolve(__dirname, '../components/ExoticBackdropCanvas.tsx'), 'utf-8');
+    expect(exoticSrc).toContain('mix(1.38, 0.74, isPortrait)');
+    expect(exoticSrc).toContain('mix(1.0, 0.44, isPortrait)');
+    expect(exoticSrc).toContain('__pmusicAppBackgrounded');
   });
 });

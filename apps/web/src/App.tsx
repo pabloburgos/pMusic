@@ -77,6 +77,7 @@ import { CarModeView } from './components/CarModeView.tsx';
 import { TrackInfoModal } from './components/TrackInfoModal.tsx';
 import { AuthOnboardingModal } from './components/AuthOnboardingModal.tsx';
 import { WrappedStoriesModal } from './components/WrappedStoriesModal.tsx';
+import { AddToPlaylistModal } from './components/AddToPlaylistModal.tsx';
 import { SocialScreen } from './components/SocialScreen.tsx';
 import { PublicJamGuestPage } from './components/PublicJamGuestPage.tsx';
 import { SharedPlaylistLinkModal } from './components/SharedPlaylistLinkModal.tsx';
@@ -3997,6 +3998,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
         }}
       />
       <TrackInfoModal />
+      <AddToPlaylistModal />
       <TrackContextMenu />
       <PlaylistOptionsMenu />
       <PlaylistAppearanceModal />

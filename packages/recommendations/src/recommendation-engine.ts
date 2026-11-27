@@ -1331,8 +1331,13 @@ export class RecommendationEngine implements IRecommendationEngine {
           for (const ap of (val.appearances ?? []) as Track[]) {
             if (isBrokenOrSyntheticTrack(ap)) continue;
             for (const co of ap.artists ?? []) addAllowedArtist(co.name);
-            if (!recentReleasesMap.has(ap.id)) recentReleasesMap.set(ap.id, ap);
-            recentTrackMeta.set(ap.id, { tasteTier: 3, source: 'artist_appearances' });
+            if (
+              isReleaseDateInWindow(ap.releaseDate, rollingWin.startIso, rollingWin.endIso) &&
+              !recentReleasesMap.has(ap.id)
+            ) {
+              recentReleasesMap.set(ap.id, ap);
+              recentTrackMeta.set(ap.id, { tasteTier: 3, source: 'artist_appearances' });
+            }
             pushTrack(ap, true);
           }
           for (const rel of val.relatedArtists ?? []) {
@@ -1795,19 +1800,19 @@ export class RecommendationEngine implements IRecommendationEngine {
           rollingWin.endIso
         );
 
+        // Strict <= 15-day rule: catalog song MUST have a verified releaseDate inside the 15-day window
+        // (except explicit single-track editorial feeds like apple_es_top / lahiguera_novedades where matchedSong omitted releaseDate)
         let resolvedDate: string | undefined;
         if (songHasWindowDate) {
           resolvedDate = matchedSong.releaseDate;
         } else if (matchedSong.releaseDate) {
-          if (cand.source === 'spotify_pegao') continue;
-          if (matchedSong.releaseDate >= seventyFiveDaysAgoIso && candHasWindowDate) {
-            resolvedDate = cand.releaseDate;
-          } else {
-            continue;
-          }
+          continue;
         } else if (
           candHasWindowDate &&
-          (!matchedSong.releaseYear || matchedSong.releaseYear >= currentYear - 1)
+          (cand.source === 'apple_es_top' ||
+            cand.source === 'lahiguera_novedades' ||
+            cand.source === 'deezer_novedades_es') &&
+          (!matchedSong.releaseYear || matchedSong.releaseYear >= currentYear)
         ) {
           resolvedDate = cand.releaseDate;
         } else {
@@ -2100,30 +2105,24 @@ export class RecommendationEngine implements IRecommendationEngine {
       }
     }
     const allDatedPool = Array.from(recentPoolMap.values());
-    const rolling15Tracks = allDatedPool.filter((t) =>
+    // Hard invariant: ONLY releases strictly within the rolling 15-day window may enter Descubre lo Nuevo
+    const strictRecentTracksBase = allDatedPool.filter((t) =>
       isReleaseDateInWindow(t.releaseDate, rollingWin.startIso, rollingWin.endIso)
     );
-    const used30Fallback = rolling15Tracks.length === 0;
-    const baseRecentTracks = used30Fallback
-      ? allDatedPool.filter((t) =>
-          isReleaseDateInWindow(t.releaseDate, rolling30Win.startIso, rolling30Win.endIso)
-        )
-      : rolling15Tracks;
 
-    const fallbackWin = used30Fallback ? rolling30Win : rollingWin;
     const datedOffGenrePool =
-      baseRecentTracks.length < 20
+      strictRecentTracksBase.length < 20
         ? Array.from(offGenreFallbackTracks.values()).filter(
             (t) =>
               !isBrokenOrSyntheticTrack(t) &&
               !recentPoolMap.has(t.id) &&
-              isReleaseDateInWindow(t.releaseDate, fallbackWin.startIso, fallbackWin.endIso)
+              isReleaseDateInWindow(t.releaseDate, rollingWin.startIso, rollingWin.endIso)
           )
         : [];
     const strictRecentTracks =
-      baseRecentTracks.length < 20 && datedOffGenrePool.length > 0
-        ? [...baseRecentTracks, ...datedOffGenrePool.slice(0, 20 - baseRecentTracks.length)]
-        : baseRecentTracks;
+      strictRecentTracksBase.length < 20 && datedOffGenrePool.length > 0
+        ? [...strictRecentTracksBase, ...datedOffGenrePool.slice(0, 20 - strictRecentTracksBase.length)]
+        : strictRecentTracksBase;
 
     const nowDayMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     const scoreRecentRelease = (t: Track): number => {
@@ -2273,12 +2272,10 @@ export class RecommendationEngine implements IRecommendationEngine {
         id: 'mix_descubre_lo_nuevo',
         title: 'Descubre lo Nuevo',
         subtitle:
-          radarTracks.length > 0 && !used30Fallback
+          radarTracks.length > 0
             ? `Estrenos y colaboraciones de los últimos 15 días (${rollingWin.rangeLabel}) · Actualizada cada día`
-            : radarTracks.length > 0
-              ? `Estrenos y colaboraciones de los últimos 30 días (${rolling30Win.rangeLabel}) · Actualizada cada día`
-              : 'Sin estrenos recientes detectados todavía · Actualizada cada día',
-        badge: used30Fallback ? 'ÚLTIMOS 30 DÍAS' : 'ÚLTIMOS 15 DÍAS',
+            : 'Sin estrenos recientes de los últimos 15 días · Actualizada cada día',
+        badge: 'ÚLTIMOS 15 DÍAS',
         coverUrl:
           radarTracks[0]?.thumbnailHighUrl ??
           radarTracks[0]?.thumbnailUrl ??

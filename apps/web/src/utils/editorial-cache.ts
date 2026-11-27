@@ -20,7 +20,7 @@ export const DETAIL_PERSIST_MAX_ENTRIES = 20;
 export const DETAIL_PERSIST_READ_TTL_MS = 24 * 60 * 60_000;
 export const DETAIL_STALE_REFRESH_MS = 20 * 60_000;
 export const DESCUBRE_RESCAN_INTERVAL_MS = 6 * 60 * 60_000;
-export const DESCUBRE_ALGO_VERSION = 2;
+export const DESCUBRE_ALGO_VERSION = 3;
 
 export function getLocalDayKey(ms: number = Date.now()): string {
   const d = new Date(ms);
@@ -135,18 +135,18 @@ export function mergeIncrementalDescubrePool(
   const consider = (raw: Track | CompactSyncedTrack) => {
     if (!raw?.id || !raw.title) return;
     if (raw.id.startsWith('trk_fb_') || raw.id.startsWith('fallback_')) return;
-    const rawRelDate = raw.releaseDate ? raw.releaseDate.slice(0, 10) : undefined;
+    const rawRelDate = raw.releaseDate ? raw.releaseDate.trim().slice(0, 10) : '';
     const rawAdded = 'addedAtDay' in raw && raw.addedAtDay ? raw.addedAtDay.slice(0, 10) : undefined;
-    const effectiveDate = rawRelDate ?? rawAdded;
-    if (!effectiveDate || effectiveDate < cutoff15Iso) return;
+    // Strict <= 15-day rule: track must carry a verified releaseDate in [cutoff15Iso, todayIso] (never addedAtDay!)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(rawRelDate) || rawRelDate < cutoff15Iso || rawRelDate > todayIso) {
+      return;
+    }
 
     const compact: CompactSyncedTrack = toCompactSyncedTrack(
       raw as Track,
-      rawAdded ?? rawRelDate ?? todayIso
+      rawAdded ?? rawRelDate
     );
-    if (!compact.releaseDate && effectiveDate) {
-      compact.releaseDate = effectiveDate;
-    }
+    compact.releaseDate = rawRelDate;
 
     const prev = pool.get(compact.id);
     if (prev) {

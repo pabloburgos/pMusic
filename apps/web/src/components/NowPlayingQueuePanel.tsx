@@ -79,6 +79,8 @@ interface QueueTrackRowProps {
   djEnabled: boolean;
   bpm: number;
   isDragOver: boolean;
+  isPointerDragging?: boolean;
+  pointerDeltaY?: number;
   isMoved: boolean;
   isDisplaced: boolean;
   onPlayAt: (realIdx: number) => void;
@@ -92,6 +94,7 @@ interface QueueTrackRowProps {
   onDragOverIdx: (e: React.DragEvent<HTMLDivElement>, realIdx: number) => void;
   onDragLeaveIdx: (realIdx: number) => void;
   onDropIdx: (e: React.DragEvent<HTMLDivElement>, realIdx: number, rowKey: string) => void;
+  onPointerDragHandleDown?: (e: React.PointerEvent<HTMLSpanElement>, realIdx: number, rowKey: string) => void;
 }
 
 const QueueTrackRow: React.FC<QueueTrackRowProps> = React.memo(
@@ -105,6 +108,8 @@ const QueueTrackRow: React.FC<QueueTrackRowProps> = React.memo(
     djEnabled,
     bpm,
     isDragOver,
+    isPointerDragging,
+    pointerDeltaY = 0,
     isMoved,
     isDisplaced,
     onPlayAt,
@@ -118,12 +123,24 @@ const QueueTrackRow: React.FC<QueueTrackRowProps> = React.memo(
     onDragOverIdx,
     onDragLeaveIdx,
     onDropIdx,
+    onPointerDragHandleDown,
   }) => (
     <div
       data-queue-row-key={rowKey}
+      data-queue-real-idx={realIdx}
       role="listitem"
       draggable
-      style={ROW_PERF_STYLE}
+      style={{
+        ...ROW_PERF_STYLE,
+        ...(isPointerDragging
+          ? {
+              transform: `translate3d(0, ${pointerDeltaY.toFixed(1)}px, 0) scale(1.02)`,
+              zIndex: 40,
+              boxShadow: '0 14px 32px rgba(0, 0, 0, 0.55)',
+              backgroundColor: 'rgba(255, 255, 255, 0.16)',
+            }
+          : {}),
+      }}
       onDragStart={(e) => {
         onDragStartIdx(realIdx);
         setDraggedTrack(e, track);
@@ -143,12 +160,15 @@ const QueueTrackRow: React.FC<QueueTrackRowProps> = React.memo(
       }}
       className={`group flex h-15 items-center justify-between gap-2.5 overflow-hidden rounded-[12px] px-2.5 transition-colors duration-75 hover:bg-white/[0.09] ${
         isMoved ? 'pm-queue-leap-over' : isDisplaced ? 'pm-queue-duck-under' : ''
-      } ${isDragOver ? 'border-t-2 border-white bg-white/[0.18]' : ''}`}
+      } ${isDragOver && !isPointerDragging ? 'border-t-2 border-white bg-white/[0.18]' : ''}`}
     >
       <div className="flex min-w-0 flex-1 items-center gap-2.5">
         <span
-          aria-hidden="true"
-          className="hidden cursor-grab text-[#D4D4E0]/50 opacity-50 transition-opacity duration-75 group-hover:opacity-100 sm:inline-flex"
+          role="button"
+          tabIndex={-1}
+          aria-label={`Arrastrar ${track.title} en la cola`}
+          onPointerDown={(e) => onPointerDragHandleDown?.(e, realIdx, rowKey)}
+          className="inline-flex touch-none select-none cursor-grab items-center justify-center rounded-md px-1 py-2 -ml-1 text-[#D4D4E0]/70 opacity-75 transition-opacity duration-75 hover:text-white active:cursor-grabbing sm:opacity-55 sm:group-hover:opacity-100"
         >
           <GripVertical className="h-4 w-4" />
         </span>
@@ -374,6 +394,7 @@ const RecommendedQueueRow: React.FC<RecommendedQueueRowProps> = React.memo(
 export const NowPlayingQueuePanel: React.FC = React.memo(() => {
   const queue = usePMusicStore((s) => s.queue);
   const queueIndex = usePMusicStore((s) => s.queueIndex);
+  const userQueueCount = usePMusicStore((s) => s.userQueueCount);
   const currentTrack = usePMusicStore((s) => s.currentTrack);
   const isPlaying = usePMusicStore((s) => s.isPlaying);
   const shuffleEnabled = usePMusicStore((s) => s.shuffleEnabled);
@@ -400,6 +421,7 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
   const approveJamRequest = usePMusicStore((s) => s.approveJamRequest);
   const rejectJamRequest = usePMusicStore((s) => s.rejectJamRequest);
   const playTrack = usePMusicStore((s) => s.playTrack);
+  const playQueueIndex = usePMusicStore((s) => s.playQueueIndex);
   const toggleLike = usePMusicStore((s) => s.toggleLike);
   const openTrackMenu = usePMusicStore((s) => s.openTrackMenu);
   const moveQueueItem = usePMusicStore((s) => s.moveQueueItem);
@@ -411,6 +433,8 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
 
   const [dragQueueIdx, setDragQueueIdx] = useState<number | null>(null);
   const [dragOverQueueIdx, setDragOverQueueIdx] = useState<number | null>(null);
+  const [pointerDragIdx, setPointerDragIdx] = useState<number | null>(null);
+  const [pointerDragDeltaY, setPointerDragDeltaY] = useState(0);
   const [queueSearchQuery, setQueueSearchQuery] = useState('');
   const [queueSearchResults, setQueueSearchResults] = useState<Track[]>([]);
   const [isQueueSearching, setIsQueueSearching] = useState(false);
@@ -420,6 +444,12 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
   const listContainerRef = useRef<HTMLDivElement | null>(null);
   const prevRowTopsRef = useRef<Map<string, number>>(new Map());
   const movedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pointerDragSessionRef = useRef<{
+    fromIdx: number;
+    rowKey: string;
+    startY: number;
+    overIdx: number;
+  } | null>(null);
 
   const likedIdSet = useMemo(() => new Set(likedTracks.map((l) => l.trackId)), [likedTracks]);
 
@@ -511,8 +541,7 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
       showToast('Solo el jefe de la Jam controla la reproducción');
       return;
     }
-    const t = queue[realIdx];
-    if (t) void playTrack(t, queue.slice(realIdx));
+    void playQueueIndex(realIdx);
   };
   const handlePlayRec = (rec: Track) => {
     if (isGuestInJam) {
@@ -577,6 +606,81 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
     if (Number.isFinite(from) && from > queueIndex && from !== realIdx) {
       handleQueueMove(from, realIdx, rowKey);
     }
+  };
+
+  const handlePointerDragHandleDown = (
+    e: React.PointerEvent<HTMLSpanElement>,
+    realIdx: number,
+    rowKey: string
+  ) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    // On mobile touch/pen, drive smooth touch drag-and-drop without fighting HTML5 drag
+    if (e.pointerType === 'mouse') return;
+    e.preventDefault();
+    e.stopPropagation();
+    const startY = e.clientY;
+    pointerDragSessionRef.current = {
+      fromIdx: realIdx,
+      rowKey,
+      startY,
+      overIdx: realIdx,
+    };
+    setPointerDragIdx(realIdx);
+    setPointerDragDeltaY(0);
+    setDragOverQueueIdx(realIdx);
+
+    const handleMove = (ev: PointerEvent) => {
+      const sess = pointerDragSessionRef.current;
+      if (!sess) return;
+      setPointerDragDeltaY(ev.clientY - sess.startY);
+      const container = listContainerRef.current;
+      if (container) {
+        const cRect = container.getBoundingClientRect();
+        if (ev.clientY < cRect.top + 38) {
+          container.scrollTop = Math.max(0, container.scrollTop - 12);
+        } else if (ev.clientY > cRect.bottom - 38) {
+          container.scrollTop += 12;
+        }
+        const rows = container.querySelectorAll<HTMLElement>('[data-queue-real-idx]');
+        let bestIdx = sess.overIdx;
+        let bestDist = Infinity;
+        rows.forEach((node) => {
+          const r = node.getBoundingClientRect();
+          const midY = r.top + r.height * 0.5;
+          const dist = Math.abs(ev.clientY - midY);
+          const idxVal = Number(node.dataset.queueRealIdx);
+          if (Number.isFinite(idxVal) && idxVal > queueIndex && dist < bestDist) {
+            bestDist = dist;
+            bestIdx = idxVal;
+          }
+        });
+        if (bestIdx !== sess.overIdx) {
+          sess.overIdx = bestIdx;
+          setDragOverQueueIdx(bestIdx);
+        }
+      }
+    };
+
+    const cleanup = (commit: boolean) => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+      window.removeEventListener('pointercancel', handleCancel);
+      const sess = pointerDragSessionRef.current;
+      pointerDragSessionRef.current = null;
+      setPointerDragIdx(null);
+      setPointerDragDeltaY(0);
+      setDragOverQueueIdx(null);
+      if (commit && sess && sess.overIdx > queueIndex && sess.overIdx !== sess.fromIdx) {
+        handleQueueMove(sess.fromIdx, sess.overIdx, sess.rowKey);
+      }
+    };
+
+    const handleUp = () => cleanup(true);
+    const handleCancel = () => cleanup(false);
+
+    window.addEventListener('pointermove', handleMove, { passive: false });
+    window.addEventListener('pointerup', handleUp, { once: true });
+    window.addEventListener('pointercancel', handleCancel, { once: true });
   };
 
   return (
@@ -983,36 +1087,53 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
               const realIdx = queueIndex + 1 + relIdx;
               const rowKey = rowKeys[relIdx]!;
               const prevRowKey = relIdx > 0 ? rowKeys[relIdx - 1] ?? null : null;
+              const showUserQueueBadge = !isGuestInJam && userQueueCount > 0 && relIdx === 0;
+              const showContextQueueDivider =
+                !isGuestInJam && userQueueCount > 0 && relIdx === userQueueCount;
               return (
-                <QueueTrackRow
-                  key={rowKey}
-                  track={track}
-                  realIdx={realIdx}
-                  relIdx={relIdx}
-                  rowKey={rowKey}
-                  prevRowKey={prevRowKey}
-                  queueLength={queue.length}
-                  trackLiked={likedIdSet.has(track.id)}
-                  djEnabled={djMode.enabled}
-                  bpm={trackAnalyses[track.id]?.bpm ?? 120}
-                  isDragOver={dragOverQueueIdx === realIdx}
-                  isMoved={recentlyMovedKey === rowKey}
-                  isDisplaced={recentlyDisplacedKey === rowKey}
-                  onPlayAt={handlePlayAt}
-                  onCloseSheet={handleCloseSheet}
-                  onToggleLike={handleToggleLike}
-                  onMoveWithFlip={handleQueueMove}
-                  onOpenMenu={openTrackMenu}
-                  onRemoveAt={handleQueueRemove}
-                  onDragStartIdx={setDragQueueIdx}
-                  onDragEndIdx={() => {
-                    setDragQueueIdx(null);
-                    setDragOverQueueIdx(null);
-                  }}
-                  onDragOverIdx={handleDragOverIdx}
-                  onDragLeaveIdx={handleDragLeaveIdx}
-                  onDropIdx={handleDropIdx}
-                />
+                <React.Fragment key={rowKey}>
+                  {showUserQueueBadge && (
+                    <div className="px-1 pt-0.5 text-[10px] font-bold uppercase tracking-[0.09em] text-emerald-300/90">
+                      Añadidas a tu cola ({Math.min(userQueueCount, upNextTracks.length)})
+                    </div>
+                  )}
+                  {showContextQueueDivider && (
+                    <div className="mt-1 border-t border-white/[0.08] px-1 pt-2 text-[10px] font-bold uppercase tracking-[0.09em] text-[#B4B4BE]">
+                      Siguiente de la lista
+                    </div>
+                  )}
+                  <QueueTrackRow
+                    track={track}
+                    realIdx={realIdx}
+                    relIdx={relIdx}
+                    rowKey={rowKey}
+                    prevRowKey={prevRowKey}
+                    queueLength={queue.length}
+                    trackLiked={likedIdSet.has(track.id)}
+                    djEnabled={djMode.enabled}
+                    bpm={trackAnalyses[track.id]?.bpm ?? 120}
+                    isDragOver={dragOverQueueIdx === realIdx}
+                    isPointerDragging={pointerDragIdx === realIdx}
+                    pointerDeltaY={pointerDragIdx === realIdx ? pointerDragDeltaY : 0}
+                    isMoved={recentlyMovedKey === rowKey}
+                    isDisplaced={recentlyDisplacedKey === rowKey}
+                    onPlayAt={handlePlayAt}
+                    onCloseSheet={handleCloseSheet}
+                    onToggleLike={handleToggleLike}
+                    onMoveWithFlip={handleQueueMove}
+                    onOpenMenu={openTrackMenu}
+                    onRemoveAt={handleQueueRemove}
+                    onDragStartIdx={setDragQueueIdx}
+                    onDragEndIdx={() => {
+                      setDragQueueIdx(null);
+                      setDragOverQueueIdx(null);
+                    }}
+                    onDragOverIdx={handleDragOverIdx}
+                    onDragLeaveIdx={handleDragLeaveIdx}
+                    onDropIdx={handleDropIdx}
+                    onPointerDragHandleDown={handlePointerDragHandleDown}
+                  />
+                </React.Fragment>
               );
             })
           )}

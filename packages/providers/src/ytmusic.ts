@@ -722,9 +722,13 @@ export class HttpProxyMusicProvider implements IMusicProvider {
         // Cascade to Deezer editorial playlists via /api/dz-proxy below
       }
 
-      // 3. Resilient Android fallback via /api/dz-proxy editorial playlists with full playable tracks
+      // 3. Resilient Android fallback via /api/dz-proxy editorial playlists with strict <= 15-day verified album dates
       try {
-        const fridayIso = getMostRecentFridayIso();
+        const now = new Date();
+        const toIso = (d: Date) =>
+          `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const todayIso = toIso(now);
+        const cutoff15Iso = toIso(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 15));
         const searchPl = await this.fetchApiJson<{ data?: Array<{ id?: number | string }> }>(
           `/api/dz-proxy?path=${encodeURIComponent('/search/playlist?q=Novedades+Viernes+Espa%C3%B1a&limit=3')}`,
           signal
@@ -752,69 +756,100 @@ export class HttpProxyMusicProvider implements IMusicProvider {
                   cover?: string;
                   cover_medium?: string;
                   cover_big?: string;
+                  release_date?: string;
                 };
                 release_date?: string;
               }>;
             }>(`/api/dz-proxy?path=${encodeURIComponent(`/playlist/${id}/tracks?limit=60`)}`, signal)
           )
         );
-        const out: ExternalReleaseCandidate[] = [];
-        const seen = new Set<string>();
+        const allRawTracks: Array<NonNullable<any>> = [];
+        const missingAlbumDateIds: string[] = [];
         for (const r of plResults) {
           if (r.status !== 'fulfilled' || !Array.isArray(r.value?.data)) continue;
           for (const t of r.value.data) {
-            const title = String(t?.title ?? t?.title_short ?? '').trim();
-            const artist = String(t?.artist?.name ?? '').trim();
-            if (!title || !artist) continue;
-            const k = `${title.toLowerCase()}::${artist.toLowerCase()}`;
-            if (seen.has(k)) continue;
-            seen.add(k);
-            const relDate =
-              typeof t.release_date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(t.release_date)
-                ? t.release_date.slice(0, 10)
-                : fridayIso;
-            const dzId = String(t?.id ?? '').trim();
-            const coverMed = t.album?.cover_medium ?? t.album?.cover ?? '';
-            const coverHigh = t.album?.cover_big ?? coverMed;
-            out.push({
-              title,
-              artists: [artist],
-              releaseDate: relDate,
-              kind: 'track',
-              source: 'deezer_novedades_es',
-              priority: 92,
-              ...(coverMed ? { thumbnailUrl: coverMed } : {}),
-              ...(dzId
-                ? {
-                    track: {
-                      id: `dz_${dzId}`,
-                      title,
-                      artists: [
-                        { id: t.artist?.id ? `dz_ar_${t.artist.id}` : undefined, name: artist },
-                      ],
-                      ...(t.album?.title
-                        ? {
-                            album: {
-                              id: t.album.id ? `dz_al_${t.album.id}` : undefined,
-                              name: t.album.title,
-                            },
-                          }
-                        : {}),
-                      durationSec:
-                        typeof t.duration === 'number' && t.duration > 0
-                          ? Math.round(t.duration)
-                          : 180,
-                      thumbnailUrl: coverMed,
-                      ...(coverHigh ? { thumbnailHighUrl: coverHigh } : {}),
-                      releaseYear: Number.parseInt(relDate.slice(0, 4), 10) || undefined,
-                      releaseDate: relDate,
-                      isExplicit: Boolean(t.explicit_lyrics),
-                      source: 'ytmusic',
-                    },
-                  }
-                : {}),
-            });
+            allRawTracks.push(t);
+            const hasTrDate = typeof t?.release_date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(t.release_date);
+            const hasAlDate = typeof t?.album?.release_date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(t.album.release_date);
+            if (!hasTrDate && !hasAlDate && t?.album?.id) {
+              missingAlbumDateIds.push(String(t.album.id));
+            }
           }
+        }
+        const verifiedAlbumDates = new Map<string, string>();
+        const uniqueAlIds = Array.from(new Set(missingAlbumDateIds)).slice(0, 48);
+        for (let i = 0; i < uniqueAlIds.length; i += 10) {
+          const batch = uniqueAlIds.slice(i, i + 10);
+          const alDetails = await Promise.allSettled(
+            batch.map((alId) =>
+              this.fetchApiJson<{ id?: number | string; release_date?: string }>(
+                `/api/dz-proxy?path=${encodeURIComponent(`/album/${encodeURIComponent(alId)}`)}`,
+                signal
+              )
+            )
+          );
+          for (let j = 0; j < batch.length; j++) {
+            const det = alDetails[j];
+            if (det?.status === 'fulfilled' && typeof det.value?.release_date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(det.value.release_date)) {
+              verifiedAlbumDates.set(batch[j]!, det.value.release_date.slice(0, 10));
+            }
+          }
+        }
+        const out: ExternalReleaseCandidate[] = [];
+        const seen = new Set<string>();
+        for (const t of allRawTracks) {
+          const title = String(t?.title ?? t?.title_short ?? '').trim();
+          const artist = String(t?.artist?.name ?? '').trim();
+          if (!title || !artist) continue;
+          const k = `${title.toLowerCase()}::${artist.toLowerCase()}`;
+          if (seen.has(k)) continue;
+          seen.add(k);
+          const rawTrDate = typeof t.release_date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(t.release_date) ? t.release_date.slice(0, 10) : '';
+          const rawAlDate = typeof t.album?.release_date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(t.album.release_date) ? t.album.release_date.slice(0, 10) : '';
+          const verifiedAl = t.album?.id ? verifiedAlbumDates.get(String(t.album.id)) ?? '' : '';
+          const relDate = rawTrDate || rawAlDate || verifiedAl;
+          if (!relDate || relDate < cutoff15Iso || relDate > todayIso) continue;
+          const dzId = String(t?.id ?? '').trim();
+          const coverMed = t.album?.cover_medium ?? t.album?.cover ?? '';
+          const coverHigh = t.album?.cover_big ?? coverMed;
+          out.push({
+            title,
+            artists: [artist],
+            releaseDate: relDate,
+            kind: 'track',
+            source: 'deezer_novedades_es',
+            priority: 92,
+            ...(coverMed ? { thumbnailUrl: coverMed } : {}),
+            ...(dzId
+              ? {
+                  track: {
+                    id: `dz_${dzId}`,
+                    title,
+                    artists: [
+                      { id: t.artist?.id ? `dz_ar_${t.artist.id}` : undefined, name: artist },
+                    ],
+                    ...(t.album?.title
+                      ? {
+                          album: {
+                            id: t.album.id ? `dz_al_${t.album.id}` : undefined,
+                            name: t.album.title,
+                          },
+                        }
+                      : {}),
+                    durationSec:
+                      typeof t.duration === 'number' && t.duration > 0
+                        ? Math.round(t.duration)
+                        : 180,
+                    thumbnailUrl: coverMed,
+                    ...(coverHigh ? { thumbnailHighUrl: coverHigh } : {}),
+                    releaseYear: Number.parseInt(relDate.slice(0, 4), 10) || undefined,
+                    releaseDate: relDate,
+                    isExplicit: Boolean(t.explicit_lyrics),
+                    source: 'ytmusic',
+                  },
+                }
+              : {}),
+          });
         }
         return out;
       } catch {

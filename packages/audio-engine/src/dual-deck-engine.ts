@@ -85,6 +85,9 @@ function setFilterTypeSafe(
   if (node.type !== nextType) {
     resetAudioParam(node.frequency, ctx, snapFreqHz);
     resetAudioParam(node.Q, ctx, q);
+    if (nextType === 'lowpass' || nextType === 'highpass') {
+      resetAudioParam(node.gain, ctx, 0);
+    }
     node.type = nextType;
   }
 }
@@ -329,7 +332,12 @@ export class DualDeckAudioEngine implements IAudioEngine {
 
     if (AudioCtxCtor) {
       try {
-        const ctx = new AudioCtxCtor();
+        let ctx: AudioContext;
+        try {
+          ctx = new AudioCtxCtor({ latencyHint: 'playback' });
+        } catch {
+          ctx = new AudioCtxCtor();
+        }
         this.audioCtx = ctx;
 
         this.userEqNodes = USER_EQ_FREQUENCIES_HZ.map((freq, idx) => {
@@ -343,12 +351,13 @@ export class DualDeckAudioEngine implements IAudioEngine {
           return biquad;
         });
 
+        // Transparent brickwall safety limiter: untouched dynamic range below -0.3 dBFS
         this.limiterNode = ctx.createDynamicsCompressor();
-        this.limiterNode.threshold.value = -1.5;
-        this.limiterNode.knee.value = 6;
-        this.limiterNode.ratio.value = 12;
-        this.limiterNode.attack.value = 0.003;
-        this.limiterNode.release.value = 0.15;
+        this.limiterNode.threshold.value = -0.3;
+        this.limiterNode.knee.value = 0;
+        this.limiterNode.ratio.value = 20;
+        this.limiterNode.attack.value = 0.001;
+        this.limiterNode.release.value = 0.08;
 
         this.masterGainNode = ctx.createGain();
         this.masterGainNode.gain.value = volumeToPerceptualGain(this.volume);
@@ -477,7 +486,9 @@ export class DualDeckAudioEngine implements IAudioEngine {
           }
           void audio.play().catch(() => {});
         }
-        const isDocHidden = typeof document !== 'undefined' && document.hidden;
+        const isDocHidden =
+          (typeof document !== 'undefined' && document.hidden) ||
+          Boolean((typeof window !== 'undefined' ? (window as any).__pmusicAppBackgrounded : false));
         if (isDocHidden && !this.isTransitioning && realDur - curTime > 12) {
           if (nowMs - this.lastHiddenEmitMs >= 1000) {
             this.lastHiddenEmitMs = nowMs;
@@ -766,10 +777,12 @@ export class DualDeckAudioEngine implements IAudioEngine {
       highEq.frequency.value = 4000;
       highEq.gain.value = 0;
 
+      // Idle at 0 dB peaking filter so normal playback has zero Nyquist roll-off or phase coloration
       const sweepFilter = ctx.createBiquadFilter();
-      sweepFilter.type = 'lowpass';
-      sweepFilter.frequency.value = 20000;
+      sweepFilter.type = 'peaking';
+      sweepFilter.frequency.value = 1000;
       sweepFilter.Q.value = 0.707;
+      sweepFilter.gain.value = 0;
 
       const trimGain = ctx.createGain();
       trimGain.gain.value = 1.0;
@@ -858,9 +871,10 @@ export class DualDeckAudioEngine implements IAudioEngine {
     resetAudioParam(deck.midEqNode?.Q, this.audioCtx, 0.8);
     resetAudioParam(deck.highEqNode?.gain, this.audioCtx, 0);
     if (deck.sweepFilterNode) {
-      resetAudioParam(deck.sweepFilterNode.frequency, this.audioCtx, 20000);
+      resetAudioParam(deck.sweepFilterNode.frequency, this.audioCtx, 1000);
       resetAudioParam(deck.sweepFilterNode.Q, this.audioCtx, 0.707);
-      deck.sweepFilterNode.type = 'lowpass';
+      resetAudioParam(deck.sweepFilterNode.gain, this.audioCtx, 0);
+      deck.sweepFilterNode.type = 'peaking';
     }
     resetAudioParam(deck.trimGainNode?.gain, this.audioCtx, 1.0);
     resetAudioParam(deck.gainNode?.gain, this.audioCtx, gainValue);

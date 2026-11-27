@@ -26,7 +26,7 @@ import {
   writeSyncedEditorialMixes,
   type SyncedEditorialMixesState,
 } from '../utils/editorial-cache.ts';
-import { optimizeArtworkUrl } from '../utils/image-opt.ts';
+import { optimizeArtworkUrl, setDataSaverMode } from '../utils/image-opt.ts';
 import {
   DEFAULT_DJ_MODE_CONFIG,
   DEFAULT_SAFE_CROSSFADE_CONFIG,
@@ -1046,12 +1046,14 @@ export interface PMusicStoreState {
   sleepTimerMode: 'off' | 'minutes' | 'end_of_track';
   sleepTimerRemainingSec: number;
   trackInfoModalTrack: Track | null;
+  addToPlaylistModalTrack: Track | null;
   trackMenu: TrackMenuState;
   toastMessage: string | null;
 
   // Playback & Audio
   currentTrack: Track;
   queue: Track[];
+  userQueueCount: number;
   recommendedQueue: Track[];
   sessionPrevStack: Track[];
   isLoadingRecommendedQueue: boolean;
@@ -1233,6 +1235,7 @@ export interface PMusicStoreState {
   clearUpNextQueue: () => void;
   addToQueue: (track: Track) => void;
   playNextInQueue: (track: Track) => void;
+  playQueueIndex: (index: number) => Promise<void>;
   replenishRecommendedQueue: (force?: boolean) => Promise<void>;
   promoteRecommendedTrack: (trackId: string) => void;
   dismissRecommendedTrack: (trackId: string) => void;
@@ -1453,6 +1456,7 @@ export interface PMusicStoreState {
   setSleepTimer: (minutes: number | 'end_of_track') => void;
   cancelSleepTimer: () => void;
   setTrackInfoModalTrack: (track: Track | null) => void;
+  setAddToPlaylistModalTrack: (track: Track | null) => void;
   exportLibraryJson: () => string;
   importLibraryJson: (rawJson: string) => Promise<number>;
   refreshExploreDiscovery: (force?: boolean) => Promise<void>;
@@ -1472,6 +1476,7 @@ const initialBundle = {
 
 let initialized = false;
 let previousVolumeBeforeMute = 0.85;
+let pendingNextUserQueueCount: number | null = null;
 
 export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   let mediaController: MediaSessionController | null = null;
@@ -2972,7 +2977,13 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         tracks:
           nextDescubreTracks.length > 0
             ? nextDescubreTracks
-            : (dlnMix?.tracks ?? []).slice(0, 50).map((t) => toCompactSyncedTrack(t, todayKey)),
+            : (dlnMix?.tracks ?? [])
+                .filter((t) => {
+                  const cutoff15 = getRollingDaysAgoIso(15);
+                  return Boolean(t.releaseDate && t.releaseDate >= cutoff15 && t.releaseDate <= todayKey);
+                })
+                .slice(0, 50)
+                .map((t) => toCompactSyncedTrack(t, t.releaseDate ?? todayKey)),
       },
       dailyMix: nextDailyMix,
       dailyDiscover: nextDailyDiscover,
@@ -3149,6 +3160,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }
     if (typeof prefs.streamQuality === 'string') {
       currentStreamQualityPref = prefs.streamQuality as AudioStreamQuality;
+      setDataSaverMode(prefs.streamQuality === 'low');
     }
     if (prefs.userEq) audioEngine.setUserEq(prefs.userEq as UserEqConfig);
     if (prefs.safeCrossfade) {
@@ -3401,11 +3413,13 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   sleepTimerMode: 'off',
   sleepTimerRemainingSec: 0,
   trackInfoModalTrack: null,
+  addToPlaylistModalTrack: null,
   trackMenu: null,
   toastMessage: null,
 
   currentTrack: initialTrack,
   queue: canonicalFallbackQueue,
+  userQueueCount: 0,
   recommendedQueue: [],
   sessionPrevStack: [],
   isLoadingRecommendedQueue: false,
@@ -3775,6 +3789,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       }
       if (typeof hydratedPrefs.streamQuality === 'string') {
         currentStreamQualityPref = hydratedPrefs.streamQuality as AudioStreamQuality;
+        setDataSaverMode(hydratedPrefs.streamQuality === 'low');
       }
       if (hydratedPrefs.userEq) audioEngine.setUserEq(hydratedPrefs.userEq as UserEqConfig);
       if (hydratedPrefs.safeCrossfade) {
@@ -4970,6 +4985,18 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         idx = 0;
       }
 
+      const rawUserQueueCount =
+        pendingNextUserQueueCount !== null
+          ? pendingNextUserQueueCount
+          : hasNewQueue
+            ? 0
+            : st.userQueueCount;
+      pendingNextUserQueueCount = null;
+      const nextUserQueueCount = Math.max(
+        0,
+        Math.min(rawUserQueueCount, Math.max(0, queue.length - idx - 1))
+      );
+
       if (!st.trackAnalyses[track.id]) {
         const ana = await djPlanner.analyzeTrack(track.id, null, track.durationSec);
         set((prev) => ({
@@ -4990,6 +5017,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         currentTrack: track,
         lastTrackDirection: direction,
         queue,
+        userQueueCount: nextUserQueueCount,
         unshuffledQueue,
         shuffleEnabled: nextShuffleEnabled,
         queueIndex: idx,
@@ -5037,12 +5065,13 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       if (
         isLiveRuntime() &&
         !offlineNow &&
+        get().streamQuality !== 'low' &&
         (get().recommendedQueue.length < 5 || (newQueue && newQueue.length === 1))
       ) {
         void get().replenishRecommendedQueue(Boolean(newQueue && newQueue.length === 1));
       }
       const nextCandidate = getUpcomingDjTarget(get())?.track;
-      if (nextCandidate && nextCandidate.id !== track.id) {
+      if (nextCandidate && nextCandidate.id !== track.id && get().streamQuality !== 'low') {
         const nextAna =
           get().trackAnalyses[nextCandidate.id] ??
           (await djPlanner.analyzeTrack(nextCandidate.id, null, nextCandidate.durationSec));
@@ -5226,11 +5255,15 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       if (target.fromRecommended) {
         nextQueue = [next];
         nextRecommended = latest.recommendedQueue.filter((t) => t.id !== next.id);
+        pendingNextUserQueueCount = 0;
       } else if (latest.repeatMode === 'all' && target.nextIdx === 0 && latest.queue.length > 1) {
         nextQueue = latest.queue;
+        pendingNextUserQueueCount = 0;
       } else {
         // Consumed tracks before nextIdx drop off from active queue automatically
         nextQueue = latest.queue.slice(Math.max(0, target.nextIdx));
+        const stepsConsumed = Math.max(1, target.nextIdx - latest.queueIndex);
+        pendingNextUserQueueCount = Math.max(0, latest.userQueueCount - stepsConsumed);
       }
 
       set({
@@ -5476,14 +5509,29 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     ) {
       return;
     }
+    const oldCurIdx = st.queueIndex;
+    const oldUserEnd = oldCurIdx + st.userQueueCount;
+    const fromInUserZone = fromIndex > oldCurIdx && fromIndex <= oldUserEnd;
+    const toInUserZone = toIndex > oldCurIdx && toIndex <= oldUserEnd;
+    let nextUserCount = st.userQueueCount;
+    if (fromInUserZone && !toInUserZone && toIndex > oldUserEnd) {
+      nextUserCount = Math.max(0, nextUserCount - 1);
+    } else if (!fromInUserZone && toInUserZone && fromIndex > oldUserEnd) {
+      nextUserCount += 1;
+    }
+
     const copy = [...st.queue];
     const [moved] = copy.splice(fromIndex, 1);
     if (!moved) return;
     copy.splice(toIndex, 0, moved);
-    const newCurrentIdx = copy.findIndex((t) => t.id === st.currentTrack.id);
+    const newCurrentIdx = Math.max(
+      0,
+      copy.findIndex((t) => t.id === st.currentTrack.id)
+    );
     set({
       queue: copy,
-      queueIndex: newCurrentIdx >= 0 ? newCurrentIdx : 0,
+      queueIndex: newCurrentIdx,
+      userQueueCount: Math.max(0, Math.min(nextUserCount, Math.max(0, copy.length - newCurrentIdx - 1))),
     });
     void recomputeActiveDjPlan();
     persistPrefsFromStore();
@@ -5493,14 +5541,20 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   removeQueueItem: (index) => {
     const st = get();
     if (st.queue.length <= 1 || index < 0 || index >= st.queue.length) return;
+    const removedInUserZone =
+      index > st.queueIndex && index <= st.queueIndex + st.userQueueCount;
     const copy = st.queue.filter((_, idx) => idx !== index);
     const newCurrentIdx = Math.max(
       0,
       copy.findIndex((t) => t.id === st.currentTrack.id)
     );
+    const nextUserCount = removedInUserZone
+      ? Math.max(0, st.userQueueCount - 1)
+      : st.userQueueCount;
     set({
       queue: copy,
       queueIndex: newCurrentIdx,
+      userQueueCount: Math.max(0, Math.min(nextUserCount, Math.max(0, copy.length - newCurrentIdx - 1))),
     });
     void recomputeActiveDjPlan();
     persistPrefsFromStore();
@@ -5513,6 +5567,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     djPreloadedKey = '';
     set({
       queue: [kept],
+      userQueueCount: 0,
       unshuffledQueue: st.shuffleEnabled ? [kept] : st.unshuffledQueue,
       queueIndex: 0,
       activeTransitionPlan: null,
@@ -5524,39 +5579,55 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   addToQueue: (rawTrack) => {
     const track = canonicalizeTrackArtists(rawTrack);
     const st = get();
-    if (st.queue.some((t) => t.id === track.id)) {
-      const idx = st.queue.findIndex((t) => t.id === track.id);
-      if (idx !== st.queueIndex) {
-        const copy = st.queue.filter((t) => t.id !== track.id);
-        copy.push(track);
-        const curIdx = Math.max(
-          0,
-          copy.findIndex((t) => t.id === st.currentTrack.id)
-        );
-        set({ queue: copy, queueIndex: curIdx });
-      }
-      st.showToast('Añadida al final de la cola');
-      void recomputeActiveDjPlan();
-      pushHostJamStateSoon();
+    if (track.id === st.currentTrack.id && st.queue.length <= 1) {
+      st.showToast('Ya está sonando ahora');
       return;
     }
+    const userSliceEnd = st.queueIndex + st.userQueueCount;
+    let adjustedUserCount = st.userQueueCount;
+    const filtered = st.queue.filter((t, i) => {
+      if (i > st.queueIndex && t.id === track.id) {
+        if (i <= userSliceEnd) adjustedUserCount = Math.max(0, adjustedUserCount - 1);
+        return false;
+      }
+      return true;
+    });
+    const curIdx = Math.max(
+      0,
+      filtered.findIndex((t) => t.id === st.currentTrack.id)
+    );
+    const insertIdx = Math.min(filtered.length, curIdx + 1 + adjustedUserCount);
+    filtered.splice(insertIdx, 0, track);
+    const nextUserCount = Math.min(Math.max(0, filtered.length - curIdx - 1), adjustedUserCount + 1);
     set({
-      queue: [...st.queue, track],
+      queue: filtered,
+      queueIndex: curIdx,
+      userQueueCount: nextUserCount,
       recommendedQueue: st.recommendedQueue.filter((t) => t.id !== track.id),
     });
+    djPreloadedKey = '';
     st.showToast('Añadida a la cola');
     void recomputeActiveDjPlan();
     persistPrefsFromStore();
     pushHostJamStateSoon();
   },
 
-  playNextInQueue: (track) => {
+  playNextInQueue: (rawTrack) => {
+    const track = canonicalizeTrackArtists(rawTrack);
     const st = get();
     if (track.id === st.currentTrack.id) {
       st.showToast('Ya está sonando ahora');
       return;
     }
-    const copy = st.queue.filter((t) => t.id !== track.id);
+    const userSliceEnd = st.queueIndex + st.userQueueCount;
+    let adjustedUserCount = st.userQueueCount;
+    const copy = st.queue.filter((t, i) => {
+      if (i > st.queueIndex && t.id === track.id) {
+        if (i <= userSliceEnd) adjustedUserCount = Math.max(0, adjustedUserCount - 1);
+        return false;
+      }
+      return true;
+    });
     const curIdx = Math.max(
       0,
       copy.findIndex((t) => t.id === st.currentTrack.id)
@@ -5565,6 +5636,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     set({
       queue: copy,
       queueIndex: curIdx,
+      userQueueCount: Math.min(Math.max(0, copy.length - curIdx - 1), adjustedUserCount + 1),
       recommendedQueue: st.recommendedQueue.filter((t) => t.id !== track.id),
     });
     djPreloadedKey = '';
@@ -5574,10 +5646,23 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     pushHostJamStateSoon();
   },
 
+  playQueueIndex: async (index) => {
+    const st = get();
+    const t = st.queue[index];
+    if (!t) return;
+    if (index > st.queueIndex) {
+      const steps = index - st.queueIndex;
+      pendingNextUserQueueCount = Math.max(0, st.userQueueCount - steps);
+    } else {
+      pendingNextUserQueueCount = st.userQueueCount;
+    }
+    await get().playTrack(t, st.queue.slice(index), undefined, 'next');
+  },
+
   replenishRecommendedQueue: async (force = false) => {
     const st = get();
     if (st.isLoadingRecommendedQueue) return;
-    if (!force && st.recommendedQueue.length >= 6) return;
+    if (!force && (st.streamQuality === 'low' ? st.recommendedQueue.length >= 2 : st.recommendedQueue.length >= 6)) return;
     set({ isLoadingRecommendedQueue: true });
     try {
       const excludedIds = new Set<string>([
@@ -8744,11 +8829,12 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   setStreamQuality: (quality) => {
     currentStreamQualityPref = quality;
+    setDataSaverMode(quality === 'low');
     set({ streamQuality: quality });
     persistPrefsFromStore(true);
     get().showToast(
       `Calidad de audio: ${
-        quality === 'high' ? 'Alta' : quality === 'medium' ? 'Equilibrada' : 'Ahorro'
+        quality === 'high' ? 'Alta' : quality === 'medium' ? 'Equilibrada' : 'Ahorro 3G/E'
       }`
     );
   },
@@ -8840,6 +8926,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   },
 
   setTrackInfoModalTrack: (track) => set({ trackInfoModalTrack: track }),
+  setAddToPlaylistModalTrack: (track) => set({ addToPlaylistModalTrack: track }),
 
   exportLibraryJson: () => {
     const st = get();
@@ -9092,6 +9179,14 @@ if (typeof window !== 'undefined') {
     void usePMusicStore.getState().handleAuthCallbackUrl(cbUrl);
   };
   (window as any).__pmusicHandleAuthCallback = dispatchOAuthOnce;
+  (window as any).__pmusicSetAppBackgrounded = (bg: boolean) => {
+    (window as any).__pmusicAppBackgrounded = Boolean(bg);
+    try {
+      window.dispatchEvent(new CustomEvent('pmusic-bg-change', { detail: Boolean(bg) }));
+    } catch {
+      // ignore
+    }
+  };
   const desktopBridge = (window as any).pmusicDesktop;
   if (desktopBridge?.onAuthCallback) {
     desktopBridge.onAuthCallback(dispatchOAuthOnce);

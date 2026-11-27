@@ -24,7 +24,10 @@ function setCorsHeaders(res: ServerResponse): void {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Authorization, X-PMusic-Token, Lrclib-Client');
-  res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges, X-PMusic-Stream-Source');
+  res.setHeader(
+    'Access-Control-Expose-Headers',
+    'Content-Range, Content-Length, Accept-Ranges, X-PMusic-Stream-Source, X-PMusic-Stream-Quality, X-PMusic-Stream-Codec, X-PMusic-Stream-Bitrate, X-PMusic-Stream-SampleRate'
+  );
 }
 
 function sendJson(res: ServerResponse, status: number, payload: unknown): void {
@@ -641,11 +644,17 @@ export function createPMusicApiHandler(options: PMusicApiHandlerOptions = {}) {
         const artistParam = urlObj.searchParams.get('artist') ?? undefined;
         const durParam = urlObj.searchParams.get('durationSec');
         const durationSec = durParam ? Number(durParam) : undefined;
+        const rawQuality = urlObj.searchParams.get('quality');
+        const quality =
+          rawQuality === 'low' || rawQuality === 'medium' || rawQuality === 'high'
+            ? rawQuality
+            : 'high';
         if (
           await streamResolver.pipe(streamId, req, res, {
             title: titleParam,
             artist: artistParam,
             durationSec: Number.isFinite(durationSec) ? durationSec : undefined,
+            quality,
           })
         ) {
           return true;

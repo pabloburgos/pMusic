@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { stripTrackTitleNoise } from '@pmusic/core';
+import { stripTrackTitleNoise, type AudioStreamQuality } from '@pmusic/core';
 import { FALLBACK_TRACKS } from './catalog-fallback.ts';
 import type { DeezerCatalog } from './deezer-catalog.ts';
 import { isDeezerTrackId } from './deezer-catalog.ts';
@@ -8,6 +8,7 @@ export interface AudioStreamMeta {
   title?: string;
   artist?: string;
   durationSec?: number;
+  quality?: AudioStreamQuality;
 }
 
 export type StreamSourceKind = 'youtube-full' | 'audius-full';
@@ -17,10 +18,178 @@ interface Resolved {
   mime: string;
   source: StreamSourceKind;
   expiresAt: number;
+  codec?: string;
+  bitrate?: number;
+  sampleRate?: number;
+  itag?: number;
 }
 
 const YOUTUBE_ID_RE = /^[a-zA-Z0-9_-]{11}$/;
-const AUDIO_CLIENTS = ['ANDROID', 'YTMUSIC', 'MWEB', 'IOS'] as const;
+const AUDIO_CLIENTS = ['YTMUSIC', 'ANDROID_VR', 'IOS', 'ANDROID', 'MWEB'] as const;
+
+export interface StreamFormatLike {
+  itag?: number;
+  mime_type?: string;
+  bitrate?: number;
+  average_bitrate?: number;
+  audio_sample_rate?: number | string;
+  has_audio?: boolean;
+  has_video?: boolean;
+  approx_duration_ms?: number | string;
+  decipher?: (player: any) => Promise<string | undefined> | string;
+}
+
+function getEffectiveBitrate(f: StreamFormatLike): number {
+  const avg = Number(f.average_bitrate ?? 0);
+  if (Number.isFinite(avg) && avg > 0) return avg;
+  const raw = Number(f.bitrate ?? 0);
+  return Number.isFinite(raw) && raw > 0 ? raw : 0;
+}
+
+function getSampleRateHz(f: StreamFormatLike): number {
+  const sr = Number(f.audio_sample_rate ?? 0);
+  return Number.isFinite(sr) && sr > 0 ? sr : 0;
+}
+
+function isOpusFormat(f: StreamFormatLike): boolean {
+  const mime = String(f.mime_type ?? '').toLowerCase();
+  return (
+    mime.includes('opus') ||
+    mime.includes('webm') ||
+    f.itag === 251 ||
+    f.itag === 250 ||
+    f.itag === 249 ||
+    f.itag === 774 ||
+    f.itag === 600
+  );
+}
+
+function isAacMp4Format(f: StreamFormatLike): boolean {
+  const mime = String(f.mime_type ?? '').toLowerCase();
+  return (
+    mime.includes('mp4') ||
+    mime.includes('mp4a') ||
+    f.itag === 140 ||
+    f.itag === 141 ||
+    f.itag === 139 ||
+    f.itag === 599
+  );
+}
+
+function extractCodecLabel(mimeType?: string): string {
+  const raw = String(mimeType ?? '').toLowerCase();
+  const codecMatch = raw.match(/codecs="([^"]+)"/i);
+  if (codecMatch?.[1]) {
+    const c = codecMatch[1].trim();
+    if (c.includes('opus')) return 'opus';
+    if (c.includes('mp4a.40.2')) return 'aac-lc';
+    if (c.includes('mp4a.40.5')) return 'he-aac';
+    return c;
+  }
+  if (raw.includes('webm') || raw.includes('opus')) return 'opus';
+  if (raw.includes('mp4')) return 'aac';
+  if (raw.includes('mpeg')) return 'mp3';
+  return raw.split(';')[0]?.trim() || 'audio';
+}
+
+/**
+ * Orders candidate progressive and adaptive audio formats for the requested quality tier.
+ * Adaptive audio-only formats come first in high/medium/low tiers so open-range verification
+ * upgrades playback to Opus ~160 kbps / 48 kHz (or AAC 128 kbps) whenever YouTube permits it,
+ * while retaining progressive itag 18 (mp4) as a rock-solid fallback.
+ */
+export function rankStreamFormatsForQuality<T extends StreamFormatLike>(
+  progressiveFormats: readonly T[],
+  adaptiveAudioFormats: readonly T[],
+  quality: AudioStreamQuality = 'high'
+): T[] {
+  const progressiveSorted = [...progressiveFormats].sort((a, b) => {
+    const aPref = a.itag === 18 || String(a.mime_type ?? '').toLowerCase().includes('mp4') ? 1 : 0;
+    const bPref = b.itag === 18 || String(b.mime_type ?? '').toLowerCase().includes('mp4') ? 1 : 0;
+    if (aPref !== bPref) return bPref - aPref;
+    return getEffectiveBitrate(b) - getEffectiveBitrate(a);
+  });
+
+  if (quality === 'low') {
+    // 3G/EDGE Ultra-Data-Saver: 32–56 kbps audio-only streams first (Opus 249/600 & HE-AAC 599/139)
+    const adaptiveLow = [...adaptiveAudioFormats].sort((a, b) => {
+      const aBps = getEffectiveBitrate(a);
+      const bBps = getEffectiveBitrate(b);
+      const lowTier = (bps: number) =>
+        bps >= 24_000 && bps <= 56_000
+          ? 3
+          : bps > 56_000 && bps <= 85_000
+            ? 2
+            : bps > 0 && bps < 24_000
+              ? 1
+              : 0;
+      const aTier = lowTier(aBps);
+      const bTier = lowTier(bBps);
+      if (aTier !== bTier) return bTier - aTier;
+      if (aBps !== bBps) return aBps - bBps;
+      return (isOpusFormat(b) ? 1 : 0) - (isOpusFormat(a) ? 1 : 0);
+    });
+    return [...adaptiveLow, ...progressiveSorted];
+  }
+
+  if (quality === 'medium') {
+    const goodMedium: T[] = [];
+    const lowTail: T[] = [];
+    for (const f of adaptiveAudioFormats) {
+      if (getEffectiveBitrate(f) >= 55_000) goodMedium.push(f);
+      else lowTail.push(f);
+    }
+    goodMedium.sort((a, b) => {
+      const aBps = getEffectiveBitrate(a);
+      const bBps = getEffectiveBitrate(b);
+      const aTier =
+        isAacMp4Format(a) && aBps >= 96_000 && aBps <= 165_000
+          ? 3
+          : isOpusFormat(a) && aBps >= 64_000 && aBps <= 170_000
+            ? 2
+            : 1;
+      const bTier =
+        isAacMp4Format(b) && bBps >= 96_000 && bBps <= 165_000
+          ? 3
+          : isOpusFormat(b) && bBps >= 64_000 && bBps <= 170_000
+            ? 2
+            : 1;
+      if (aTier !== bTier) return bTier - aTier;
+      return bBps - aBps;
+    });
+    lowTail.sort((a, b) => getEffectiveBitrate(b) - getEffectiveBitrate(a));
+    return [...goodMedium, ...progressiveSorted, ...lowTail];
+  }
+
+  // 'high': Maximum perceptual fidelity (Opus >=110k 48kHz -> AAC >=110k -> high bitrate adaptive -> progressive fallback)
+  const adaptiveHigh = [...adaptiveAudioFormats].sort((a, b) => {
+    const aBps = getEffectiveBitrate(a);
+    const bBps = getEffectiveBitrate(b);
+    const aTier =
+      isOpusFormat(a) && aBps >= 110_000
+        ? 4
+        : isAacMp4Format(a) && aBps >= 110_000
+          ? 3
+          : aBps >= 85_000
+            ? 2
+            : 1;
+    const bTier =
+      isOpusFormat(b) && bBps >= 110_000
+        ? 4
+        : isAacMp4Format(b) && bBps >= 110_000
+          ? 3
+          : bBps >= 85_000
+            ? 2
+            : 1;
+    if (aTier !== bTier) return bTier - aTier;
+    const aSr = getSampleRateHz(a);
+    const bSr = getSampleRateHz(b);
+    if (aSr !== bSr) return bSr - aSr;
+    return bBps - aBps;
+  });
+
+  return [...adaptiveHigh, ...progressiveSorted];
+}
 const HARD_UNWANTED_RE =
   /\b(karaoke|instrumental|backing track|sin voz|minus one|pista karaoke|cover|tribute|parodia|parody|ai cover|tutorial|piano version|guitar cover|ukulele|reaction|reaccion|8d audio|slowed|sped up|nightcore|reverb|bass boosted|acapella|a capella|mashup|bootleg|megamix|mixtape|dj set|break intro|dj intro|intro edit|lyrics|letra)\b/g;
 const REMIX_VERSION_RE =
@@ -295,7 +464,8 @@ export class AudioStreamResolver {
   private async decipherVideo(
     yt: any,
     videoId: string,
-    expectedDurationSec?: number
+    expectedDurationSec?: number,
+    quality: AudioStreamQuality = 'high'
   ): Promise<Resolved | null> {
     const formatMatchesDuration = (f: any): boolean => {
       if (!expectedDurationSec || expectedDurationSec < 45) return true;
@@ -321,36 +491,32 @@ export class AudioStreamResolver {
           continue;
         }
 
-        const progressive = (info.streaming_data?.formats ?? [])
-          .filter((f: any) => Boolean(f?.has_audio) && formatMatchesDuration(f))
-          .sort((a: any, b: any) => {
-            const aPref = a?.itag === 18 || String(a?.mime_type ?? '').includes('mp4') ? 1 : 0;
-            const bPref = b?.itag === 18 || String(b?.mime_type ?? '').includes('mp4') ? 1 : 0;
-            if (aPref !== bPref) return bPref - aPref;
-            return Number(b?.bitrate ?? 0) - Number(a?.bitrate ?? 0);
-          });
+        const progressive = (info.streaming_data?.formats ?? []).filter(
+          (f: any) => Boolean(f?.has_audio) && formatMatchesDuration(f)
+        );
+        const adaptiveAudio = (info.streaming_data?.adaptive_formats ?? []).filter(
+          (f: any) => Boolean(f?.has_audio) && !f?.has_video && formatMatchesDuration(f)
+        );
+        const rankedFormats = rankStreamFormatsForQuality(progressive, adaptiveAudio, quality);
 
-        const adaptiveAudio = (info.streaming_data?.adaptive_formats ?? [])
-          .filter((f: any) => Boolean(f?.has_audio) && !f?.has_video && formatMatchesDuration(f))
-          .sort((a: any, b: any) => {
-            const aMp4 = String(a?.mime_type ?? '').includes('mp4') ? 1 : 0;
-            const bMp4 = String(b?.mime_type ?? '').includes('mp4') ? 1 : 0;
-            if (aMp4 !== bMp4) return bMp4 - aMp4;
-            return Number(b?.bitrate ?? 0) - Number(a?.bitrate ?? 0);
-          });
-
-        for (const fmt of [...progressive, ...adaptiveAudio]) {
+        for (const fmt of rankedFormats) {
           try {
-            const url = await fmt?.decipher(yt.session.player);
+            const url = await fmt?.decipher?.(yt.session.player);
             if (!url) continue;
             if (await this.isStreamableOpenRange(url)) {
               this.lastFailureReason = null;
               this.botCheckCooldownUntilMs = 0;
+              const bitrate = getEffectiveBitrate(fmt);
+              const sampleRate = getSampleRateHz(fmt);
               return {
                 url,
                 mime: String(fmt.mime_type ?? 'video/mp4').split(';')[0]!,
                 source: 'youtube-full',
                 expiresAt: Date.now() + 35 * 60_000,
+                codec: extractCodecLabel(fmt.mime_type),
+                bitrate: bitrate > 0 ? bitrate : undefined,
+                sampleRate: sampleRate > 0 ? sampleRate : undefined,
+                itag: Number(fmt.itag ?? 0) || undefined,
               };
             }
           } catch {
@@ -416,9 +582,10 @@ export class AudioStreamResolver {
   private async resolveYoutube(trackId: string, meta?: AudioStreamMeta): Promise<Resolved | null> {
     this.lastFailureReason = null;
     const yt = await this.yt();
+    const quality: AudioStreamQuality = meta?.quality ?? 'high';
 
     if (YOUTUBE_ID_RE.test(trackId)) {
-      const direct = await this.decipherVideo(yt, trackId, meta?.durationSec);
+      const direct = await this.decipherVideo(yt, trackId, meta?.durationSec, quality);
       if (direct) return direct;
       if (this.lastFailureReason === 'bot_check') return null;
     }
@@ -486,7 +653,7 @@ export class AudioStreamResolver {
       }
       musicCandidates.sort((a, b) => b.score - a.score);
       for (const c of musicCandidates.slice(0, 3)) {
-        const resolved = await this.decipherVideo(yt, c.id, info.durationSec);
+        const resolved = await this.decipherVideo(yt, c.id, info.durationSec, quality);
         if (resolved) return resolved;
         if (this.lastFailureReason === 'bot_check') return null;
       }
@@ -541,7 +708,7 @@ export class AudioStreamResolver {
         candidates.sort((a, b) => b.score - a.score);
 
         for (const c of candidates.slice(0, 3)) {
-          const resolved = await this.decipherVideo(yt, c.id, info.durationSec);
+          const resolved = await this.decipherVideo(yt, c.id, info.durationSec, quality);
           if (resolved) return resolved;
           if (this.lastFailureReason === 'bot_check') return null;
         }
@@ -556,7 +723,7 @@ export class AudioStreamResolver {
     for (const c of allRelaxed) {
       if (seenIds.has(c.id)) continue;
       seenIds.add(c.id);
-      const resolved = await this.decipherVideo(yt, c.id, info.durationSec);
+      const resolved = await this.decipherVideo(yt, c.id, info.durationSec, quality);
       if (resolved) return resolved;
       if (this.lastFailureReason === 'bot_check') return null;
       if (seenIds.size >= 4) break;
@@ -644,6 +811,9 @@ export class AudioStreamResolver {
           mime: 'audio/mpeg',
           source: 'audius-full',
           expiresAt: Date.now() + 90 * 60_000,
+          codec: 'mp3',
+          bitrate: 320_000,
+          sampleRate: 44_100,
         };
       }
       if (seen.size >= 3) break;
@@ -652,7 +822,8 @@ export class AudioStreamResolver {
   }
 
   public async resolve(trackId: string, meta?: AudioStreamMeta): Promise<Resolved | null> {
-    const cacheKey = `${trackId}::${meta?.title ?? ''}`;
+    const quality: AudioStreamQuality = meta?.quality ?? 'high';
+    const cacheKey = `${trackId}::${meta?.title ?? ''}::${quality}`;
     const hit = this.cache.get(cacheKey);
     if (hit && hit.expiresAt > Date.now()) return hit;
 
@@ -708,7 +879,8 @@ export class AudioStreamResolver {
   ): Promise<boolean> {
     if (!this.canAttemptResolve(trackId, meta)) return false;
 
-    const cacheKey = `${trackId}::${meta?.title ?? ''}`;
+    const quality: AudioStreamQuality = meta?.quality ?? 'high';
+    const cacheKey = `${trackId}::${meta?.title ?? ''}::${quality}`;
     let resolved = await this.resolve(trackId, meta);
     if (!resolved) {
       return false;
@@ -766,6 +938,10 @@ export class AudioStreamResolver {
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('X-PMusic-Stream-Source', resolved.source);
+    res.setHeader('X-PMusic-Stream-Quality', quality);
+    if (resolved.codec) res.setHeader('X-PMusic-Stream-Codec', resolved.codec);
+    if (resolved.bitrate) res.setHeader('X-PMusic-Stream-Bitrate', String(resolved.bitrate));
+    if (resolved.sampleRate) res.setHeader('X-PMusic-Stream-SampleRate', String(resolved.sampleRate));
     if (!hasClientRange && upstream.status === 206) {
       res.statusCode = 200;
       const len = upstream.headers.get('content-length');

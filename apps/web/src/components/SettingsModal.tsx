@@ -814,6 +814,13 @@ const SettingsModalInner: React.FC = () => {
                         </button>
                       ))}
                     </div>
+                    <div className="text-[11px] pm-text-secondary">
+                      {streamQuality === 'high'
+                        ? 'Hasta Opus 160 kbps · 48 kHz (máximo disponible sin pérdida de rango dinámico)'
+                        : streamQuality === 'medium'
+                          ? 'AAC ~128 kbps · 44.1 kHz (equilibrio entre fidelidad y datos)'
+                          : 'Modo 3G / E · Audio ultraligero (~32–64 kbps), portadas mínimas y sin precargas'}
+                    </div>
                   </div>
 
                   <div className="border-t pm-border pt-3">
