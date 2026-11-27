@@ -5,6 +5,10 @@
   "installCommand": "npm install",
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/jam/assets/(.*)", "destination": "/assets/$1" },
+    { "source": "/jam/favicon.svg", "destination": "/favicon.svg" },
+    { "source": "/playlist/assets/(.*)", "destination": "/assets/$1" },
+    { "source": "/playlist/favicon.svg", "destination": "/favicon.svg" },
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "headers": [

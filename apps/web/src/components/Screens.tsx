@@ -197,7 +197,6 @@ export const TrackListRow: React.FC<{
   );
 
   const [dragOver, setDragOver] = useState(false);
-  const [coverHidden, setCoverHidden] = useState(false);
 
   const isUnavailableOffline = isOfflineNetwork && dlStatus !== 'downloaded';
 
@@ -280,36 +279,36 @@ export const TrackListRow: React.FC<{
           </span>
         )}
 
-        {!coverHidden && (
-          <button
-            type="button"
-            aria-label={`Reproducir ${track.title}`}
-            onClick={handleRowPlay}
-            className="pm-elevated relative h-11 w-11 shrink-0 overflow-hidden rounded-[8px]"
+        <button
+          type="button"
+          aria-label={`Reproducir ${track.title}`}
+          onClick={handleRowPlay}
+          className="pm-elevated relative h-11 w-11 shrink-0 overflow-hidden rounded-[8px]"
+        >
+          <TrackArtwork
+            trackId={track.id}
+            src={track.thumbnailUrl}
+            title={track.title}
+            artistName={track.artists[0]?.name}
+            artistId={track.artists[0]?.id}
+            alt={track.title}
+            variant="list"
+            loading="lazy"
+            draggable={false}
+            imgClassName="pointer-events-none h-full w-full select-none object-cover"
+          />
+          <span
+            className={`absolute inset-0 flex items-center justify-center bg-black/55 text-white transition-opacity ${
+              isCurrent ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+            }`}
           >
-            <TrackArtwork
-              trackId={track.id}
-              src={track.thumbnailUrl}
-              alt={track.title}
-              variant="list"
-              loading="lazy"
-              draggable={false}
-              onUnavailableChange={setCoverHidden}
-              imgClassName="pointer-events-none h-full w-full select-none object-cover"
-            />
-            <span
-              className={`absolute inset-0 flex items-center justify-center bg-black/55 text-white transition-opacity ${
-                isCurrent ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-              }`}
-            >
-              {isCurrent && isPlaying ? (
-                <Pause className="h-4 w-4 fill-current" />
-              ) : (
-                <Play className="h-4 w-4 translate-x-[1px] fill-current" />
-              )}
-            </span>
-          </button>
-        )}
+            {isCurrent && isPlaying ? (
+              <Pause className="h-4 w-4 fill-current" />
+            ) : (
+              <Play className="h-4 w-4 translate-x-[1px] fill-current" />
+            )}
+          </span>
+        </button>
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
@@ -1530,6 +1529,9 @@ export const DetailViewPanel: React.FC = React.memo(() => {
                   <TrackArtwork
                     trackId={tracks[0]?.id}
                     src={albumHeroCover}
+                    title={album.title}
+                    artistName={album.artists[0]?.name}
+                    artistId={album.artists[0]?.id}
                     alt={album.title}
                     variant="card"
                     imgClassName="h-full w-full object-cover"
@@ -2159,6 +2161,9 @@ export const DetailViewPanel: React.FC = React.memo(() => {
         <TrackArtwork
           trackId={opts.tracks[0]?.id}
           src={resolvedCover}
+          title={opts.name}
+          artistName={opts.tracks[0]?.artists[0]?.name}
+          artistId={opts.tracks[0]?.artists[0]?.id}
           alt={opts.name}
           variant="card"
           imgClassName="h-full w-full object-cover"
@@ -3693,6 +3698,9 @@ export const ExploreScreen: React.FC = React.memo(() => {
             <TrackArtwork
               trackId={heroDiscoveryTrack.id}
               src={heroDiscoveryTrack.thumbnailHighUrl ?? heroDiscoveryTrack.thumbnailUrl}
+              title={heroDiscoveryTrack.title}
+              artistName={heroDiscoveryTrack.artists[0]?.name}
+              artistId={heroDiscoveryTrack.artists[0]?.id}
               alt={heroDiscoveryTrack.title}
               variant="card"
               imgClassName="h-20 w-20 shrink-0 rounded-[14px] object-cover shadow-xl sm:h-24 sm:w-24 sm:rounded-[16px]"

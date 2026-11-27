@@ -67,6 +67,24 @@ export interface SharedPlaylistRecord {
   updatedAt: string;
 }
 
+export interface JamHostSyncMeta {
+  positionSec: number;
+  updatedAtMs: number;
+  isPlaying: boolean;
+  djEnabled: boolean;
+  crossfadeEnabled: boolean;
+  crossfadeSec: number;
+  eqEnabled: boolean;
+  eqPreset: string;
+}
+
+export interface JamQueueOpPayload {
+  __jamOp: 'move' | 'remove' | 'add_next';
+  targetTrackId: string;
+  toUpNextIndex?: number;
+  track?: Track;
+}
+
 export interface JamSessionRecord {
   code: string;
   hostUserId: string;
@@ -78,6 +96,27 @@ export interface JamSessionRecord {
   maxRequestsPerGuest: number;
   active: boolean;
   updatedAt: string;
+}
+
+export function extractJamSyncMeta(session: JamSessionRecord | null | undefined): JamHostSyncMeta | null {
+  if (!session?.currentTrack) return null;
+  const raw = (session.currentTrack as Track & { __jamSync?: Partial<JamHostSyncMeta> }).__jamSync;
+  if (!raw || typeof raw !== 'object') return null;
+  return {
+    positionSec: typeof raw.positionSec === 'number' && Number.isFinite(raw.positionSec) ? Math.max(0, raw.positionSec) : 0,
+    updatedAtMs: typeof raw.updatedAtMs === 'number' && Number.isFinite(raw.updatedAtMs) ? raw.updatedAtMs : Date.now(),
+    isPlaying: Boolean(raw.isPlaying ?? session.isPlaying),
+    djEnabled: Boolean(raw.djEnabled),
+    crossfadeEnabled: Boolean(raw.crossfadeEnabled),
+    crossfadeSec: typeof raw.crossfadeSec === 'number' && Number.isFinite(raw.crossfadeSec) ? raw.crossfadeSec : 4,
+    eqEnabled: Boolean(raw.eqEnabled),
+    eqPreset: typeof raw.eqPreset === 'string' && raw.eqPreset ? raw.eqPreset : 'flat',
+  };
+}
+
+export function isJamQueueOpRequest(req: JamRequestRecord | null | undefined): boolean {
+  if (!req?.track) return false;
+  return Boolean((req.track as unknown as { __jamOp?: string }).__jamOp);
 }
 
 export interface JamRequestRecord {
@@ -747,6 +786,30 @@ export async function submitPublicJamRequest(
     throw new Error(error?.message || 'No se pudo enviar tu petición');
   }
   return mapJamRequestRow(data);
+}
+
+export async function submitPublicJamQueueOp(
+  code: string,
+  guestName: string,
+  op: JamQueueOpPayload
+): Promise<void> {
+  const sb = getAnonClient();
+  const cleanGuestName = guestName.trim().slice(0, 40) || 'Invitado';
+  const payload = {
+    id: `__jam_op__:${op.__jamOp}:${op.targetTrackId}:${Date.now()}`,
+    title: op.track?.title ?? op.__jamOp,
+    artists: op.track?.artists ?? [],
+    durationSec: op.track?.durationSec ?? 0,
+    thumbnailUrl: op.track?.thumbnailUrl ?? '',
+    source: 'youtube',
+    ...op,
+  };
+  await sb.from('jam_requests').insert({
+    jam_code: code.toUpperCase(),
+    guest_name: cleanGuestName,
+    track_data: payload,
+    status: 'approved',
+  });
 }
 
 function mapDeezerItemsToTracks(items: unknown): Track[] {

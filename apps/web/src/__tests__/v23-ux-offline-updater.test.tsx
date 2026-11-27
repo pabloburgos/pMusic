@@ -5,6 +5,8 @@ import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { App } from '../App.tsx';
+import { PMusicLogo } from '../components/PMusicLogo.tsx';
+import { PublicJamGuestPage } from '../components/PublicJamGuestPage.tsx';
 import { SettingsModal } from '../components/SettingsModal.tsx';
 import { TrackArtwork } from '../components/TrackArtwork.tsx';
 import {
@@ -62,7 +64,7 @@ afterEach(() => {
 });
 
 describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
-  it('hides list cover on offline failure and renders pMusic fallback in NowPlaying', async () => {
+  it('renders bespoke modern pMusic generated cover artwork with unboxed mark when cover fails or is offline', async () => {
     act(() => {
       usePMusicStore.setState({ isOfflineNetwork: true });
     });
@@ -71,29 +73,36 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
       <TrackArtwork
         trackId="missing-offline-cover"
         src="https://example.com/missing.jpg"
-        alt="Offline Song"
+        title="LA PRUEBA"
+        artistName="Raul Clyde"
+        alt="LA PRUEBA"
         variant="list"
       />
     );
     await act(async () => {
       await Promise.resolve();
     });
-    expect(listRender.container.querySelector('img')).toBeNull();
-    expect(listRender.container.textContent).toBe('');
+    expect(listRender.container.querySelector('[data-testid="pmusic-generated-cover"]')).not.toBeNull();
+    expect(listRender.container.querySelector('rect[rx="64"]')).toBeNull();
 
     render(
       <TrackArtwork
         trackId="missing-offline-cover"
         src="https://example.com/missing.jpg"
-        alt="Offline Song"
+        title="LA PRUEBA"
+        artistName="Raul Clyde"
+        alt="LA PRUEBA"
         variant="nowplaying"
       />
     );
     await act(async () => {
       await Promise.resolve();
     });
-    expect(screen.getByTestId('nowplaying-missing-cover')).toBeTruthy();
-    expect(screen.getByText(/No se consiguió cargar la portada/i)).toBeTruthy();
+    const npCover = screen.getByTestId('nowplaying-missing-cover');
+    expect(npCover).toBeTruthy();
+    expect(screen.getByText('LA PRUEBA')).toBeTruthy();
+    expect(screen.getByText('Raul Clyde')).toBeTruthy();
+    expect(npCover.querySelector('rect[rx="64"]')).toBeNull();
   });
 
   it('compares semantic versions accurately for splash auto-updates', () => {
@@ -867,5 +876,132 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
 
     const cssSrc = readFileSync(resolve(__dirname, '../styles/index.css'), 'utf-8');
     expect(cssSrc).not.toContain('h1, button, svg');
+  });
+
+  it('v0.23.13 fixes Jam link splash & routing, locks guest audio/transport while allowing personal settings and queue edits, and renders unboxed pMusic mark + TrackArtwork', async () => {
+    // 1. Verify vercel.json & vite.config.ts asset routing on nested /jam/:code links
+    const vercelSrc = readFileSync(resolve(__dirname, '../../../../vercel.json'), 'utf-8');
+    expect(vercelSrc).toContain('/jam/assets/(.*)');
+    expect(vercelSrc).toContain('/jam/favicon.svg');
+    const viteSrc = readFileSync(resolve(__dirname, '../../vite.config.ts'), 'utf-8');
+    expect(viteSrc).toContain("process.env.VERCEL === '1' ? '/' : './'");
+
+    // 2. Verify PMusicLogo variant="mark" renders pure unboxed SVG glyph (no square icon frame)
+    const { container: markContainer } = render(<PMusicLogo variant="mark" size={28} color="#FFFFFF" />);
+    expect(markContainer.querySelector('svg')).not.toBeNull();
+    expect(markContainer.querySelector('rect')).toBeNull();
+    cleanup();
+
+    // 3. Verify NowPlayingQueuePanel & App En Reproducción use TrackArtwork instead of raw cover img tags
+    const queuePanelSrc = readFileSync(
+      resolve(__dirname, '../components/NowPlayingQueuePanel.tsx'),
+      'utf-8'
+    );
+    expect(queuePanelSrc).toContain('<TrackArtwork');
+    expect(queuePanelSrc).not.toContain('<img');
+
+    // 4. Verify PublicJamGuestPage immediately dismisses #pm-boot-splash and provides interactive UI + host locks
+    const splashEl = document.createElement('div');
+    splashEl.id = 'pm-boot-splash';
+    document.body.appendChild(splashEl);
+    localStorage.setItem('pmusic.jam.guestName', 'Ana');
+
+    const tNow = makeTrack(950);
+    const tQ1 = { ...makeTrack(951), id: 'jam-q-1', title: 'LA PRUEBA', artists: [{ id: 'ar-rc', name: 'Raul Clyde' }], thumbnailUrl: '' };
+    const tQ2 = { ...makeTrack(952), id: 'jam-q-2', title: 'Segundos', artists: [{ id: 'ar-q2', name: 'Quevedo' }] };
+    const queueOpsSent: string[] = [];
+
+    const origFetch = globalThis.fetch;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes('jam_sessions')) {
+          return new Response(
+            JSON.stringify({
+              code: 'AB3K9P',
+              host_user_id: 'host-user-1',
+              host_name: 'Pablo',
+              current_track: {
+                ...tNow,
+                __jamSync: {
+                  positionSec: 42,
+                  updatedAtMs: Date.now(),
+                  isPlaying: true,
+                  djEnabled: false,
+                  crossfadeEnabled: true,
+                  crossfadeSec: 6,
+                  eqEnabled: true,
+                  eqPreset: 'bass',
+                },
+              },
+              queue: [tNow, tQ1, tQ2],
+              is_playing: true,
+              allow_guest_direct_add: true,
+              max_requests_per_guest: 0,
+              active: true,
+              updated_at: new Date().toISOString(),
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        if (url.includes('jam_requests')) {
+          if (init?.method === 'POST' && typeof init.body === 'string') {
+            queueOpsSent.push(init.body);
+            return new Response(JSON.stringify([{ id: 'op-1', jam_code: 'AB3K9P', guest_name: 'Ana', track_data: {}, status: 'approved', created_at: new Date().toISOString() }]), {
+              status: 201,
+              headers: { 'content-type': 'application/json' },
+            });
+          }
+          return new Response(JSON.stringify([]), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        return new Response(JSON.stringify({ data: [], results: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      })
+    );
+
+    try {
+      render(<PublicJamGuestPage code="AB3K9P" />);
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 40));
+      });
+
+      expect(splashEl.classList.contains('pm-splash-hide')).toBe(true);
+      expect(screen.getAllByText(/Solo el jefe de la Jam/i).length).toBeGreaterThan(0);
+
+      // Transport play button is locked for Jam guests
+      const lockedBtns = screen.getAllByTestId('jam-guest-play-locked-btn');
+      expect((lockedBtns[0] as HTMLButtonElement).disabled).toBe(true);
+
+      // Move queue item up + remove item as guest
+      const moveUpBtns = screen.getAllByRole('button', { name: /Subir Segundos en la cola/i });
+      await act(async () => {
+        fireEvent.click(moveUpBtns[0]!);
+      });
+      expect(queueOpsSent.some((b) => b.includes('"__jamOp":"move"'))).toBe(true);
+
+      // Open Guest Settings: backdrop is interactive while Crossfade/EQ/DJ are locked
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('jam-guest-settings-btn'));
+      });
+      expect(screen.getByTestId('jam-guest-settings-modal')).toBeTruthy();
+      expect(screen.getByTestId('jam-guest-audio-locked').textContent).toContain(
+        'Solo el jefe de la Jam puede cambiar esto'
+      );
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('jam-guest-backdrop-pulse'));
+      });
+      expect(JSON.parse(localStorage.getItem('pmusic.jam.guestPrefs') || '{}').backdropStyle).toBe('pulse');
+    } finally {
+      vi.stubGlobal('fetch', origFetch);
+      localStorage.removeItem('pmusic.jam.guestName');
+      localStorage.removeItem('pmusic.jam.guestPrefs');
+      splashEl.remove();
+    }
   });
 });

@@ -22,6 +22,7 @@ import {
   buildJamQrImageUrl,
   buildJamShareUrl,
   buildPlaylistShareUrl,
+  isJamQueueOpRequest,
   searchProfilesByUsername,
 } from '../services/social-service.ts';
 import { UserAvatar } from './UserAvatar.tsx';
@@ -346,9 +347,13 @@ export const SocialScreen: React.FC = React.memo(() => {
               </div>
 
               <div className="pm-surface-card space-y-3 rounded-3xl p-5 lg:col-span-7">
+                {(() => {
+                  const visibleJamReqs = activeJamRequests.filter((r) => !isJamQueueOpRequest(r));
+                  return (
+                    <>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-sm font-bold pm-text-primary">
-                    Peticiones entrantes ({activeJamRequests.length})
+                    Peticiones entrantes ({visibleJamReqs.length})
                   </h3>
                   {activeJamRole === 'host' && (
                     <div className="flex items-center gap-2">
@@ -374,13 +379,13 @@ export const SocialScreen: React.FC = React.memo(() => {
                   )}
                 </div>
 
-                {activeJamRequests.length === 0 ? (
+                {visibleJamReqs.length === 0 ? (
                   <p className="py-10 text-center text-xs pm-text-secondary">
                     Escanea el QR o comparte el enlace: cada tema añadido entrará al instante.
                   </p>
                 ) : (
                   <div className="space-y-2">
-                    {activeJamRequests.map((req) => (
+                    {visibleJamReqs.map((req) => (
                       <div
                         key={req.id}
                         className="flex items-center gap-3 rounded-2xl border pm-border bg-white/[0.03] p-2.5"
@@ -435,6 +440,9 @@ export const SocialScreen: React.FC = React.memo(() => {
                     ))}
                   </div>
                 )}
+                    </>
+                  );
+                })()}
               </div>
             </div>
           )}

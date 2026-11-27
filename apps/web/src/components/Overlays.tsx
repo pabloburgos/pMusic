@@ -13,6 +13,7 @@ import {
   Laptop,
   ListMusic,
   Loader2,
+  Lock,
   Maximize,
   MessageSquareQuote,
   Mic2,
@@ -299,6 +300,8 @@ const NowPlayingSheetInner: React.FC = () => {
     downloadTrackOffline,
     replenishRecommendedQueue,
     openAlbumDetail,
+    activeJamSession,
+    activeJamRole,
   } = usePMusicStore(
     useShallow((s) => {
       const nextTrackCand = s.queue[s.queueIndex + 1] ?? s.recommendedQueue[0] ?? null;
@@ -363,9 +366,13 @@ const NowPlayingSheetInner: React.FC = () => {
         downloadTrackOffline: s.downloadTrackOffline,
         replenishRecommendedQueue: s.replenishRecommendedQueue,
         openAlbumDetail: s.openAlbumDetail,
+        activeJamSession: s.activeJamSession,
+        activeJamRole: s.activeJamRole,
       };
     })
   );
+
+  const isGuestInJam = Boolean(activeJamSession?.active && activeJamRole === 'guest');
 
   const initialPosSec = usePMusicStore.getState().positionSec;
   const isElectronDesktop = isElectronDesktopRuntime();
@@ -1210,10 +1217,15 @@ const NowPlayingSheetInner: React.FC = () => {
       <div
         key="np-cover-stage"
         onTouchStart={(e) => {
+          if (isGuestInJam) return;
           const t = e.touches[0];
           if (t) coverSwipeStartRef.current = { x: t.clientX, y: t.clientY };
         }}
         onTouchEnd={(e) => {
+          if (isGuestInJam) {
+            coverSwipeStartRef.current = null;
+            return;
+          }
           const start = coverSwipeStartRef.current;
           coverSwipeStartRef.current = null;
           const t = e.changedTouches[0];
@@ -1245,6 +1257,9 @@ const NowPlayingSheetInner: React.FC = () => {
         <TrackArtwork
           trackId={currentTrack.id}
           src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
+          title={currentTrack.title}
+          artistName={currentTrack.artists[0]?.name}
+          artistId={currentTrack.artists[0]?.id}
           alt={currentTrack.title}
           variant="nowplaying"
           loading="eager"
@@ -1571,6 +1586,7 @@ const NowPlayingSheetInner: React.FC = () => {
             type="range"
             role="slider"
             aria-label="Progreso de la canción"
+            disabled={isGuestInJam}
             min={0}
             max={Math.max(1, Math.round(activeSheetDurSec))}
             step={0.1}
@@ -1581,6 +1597,7 @@ const NowPlayingSheetInner: React.FC = () => {
               ).toFixed(1)
             )}
             onChange={(e) => {
+              if (isGuestInJam) return;
               const effDur = activeSheetDurSec;
               const next = Math.max(0, Math.min(effDur, Number(e.target.value)));
               const pct = Math.min(100, Math.max(0, (next / effDur) * 100));
@@ -1617,7 +1634,9 @@ const NowPlayingSheetInner: React.FC = () => {
               setSmoothPosSec(next);
               seekTo(next);
             }}
-            className="pm-range-gpu-overlay absolute inset-0 z-10 h-full w-full cursor-pointer"
+            className={`pm-range-gpu-overlay absolute inset-0 z-10 h-full w-full ${
+              isGuestInJam ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'
+            }`}
           />
         </div>
         <div className="tabular-nums flex items-center justify-between text-[11px] font-medium text-white/60">
@@ -1646,6 +1665,7 @@ const NowPlayingSheetInner: React.FC = () => {
       <div className="mx-auto grid w-full max-w-[340px] grid-cols-5 place-items-center py-0">
         <button
           type="button"
+          disabled={isGuestInJam}
           aria-label={
             shuffleEnabled
               ? 'Desactivar reproducción aleatoria'
@@ -1656,7 +1676,9 @@ const NowPlayingSheetInner: React.FC = () => {
             triggerTransportAnim('shuffle');
             toggleShuffle();
           }}
-          className={`pm-pressable relative flex h-7 w-7 items-center justify-center overflow-visible bg-transparent transition-transform duration-150 hover:scale-110 focus:outline-none md:h-9 md:w-9 ${
+          className={`pm-pressable relative flex h-7 w-7 items-center justify-center overflow-visible bg-transparent transition-transform duration-150 focus:outline-none md:h-9 md:w-9 ${
+            isGuestInJam ? 'cursor-not-allowed opacity-40' : 'hover:scale-110'
+          } ${
             shuffleEnabled
               ? 'text-white'
               : 'text-white/55 hover:text-white'
@@ -1676,12 +1698,15 @@ const NowPlayingSheetInner: React.FC = () => {
 
         <button
           type="button"
+          disabled={isGuestInJam}
           aria-label="Canción anterior"
           onClick={() => {
             triggerTransportAnim('prev');
             void prevTrack();
           }}
-          className="pm-pressable relative flex h-12 w-12 items-center justify-center overflow-visible bg-transparent text-white/90 transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none"
+          className={`pm-pressable relative flex h-12 w-12 items-center justify-center overflow-visible bg-transparent text-white/90 transition-transform duration-150 focus:outline-none ${
+            isGuestInJam ? 'cursor-not-allowed opacity-40' : 'hover:scale-110 hover:text-white active:scale-90'
+          }`}
         >
           <AnimatedSkipBackIcon
             className="h-8 w-8"
@@ -1692,13 +1717,16 @@ const NowPlayingSheetInner: React.FC = () => {
 
         <button
           type="button"
+          disabled={isGuestInJam}
           data-testid="nowplaying-play-btn"
           aria-label={showBuffering ? 'Cargando canción' : isPlaying ? 'Pausar' : 'Reproducir'}
           onClick={() => {
             triggerTransportAnim('play');
             void togglePlayPause();
           }}
-          className="pm-pressable relative flex h-16 w-16 items-center justify-center overflow-visible bg-transparent text-white outline-none ring-0 transition-transform duration-200 hover:scale-105 active:scale-90 focus:outline-none"
+          className={`pm-pressable relative flex h-16 w-16 items-center justify-center overflow-visible bg-transparent text-white outline-none ring-0 transition-transform duration-200 focus:outline-none ${
+            isGuestInJam ? 'cursor-not-allowed opacity-45' : 'hover:scale-105 active:scale-90'
+          }`}
         >
           {showBuffering ? (
             <Loader2 data-testid="nowplaying-play-loader" className="h-10 w-10 animate-spin text-white/95" />
@@ -1724,12 +1752,15 @@ const NowPlayingSheetInner: React.FC = () => {
 
         <button
           type="button"
+          disabled={isGuestInJam}
           aria-label="Siguiente canción"
           onClick={() => {
             triggerTransportAnim('next');
             void nextTrack();
           }}
-          className="pm-pressable relative flex h-12 w-12 items-center justify-center overflow-visible bg-transparent text-white/90 transition-transform duration-150 hover:scale-110 hover:text-white active:scale-90 focus:outline-none"
+          className={`pm-pressable relative flex h-12 w-12 items-center justify-center overflow-visible bg-transparent text-white/90 transition-transform duration-150 focus:outline-none ${
+            isGuestInJam ? 'cursor-not-allowed opacity-40' : 'hover:scale-110 hover:text-white active:scale-90'
+          }`}
         >
           <AnimatedSkipForwardIcon
             className="h-8 w-8"
@@ -1740,13 +1771,16 @@ const NowPlayingSheetInner: React.FC = () => {
 
         <button
           type="button"
+          disabled={isGuestInJam}
           aria-label={repeatLabel}
           aria-pressed={repeatMode !== 'off'}
           onClick={() => {
             triggerTransportAnim('repeat');
             cycleRepeatMode();
           }}
-          className={`pm-pressable relative flex h-7 w-7 items-center justify-center bg-transparent transition-transform duration-150 hover:scale-110 focus:outline-none md:h-9 md:w-9 ${
+          className={`pm-pressable relative flex h-7 w-7 items-center justify-center bg-transparent transition-transform duration-150 focus:outline-none md:h-9 md:w-9 ${
+            isGuestInJam ? 'cursor-not-allowed opacity-40' : 'hover:scale-110'
+          } ${
             repeatMode !== 'off'
               ? 'text-white'
               : 'text-white/55 hover:text-white'
@@ -1771,6 +1805,16 @@ const NowPlayingSheetInner: React.FC = () => {
           )}
         </button>
       </div>
+
+      {isGuestInJam && (
+        <div
+          data-testid="nowplaying-jam-guest-lock"
+          className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-black/35 px-3 py-1 text-[11px] font-semibold text-white/80 backdrop-blur-md"
+        >
+          <Lock className="h-3 w-3 shrink-0" />
+          <span>Solo el jefe de la Jam controla la reproducción</span>
+        </div>
+      )}
 
       {/* Desktop-only Subtle Pill Volume Bar (mobile locks internal volume to 100%) */}
       <div className="hidden w-full max-w-[290px] items-center gap-3 pt-1 md:flex">
@@ -1944,11 +1988,18 @@ const NowPlayingSheetInner: React.FC = () => {
               onClick={() => setNowPlayingTab('Portada')}
               className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
             >
-              <img
-                src={currentTrack.thumbnailUrl}
-                alt={currentTrack.title}
-                className="h-10 w-10 shrink-0 rounded-[8px] object-cover shadow-md"
-              />
+              <div className="h-10 w-10 shrink-0 overflow-hidden rounded-[8px] shadow-md">
+                <TrackArtwork
+                  trackId={currentTrack.id}
+                  src={currentTrack.thumbnailUrl}
+                  title={currentTrack.title}
+                  artistName={currentTrack.artists[0]?.name}
+                  artistId={currentTrack.artists[0]?.id}
+                  alt={currentTrack.title}
+                  variant="mini"
+                  imgClassName="h-full w-full object-cover"
+                />
+              </div>
               <div className="min-w-0 flex-1">
                 <MarqueeText
                   disabled={!marqueeTextEnabled || reducedMotionPref || cfActive}
@@ -2132,11 +2183,15 @@ const NowPlayingSheetInner: React.FC = () => {
                                 isPlaying && ambientMotionEnabled ? 'pm-focus-cover-playing' : ''
                               }`}
                             >
-                              <img
+                              <TrackArtwork
+                                trackId={currentTrack.id}
                                 src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
+                                title={currentTrack.title}
+                                artistName={currentTrack.artists[0]?.name}
+                                artistId={currentTrack.artists[0]?.id}
                                 alt={currentTrack.title}
-                                draggable={false}
-                                className="h-full w-full object-cover"
+                                variant="card"
+                                imgClassName="h-full w-full object-cover"
                               />
                               <div
                                 aria-hidden="true"
@@ -2815,65 +2870,71 @@ const AudioStudioSheetInner: React.FC = () => {
     setSkipSameAlbumCoverTransition,
     marqueeTextEnabled,
     setMarqueeTextEnabled,
-    ambientMotionEnabled,
-    setAmbientMotionEnabled,
-    showRemainingTime,
-    setShowRemainingTime,
-  } = usePMusicStore(
-    useShallow((s) => ({
-      eqSheetOpen: s.eqSheetOpen,
-      djPopoverOpen: s.djPopoverOpen,
-      audioPanelTab: s.audioPanelTab,
-      setAudioPanelTab: s.setAudioPanelTab,
-      setEqSheetOpen: s.setEqSheetOpen,
-      setDjPopoverOpen: s.setDjPopoverOpen,
-      nowPlayingOpen: s.nowPlayingOpen,
-      playerBarStyle: s.playerBarStyle,
-      setPlayerBarStyle: s.setPlayerBarStyle,
-      userEq: s.userEq,
-      safeCrossfade: s.safeCrossfade,
-      djMode: s.djMode,
-      currentTrack: s.currentTrack,
-      positionSec:
-        s.audioPanelTab === 'dj' && s.djMode.enabled && Boolean(s.activeTransitionPlan)
-          ? Math.floor(s.positionSec)
-          : 0,
-      activeTransitionPlan: s.activeTransitionPlan,
-      isTransitioning: s.isTransitioning,
-      trackAnalyses: s.trackAnalyses,
-      setEqPreset: s.setEqPreset,
-      setEqBandGain: s.setEqBandGain,
-      setEqEnabled: s.setEqEnabled,
-      setSafeCrossfade: s.setSafeCrossfade,
-      toggleDjMode: s.toggleDjMode,
-      setDjSessionStyle: s.setDjSessionStyle,
-      toggleDjFx: s.toggleDjFx,
-      triggerDjMixNow: s.triggerDjMixNow,
-      startFullDjRadio: s.startFullDjRadio,
-      streamQuality: s.streamQuality,
-      setStreamQuality: s.setStreamQuality,
-      audioNormalization: s.audioNormalization,
-      setAudioNormalization: s.setAudioNormalization,
-      nowPlayingBackdropStyle: s.nowPlayingBackdropStyle,
-      setNowPlayingBackdropStyle: s.setNowPlayingBackdropStyle,
-      lyricsStyle: s.lyricsStyle,
-      setLyricsStyle: s.setLyricsStyle,
-      lyricsSize: s.lyricsSize,
-      setLyricsSize: s.setLyricsSize,
-      lyricsBlurEnabled: s.lyricsBlurEnabled,
-      setLyricsBlurEnabled: s.setLyricsBlurEnabled,
-      alwaysShuffle: s.alwaysShuffle,
-      setAlwaysShuffle: s.setAlwaysShuffle,
-      skipSameAlbumCoverTransition: s.skipSameAlbumCoverTransition,
-      setSkipSameAlbumCoverTransition: s.setSkipSameAlbumCoverTransition,
-      marqueeTextEnabled: s.marqueeTextEnabled,
-      setMarqueeTextEnabled: s.setMarqueeTextEnabled,
-      ambientMotionEnabled: s.ambientMotionEnabled,
-      setAmbientMotionEnabled: s.setAmbientMotionEnabled,
-      showRemainingTime: s.showRemainingTime,
-      setShowRemainingTime: s.setShowRemainingTime,
-    }))
-  );
+      ambientMotionEnabled,
+      setAmbientMotionEnabled,
+      showRemainingTime,
+      setShowRemainingTime,
+      activeJamSession,
+      activeJamRole,
+    } = usePMusicStore(
+      useShallow((s) => ({
+        eqSheetOpen: s.eqSheetOpen,
+        djPopoverOpen: s.djPopoverOpen,
+        audioPanelTab: s.audioPanelTab,
+        setAudioPanelTab: s.setAudioPanelTab,
+        setEqSheetOpen: s.setEqSheetOpen,
+        setDjPopoverOpen: s.setDjPopoverOpen,
+        nowPlayingOpen: s.nowPlayingOpen,
+        playerBarStyle: s.playerBarStyle,
+        setPlayerBarStyle: s.setPlayerBarStyle,
+        userEq: s.userEq,
+        safeCrossfade: s.safeCrossfade,
+        djMode: s.djMode,
+        currentTrack: s.currentTrack,
+        positionSec:
+          s.audioPanelTab === 'dj' && s.djMode.enabled && Boolean(s.activeTransitionPlan)
+            ? Math.floor(s.positionSec)
+            : 0,
+        activeTransitionPlan: s.activeTransitionPlan,
+        isTransitioning: s.isTransitioning,
+        trackAnalyses: s.trackAnalyses,
+        setEqPreset: s.setEqPreset,
+        setEqBandGain: s.setEqBandGain,
+        setEqEnabled: s.setEqEnabled,
+        setSafeCrossfade: s.setSafeCrossfade,
+        toggleDjMode: s.toggleDjMode,
+        setDjSessionStyle: s.setDjSessionStyle,
+        toggleDjFx: s.toggleDjFx,
+        triggerDjMixNow: s.triggerDjMixNow,
+        startFullDjRadio: s.startFullDjRadio,
+        streamQuality: s.streamQuality,
+        setStreamQuality: s.setStreamQuality,
+        audioNormalization: s.audioNormalization,
+        setAudioNormalization: s.setAudioNormalization,
+        nowPlayingBackdropStyle: s.nowPlayingBackdropStyle,
+        setNowPlayingBackdropStyle: s.setNowPlayingBackdropStyle,
+        lyricsStyle: s.lyricsStyle,
+        setLyricsStyle: s.setLyricsStyle,
+        lyricsSize: s.lyricsSize,
+        setLyricsSize: s.setLyricsSize,
+        lyricsBlurEnabled: s.lyricsBlurEnabled,
+        setLyricsBlurEnabled: s.setLyricsBlurEnabled,
+        alwaysShuffle: s.alwaysShuffle,
+        setAlwaysShuffle: s.setAlwaysShuffle,
+        skipSameAlbumCoverTransition: s.skipSameAlbumCoverTransition,
+        setSkipSameAlbumCoverTransition: s.setSkipSameAlbumCoverTransition,
+        marqueeTextEnabled: s.marqueeTextEnabled,
+        setMarqueeTextEnabled: s.setMarqueeTextEnabled,
+        ambientMotionEnabled: s.ambientMotionEnabled,
+        setAmbientMotionEnabled: s.setAmbientMotionEnabled,
+        showRemainingTime: s.showRemainingTime,
+        setShowRemainingTime: s.setShowRemainingTime,
+        activeJamSession: s.activeJamSession,
+        activeJamRole: s.activeJamRole,
+      }))
+    );
+
+  const isGuestInJam = Boolean(activeJamSession?.active && activeJamRole === 'guest');
 
   const [isMobileViewport, setIsMobileViewport] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth < 768 : false
@@ -3037,6 +3098,19 @@ const AudioStudioSheetInner: React.FC = () => {
 
         {audioPanelTab === 'dj' ? (
           <div>
+            {isGuestInJam && (
+              <div
+                data-testid="studio-jam-dj-locked"
+                className="mb-3 flex items-center gap-2 rounded-[12px] border border-amber-400/30 bg-amber-500/12 px-3 py-2 text-[11px] font-semibold text-amber-200"
+              >
+                <Lock className="h-3.5 w-3.5 shrink-0" />
+                <span>Solo el jefe de la Jam puede cambiar esto</span>
+              </div>
+            )}
+            <div
+              aria-disabled={isGuestInJam || undefined}
+              className={isGuestInJam ? 'pointer-events-none select-none opacity-45' : ''}
+            >
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h2 className="text-[15px] font-bold leading-tight">
@@ -3183,9 +3257,23 @@ const AudioStudioSheetInner: React.FC = () => {
                 </div>
               </div>
             )}
+            </div>
           </div>
         ) : audioPanelTab === 'eq' ? (
           <div>
+            {isGuestInJam && (
+              <div
+                data-testid="studio-jam-eq-locked"
+                className="mb-3 flex items-center gap-2 rounded-[12px] border border-amber-400/30 bg-amber-500/12 px-3 py-2 text-[11px] font-semibold text-amber-200"
+              >
+                <Lock className="h-3.5 w-3.5 shrink-0" />
+                <span>Solo el jefe de la Jam puede cambiar esto (EQ y Crossfade)</span>
+              </div>
+            )}
+            <div
+              aria-disabled={isGuestInJam || undefined}
+              className={isGuestInJam ? 'pointer-events-none select-none opacity-45' : ''}
+            >
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h2 className="text-[15px] font-bold leading-tight">Ecualizador</h2>
@@ -3354,6 +3442,7 @@ const AudioStudioSheetInner: React.FC = () => {
                   onChange={() => setAudioNormalization(!audioNormalization)}
                 />
               </div>
+            </div>
             </div>
           </div>
         ) : !nowPlayingOpen ? (

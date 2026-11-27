@@ -122,6 +122,7 @@ import {
   fetchSharedPlaylistByCode,
   getAnonSupabaseClient,
   inviteMemberToSharedPlaylist,
+  isJamQueueOpRequest,
   joinSharedPlaylistByCode,
   listFriendships,
   listSharedPlaylists,
@@ -131,10 +132,13 @@ import {
   searchPublicCatalog,
   sendFriendRequest,
   stampTrackAddedBy,
+  submitPublicJamQueueOp,
   submitPublicJamRequest,
+  extractJamSyncMeta,
   updateJamRequestStatus,
   updateJamSessionState,
   type FriendRecord,
+  type JamQueueOpPayload,
   type JamRequestRecord,
   type JamSessionRecord,
   type SharedPlaylistRecord,
@@ -1294,6 +1298,12 @@ export interface PMusicStoreState {
   joinJamInApp: (code: string) => Promise<JamSessionRecord | null>;
   leaveOrEndJam: () => Promise<void>;
   addTrackToActiveJam: (track: Track, playNext?: boolean) => Promise<void>;
+  modifyJamQueueAsGuest: (
+    op: 'move' | 'remove' | 'add_next',
+    targetTrackId: string,
+    toUpNextIndex?: number,
+    track?: Track
+  ) => Promise<void>;
   approveJamRequest: (req: JamRequestRecord) => Promise<void>;
   rejectJamRequest: (req: JamRequestRecord) => Promise<void>;
   updateJamSettings: (patch: {
@@ -2564,6 +2574,27 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     socialSubscribedUserId = '';
   }
 
+  let lastHostJamPushAtMs = 0;
+
+  function buildHostSyncedTrack(cur: PMusicStoreState): Track {
+    const cleanBase = { ...cur.currentTrack } as Track & { __jamSync?: unknown };
+    delete cleanBase.__jamSync;
+    const liveSyncPos = getLivePlaybackPosition();
+    return {
+      ...cleanBase,
+      __jamSync: {
+        positionSec: Number(Math.max(0, liveSyncPos.positionSec).toFixed(2)),
+        updatedAtMs: Date.now(),
+        isPlaying: cur.isPlaying,
+        djEnabled: cur.djMode.enabled,
+        crossfadeEnabled: cur.safeCrossfade.enabled,
+        crossfadeSec: cur.safeCrossfade.durationSec,
+        eqEnabled: cur.userEq.enabled,
+        eqPreset: cur.userEq.preset,
+      },
+    } as Track;
+  }
+
   function pushHostJamStateSoon(): void {
     const st = get();
     const sb = getSyncSupabaseClient();
@@ -2574,9 +2605,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       const cur = get();
       const sbNow = getSyncSupabaseClient();
       if (!sbNow || !cur.activeJamSession?.active || cur.activeJamRole !== 'host') return;
+      lastHostJamPushAtMs = Date.now();
       const liveQueue = cur.queue.slice(Math.max(0, cur.queueIndex));
       void updateJamSessionState(sbNow, cur.activeJamSession.code, {
-        currentTrack: cur.currentTrack,
+        currentTrack: buildHostSyncedTrack(cur),
         queue: liveQueue,
         isPlaying: cur.isPlaying,
         allowGuestDirectAdd: cur.activeJamSession.allowGuestDirectAdd,
@@ -2627,6 +2659,60 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     for (const req of reqs) {
       if (req.status === 'approved' && !processedJamRequestIds.has(req.id)) {
         processedJamRequestIds.add(req.id);
+        if (isJamQueueOpRequest(req)) {
+          const op = req.track as unknown as JamQueueOpPayload;
+          const cur = get();
+          const baseIdx = Math.max(0, cur.queueIndex);
+          const upNext = cur.queue.slice(baseIdx + 1);
+          const isOwnOp = req.guestName.trim().toLowerCase() === myNameLow;
+          if (op.__jamOp === 'move') {
+            const fromRel = upNext.findIndex((t) => t.id === op.targetTrackId);
+            if (fromRel >= 0) {
+              const targetRel = Math.max(
+                0,
+                Math.min(upNext.length - 1, op.toUpNextIndex ?? Math.max(0, fromRel - 1))
+              );
+              if (fromRel !== targetRel) {
+                const nextUp = [...upNext];
+                const [moved] = nextUp.splice(fromRel, 1);
+                if (moved) {
+                  nextUp.splice(targetRel, 0, moved);
+                  set({ queue: [...cur.queue.slice(0, baseIdx + 1), ...nextUp] });
+                  if (!isOwnOp) cur.showToast(`${req.guestName} reordenó la cola de la Jam`);
+                  pushHostJamStateSoon();
+                }
+              }
+            }
+          } else if (op.__jamOp === 'remove') {
+            const rmRel = upNext.findIndex((t) => t.id === op.targetTrackId);
+            if (rmRel >= 0) {
+              const nextUp = [...upNext];
+              const [removed] = nextUp.splice(rmRel, 1);
+              set({ queue: [...cur.queue.slice(0, baseIdx + 1), ...nextUp] });
+              if (!isOwnOp && removed) {
+                cur.showToast(`${req.guestName} quitó «${removed.title}» de la cola`);
+              }
+              pushHostJamStateSoon();
+            }
+          } else if (op.__jamOp === 'add_next' && op.track?.id) {
+            const cleaned = { ...(op.track as Track & { __jamOp?: unknown; targetTrackId?: unknown; toUpNextIndex?: unknown }) };
+            delete cleaned.__jamOp;
+            delete cleaned.targetTrackId;
+            delete cleaned.toUpNextIndex;
+            const stamped = cleaned.addedBy?.displayName
+              ? cleaned
+              : stampTrackAddedBy(cleaned, {
+                  displayName: req.guestName || 'Invitado',
+                  avatarUrl: cleaned.addedBy?.avatarUrl ?? null,
+                });
+            if (!upNext.some((t) => t.id === stamped.id)) {
+              set({ queue: [...cur.queue.slice(0, baseIdx + 1), stamped, ...upNext] });
+              if (!isOwnOp) cur.showToast(`${req.guestName} puso «${stamped.title}» a continuación`);
+              pushHostJamStateSoon();
+            }
+          }
+          continue;
+        }
         if (req.track?.id && !st.queue.some((t) => t.id === req.track.id)) {
           const stamped = req.track.addedBy?.displayName
             ? req.track
@@ -2673,12 +2759,44 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         get().showToast('La sala Jam ha finalizado');
         return;
       }
-      set({
-        activeJamSession: sess,
-        activeJamRequests: reqs,
-      });
-      if (cur.activeJamRole === 'host') {
+      if (cur.activeJamRole === 'guest') {
+        const syncMeta = extractJamSyncMeta(sess);
+        const guestPatch: Partial<PMusicStoreState> = {
+          activeJamSession: sess,
+          activeJamRequests: reqs,
+        };
+        if (sess.currentTrack) {
+          const cleanTrack = { ...sess.currentTrack } as Track & { __jamSync?: unknown };
+          delete cleanTrack.__jamSync;
+          const elapsedSec =
+            syncMeta && syncMeta.isPlaying
+              ? Math.max(0, (Date.now() - syncMeta.updatedAtMs) / 1000)
+              : 0;
+          const syncedPos = syncMeta
+            ? Math.min(cleanTrack.durationSec || 9999, syncMeta.positionSec + elapsedSec)
+            : cur.positionSec;
+          const syncedQueue = sess.queue.length > 0 ? sess.queue : [cleanTrack];
+          const idx = Math.max(
+            0,
+            syncedQueue.findIndex((q) => q.id === cleanTrack.id)
+          );
+          guestPatch.currentTrack = cleanTrack;
+          guestPatch.durationSec = cleanTrack.durationSec || cur.durationSec;
+          guestPatch.isPlaying = sess.isPlaying;
+          guestPatch.positionSec = syncedPos;
+          guestPatch.queue = syncedQueue;
+          guestPatch.queueIndex = idx;
+        }
+        set(guestPatch);
+      } else {
+        set({
+          activeJamSession: sess,
+          activeJamRequests: reqs,
+        });
         processIncomingHostJamRequests(reqs);
+        if (cur.isPlaying && Date.now() - lastHostJamPushAtMs >= 4800) {
+          pushHostJamStateSoon();
+        }
       }
     };
 
@@ -4974,6 +5092,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   },
 
   togglePlayPause: async () => {
+    const preSt = get();
+    if (preSt.activeJamRole === 'guest' && preSt.activeJamSession?.active) {
+      preSt.showToast('Solo el jefe de la Jam controla la reproducción');
+      return;
+    }
     ensureAudioEngineBindings();
     const st = get();
     if (st.isPlaying) {
@@ -5015,6 +5138,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   },
 
   nextTrack: async (isAutoAdvance = false) => {
+    const preSt = get();
+    if (preSt.activeJamRole === 'guest' && preSt.activeJamSession?.active) {
+      if (!isAutoAdvance) preSt.showToast('Solo el jefe de la Jam controla la reproducción');
+      return;
+    }
     if (isAutoAdvance && (autoAdvanceInFlight || manualTrackSwitchInFlight)) return;
     if (seekAutoTriggerTimer) {
       clearTimeout(seekAutoTriggerTimer);
@@ -5127,6 +5255,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   prevTrack: async () => {
     const st = get();
+    if (st.activeJamRole === 'guest' && st.activeJamSession?.active) {
+      st.showToast('Solo el jefe de la Jam controla la reproducción');
+      return;
+    }
     if (st.positionSec > 5) {
       st.seekTo(0);
       return;
@@ -5160,6 +5292,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   toggleShuffle: () => {
     const st = get();
+    if (st.activeJamRole === 'guest' && st.activeJamSession?.active) {
+      st.showToast('Solo el jefe de la Jam controla la reproducción');
+      return;
+    }
     djPreloadedKey = '';
     if (!st.shuffleEnabled) {
       const original = [...st.queue];
@@ -5199,7 +5335,12 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   },
 
   cycleRepeatMode: () => {
-    const cur = get().repeatMode;
+    const preSt = get();
+    if (preSt.activeJamRole === 'guest' && preSt.activeJamSession?.active) {
+      preSt.showToast('Solo el jefe de la Jam controla la reproducción');
+      return;
+    }
+    const cur = preSt.repeatMode;
     const next: RepeatMode = cur === 'off' ? 'all' : cur === 'all' ? 'one' : 'off';
     set({ repeatMode: next });
     void recomputeActiveDjPlan();
@@ -5217,6 +5358,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   },
 
   seekTo: (positionSec) => {
+    const preSt = get();
+    if (preSt.activeJamRole === 'guest' && preSt.activeJamSession?.active) {
+      preSt.showToast('Solo el jefe de la Jam controla la reproducción');
+      return;
+    }
     if (seekAutoTriggerTimer) {
       clearTimeout(seekAutoTriggerTimer);
       seekAutoTriggerTimer = null;
@@ -6578,6 +6724,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       pushHostJamStateSoon();
       return;
     }
+    if (playNext && sess.allowGuestDirectAdd) {
+      await st.modifyJamQueueAsGuest('add_next', stamped.id, 0, stamped);
+      return;
+    }
     const created = await submitPublicJamRequest(
       sess.code,
       identity.displayName,
@@ -6603,6 +6753,56 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         ? `«${stamped.title}» añadida a la cola de la Jam`
         : `«${stamped.title}» enviada para aprobación`
     );
+  },
+
+  modifyJamQueueAsGuest: async (op, targetTrackId, toUpNextIndex, rawTrack) => {
+    const st = get();
+    const sess = st.activeJamSession;
+    if (!sess || !sess.active) return;
+    const identity = getOwnAdderIdentity();
+    const curTrackId = sess.currentTrack?.id ?? st.currentTrack.id;
+    const upNext = sess.queue.filter((t) => t.id !== curTrackId);
+    const currentHead = sess.queue.filter((t) => t.id === curTrackId);
+    let nextUp = [...upNext];
+
+    if (op === 'move') {
+      const fromIdx = nextUp.findIndex((t) => t.id === targetTrackId);
+      if (fromIdx >= 0) {
+        const destIdx = Math.max(0, Math.min(nextUp.length - 1, toUpNextIndex ?? Math.max(0, fromIdx - 1)));
+        const [moved] = nextUp.splice(fromIdx, 1);
+        if (moved) nextUp.splice(destIdx, 0, moved);
+      }
+    } else if (op === 'remove') {
+      nextUp = nextUp.filter((t) => t.id !== targetTrackId);
+    } else if (op === 'add_next' && rawTrack) {
+      const stamped = stampTrackAddedBy(canonicalizeTrackArtists(rawTrack), identity);
+      nextUp = [stamped, ...nextUp.filter((t) => t.id !== stamped.id)];
+    }
+
+    const updatedQueue = [...currentHead, ...nextUp];
+    set((prev) => ({
+      activeJamSession: prev.activeJamSession
+        ? { ...prev.activeJamSession, queue: updatedQueue }
+        : prev.activeJamSession,
+      queue: updatedQueue,
+    }));
+
+    const payloadTrack = rawTrack ? stampTrackAddedBy(canonicalizeTrackArtists(rawTrack), identity) : undefined;
+    try {
+      await submitPublicJamQueueOp(sess.code, identity.displayName, {
+        __jamOp: op,
+        targetTrackId,
+        ...(typeof toUpNextIndex === 'number' ? { toUpNextIndex } : {}),
+        ...(payloadTrack ? { track: payloadTrack } : {}),
+      });
+      if (op === 'add_next' && payloadTrack) {
+        st.showToast(`«${payloadTrack.title}» sonará a continuación en la Jam`);
+      } else if (op === 'remove') {
+        st.showToast('Canción quitada de la cola de la Jam');
+      }
+    } catch {
+      // keep optimistic UI if transient network issue
+    }
   },
 
   approveJamRequest: async (req) => {

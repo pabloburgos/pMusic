@@ -1,26 +1,116 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Check, Clock, Loader2, Music2, Pencil, Plus, Radio, Search, Sparkles, X } from 'lucide-react';
-import type { Track } from '@pmusic/core';
-import { PMusicLogo } from './PMusicLogo.tsx';
-import { UserAvatar } from './UserAvatar.tsx';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Check,
+  Clock,
+  Disc3,
+  GripVertical,
+  Image as ImageIcon,
+  ListMusic,
+  Loader2,
+  Lock,
+  Music2,
+  Pencil,
+  Plus,
+  Radio,
+  Search,
+  Sliders,
+  SlidersHorizontal,
+  Sparkles,
+  Trash2,
+  X,
+} from 'lucide-react';
+import {
+  formatDurationSec,
+  USER_EQ_FREQUENCIES_HZ,
+  type Track,
+} from '@pmusic/core';
+import { PMusicLogo } from './PMusicLogo.tsx';
+import { TrackArtwork } from './TrackArtwork.tsx';
+import { UserAvatar } from './UserAvatar.tsx';
+import { PMusicSwitch } from './PMusicSwitch.tsx';
+import { MobileFluidBackdropCanvas } from './MobileFluidBackdropCanvas.tsx';
+import { ExoticBackdropCanvas } from './ExoticBackdropCanvas.tsx';
+import {
+  AnimatedShuffleIcon,
+  AnimatedSkipBackIcon,
+  AnimatedSkipForwardIcon,
+  RoundedPauseIcon,
+  RoundedPlayIcon,
+} from './TransportIcons.tsx';
+import { Repeat } from 'lucide-react';
+import {
+  extractJamSyncMeta,
   fetchPublicJamRequests,
   fetchPublicJamSession,
   getAnonSupabaseClient,
+  isJamQueueOpRequest,
   searchPublicCatalog,
+  submitPublicJamQueueOp,
   submitPublicJamRequest,
   type JamRequestRecord,
   type JamSessionRecord,
 } from '../services/social-service.ts';
+
+type GuestBackdropStyle = 'fluid' | 'paint' | 'pulse' | 'minimal';
+
+interface GuestVisualPrefs {
+  backdropStyle: GuestBackdropStyle;
+  ambientMotion: boolean;
+  showRemainingTime: boolean;
+}
+
+const GUEST_PREFS_STORAGE_KEY = 'pmusic.jam.guestPrefs';
+
+function readGuestPrefs(): GuestVisualPrefs {
+  const defaults: GuestVisualPrefs = {
+    backdropStyle: 'fluid',
+    ambientMotion: true,
+    showRemainingTime: false,
+  };
+  if (typeof window === 'undefined') return defaults;
+  try {
+    const raw = window.localStorage.getItem(GUEST_PREFS_STORAGE_KEY);
+    if (!raw) return defaults;
+    const parsed = JSON.parse(raw) as Partial<GuestVisualPrefs>;
+    return {
+      backdropStyle:
+        parsed.backdropStyle === 'paint' ||
+        parsed.backdropStyle === 'pulse' ||
+        parsed.backdropStyle === 'minimal'
+          ? parsed.backdropStyle
+          : 'fluid',
+      ambientMotion: parsed.ambientMotion !== false,
+      showRemainingTime: Boolean(parsed.showRemainingTime),
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+function dismissBootSplashImmediately(): void {
+  if (typeof document === 'undefined') return;
+  const el = document.getElementById('pm-boot-splash');
+  if (!el || el.classList.contains('pm-splash-hide')) return;
+  el.classList.add('pm-splash-hide');
+  setTimeout(() => el.remove(), 360);
+}
 
 export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
   const cleanCode = code.toUpperCase();
   const [session, setSession] = useState<JamSessionRecord | null>(null);
   const [requests, setRequests] = useState<JamRequestRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [mobileTab, setMobileTab] = useState<'Portada' | 'Cola'>('Portada');
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const [guestPrefs, setGuestPrefs] = useState<GuestVisualPrefs>(() => readGuestPrefs());
   const [guestName, setGuestName] = useState<string>(() => {
     try {
-      return localStorage.getItem('pmusic.jam.guestName') ?? sessionStorage.getItem('pmusic.jam.guestName') ?? '';
+      return (
+        localStorage.getItem('pmusic.jam.guestName') ??
+        sessionStorage.getItem('pmusic.jam.guestName') ??
+        ''
+      );
     } catch {
       return '';
     }
@@ -28,7 +118,8 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
   const [nameConfirmed, setNameConfirmed] = useState<boolean>(() => {
     try {
       return Boolean(
-        localStorage.getItem('pmusic.jam.guestName') || sessionStorage.getItem('pmusic.jam.guestName')
+        localStorage.getItem('pmusic.jam.guestName') ||
+          sessionStorage.getItem('pmusic.jam.guestName')
       );
     } catch {
       return false;
@@ -41,51 +132,103 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
   const [results, setResults] = useState<Track[]>([]);
   const [requestedIds, setRequestedIds] = useState<Set<string>>(new Set());
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [dragFromIdx, setDragFromIdx] = useState<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+  const [syncedPosSec, setSyncedPosSec] = useState(0);
   const searchSeqRef = useRef(0);
+
+  const updateGuestPrefs = (patch: Partial<GuestVisualPrefs>) => {
+    setGuestPrefs((prev) => {
+      const next = { ...prev, ...patch };
+      try {
+        localStorage.setItem(GUEST_PREFS_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    dismissBootSplashImmediately();
+  }, []);
 
   useEffect(() => {
     let active = true;
     const load = async () => {
-      const [s, r] = await Promise.all([
-        fetchPublicJamSession(cleanCode),
-        fetchPublicJamRequests(cleanCode),
-      ]);
-      if (!active) return;
-      setSession(s);
-      setRequests(r);
-      setLoading(false);
+      try {
+        const [s, r] = await Promise.all([
+          fetchPublicJamSession(cleanCode),
+          fetchPublicJamRequests(cleanCode),
+        ]);
+        if (!active) return;
+        setSession(s);
+        setRequests(r);
+      } catch {
+        if (!active) return;
+      } finally {
+        if (active) setLoading(false);
+      }
     };
     void load();
 
-    const sb = getAnonSupabaseClient();
-    const channel = sb
-      .channel(`pmusic-public-jam:${cleanCode}:${Date.now()}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'jam_sessions', filter: `code=eq.${cleanCode}` },
-        () => void load()
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'jam_requests', filter: `jam_code=eq.${cleanCode}` },
-        () => void load()
-      )
-      .subscribe();
+    let channel: any = null;
+    let sb: any = null;
+    try {
+      sb = getAnonSupabaseClient();
+      channel = sb
+        .channel(`pmusic-public-jam:${cleanCode}:${Date.now()}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'jam_sessions', filter: `code=eq.${cleanCode}` },
+          () => void load()
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'jam_requests', filter: `jam_code=eq.${cleanCode}` },
+          () => void load()
+        )
+        .subscribe();
+    } catch {
+      // fallback polling still keeps data fresh
+    }
 
     const timer = window.setInterval(() => {
       if (typeof document !== 'undefined' && document.hidden) return;
       void load();
-    }, 5500);
+    }, 4500);
 
     return () => {
       active = false;
       window.clearInterval(timer);
-      void channel.unsubscribe?.();
-      sb.removeChannel?.(channel);
+      try {
+        void channel?.unsubscribe?.();
+        if (channel && sb) sb.removeChannel?.(channel);
+      } catch {
+        // ignore
+      }
     };
   }, [cleanCode]);
 
-  // Live debounced search as the guest types
+  const syncMeta = useMemo(() => extractJamSyncMeta(session), [session]);
+
+  useEffect(() => {
+    const computeLivePos = () => {
+      const dur = Math.max(1, session?.currentTrack?.durationSec ?? 180);
+      if (!syncMeta) return 0;
+      const elapsed = syncMeta.isPlaying
+        ? Math.max(0, (Date.now() - syncMeta.updatedAtMs) / 1000)
+        : 0;
+      return Math.min(dur, Math.max(0, syncMeta.positionSec + elapsed));
+    };
+    setSyncedPosSec(computeLivePos());
+    if (!session?.isPlaying) return;
+    const iv = window.setInterval(() => {
+      setSyncedPosSec(computeLivePos());
+    }, 500);
+    return () => window.clearInterval(iv);
+  }, [session?.isPlaying, session?.currentTrack?.id, session?.currentTrack?.durationSec, syncMeta]);
+
   useEffect(() => {
     const cleanQ = query.trim();
     if (cleanQ.length < 2) {
@@ -130,17 +273,42 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
     }
   };
 
-  const handleRequestTrack = async (track: Track) => {
+  const handleRequestTrack = async (track: Track, playNext = false) => {
     if (!session) return;
-    const myCount = requests.filter(
-      (r) => r.guestName.toLowerCase() === guestName.trim().toLowerCase() && r.status !== 'rejected'
+    const visibleReqs = requests.filter((r) => !isJamQueueOpRequest(r));
+    const myCount = visibleReqs.filter(
+      (r) =>
+        r.guestName.toLowerCase() === guestName.trim().toLowerCase() && r.status !== 'rejected'
     ).length;
     if (session.maxRequestsPerGuest > 0 && myCount >= session.maxRequestsPerGuest) {
       setFeedback(`Límite alcanzado: máximo ${session.maxRequestsPerGuest} canciones por invitado.`);
       return;
     }
+    const cleanNick = guestName.trim() || 'Invitado';
     try {
-      const cleanNick = guestName.trim() || 'Invitado';
+      if (playNext && session.allowGuestDirectAdd) {
+        const stampedTrack: Track = {
+          ...track,
+          addedBy: { displayName: cleanNick, avatarUrl: null },
+        };
+        setSession((prev) => {
+          if (!prev) return prev;
+          const curId = prev.currentTrack?.id;
+          const rest = prev.queue.filter((q) => q.id !== curId && q.id !== stampedTrack.id);
+          const head = prev.queue.filter((q) => q.id === curId);
+          return { ...prev, queue: [...head, stampedTrack, ...rest] };
+        });
+        setRequestedIds((prev) => new Set(prev).add(track.id));
+        await submitPublicJamQueueOp(cleanCode, cleanNick, {
+          __jamOp: 'add_next',
+          targetTrackId: track.id,
+          toUpNextIndex: 0,
+          track: stampedTrack,
+        });
+        setFeedback(`«${track.title}» puesta a continuación en la Jam de ${session.hostName}`);
+        return;
+      }
+
       const created = await submitPublicJamRequest(
         cleanCode,
         cleanNick,
@@ -149,6 +317,17 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
         { displayName: cleanNick, avatarUrl: null }
       );
       setRequests((prev) => [created, ...prev]);
+      if (session.allowGuestDirectAdd) {
+        const stampedTrack: Track = {
+          ...track,
+          addedBy: { displayName: cleanNick, avatarUrl: null },
+        };
+        setSession((prev) => {
+          if (!prev) return prev;
+          if (prev.queue.some((q) => q.id === stampedTrack.id)) return prev;
+          return { ...prev, queue: [...prev.queue, stampedTrack] };
+        });
+      }
       setRequestedIds((prev) => new Set(prev).add(track.id));
       setFeedback(
         session.allowGuestDirectAdd
@@ -157,6 +336,48 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
       );
     } catch (err) {
       setFeedback(err instanceof Error ? err.message : 'No se pudo enviar la canción');
+    }
+  };
+
+  const handleQueueMove = async (fromIdx: number, toIdx: number) => {
+    if (!session) return;
+    const curId = session.currentTrack?.id;
+    const upNext = session.queue.filter((t) => t.id !== curId);
+    if (fromIdx < 0 || fromIdx >= upNext.length || toIdx < 0 || toIdx >= upNext.length || fromIdx === toIdx) {
+      return;
+    }
+    const nextUp = [...upNext];
+    const [moved] = nextUp.splice(fromIdx, 1);
+    if (!moved) return;
+    nextUp.splice(toIdx, 0, moved);
+    const head = session.queue.filter((t) => t.id === curId);
+    setSession((prev) => (prev ? { ...prev, queue: [...head, ...nextUp] } : prev));
+    setFeedback(`«${moved.title}» movida en la cola`);
+    try {
+      await submitPublicJamQueueOp(cleanCode, guestName.trim() || 'Invitado', {
+        __jamOp: 'move',
+        targetTrackId: moved.id,
+        toUpNextIndex: toIdx,
+      });
+    } catch {
+      // keep optimistic update
+    }
+  };
+
+  const handleQueueRemove = async (trackId: string, title: string) => {
+    if (!session) return;
+    const curId = session.currentTrack?.id;
+    const head = session.queue.filter((t) => t.id === curId);
+    const nextUp = session.queue.filter((t) => t.id !== curId && t.id !== trackId);
+    setSession((prev) => (prev ? { ...prev, queue: [...head, ...nextUp] } : prev));
+    setFeedback(`«${title}» retirada de la cola compartida`);
+    try {
+      await submitPublicJamQueueOp(cleanCode, guestName.trim() || 'Invitado', {
+        __jamOp: 'remove',
+        targetTrackId: trackId,
+      });
+    } catch {
+      // keep optimistic update
     }
   };
 
@@ -193,9 +414,9 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
             <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/25 bg-emerald-500/12 px-3 py-1 text-[11px] font-semibold uppercase tracking-widest text-emerald-300">
               <Sparkles className="h-3 w-3" /> Jam de {session.hostName}
             </span>
-            <h1 className="mt-3 text-xl font-bold">Añade canciones a la cola</h1>
+            <h1 className="mt-3 text-xl font-bold">Entra a la sesión en directo</h1>
             <p className="mt-1 text-xs text-white/55">
-              Pon tu apodo para que sepan quién ha añadido cada tema.
+              Pon tu apodo para que sepan quién añade o mueve canciones en la cola.
             </p>
           </div>
           <form
@@ -228,7 +449,7 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
               type="submit"
               className="w-full cursor-pointer rounded-full bg-white px-5 py-3.5 text-sm font-bold text-black transition hover:bg-white/90"
             >
-              {editingNickname ? 'Guardar apodo' : 'Entrar a añadir canciones'}
+              {editingNickname ? 'Guardar apodo' : 'Entrar a la Jam'}
             </button>
           </form>
         </div>
@@ -236,44 +457,179 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
     );
   }
 
-  return (
-    <div className="min-h-dvh bg-[#050507] text-white">
-      <div className="mx-auto max-w-xl px-4 pb-16 pt-5 sm:px-6">
-        <header className="flex flex-wrap items-center justify-between gap-2 pb-4">
-          <PMusicLogo size={26} variant="wordmark-only" />
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/30 bg-emerald-500/15 px-3 py-1 text-[11px] font-semibold text-emerald-300">
-              <Radio className="h-3 w-3 animate-pulse" />
-              Jam · {session.hostName}
-            </span>
-            <button
-              type="button"
-              onClick={() => setEditingNickname(true)}
-              className="inline-flex items-center gap-1.5 rounded-full border border-white/12 bg-white/[0.05] px-2.5 py-1 text-[11px] font-semibold text-white/80 hover:bg-white/10"
-              title="Cambiar tu apodo"
-            >
-              <UserAvatar name={guestName || 'Invitado'} size="xs" />
-              <span className="max-w-[90px] truncate">{guestName}</span>
-              <Pencil className="h-2.5 w-2.5 opacity-65" />
-            </button>
+  const activeTrack = session.currentTrack ?? session.queue[0] ?? null;
+  const activeCoverUrl = activeTrack
+    ? activeTrack.thumbnailHighUrl ?? activeTrack.thumbnailUrl
+    : undefined;
+  const activeDurSec = Math.max(1, activeTrack?.durationSec ?? 180);
+  const progressPct = Math.max(0, Math.min(100, (syncedPosSec / activeDurSec) * 100));
+  const remainingSec = Math.max(0, activeDurSec - syncedPosSec);
+  const upNextQueue = activeTrack
+    ? session.queue.filter((t) => t.id !== activeTrack.id)
+    : session.queue;
+  const visibleRequests = requests.filter((r) => !isJamQueueOpRequest(r));
+
+  const renderPortadaDeck = () => (
+    <div
+      data-testid="jam-guest-portada-view"
+      className="mx-auto flex w-full max-w-[390px] flex-col items-center gap-4 lg:sticky lg:top-8"
+    >
+      <div className="relative aspect-square w-[min(76vw,320px)] overflow-hidden rounded-[18px] bg-[#111116] shadow-[0_26px_64px_rgba(0,0,0,0.6)] md:w-[340px]">
+        {activeTrack ? (
+          <TrackArtwork
+            trackId={activeTrack.id}
+            src={activeCoverUrl}
+            title={activeTrack.title}
+            artistName={activeTrack.artists[0]?.name}
+            artistId={activeTrack.artists[0]?.id}
+            alt={activeTrack.title}
+            variant="nowplaying"
+            loading="eager"
+            imgClassName="h-full w-full object-cover"
+          />
+        ) : (
+          <div className="flex h-full w-full flex-col items-center justify-center gap-3 p-6 text-center">
+            <PMusicLogo variant="mark" size={40} color="#FFFFFF" />
+            <p className="text-sm font-bold text-white/85">Jam de {session.hostName}</p>
+            <p className="text-xs text-white/50">Esperando la siguiente canción</p>
           </div>
-        </header>
+        )}
+      </div>
 
-        <div className="mb-4 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-xs text-white/75">
-          Modo web invitado · Solo para buscar y añadir temas directamente a la cola de{' '}
-          <strong className="text-white">{session.hostName}</strong>.
+      <div className="w-full space-y-1 text-left">
+        <div className="flex items-center justify-between gap-2">
+          <h1 className="truncate text-[21px] font-bold leading-tight tracking-tight text-white">
+            {activeTrack?.title ?? `Jam de ${session.hostName}`}
+          </h1>
+          <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-500/15 px-2.5 py-0.5 text-[10px] font-bold text-emerald-300">
+            <Radio className="h-3 w-3 animate-pulse" />
+            EN VIVO
+          </span>
         </div>
+        <p className="truncate text-sm text-white/70">
+          {activeTrack?.artists.map((a) => a.name).join(', ') ?? 'En directo'}
+          {activeTrack?.album?.name ? ` · ${activeTrack.album.name}` : ''}
+        </p>
+        {activeTrack?.addedBy?.displayName && (
+          <div className="inline-flex items-center gap-1.5 pt-1 text-[11px] font-medium text-white/65">
+            <UserAvatar
+              src={activeTrack.addedBy.avatarUrl}
+              name={activeTrack.addedBy.displayName}
+              size="xs"
+            />
+            <span>Añadida por {activeTrack.addedBy.displayName}</span>
+          </div>
+        )}
+      </div>
 
-        {/* Fast Search Bar — Only add songs */}
-        <form onSubmit={handleSearch} className="mb-4 flex gap-2">
+      {/* Synced Locked Progress Bar */}
+      <div className="w-full space-y-1.5">
+        <div className="relative flex h-6 items-center">
+          <div className="pointer-events-none relative h-[5px] w-full overflow-hidden rounded-full bg-white/20">
+            <div
+              className="h-full w-full rounded-full bg-white/85 transition-transform duration-300"
+              style={{ transform: `translate3d(${(progressPct - 100).toFixed(2)}%, 0, 0)` }}
+            />
+          </div>
+          <input
+            type="range"
+            role="slider"
+            aria-label="Progreso de la canción (bloqueado en modo invitado)"
+            disabled
+            min={0}
+            max={Math.round(activeDurSec)}
+            value={Math.round(syncedPosSec)}
+            onChange={() => {}}
+            className="pm-range-gpu-overlay absolute inset-0 z-10 h-full w-full cursor-not-allowed opacity-0"
+          />
+        </div>
+        <div className="tabular-nums flex items-center justify-between text-[11px] font-medium text-white/60">
+          <span>{formatDurationSec(syncedPosSec)}</span>
+          <button
+            type="button"
+            onClick={() => updateGuestPrefs({ showRemainingTime: !guestPrefs.showRemainingTime })}
+            className="hover:text-white"
+          >
+            {guestPrefs.showRemainingTime
+              ? `-${formatDurationSec(remainingSec)}`
+              : formatDurationSec(activeDurSec)}
+          </button>
+        </div>
+      </div>
+
+      {/* Locked Transport Controls */}
+      <div
+        data-testid="jam-guest-locked-controls"
+        className="mx-auto grid w-full max-w-[320px] grid-cols-5 place-items-center py-0.5"
+      >
+        <button
+          type="button"
+          disabled
+          aria-label="Aleatorio bloqueado"
+          className="flex h-9 w-9 cursor-not-allowed items-center justify-center text-white/40 opacity-45"
+        >
+          <AnimatedShuffleIcon className="h-4 w-4" animate={false} />
+        </button>
+        <button
+          type="button"
+          disabled
+          aria-label="Anterior bloqueado"
+          className="flex h-11 w-11 cursor-not-allowed items-center justify-center text-white/45 opacity-45"
+        >
+          <AnimatedSkipBackIcon className="h-7 w-7" filled animate={false} />
+        </button>
+        <button
+          type="button"
+          disabled
+          data-testid="jam-guest-play-locked-btn"
+          aria-label={session.isPlaying ? 'Reproducción en curso (solo el jefe)' : 'Pausada (solo el jefe)'}
+          className="flex h-14 w-14 cursor-not-allowed items-center justify-center rounded-full bg-white/10 text-white/75 opacity-55"
+        >
+          {session.isPlaying ? (
+            <RoundedPauseIcon className="h-11 w-11" />
+          ) : (
+            <RoundedPlayIcon className="h-11 w-11 translate-x-[1px]" />
+          )}
+        </button>
+        <button
+          type="button"
+          disabled
+          aria-label="Siguiente bloqueado"
+          className="flex h-11 w-11 cursor-not-allowed items-center justify-center text-white/45 opacity-45"
+        >
+          <AnimatedSkipForwardIcon className="h-7 w-7" filled animate={false} />
+        </button>
+        <button
+          type="button"
+          disabled
+          aria-label="Repetir bloqueado"
+          className="flex h-9 w-9 cursor-not-allowed items-center justify-center text-white/40 opacity-45"
+        >
+          <Repeat className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-black/35 px-3.5 py-1 text-[11px] font-semibold text-white/75 backdrop-blur-md">
+        <Lock className="h-3 w-3 shrink-0" />
+        <span>Controles bloqueados · Solo el jefe de la Jam</span>
+      </div>
+    </div>
+  );
+
+  const renderColaSection = () => (
+    <div data-testid="jam-guest-cola-view" className="space-y-5">
+      {/* Search Bar to Request or Add Songs */}
+      <div className="space-y-3">
+        <form onSubmit={handleSearch} className="flex gap-2">
           <div className="relative flex-1">
-            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40" />
+            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/45" />
             <input
               type="text"
+              aria-label="Buscar canción para pedir en la Jam"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Busca una canción para añadir a la Jam..."
-              className="w-full rounded-full border border-white/15 bg-white/[0.06] py-3 pl-11 pr-9 text-sm text-white placeholder-white/40 outline-none focus:border-white/40"
+              placeholder="Pide una canción para la cola de la Jam…"
+              className="w-full rounded-full border border-white/15 bg-black/35 py-3 pl-11 pr-9 text-sm text-white placeholder-white/45 backdrop-blur-md outline-none focus:border-white/40"
             />
             {query && (
               <button
@@ -283,7 +639,7 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
                   setQuery('');
                   setResults([]);
                 }}
-                className="absolute right-3 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full text-white/50 hover:bg-white/10 hover:text-white"
+                className="absolute right-3 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full text-white/60 hover:bg-white/15 hover:text-white"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -292,23 +648,22 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
           <button
             type="submit"
             disabled={searching}
-            className="shrink-0 cursor-pointer rounded-full bg-white px-5 py-3 text-sm font-bold text-black transition hover:bg-white/90 disabled:opacity-50"
+            className="shrink-0 cursor-pointer rounded-full bg-white px-5 py-3 text-sm font-bold text-[#070709] transition hover:bg-white/90 disabled:opacity-50"
           >
             {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Buscar'}
           </button>
         </form>
 
         {feedback && (
-          <div className="mb-4 rounded-2xl border border-emerald-400/25 bg-emerald-500/10 px-4 py-2.5 text-xs font-medium text-emerald-200">
+          <div className="rounded-2xl border border-emerald-400/25 bg-emerald-500/12 px-4 py-2.5 text-xs font-medium text-emerald-200 backdrop-blur-md">
             {feedback}
           </div>
         )}
 
-        {/* Search Results */}
         {results.length > 0 && (
-          <section className="mb-7 space-y-2">
-            <h2 className="text-[11px] font-bold uppercase tracking-wider text-white/45">
-              Resultados — Toca para añadir a la cola
+          <section className="space-y-2 rounded-2xl border border-white/12 bg-black/45 p-3 backdrop-blur-xl">
+            <h2 className="px-1 text-[11px] font-bold uppercase tracking-wider text-white/55">
+              Resultados — Añade a la Jam
             </h2>
             <div className="space-y-1.5">
               {results.map((track) => {
@@ -316,106 +671,530 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
                 return (
                   <div
                     key={track.id}
-                    className="flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.04] p-2.5"
+                    className="flex items-center gap-3 rounded-xl border border-white/[0.08] bg-white/[0.04] p-2"
                   >
-                    <img
-                      src={track.thumbnailUrl}
-                      alt=""
-                      className="h-11 w-11 shrink-0 rounded-xl object-cover"
-                    />
+                    <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-black/40">
+                      <TrackArtwork
+                        trackId={track.id}
+                        src={track.thumbnailUrl}
+                        title={track.title}
+                        artistName={track.artists[0]?.name}
+                        artistId={track.artists[0]?.id}
+                        alt={track.title}
+                        variant="mini"
+                        imgClassName="h-full w-full object-cover"
+                      />
+                    </div>
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-semibold text-white">{track.title}</div>
-                      <div className="truncate text-xs text-white/55">
+                      <div className="truncate text-xs text-white/60">
                         {track.artists.map((a) => a.name).join(', ')}
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      disabled={already}
-                      onClick={() => void handleRequestTrack(track)}
-                      className={`inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-full px-3.5 py-2 text-xs font-bold transition ${
-                        already
-                          ? 'bg-emerald-500/20 text-emerald-300'
-                          : 'bg-white text-black hover:bg-white/90'
-                      }`}
-                    >
-                      {already ? <Check className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
-                      {already ? 'Añadida' : 'Añadir'}
-                    </button>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {session.allowGuestDirectAdd && !already && (
+                        <button
+                          type="button"
+                          onClick={() => void handleRequestTrack(track, true)}
+                          className="cursor-pointer rounded-full bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#070709] hover:opacity-90"
+                        >
+                          + Siguiente
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        disabled={already}
+                        onClick={() => void handleRequestTrack(track, false)}
+                        className={`inline-flex cursor-pointer items-center gap-1 rounded-full px-3 py-1.5 text-xs font-bold transition ${
+                          already
+                            ? 'bg-emerald-500/20 text-emerald-300'
+                            : 'border border-white/20 bg-white/[0.10] text-white hover:bg-white/[0.20]'
+                        }`}
+                      >
+                        {already ? <Check className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+                        {already ? 'En cola' : 'Pedir'}
+                      </button>
+                    </div>
                   </div>
                 );
               })}
             </div>
           </section>
         )}
+      </div>
 
-        {/* Live Add-Only Jam Queue */}
-        <section className="space-y-2.5">
-          <div className="flex items-center justify-between">
-            <h2 className="text-[11px] font-bold uppercase tracking-wider text-white/45">
-              Añadidas a la cola ({requests.length + (session.queue?.length ?? 0)})
-            </h2>
-          </div>
-
-          {requests.length === 0 && (!session.queue || session.queue.length === 0) ? (
-            <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-6 text-center text-xs text-white/45">
-              <Music2 className="mx-auto mb-2 h-6 w-6 opacity-50" />
-              Aún no hay temas añadidos. ¡Busca arriba y añade el primero!
+      {/* Sonando ahora */}
+      {activeTrack && (
+        <section className="space-y-1.5">
+          <h2 className="px-1 text-[11px] font-bold uppercase tracking-wider text-white/55">
+            Sonando ahora
+          </h2>
+          <div className="flex items-center gap-3 rounded-2xl border border-white/15 bg-white/[0.12] p-2.5 backdrop-blur-md">
+            <div className="relative h-11 w-11 shrink-0 overflow-hidden rounded-lg bg-black/40">
+              <TrackArtwork
+                trackId={activeTrack.id}
+                src={activeTrack.thumbnailUrl}
+                title={activeTrack.title}
+                artistName={activeTrack.artists[0]?.name}
+                artistId={activeTrack.artists[0]?.id}
+                alt={activeTrack.title}
+                variant="mini"
+                imgClassName="h-full w-full object-cover"
+              />
             </div>
-          ) : (
-            <div className="space-y-2">
-              {requests.map((req) => (
-                <div
-                  key={req.id}
-                  className="flex items-center gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.03] p-2.5"
-                >
-                  {req.track?.thumbnailUrl && (
-                    <img
-                      src={req.track.thumbnailUrl}
-                      alt=""
-                      className="h-10 w-10 shrink-0 rounded-xl object-cover"
-                    />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-semibold text-white">
-                      {req.track?.title}
-                    </div>
-                    <div className="mt-0.5 flex items-center gap-1.5 truncate text-[11px] text-white/60">
-                      <UserAvatar
-                        src={req.track?.addedBy?.avatarUrl}
-                        name={req.guestName}
-                        size="xs"
-                      />
-                      <span>
-                        Añadida por <strong className="text-white/90">{req.guestName}</strong>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-bold text-white">{activeTrack.title}</div>
+              <div className="truncate text-xs text-white/70">
+                {activeTrack.artists.map((a) => a.name).join(', ')}
+              </div>
+            </div>
+            <span className="tabular-nums text-xs font-medium text-white/65">
+              {formatDurationSec(activeTrack.durationSec)}
+            </span>
+          </div>
+        </section>
+      )}
+
+      {/* Editable Shared Queue (Move up, drag & drop, remove) */}
+      <section className="space-y-2">
+        <div className="flex items-center justify-between px-1">
+          <h2 className="text-[11px] font-bold uppercase tracking-wider text-white/65">
+            Cola compartida ({upNextQueue.length})
+          </h2>
+          <span className="text-[10.5px] text-white/50">Puedes reordenar y editar</span>
+        </div>
+
+        {upNextQueue.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-white/15 bg-black/25 p-6 text-center text-xs text-white/55 backdrop-blur-md">
+            <Music2 className="mx-auto mb-2 h-6 w-6 opacity-55" />
+            No hay canciones siguientes aún. ¡Busca arriba y pide el primer tema!
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            {upNextQueue.map((track, idx) => (
+              <div
+                key={`${track.id}-${idx}`}
+                data-testid={`jam-guest-queue-row-${track.id}`}
+                draggable
+                onDragStart={(e) => {
+                  setDragFromIdx(idx);
+                  e.dataTransfer.effectAllowed = 'move';
+                }}
+                onDragOver={(e) => {
+                  if (dragFromIdx !== null && dragFromIdx !== idx) {
+                    e.preventDefault();
+                    setDragOverIdx(idx);
+                  }
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (dragFromIdx !== null && dragFromIdx !== idx) {
+                    void handleQueueMove(dragFromIdx, idx);
+                  }
+                  setDragFromIdx(null);
+                  setDragOverIdx(null);
+                }}
+                onDragEnd={() => {
+                  setDragFromIdx(null);
+                  setDragOverIdx(null);
+                }}
+                className={`group flex items-center gap-2.5 rounded-2xl border border-white/10 bg-black/30 p-2 backdrop-blur-md transition-colors hover:bg-white/[0.08] ${
+                  dragOverIdx === idx ? 'border-t-2 border-t-white' : ''
+                }`}
+              >
+                <GripVertical className="hidden h-4 w-4 shrink-0 cursor-grab text-white/40 sm:block" />
+                <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-black/40">
+                  <TrackArtwork
+                    trackId={track.id}
+                    src={track.thumbnailUrl}
+                    title={track.title}
+                    artistName={track.artists[0]?.name}
+                    artistId={track.artists[0]?.id}
+                    alt={track.title}
+                    variant="mini"
+                    imgClassName="h-full w-full object-cover"
+                  />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-semibold text-white">{track.title}</div>
+                  <div className="flex items-center gap-1.5 truncate text-xs text-white/60">
+                    <span className="truncate">{track.artists.map((a) => a.name).join(', ')}</span>
+                    {track.addedBy?.displayName && (
+                      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white/[0.10] px-1.5 py-0.5 text-[10px] font-semibold text-white/85">
+                        {track.addedBy.displayName}
                       </span>
-                    </div>
+                    )}
                   </div>
-                  <span
-                    className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold ${
-                      req.status === 'approved'
-                        ? 'bg-emerald-500/15 text-emerald-300'
-                        : req.status === 'pending'
-                          ? 'bg-amber-500/15 text-amber-300'
-                          : 'bg-rose-500/15 text-rose-300'
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  {idx > 0 && (
+                    <button
+                      type="button"
+                      aria-label={`Subir ${track.title} en la cola`}
+                      onClick={() => void handleQueueMove(idx, idx - 1)}
+                      className="rounded-full bg-white/[0.08] px-2.5 py-1 text-xs font-bold text-white hover:bg-white/[0.18]"
+                    >
+                      ↑
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    aria-label={`Quitar ${track.title} de la cola`}
+                    onClick={() => void handleQueueRemove(track.id, track.title)}
+                    className="rounded-full p-1.5 text-white/60 hover:bg-white/[0.12] hover:text-rose-400"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Incoming Requests History */}
+      {visibleRequests.length > 0 && (
+        <section className="space-y-2 border-t border-white/10 pt-3">
+          <h2 className="px-1 text-[11px] font-bold uppercase tracking-wider text-white/50">
+            Peticiones enviadas ({visibleRequests.length})
+          </h2>
+          <div className="space-y-1.5">
+            {visibleRequests.slice(0, 12).map((req) => (
+              <div
+                key={req.id}
+                className="flex items-center gap-2.5 rounded-xl border border-white/[0.08] bg-black/25 p-2"
+              >
+                {req.track && (
+                  <div className="h-9 w-9 shrink-0 overflow-hidden rounded-lg bg-black/40">
+                    <TrackArtwork
+                      trackId={req.track.id}
+                      src={req.track.thumbnailUrl}
+                      title={req.track.title}
+                      artistName={req.track.artists?.[0]?.name}
+                      alt={req.track.title}
+                      variant="mini"
+                      imgClassName="h-full w-full object-cover"
+                    />
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-xs font-semibold text-white">{req.track?.title}</div>
+                  <div className="truncate text-[10.5px] text-white/55">
+                    Pedida por <strong className="text-white/85">{req.guestName}</strong>
+                  </div>
+                </div>
+                <span
+                  className={`shrink-0 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                    req.status === 'approved'
+                      ? 'bg-emerald-500/15 text-emerald-300'
+                      : req.status === 'pending'
+                        ? 'bg-amber-500/15 text-amber-300'
+                        : 'bg-rose-500/15 text-rose-300'
+                  }`}
+                >
+                  {req.status === 'approved' ? (
+                    'En cola'
+                  ) : req.status === 'pending' ? (
+                    <span className="inline-flex items-center gap-1">
+                      <Clock className="h-2.5 w-2.5" /> Pendiente
+                    </span>
+                  ) : (
+                    'Rechazada'
+                  )}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="relative min-h-dvh overflow-x-hidden bg-[#050507] text-white">
+      {/* Live Dynamic Background */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 z-0 overflow-hidden"
+        style={{
+          background:
+            guestPrefs.backdropStyle === 'minimal'
+              ? 'radial-gradient(ellipse at 50% 24%, rgba(124, 58, 237, 0.25) 0%, rgba(17, 24, 39, 0.4) 55%, #050507 100%)'
+              : '#050507',
+        }}
+      >
+        {guestPrefs.backdropStyle === 'fluid' && (
+          <MobileFluidBackdropCanvas
+            coverUrl={activeCoverUrl ?? ''}
+            crossfadeMs={800}
+            crossfadeLinear={false}
+            ambientMotionEnabled={guestPrefs.ambientMotion}
+            reducedMotionPref={false}
+          />
+        )}
+        {(guestPrefs.backdropStyle === 'paint' || guestPrefs.backdropStyle === 'pulse') && (
+          <ExoticBackdropCanvas
+            key={guestPrefs.backdropStyle}
+            style={guestPrefs.backdropStyle}
+            coverUrl={activeCoverUrl ?? ''}
+            crossfadeMs={800}
+            isPlaying={session.isPlaying}
+            ambientMotionEnabled={guestPrefs.ambientMotion}
+            reducedMotionPref={false}
+            throttleFps={false}
+          />
+        )}
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              'linear-gradient(180deg, rgba(5,5,7,0.48) 0%, rgba(5,5,7,0.28) 40%, rgba(5,5,7,0.72) 100%)',
+          }}
+        />
+      </div>
+
+      {/* Main Container */}
+      <div className="relative z-10 mx-auto max-w-6xl px-4 pb-24 pt-4 sm:px-6 md:pb-12">
+        <header className="mb-5 flex flex-wrap items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2.5">
+            <PMusicLogo size={26} variant="wordmark-only" />
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/30 bg-emerald-500/15 px-3 py-1 text-[11px] font-semibold text-emerald-300 backdrop-blur-md">
+              <Radio className="h-3 w-3 animate-pulse" />
+              Jam · {session.hostName}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setEditingNickname(true)}
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-white/15 bg-black/35 px-3 py-1.5 text-xs font-semibold text-white/85 backdrop-blur-md hover:bg-white/10"
+              title="Cambiar tu apodo"
+            >
+              <UserAvatar name={guestName || 'Invitado'} size="xs" />
+              <span className="max-w-[90px] truncate">{guestName}</span>
+              <Pencil className="h-2.5 w-2.5 opacity-65" />
+            </button>
+            <button
+              type="button"
+              data-testid="jam-guest-settings-btn"
+              onClick={() => setSettingsOpen(true)}
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-white/15 bg-black/35 px-3.5 py-1.5 text-xs font-semibold text-white backdrop-blur-md hover:bg-white/15"
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              <span>Ajustes</span>
+            </button>
+          </div>
+        </header>
+
+        {/* Desktop Two-Column Split */}
+        <div className="hidden gap-10 lg:grid lg:grid-cols-12">
+          <div className="lg:col-span-5">{renderPortadaDeck()}</div>
+          <div className="lg:col-span-7">{renderColaSection()}</div>
+        </div>
+
+        {/* Mobile/Tablet View */}
+        <div className="lg:hidden">
+          {mobileTab === 'Portada' ? renderPortadaDeck() : renderColaSection()}
+        </div>
+      </div>
+
+      {/* Mobile Bottom View Switcher */}
+      <nav
+        aria-label="Navegación Jam invitado"
+        className="fixed inset-x-4 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-30 flex items-center justify-center gap-2 lg:hidden"
+      >
+        <div className="flex items-center gap-1.5 rounded-full border border-white/15 bg-black/65 p-1.5 shadow-2xl backdrop-blur-xl">
+          <button
+            type="button"
+            data-testid="jam-guest-tab-portada"
+            aria-pressed={mobileTab === 'Portada'}
+            onClick={() => setMobileTab('Portada')}
+            className={`inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-bold transition-colors ${
+              mobileTab === 'Portada'
+                ? 'bg-white text-[#070709]'
+                : 'text-white/80 hover:bg-white/10'
+            }`}
+          >
+            <ImageIcon className="h-3.5 w-3.5" />
+            <span>Portada</span>
+          </button>
+          <button
+            type="button"
+            data-testid="jam-guest-tab-cola"
+            aria-pressed={mobileTab === 'Cola'}
+            onClick={() => setMobileTab('Cola')}
+            className={`inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-bold transition-colors ${
+              mobileTab === 'Cola'
+                ? 'bg-white text-[#070709]'
+                : 'text-white/80 hover:bg-white/10'
+            }`}
+          >
+            <ListMusic className="h-3.5 w-3.5" />
+            <span>Cola ({upNextQueue.length})</span>
+          </button>
+        </div>
+      </nav>
+
+      {/* Guest Personal + Locked Jam Audio Settings Modal */}
+      {settingsOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 backdrop-blur-md sm:items-center"
+          onClick={() => setSettingsOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Ajustes de Jam"
+            data-testid="jam-guest-settings-modal"
+            onClick={(e) => e.stopPropagation()}
+            className="max-h-[85dvh] w-full max-w-md space-y-5 overflow-y-auto rounded-[24px] border border-white/15 bg-[#0d0d12]/95 p-5 text-white shadow-2xl backdrop-blur-xl"
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-bold">Ajustes de tu sesión</h2>
+                <p className="text-[11px] text-white/55">
+                  Personaliza tu pantalla · El audio pertenece al jefe
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="Cerrar ajustes"
+                onClick={() => setSettingsOpen(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/80 hover:bg-white/20"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Personalization Section (Interactive for Guest) */}
+            <section className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.04] p-3.5">
+              <div className="text-xs font-bold uppercase tracking-wider text-white/60">
+                Personalización visual (Tu pantalla)
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {(
+                  [
+                    { id: 'fluid', label: 'Fluido' },
+                    { id: 'paint', label: 'Pintura' },
+                    { id: 'pulse', label: 'Pulso' },
+                    { id: 'minimal', label: 'Minimal' },
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    data-testid={`jam-guest-backdrop-${opt.id}`}
+                    aria-pressed={guestPrefs.backdropStyle === opt.id}
+                    onClick={() => updateGuestPrefs({ backdropStyle: opt.id })}
+                    className={`cursor-pointer rounded-xl px-3 py-2 text-left text-xs font-bold transition ${
+                      guestPrefs.backdropStyle === opt.id
+                        ? 'bg-white text-[#070709]'
+                        : 'bg-white/[0.08] text-white/85 hover:bg-white/[0.15]'
                     }`}
                   >
-                    {req.status === 'approved' ? (
-                      'En cola'
-                    ) : req.status === 'pending' ? (
-                      <span className="inline-flex items-center gap-1">
-                        <Clock className="h-3 w-3" /> Pendiente
-                      </span>
-                    ) : (
-                      'Rechazada'
-                    )}
-                  </span>
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center justify-between pt-1">
+                <div>
+                  <div className="text-xs font-semibold">Fondo animado vivo</div>
+                  <div className="text-[10.5px] text-white/55">Movimiento fluido de portada</div>
                 </div>
-              ))}
-            </div>
-          )}
-        </section>
-      </div>
+                <PMusicSwitch
+                  variant="hud"
+                  ariaLabel="Fondo animado vivo"
+                  checked={guestPrefs.ambientMotion}
+                  onChange={() =>
+                    updateGuestPrefs({ ambientMotion: !guestPrefs.ambientMotion })
+                  }
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-semibold">Mostrar tiempo restante</div>
+                  <div className="text-[10.5px] text-white/55">Cuenta regresiva en el reproductor</div>
+                </div>
+                <PMusicSwitch
+                  variant="hud"
+                  ariaLabel="Mostrar tiempo restante"
+                  checked={guestPrefs.showRemainingTime}
+                  onChange={() =>
+                    updateGuestPrefs({ showRemainingTime: !guestPrefs.showRemainingTime })
+                  }
+                />
+              </div>
+            </section>
+
+            {/* Locked Host Audio Controls */}
+            <section
+              data-testid="jam-guest-audio-locked"
+              className="space-y-3 rounded-2xl border border-amber-400/25 bg-amber-500/8 p-3.5"
+            >
+              <div className="flex items-center gap-2 text-xs font-bold text-amber-200">
+                <Lock className="h-3.5 w-3.5 shrink-0" />
+                <span>Solo el jefe de la Jam puede cambiar esto</span>
+              </div>
+
+              <div
+                aria-disabled="true"
+                className="pointer-events-none select-none space-y-3 opacity-50"
+              >
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs font-semibold">
+                    <span className="inline-flex items-center gap-1.5">
+                      <Sliders className="h-3.5 w-3.5" /> Crossfade
+                    </span>
+                    <span className="text-[11px]">
+                      {syncMeta?.crossfadeEnabled ? `${syncMeta.crossfadeSec} s` : 'Desactivado'}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    disabled
+                    min={0}
+                    max={12}
+                    value={syncMeta?.crossfadeSec ?? 4}
+                    onChange={() => {}}
+                    className="w-full"
+                  />
+                </div>
+
+                <div className="space-y-1.5 border-t border-white/10 pt-2.5">
+                  <div className="flex items-center justify-between text-xs font-semibold">
+                    <span>Ecualizador (EQ)</span>
+                    <span className="text-[11px] uppercase">
+                      {syncMeta?.eqEnabled ? syncMeta.eqPreset : 'Plano'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-5 gap-1.5 text-center text-[10px] text-white/65">
+                    {USER_EQ_FREQUENCIES_HZ.map((hz) => (
+                      <div key={hz} className="rounded-lg bg-white/[0.06] py-1.5">
+                        {hz >= 1000 ? `${hz / 1000}k` : hz}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between border-t border-white/10 pt-2.5">
+                  <div className="inline-flex items-center gap-1.5 text-xs font-semibold">
+                    <Disc3 className="h-3.5 w-3.5" /> Modo Sesión DJ
+                  </div>
+                  <PMusicSwitch
+                    variant="hud"
+                    checked={Boolean(syncMeta?.djEnabled)}
+                    disabled
+                    ariaLabel="Modo Sesión DJ (solo el jefe de la Jam)"
+                    onChange={() => {}}
+                  />
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -2,6 +2,7 @@ import React, { useId } from 'react';
 import {
   PMUSIC_P_MARK_HEIGHT,
   PMUSIC_P_MARK_PATH,
+  PMUSIC_P_MARK_VIEWBOX,
   PMUSIC_P_MARK_WIDTH,
   PMUSIC_WORDMARK_HEIGHT,
   PMUSIC_WORDMARK_PATH,
@@ -11,7 +12,7 @@ import {
 
 export interface PMusicLogoProps {
   size?: number;
-  variant?: 'icon' | 'full' | 'wordmark-only';
+  variant?: 'icon' | 'mark' | 'full' | 'wordmark-only';
   showWordmark?: boolean;
   color?: string;
   animated?: boolean;
@@ -33,11 +34,34 @@ export const PMusicLogo: React.FC<PMusicLogoProps> = ({
 }) => {
   const uid = useId().replace(/[^a-zA-Z0-9_-]/g, '');
   const wordmarkOnly = variant === 'wordmark-only';
+  const markOnly = variant === 'mark';
   const showFull = wordmarkOnly || (variant ? variant === 'full' : showWordmark);
   const wmHeight = wordmarkOnly ? Math.round(size * 0.92) : Math.round(size * 0.72);
   const wmWidth = Math.round((wmHeight * PMUSIC_WORDMARK_WIDTH) / PMUSIC_WORDMARK_HEIGHT);
+  const markWidth = Math.max(8, Math.round((size * PMUSIC_P_MARK_WIDTH) / PMUSIC_P_MARK_HEIGHT));
   const clipId = `pm-wm-clip-${uid}`;
   const gleamId = `pm-wm-gleam-${uid}`;
+
+  if (markOnly) {
+    return (
+      <svg
+        width={markWidth}
+        height={size}
+        viewBox={PMUSIC_P_MARK_VIEWBOX}
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+        aria-hidden="true"
+        className={`inline-block shrink-0 select-none ${className}`}
+        style={color ? { color } : undefined}
+      >
+        <path
+          d={PMUSIC_P_MARK_PATH}
+          fill={color ?? 'currentColor'}
+          fillRule="evenodd"
+        />
+      </svg>
+    );
+  }
 
   return (
     <span

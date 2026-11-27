@@ -13,6 +13,7 @@ import {
   ListMusic,
   ListStart,
   Loader2,
+  Lock,
   Maximize,
   Maximize2,
   Mic2,
@@ -101,6 +102,23 @@ import {
   NowPlayingSheet,
 } from './components/Overlays.tsx';
 
+export function dismissBootSplashElement(): void {
+  if (typeof document === 'undefined') return;
+  const el = document.getElementById('pm-boot-splash');
+  if (!el || el.classList.contains('pm-splash-hide')) return;
+  el.classList.add('pm-splash-hide');
+  setTimeout(() => el.remove(), 360);
+}
+
+function resolvePublicJamCodeFromLocation(): string | null {
+  if (typeof window === 'undefined') return null;
+  const pathMatch = window.location.pathname.match(/^\/jam\/([A-Za-z0-9]{4,12})\/?$/);
+  if (pathMatch?.[1]) return pathMatch[1].toUpperCase();
+  const qp = new URLSearchParams(window.location.search).get('jam');
+  if (qp && /^[A-Za-z0-9]{4,12}$/.test(qp.trim())) return qp.trim().toUpperCase();
+  return null;
+}
+
 function hasStoredBrowserAuthSession(): boolean {
   if (typeof window === 'undefined') return false;
   if (isElectronDesktopRuntime() || window.location?.hostname === 'appassets.pmusic.local') {
@@ -121,14 +139,17 @@ function hasStoredBrowserAuthSession(): boolean {
 }
 
 export const App: React.FC = () => {
-  const publicJamCode =
-    typeof window !== 'undefined'
-      ? window.location.pathname.match(/^\/jam\/([A-Za-z0-9]{4,12})\/?$/)?.[1] ?? null
-      : null;
+  const publicJamCode = resolvePublicJamCodeFromLocation();
+
+  useEffect(() => {
+    if (publicJamCode && !hasStoredBrowserAuthSession()) {
+      dismissBootSplashElement();
+    }
+  }, [publicJamCode]);
 
   if (publicJamCode) {
     if (hasStoredBrowserAuthSession()) {
-      return <PMusicMainApp initialJamCode={publicJamCode.toUpperCase()} />;
+      return <PMusicMainApp initialJamCode={publicJamCode} />;
     }
     return <PublicJamGuestPage code={publicJamCode} />;
   }
@@ -285,6 +306,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     addToQueue,
     playNextInQueue,
     addTrackToActiveJam,
+    modifyJamQueueAsGuest,
     joinJamInApp,
     setJamInviteModalOpen,
     searchTracksForPlaylist,
@@ -384,6 +406,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       addToQueue: s.addToQueue,
       playNextInQueue: s.playNextInQueue,
       addTrackToActiveJam: s.addTrackToActiveJam,
+      modifyJamQueueAsGuest: s.modifyJamQueueAsGuest,
       joinJamInApp: s.joinJamInApp,
       setJamInviteModalOpen: s.setJamInviteModalOpen,
       searchTracksForPlaylist: s.searchTracksForPlaylist,
@@ -1067,15 +1090,16 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       setTimeout(() => el.remove(), 420);
     };
     const isOfflineStart = typeof navigator !== 'undefined' && navigator.onLine === false;
-    const maxCapMs = isTestEnv ? 0 : isOfflineStart ? 1000 : 6200;
+    const isJamBoot = Boolean(initialJamCode);
+    const maxCapMs = isTestEnv ? 0 : isJamBoot ? 1500 : isOfflineStart ? 1000 : 6200;
     const safetyTimer = splashUpdating ? null : setTimeout(dismissSplash, maxCapMs);
-    if (!appReady || !homeFeedReady || splashUpdating) {
+    if (!appReady || (!homeFeedReady && !isJamBoot) || splashUpdating) {
       return () => {
         cancelled = true;
         if (safetyTimer) clearTimeout(safetyTimer);
       };
     }
-    if (isTestEnv) {
+    if (isTestEnv || (isJamBoot && !authState.connected)) {
       const hideNow = setTimeout(dismissSplash, 0);
       return () => {
         cancelled = true;
@@ -1504,6 +1528,8 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       void prevTrack();
     }
   };
+
+  const isGuestInJam = Boolean(activeJamSession?.active && activeJamRole === 'guest');
 
   if (initialJamCode && appReady && !authState.connected) {
     return <PublicJamGuestPage code={initialJamCode} />;
@@ -2243,13 +2269,19 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                   type="button"
                   aria-label="Abrir vista de canción"
                   onClick={() => setNowPlayingOpen(true)}
-                  className="relative block w-full overflow-hidden rounded-[12px]"
+                  className="relative block aspect-square w-full overflow-hidden rounded-[12px] shadow-2xl"
                 >
-                  <img
+                  <TrackArtwork
+                    trackId={currentTrack.id}
                     src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
+                    title={currentTrack.title}
+                    artistName={currentTrack.artists[0]?.name}
+                    artistId={currentTrack.artists[0]?.id}
                     alt={currentTrack.title}
+                    variant="card"
+                    loading="eager"
                     draggable={false}
-                    className="pointer-events-none aspect-square w-full select-none object-cover shadow-2xl"
+                    imgClassName="pointer-events-none h-full w-full select-none object-cover"
                   />
                 </button>
               </div>
@@ -2455,11 +2487,18 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                           data-testid={`sidebar-queue-search-result-${resTrack.id}`}
                           className="pm-hover flex items-center gap-2 rounded-[8px] p-1"
                         >
-                          <img
-                            src={resTrack.thumbnailUrl}
-                            alt=""
-                            className="h-8 w-8 shrink-0 rounded-[5px] object-cover"
-                          />
+                          <div className="h-8 w-8 shrink-0 overflow-hidden rounded-[5px]">
+                            <TrackArtwork
+                              trackId={resTrack.id}
+                              src={resTrack.thumbnailUrl}
+                              title={resTrack.title}
+                              artistName={resTrack.artists[0]?.name}
+                              artistId={resTrack.artists[0]?.id}
+                              alt={resTrack.title}
+                              variant="mini"
+                              imgClassName="h-full w-full object-cover"
+                            />
+                          </div>
                           <div className="min-w-0 flex-1">
                             <div className="truncate text-[12px] font-medium pm-text-primary">
                               {resTrack.title}
@@ -2469,7 +2508,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                             </div>
                           </div>
                           <div className="flex shrink-0 items-center gap-0.5">
-                            {!(activeJamSession?.active && activeJamRole === 'guest') && (
+                            {(!isGuestInJam || activeJamSession?.allowGuestDirectAdd) && (
                               <button
                                 type="button"
                                 title="Reproducir a continuación"
@@ -2508,10 +2547,10 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
               )}
 
               <div className="space-y-1">
-                {(activeJamSession?.active && activeJamRole === 'guest'
-                  ? activeJamSession.queue.filter((t) => t.id !== (activeJamSession.currentTrack?.id ?? '')).slice(0, 24)
+                {(isGuestInJam
+                  ? activeJamSession!.queue.filter((t) => t.id !== (activeJamSession?.currentTrack?.id ?? '')).slice(0, 24)
                   : upNextQueue
-                ).map((track, offset) => {
+                ).map((track, offset, arr) => {
                   const realIdx = queueIndex + 1 + offset;
                   const isDropTarget =
                     sidebarDragOverIdx === realIdx && sidebarDragFromIdx !== realIdx;
@@ -2535,7 +2574,15 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                       onDrop={(e) => {
                         if (sidebarDragFromIdx !== null) {
                           e.preventDefault();
-                          moveQueueItem(sidebarDragFromIdx, realIdx);
+                          if (isGuestInJam) {
+                            const fromOffset = sidebarDragFromIdx - (queueIndex + 1);
+                            const draggedItem = arr[fromOffset];
+                            if (draggedItem) {
+                              void modifyJamQueueAsGuest('move', draggedItem.id, offset);
+                            }
+                          } else {
+                            moveQueueItem(sidebarDragFromIdx, realIdx);
+                          }
                           setSidebarDragFromIdx(null);
                           setSidebarDragOverIdx(null);
                         }
@@ -2556,20 +2603,37 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                       <button
                         type="button"
                         aria-label={`Reproducir ${track.title}`}
-                        onClick={() => void playTrack(track, queue)}
+                        onClick={() => {
+                          if (isGuestInJam) {
+                            showToast('Solo el jefe de la Jam controla la reproducción');
+                            return;
+                          }
+                          void playTrack(track, queue);
+                        }}
                         className="h-9 w-9 shrink-0 overflow-hidden rounded-[6px]"
                       >
-                        <img
+                        <TrackArtwork
+                          trackId={track.id}
                           src={track.thumbnailUrl}
-                          alt=""
+                          title={track.title}
+                          artistName={track.artists[0]?.name}
+                          artistId={track.artists[0]?.id}
+                          alt={track.title}
+                          variant="mini"
                           draggable={false}
-                          className="pointer-events-none h-full w-full select-none object-cover"
+                          imgClassName="pointer-events-none h-full w-full select-none object-cover"
                         />
                       </button>
                       <div className="min-w-0 flex-1">
                         <button
                           type="button"
-                          onClick={() => void playTrack(track, queue)}
+                          onClick={() => {
+                            if (isGuestInJam) {
+                              showToast('Solo el jefe de la Jam controla la reproducción');
+                              return;
+                            }
+                            void playTrack(track, queue);
+                          }}
                           className="block max-w-full truncate text-left text-[12.5px] font-medium pm-text-primary hover:underline"
                         >
                           {track.title}
@@ -2600,7 +2664,11 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                         aria-label={`Quitar ${track.title} de la cola`}
                         onClick={(e) => {
                           e.stopPropagation();
-                          removeQueueItem(realIdx);
+                          if (isGuestInJam) {
+                            void modifyJamQueueAsGuest('remove', track.id);
+                          } else {
+                            removeQueueItem(realIdx);
+                          }
                         }}
                         className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full pm-text-tertiary opacity-0 transition-opacity hover:bg-white/10 hover:text-[var(--pm-text-primary)] group-hover/q:opacity-100"
                       >
@@ -2881,11 +2949,16 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                             onClick={() => setNowPlayingOpen(true)}
                             className="relative h-11 w-11 shrink-0 overflow-hidden rounded-[10px] shadow-md"
                           >
-                            <img
+                            <TrackArtwork
+                              trackId={trackItem.id}
                               src={trackItem.thumbnailUrl}
+                              title={trackItem.title}
+                              artistName={trackItem.artists[0]?.name}
+                              artistId={trackItem.artists[0]?.id}
                               alt={trackItem.title}
+                              variant="mini"
                               draggable={false}
-                              className="pointer-events-none h-full w-full select-none object-cover"
+                              imgClassName="pointer-events-none h-full w-full select-none object-cover"
                             />
                           </button>
                           <div className="min-w-0 flex-1 max-w-[200px] xl:max-w-[240px]">
@@ -2955,6 +3028,9 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                 <TrackArtwork
                   trackId={currentTrack.id}
                   src={currentTrack.thumbnailUrl}
+                  title={currentTrack.title}
+                  artistName={currentTrack.artists[0]?.name}
+                  artistId={currentTrack.artists[0]?.id}
                   alt={currentTrack.title}
                   variant="mini"
                   draggable={false}
@@ -3073,6 +3149,8 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
             <div className="pm-dock-interactive pointer-events-auto inline-flex items-center justify-center gap-2 sm:gap-3">
               <button
                 type="button"
+                disabled={isGuestInJam}
+                title={isGuestInJam ? 'Solo el jefe de la Jam controla la reproducción' : undefined}
                 aria-label={
                   shuffleEnabled
                     ? 'Desactivar reproducción aleatoria'
@@ -3084,6 +3162,8 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                   toggleShuffle();
                 }}
                 className={`pm-pressable pm-hover relative inline-flex h-8 w-8 items-center justify-center overflow-visible rounded-full transition-colors ${
+                  isGuestInJam ? 'cursor-not-allowed opacity-40' : ''
+                } ${
                   shuffleEnabled
                     ? 'pm-text-primary'
                     : 'pm-text-tertiary hover:text-[var(--pm-text-primary)]'
@@ -3104,12 +3184,16 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
 
               <button
                 type="button"
+                disabled={isGuestInJam}
+                title={isGuestInJam ? 'Solo el jefe de la Jam controla la reproducción' : undefined}
                 aria-label="Anterior"
                 onClick={() => {
                   triggerDockTransportAnim('prev');
                   void prevTrack();
                 }}
-                className="pm-pressable pm-hover relative inline-flex h-10 w-10 items-center justify-center overflow-visible rounded-full pm-text-primary active:scale-90"
+                className={`pm-pressable pm-hover relative inline-flex h-10 w-10 items-center justify-center overflow-visible rounded-full pm-text-primary ${
+                  isGuestInJam ? 'cursor-not-allowed opacity-40' : 'active:scale-90'
+                }`}
               >
                 <AnimatedSkipBackIcon
                   className="h-[21px] w-[21px]"
@@ -3119,13 +3203,17 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
 
               <button
                 type="button"
+                disabled={isGuestInJam}
+                title={isGuestInJam ? 'Solo el jefe de la Jam controla la reproducción' : undefined}
                 data-testid="dock-play-btn"
                 aria-label={showBuffering ? 'Cargando canción' : isPlaying ? 'Pausar' : 'Reproducir'}
                 onClick={() => {
                   triggerDockTransportAnim('play');
                   void togglePlayPause();
                 }}
-                className="pm-btn-primary pm-pressable relative flex h-[42px] w-[42px] items-center justify-center overflow-visible rounded-full shadow-lg transition-transform duration-200 hover:scale-105 active:scale-90"
+                className={`pm-btn-primary pm-pressable relative flex h-[42px] w-[42px] items-center justify-center overflow-visible rounded-full shadow-lg transition-transform duration-200 ${
+                  isGuestInJam ? 'cursor-not-allowed opacity-45' : 'hover:scale-105 active:scale-90'
+                }`}
               >
                 {showBuffering ? (
                   <Loader2 data-testid="dock-play-loader" className="h-5 w-5 animate-spin" />
@@ -3151,12 +3239,16 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
 
               <button
                 type="button"
+                disabled={isGuestInJam}
+                title={isGuestInJam ? 'Solo el jefe de la Jam controla la reproducción' : undefined}
                 aria-label="Siguiente"
                 onClick={() => {
                   triggerDockTransportAnim('next');
                   void nextTrack();
                 }}
-                className="pm-pressable pm-hover relative inline-flex h-10 w-10 items-center justify-center overflow-visible rounded-full pm-text-primary active:scale-90"
+                className={`pm-pressable pm-hover relative inline-flex h-10 w-10 items-center justify-center overflow-visible rounded-full pm-text-primary ${
+                  isGuestInJam ? 'cursor-not-allowed opacity-40' : 'active:scale-90'
+                }`}
               >
                 <AnimatedSkipForwardIcon
                   className="h-[21px] w-[21px]"
@@ -3166,6 +3258,8 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
 
               <button
                 type="button"
+                disabled={isGuestInJam}
+                title={isGuestInJam ? 'Solo el jefe de la Jam controla la reproducción' : undefined}
                 aria-label={repeatLabel}
                 aria-pressed={repeatMode !== 'off'}
                 onClick={() => {
@@ -3173,6 +3267,8 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                   cycleRepeatMode();
                 }}
                 className={`pm-pressable pm-hover relative inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
+                  isGuestInJam ? 'cursor-not-allowed opacity-40' : ''
+                } ${
                   repeatMode !== 'off'
                     ? 'pm-text-primary'
                     : 'pm-text-tertiary hover:text-[var(--pm-text-primary)]'
@@ -3199,6 +3295,14 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                   />
                 )}
               </button>
+              {isGuestInJam && (
+                <span
+                  title="Solo el jefe de la Jam controla la reproducción"
+                  className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/[0.06] px-2 py-0.5 text-[10px] font-semibold pm-text-secondary"
+                >
+                  <Lock className="h-2.5 w-2.5" /> Jam
+                </span>
+              )}
             </div>
 
             {playerBarStyle === 'classic-center' ? (
@@ -3239,6 +3343,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                     type="range"
                     role="slider"
                     aria-label="Posición de reproducción"
+                    disabled={isGuestInJam}
                     min={0}
                     max={Math.max(1, Math.round(activeDockDurSec))}
                     step={0.1}
@@ -3246,6 +3351,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                       Math.min(activeDockDurSec, Math.round(liveDockPosSec * 10) / 10).toFixed(1)
                     )}
                     onChange={(e) => {
+                      if (isGuestInJam) return;
                       const next = Number(e.target.value);
                       const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
                       manualSeekAtMsRef.current = now;
@@ -3659,11 +3765,15 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                               onClick={() => setNowPlayingOpen(true)}
                               className="relative h-11 w-11 shrink-0 overflow-hidden rounded-[8px] shadow-sm"
                             >
-                              <img
+                              <TrackArtwork
+                                trackId={trackItem.id}
                                 src={trackItem.thumbnailUrl}
+                                title={trackItem.title}
+                                artistName={trackItem.artists[0]?.name}
+                                artistId={trackItem.artists[0]?.id}
                                 alt={trackItem.title}
-                                draggable={false}
-                                className="h-full w-full object-cover"
+                                variant="mini"
+                                imgClassName="h-full w-full object-cover"
                               />
                             </button>
                             <div className="min-w-0 flex-1">
@@ -3717,6 +3827,9 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                       <TrackArtwork
                         trackId={currentTrack.id}
                         src={currentTrack.thumbnailUrl}
+                        title={currentTrack.title}
+                        artistName={currentTrack.artists[0]?.name}
+                        artistId={currentTrack.artists[0]?.id}
                         alt={currentTrack.title}
                         variant="mini"
                         imgClassName="h-full w-full object-cover"
@@ -3769,10 +3882,13 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
               <div className="flex shrink-0 items-center gap-1">
                 <button
                   type="button"
+                  disabled={isGuestInJam}
                   data-testid="mobile-play-btn"
                   aria-label={showBuffering ? 'Cargando canción' : isPlaying ? 'Pausar' : 'Reproducir'}
                   onClick={() => void togglePlayPause()}
-                  className="pm-btn-primary pm-pressable relative flex h-10 w-10 items-center justify-center overflow-visible rounded-full shadow-md"
+                  className={`pm-btn-primary pm-pressable relative flex h-10 w-10 items-center justify-center overflow-visible rounded-full shadow-md ${
+                    isGuestInJam ? 'cursor-not-allowed opacity-45' : ''
+                  }`}
                 >
                   {showBuffering ? (
                     <Loader2 data-testid="mobile-play-loader" className="h-4.5 w-4.5 animate-spin" />
@@ -3798,12 +3914,15 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
 
                 <button
                   type="button"
+                  disabled={isGuestInJam}
                   aria-label="Siguiente canción"
                   onClick={() => {
                     triggerDockTransportAnim('next');
                     void nextTrack();
                   }}
-                  className="pm-pressable relative flex h-10 w-10 items-center justify-center overflow-visible rounded-full pm-text-primary"
+                  className={`pm-pressable relative flex h-10 w-10 items-center justify-center overflow-visible rounded-full pm-text-primary ${
+                    isGuestInJam ? 'cursor-not-allowed opacity-40' : ''
+                  }`}
                 >
                   <AnimatedSkipForwardIcon
                     className="h-5 w-5"

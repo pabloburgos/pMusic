@@ -22,7 +22,7 @@ function pmusicApiDevPlugin(): Plugin {
 }
 
 export default defineConfig({
-  base: './',
+  base: process.env.VERCEL === '1' ? '/' : './',
   plugins: [react(), tailwindcss(), pmusicApiDevPlugin()],
   resolve: {
     alias: {

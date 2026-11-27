@@ -7,6 +7,7 @@ import {
   Download,
   Gamepad2,
   Laptop,
+  Lock,
   Palette,
   RefreshCw,
   Settings,
@@ -181,7 +182,11 @@ const SettingsModalInner: React.FC = () => {
     exportLibraryJson,
     importLibraryJson,
     showToast,
+    activeJamSession,
+    activeJamRole,
   } = usePMusicStore();
+
+  const isGuestInJam = Boolean(activeJamSession?.active && activeJamRole === 'guest');
 
   const [isMobileViewport, setIsMobileViewport] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth < 768 : false
@@ -765,6 +770,21 @@ const SettingsModalInner: React.FC = () => {
                   </p>
                 </div>
 
+                {isGuestInJam && (
+                  <div
+                    data-testid="settings-jam-audio-locked"
+                    className="flex items-center gap-2.5 rounded-[14px] border border-amber-400/30 bg-amber-500/12 px-4 py-3 text-xs font-semibold text-amber-200"
+                  >
+                    <Lock className="h-4 w-4 shrink-0" />
+                    <span>Solo el jefe de la Jam puede cambiar esto (Ecualizador, Crossfade y Calidad)</span>
+                  </div>
+                )}
+
+                <div
+                  aria-disabled={isGuestInJam || undefined}
+                  className={isGuestInJam ? 'pointer-events-none select-none space-y-5 opacity-45' : 'space-y-5'}
+                >
+
                 {/* Quality & Normalization */}
                 <section
                   data-surface="content"
@@ -1015,6 +1035,7 @@ const SettingsModalInner: React.FC = () => {
                     />
                   </div>
                 </section>
+                </div>
               </div>
             )}
 
@@ -1030,9 +1051,22 @@ const SettingsModalInner: React.FC = () => {
                   </p>
                 </div>
 
+                {isGuestInJam && (
+                  <div
+                    data-testid="settings-jam-dj-locked"
+                    className="flex items-center gap-2.5 rounded-[14px] border border-amber-400/30 bg-amber-500/12 px-4 py-3 text-xs font-semibold text-amber-200"
+                  >
+                    <Lock className="h-4 w-4 shrink-0" />
+                    <span>Solo el jefe de la Jam puede cambiar esto (Sesión DJ y Crossfade)</span>
+                  </div>
+                )}
+
                 <section
                   data-surface="content"
-                  className="pm-surface-card space-y-4 rounded-[16px] p-4"
+                  aria-disabled={isGuestInJam || undefined}
+                  className={`pm-surface-card space-y-4 rounded-[16px] p-4 ${
+                    isGuestInJam ? 'pointer-events-none select-none opacity-45' : ''
+                  }`}
                 >
                   <SwitchRow
                     title="Activar Modo Sesión DJ"

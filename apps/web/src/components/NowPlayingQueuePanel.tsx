@@ -18,7 +18,9 @@ import { formatDurationSec, type Track } from '@pmusic/core';
 import { getLivePlaybackPosition, usePMusicStore } from '../store/usePMusicStore.ts';
 import { ArtistLinks } from './ArtistLinks.tsx';
 import { LiquidHeartIcon } from './LiquidHeartIcon.tsx';
+import { TrackArtwork } from './TrackArtwork.tsx';
 import { UserAvatar } from './UserAvatar.tsx';
+import { isJamQueueOpRequest } from '../services/social-service.ts';
 import { clearDraggedTrack, setDraggedTrack } from '../utils/track-dnd.ts';
 
 const ROW_PERF_STYLE: React.CSSProperties = {
@@ -157,12 +159,16 @@ const QueueTrackRow: React.FC<QueueTrackRowProps> = React.memo(
           onClick={() => onPlayAt(realIdx)}
           className="relative h-10 w-10 shrink-0 overflow-hidden rounded-[8px] bg-black/40"
         >
-          <img
+          <TrackArtwork
+            trackId={track.id}
             src={track.thumbnailUrl}
+            title={track.title}
+            artistName={track.artists[0]?.name}
+            artistId={track.artists[0]?.id}
             alt={track.title}
+            variant="mini"
             loading="lazy"
-            decoding="async"
-            className="h-full w-full object-cover"
+            imgClassName="h-full w-full object-cover"
           />
         </button>
 
@@ -286,12 +292,16 @@ const RecommendedQueueRow: React.FC<RecommendedQueueRowProps> = React.memo(
           onClick={() => onPlayRec(rec)}
           className="relative h-10 w-10 shrink-0 overflow-hidden rounded-[8px] bg-black/40"
         >
-          <img
+          <TrackArtwork
+            trackId={rec.id}
             src={rec.thumbnailUrl}
+            title={rec.title}
+            artistName={rec.artists[0]?.name}
+            artistId={rec.artists[0]?.id}
             alt={rec.title}
+            variant="mini"
             loading="lazy"
-            decoding="async"
-            className="h-full w-full object-cover"
+            imgClassName="h-full w-full object-cover"
           />
         </button>
 
@@ -386,6 +396,7 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
   const clearUpNextQueue = usePMusicStore((s) => s.clearUpNextQueue);
   const searchTracksForPlaylist = usePMusicStore((s) => s.searchTracksForPlaylist);
   const addTrackToActiveJam = usePMusicStore((s) => s.addTrackToActiveJam);
+  const modifyJamQueueAsGuest = usePMusicStore((s) => s.modifyJamQueueAsGuest);
   const approveJamRequest = usePMusicStore((s) => s.approveJamRequest);
   const rejectJamRequest = usePMusicStore((s) => s.rejectJamRequest);
   const playTrack = usePMusicStore((s) => s.playTrack);
@@ -470,7 +481,7 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
   const isHostInJam = isJamActive && activeJamRole === 'host';
   const isGuestInJam = isJamActive && activeJamRole === 'guest';
   const pendingJamReqs = isHostInJam
-    ? activeJamRequests.filter((r) => r.status === 'pending')
+    ? activeJamRequests.filter((r) => r.status === 'pending' && !isJamQueueOpRequest(r))
     : [];
   const activeQueueTrack = isGuestInJam
     ? (activeJamSession?.currentTrack ?? queue[queueIndex] ?? currentTrack)
@@ -496,12 +507,26 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
 
   const handleCloseSheet = () => setNowPlayingOpen(false);
   const handlePlayAt = (realIdx: number) => {
+    if (isGuestInJam) {
+      showToast('Solo el jefe de la Jam controla la reproducción');
+      return;
+    }
     const t = queue[realIdx];
     if (t) void playTrack(t, queue.slice(realIdx));
   };
-  const handlePlayRec = (rec: Track) => void playTrack(rec, [rec]);
+  const handlePlayRec = (rec: Track) => {
+    if (isGuestInJam) {
+      showToast('Solo el jefe de la Jam controla la reproducción');
+      return;
+    }
+    void playTrack(rec, [rec]);
+  };
   const handleToggleLike = (t: Track) => void toggleLike(t);
   const handlePromote = (rec: Track) => {
+    if (isGuestInJam) {
+      void addTrackToActiveJam(rec, true);
+      return;
+    }
     promoteRecommendedTrack(rec.id);
     showToast(`«${rec.title}» subida a Tu cola`);
   };
@@ -516,13 +541,41 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
   const handleDragLeaveIdx = (realIdx: number) => {
     if (dragOverQueueIdx === realIdx) setDragOverQueueIdx(null);
   };
+  const handleQueueMove = (
+    fromRealIdx: number,
+    toRealIdx: number,
+    movedKey: string,
+    displacedKey?: string | null
+  ) => {
+    if (isGuestInJam) {
+      const fromRel = fromRealIdx - (queueIndex + 1);
+      const toRel = toRealIdx - (queueIndex + 1);
+      const target = upNextTracks[fromRel];
+      if (target) {
+        void modifyJamQueueAsGuest('move', target.id, Math.max(0, toRel));
+      }
+      return;
+    }
+    moveWithFlip(fromRealIdx, toRealIdx, movedKey, displacedKey);
+  };
+  const handleQueueRemove = (realIdx: number) => {
+    if (isGuestInJam) {
+      const rel = realIdx - (queueIndex + 1);
+      const target = upNextTracks[rel];
+      if (target) {
+        void modifyJamQueueAsGuest('remove', target.id);
+      }
+      return;
+    }
+    removeQueueItem(realIdx);
+  };
   const handleDropIdx = (e: React.DragEvent<HTMLDivElement>, realIdx: number, rowKey: string) => {
     e.preventDefault();
     const from = dragQueueIdx ?? Number.parseInt(e.dataTransfer.getData('text/plain'), 10);
     setDragQueueIdx(null);
     setDragOverQueueIdx(null);
     if (Number.isFinite(from) && from > queueIndex && from !== realIdx) {
-      moveWithFlip(from, realIdx, rowKey);
+      handleQueueMove(from, realIdx, rowKey);
     }
   };
 
@@ -659,13 +712,19 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
                 className="flex items-center justify-between gap-2.5 rounded-[10px] px-2.5 py-1.5 transition-colors duration-75 hover:bg-white/[0.10]"
               >
                 <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                  <img
-                    src={cand.thumbnailUrl}
-                    alt=""
-                    loading="lazy"
-                    decoding="async"
-                    className="h-8 w-8 shrink-0 rounded-[6px] object-cover"
-                  />
+                  <div className="h-8 w-8 shrink-0 overflow-hidden rounded-[6px] bg-black/40">
+                    <TrackArtwork
+                      trackId={cand.id}
+                      src={cand.thumbnailUrl}
+                      title={cand.title}
+                      artistName={cand.artists[0]?.name}
+                      artistId={cand.artists[0]?.id}
+                      alt={cand.title}
+                      variant="mini"
+                      loading="lazy"
+                      imgClassName="h-full w-full object-cover"
+                    />
+                  </div>
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-xs font-semibold leading-snug text-white">
                       {cand.title}
@@ -680,7 +739,7 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
-                  {!isGuestInJam && (
+                  {(!isGuestInJam || activeJamSession?.allowGuestDirectAdd) && (
                     <button
                       type="button"
                       onClick={() => void addTrackToActiveJam(cand, true)}
@@ -715,14 +774,19 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
               className="flex items-center justify-between gap-2 rounded-[10px] bg-black/30 px-2.5 py-1.5"
             >
               <div className="flex min-w-0 flex-1 items-center gap-2">
-                {req.track?.thumbnailUrl && (
-                  <img
-                    src={req.track.thumbnailUrl}
-                    alt=""
-                    loading="lazy"
-                    decoding="async"
-                    className="h-8 w-8 shrink-0 rounded-md object-cover"
-                  />
+                {req.track && (
+                  <div className="h-8 w-8 shrink-0 overflow-hidden rounded-md bg-black/40">
+                    <TrackArtwork
+                      trackId={req.track.id}
+                      src={req.track.thumbnailUrl}
+                      title={req.track.title}
+                      artistName={req.track.artists?.[0]?.name}
+                      alt={req.track.title}
+                      variant="mini"
+                      loading="lazy"
+                      imgClassName="h-full w-full object-cover"
+                    />
+                  </div>
                 )}
                 <div className="min-w-0">
                   <div className="truncate text-xs font-semibold text-white">
@@ -806,12 +870,16 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
                 onClick={() => void playTrack(activeQueueTrack, queue)}
                 className="relative h-10 w-10 shrink-0 overflow-hidden rounded-[8px] bg-black/40"
               >
-                <img
+                <TrackArtwork
+                  trackId={activeQueueTrack.id}
                   src={activeQueueTrack.thumbnailUrl}
+                  title={activeQueueTrack.title}
+                  artistName={activeQueueTrack.artists[0]?.name}
+                  artistId={activeQueueTrack.artists[0]?.id}
                   alt={activeQueueTrack.title}
+                  variant="mini"
                   draggable={false}
-                  decoding="async"
-                  className="pointer-events-none h-full w-full select-none object-cover"
+                  imgClassName="pointer-events-none h-full w-full select-none object-cover"
                 />
                 {isPlaying && (
                   <span className="absolute inset-0 flex items-center justify-center bg-black/45">
@@ -933,9 +1001,9 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
                   onPlayAt={handlePlayAt}
                   onCloseSheet={handleCloseSheet}
                   onToggleLike={handleToggleLike}
-                  onMoveWithFlip={moveWithFlip}
+                  onMoveWithFlip={handleQueueMove}
                   onOpenMenu={openTrackMenu}
-                  onRemoveAt={removeQueueItem}
+                  onRemoveAt={handleQueueRemove}
                   onDragStartIdx={setDragQueueIdx}
                   onDragEndIdx={() => {
                     setDragQueueIdx(null);
