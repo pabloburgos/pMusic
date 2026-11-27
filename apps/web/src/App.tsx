@@ -297,6 +297,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     authState,
     userProfile,
     sharedPlaylists,
+    friendActivities,
     activeJamSession,
     activeJamRole,
     setAuthOnboardingOpen,
@@ -400,6 +401,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       authState: s.authState,
       userProfile: s.userProfile,
       sharedPlaylists: s.sharedPlaylists,
+      friendActivities: s.friendActivities,
       activeJamSession: s.activeJamSession,
       activeJamRole: s.activeJamRole,
       setAuthOnboardingOpen: s.setAuthOnboardingOpen,
@@ -1853,7 +1855,16 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                       }
                     >
                       {item.icon}
-                      {!sidebarCollapsed && <span>{item.label}</span>}
+                      {!sidebarCollapsed && <span className="flex-1 text-left">{item.label}</span>}
+                      {item.id === 'Social' && Object.keys(friendActivities).length > 0 && (
+                        <span
+                          data-testid="social-live-friends-dot"
+                          className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-400"
+                        >
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                          {!sidebarCollapsed && Object.keys(friendActivities).length}
+                        </span>
+                      )}
                     </button>
                   );
                 })}
@@ -4021,7 +4032,15 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                       : 'pm-text-secondary hover:text-[var(--pm-text-primary)]'
                   }`}
                 >
-                  {item.icon}
+                  <span className="relative inline-flex items-center justify-center">
+                    {item.icon}
+                    {item.id === 'Social' && Object.keys(friendActivities).length > 0 && (
+                      <span
+                        data-testid="mobile-social-live-friends-dot"
+                        className="absolute -right-1 -top-0.5 h-2 w-2 rounded-full bg-emerald-400 ring-2 ring-black/60"
+                      />
+                    )}
+                  </span>
                   <span className="mt-0.5 text-[11px]">{item.label}</span>
                 </button>
               );

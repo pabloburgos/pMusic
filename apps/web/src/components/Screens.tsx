@@ -4594,6 +4594,8 @@ export const LibraryScreen: React.FC = React.memo(() => {
     openArtistDetail,
     toggleFavoriteArtist,
     setImportModalOpen,
+    setActiveTab,
+    setSocialSubTab,
     removeOfflineTrack,
     playTrack,
     playCollection,
@@ -4621,6 +4623,8 @@ export const LibraryScreen: React.FC = React.memo(() => {
       openArtistDetail: s.openArtistDetail,
       toggleFavoriteArtist: s.toggleFavoriteArtist,
       setImportModalOpen: s.setImportModalOpen,
+      setActiveTab: s.setActiveTab,
+      setSocialSubTab: s.setSocialSubTab,
       removeOfflineTrack: s.removeOfflineTrack,
       playTrack: s.playTrack,
       playCollection: s.playCollection,
@@ -4693,6 +4697,19 @@ export const LibraryScreen: React.FC = React.memo(() => {
             className="pm-btn-secondary pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full sm:hidden"
           >
             <Plus className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            data-testid="library-my-top-btn"
+            aria-label="Mi Top semanal y mensual"
+            onClick={() => {
+              setActiveTab('Social');
+              setSocialSubTab('top');
+            }}
+            className="pm-btn-secondary pm-pressable inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-xs font-bold sm:h-auto sm:px-4 sm:py-2"
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            <span>Mi Top</span>
           </button>
           <button
             type="button"

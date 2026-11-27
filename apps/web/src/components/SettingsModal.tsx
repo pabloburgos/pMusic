@@ -27,6 +27,7 @@ import {
   PMUSIC_THEMES,
 } from '../utils/themes.ts';
 import { PMusicSwitch } from './PMusicSwitch.tsx';
+import { isElectronDesktopRuntime } from '../platform/web-bridge.ts';
 import { UserAvatar } from './UserAvatar.tsx';
 
 type SettingsCategoryId =
@@ -135,6 +136,9 @@ const SettingsModalInner: React.FC = () => {
     offlineAutoPlaylistIds,
     playlists,
     sharedPlaylists,
+    shareListeningActivity,
+    minimizeToTrayOnClose,
+    desktopTrackNotifications,
     setDevicesSheetOpen,
     setDeviceName,
     signInWithGoogle,
@@ -185,6 +189,11 @@ const SettingsModalInner: React.FC = () => {
     clearOfflineCache,
     removePlaylistOffline,
     setWifiOnlyDownloads,
+    setShareListeningActivity,
+    setMinimizeToTrayOnClose,
+    setDesktopTrackNotifications,
+    setActiveTab,
+    setSocialSubTab,
     exportLibraryJson,
     importLibraryJson,
     showToast,
@@ -1785,14 +1794,88 @@ const SettingsModalInner: React.FC = () => {
                         {userProfile?.username ? ` · @${userProfile.username}` : ''} ·{' '}
                         {wrappedLocalCount} escuchas guardadas en segundo plano (se desbloquea en diciembre)
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => void openWrappedModal()}
-                        className="pm-btn-secondary rounded-full px-3 py-1.5 text-[11px] font-semibold"
-                      >
-                        Vista previa Wrapped
-                      </button>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          data-testid="settings-open-my-top-btn"
+                          onClick={() => {
+                            setSettingsOpen(false);
+                            setActiveTab('Social');
+                            setSocialSubTab('top');
+                          }}
+                          className="pm-btn-secondary rounded-full px-3 py-1.5 text-[11px] font-semibold"
+                        >
+                          Mi Top (7d / 30d)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void openWrappedModal()}
+                          className="pm-btn-secondary rounded-full px-3 py-1.5 text-[11px] font-semibold"
+                        >
+                          Vista previa Wrapped
+                        </button>
+                      </div>
                     </div>
+
+                    <div className="mt-3 flex items-center justify-between gap-3 border-t pm-border pt-3">
+                      <div>
+                        <div className="text-xs font-bold pm-text-primary">
+                          Compartir lo que escucho con amigos
+                        </div>
+                        <div className="text-[11px] pm-text-secondary">
+                          Muestra en tiempo real qué canción escuchas a tus amigos aceptados
+                        </div>
+                      </div>
+                      <PMusicSwitch
+                        checked={shareListeningActivity}
+                        onChange={() => setShareListeningActivity(!shareListeningActivity)}
+                        ariaLabel="Compartir lo que escucho con amigos"
+                        testId="settings-share-listening-toggle"
+                      />
+                    </div>
+
+                    {isElectronDesktopRuntime() && (
+                      <div
+                        data-testid="settings-desktop-tray-section"
+                        className="mt-3 space-y-2.5 border-t pm-border pt-3"
+                      >
+                        <div className="text-xs font-bold pm-text-primary">
+                          Bandeja del sistema (Windows)
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-xs font-semibold pm-text-primary">
+                              Minimizar a la bandeja al cerrar (X)
+                            </div>
+                            <div className="text-[11px] pm-text-secondary">
+                              Mantiene la música sonando en segundo plano en la barra de tareas
+                            </div>
+                          </div>
+                          <PMusicSwitch
+                            checked={minimizeToTrayOnClose}
+                            onChange={() => setMinimizeToTrayOnClose(!minimizeToTrayOnClose)}
+                            ariaLabel="Minimizar a la bandeja al cerrar"
+                            testId="settings-minimize-to-tray-toggle"
+                          />
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-xs font-semibold pm-text-primary">
+                              Notificar al cambiar de canción minimizado
+                            </div>
+                            <div className="text-[11px] pm-text-secondary">
+                              Muestra un aviso silencioso de Windows al pasar de pista
+                            </div>
+                          </div>
+                          <PMusicSwitch
+                            checked={desktopTrackNotifications}
+                            onChange={() => setDesktopTrackNotifications(!desktopTrackNotifications)}
+                            ariaLabel="Notificar al cambiar de canción minimizado"
+                            testId="settings-tray-notifications-toggle"
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </section>
 

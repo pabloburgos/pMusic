@@ -142,10 +142,13 @@ import {
 import {
   appendLocalWrappedEvent,
   buildWrappedListenEvent,
+  computePeriodTopStats,
   computeWrappedSummary,
   isWrappedSeason,
   loadLocalWrappedEvents,
   mergeWrappedEvents,
+  type PeriodTopStats,
+  type TopStatsWindow,
   type WrappedSummary,
 } from '../lib/wrapped-stats.ts';
 import {
@@ -201,6 +204,7 @@ import {
   extractJamSyncMeta,
   updateJamRequestStatus,
   updateJamSessionState,
+  type FriendListeningActivity,
   type FriendRecord,
   type JamQueueOpPayload,
   type JamRequestRecord,
@@ -210,7 +214,9 @@ import {
 } from '../services/social-service.ts';
 import {
   defaultPlatformBridge,
+  getDesktopTrayPrefs,
   isElectronDesktopRuntime,
+  setDesktopTrayPrefs,
 } from '../platform/web-bridge.ts';
 import {
   applyAmbientPaletteFromCover,
@@ -227,7 +233,7 @@ import {
 } from '../utils/themes.ts';
 
 export type MainNavTab = 'Inicio' | 'Explorar' | 'Buscar' | 'Biblioteca' | 'Social';
-export type SocialSubTab = 'jam' | 'amigos' | 'compartidas';
+export type SocialSubTab = 'jam' | 'amigos' | 'compartidas' | 'top';
 export type NowPlayingSubTab = 'Portada' | 'Letras' | 'Cola';
 export type SearchScopeTab = 'Todo' | 'Canciones' | 'Artistas' | 'Álbumes' | 'Playlists';
 export type LibraryCategoryTab =
@@ -537,6 +543,23 @@ let lastMediaSessionSyncWallMs = 0;
 let homeShelvesBuildEpoch = 0;
 let socialRealtimeChannel: any = null;
 let socialSubscribedUserId = '';
+let friendPresenceChannel: any = null;
+let friendPresenceReady = false;
+let friendPresenceUserId = '';
+let triggerPresenceSync: (() => void) | null = null;
+const SHARE_LISTENING_STORAGE_KEY = 'pmusic.social.shareListening';
+
+function readShareListeningPref(): boolean {
+  try {
+    return (
+      typeof localStorage === 'undefined' ||
+      localStorage.getItem(SHARE_LISTENING_STORAGE_KEY) !== '0'
+    );
+  } catch {
+    return true;
+  }
+}
+
 export const JAM_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 
 let jamRealtimeChannel: any = null;
@@ -1223,6 +1246,11 @@ export interface PMusicStoreState {
   friends: FriendRecord[];
   sharedPlaylists: SharedPlaylistRecord[];
   socialSubTab: SocialSubTab;
+  shareListeningActivity: boolean;
+  friendActivities: Record<string, FriendListeningActivity>;
+  personalTopStats: Record<TopStatsWindow, PeriodTopStats | null>;
+  minimizeToTrayOnClose: boolean;
+  desktopTrackNotifications: boolean;
   activeJamCode: string | null;
   activeJamSession: JamSessionRecord | null;
   activeJamRole: 'host' | 'guest' | null;
@@ -1493,6 +1521,11 @@ export interface PMusicStoreState {
   checkUsernameAvailable: (username: string) => Promise<boolean>;
   openWrappedModal: (year?: number) => Promise<void>;
   closeWrappedModal: () => void;
+  setMinimizeToTrayOnClose: (enabled: boolean) => void;
+  setDesktopTrackNotifications: (enabled: boolean) => void;
+  setShareListeningActivity: (enabled: boolean) => void;
+  loadPersonalTopStats: (window: TopStatsWindow) => Promise<PeriodTopStats>;
+  playFriendActivityTrack: (activity: FriendListeningActivity) => Promise<void>;
   pairDemoCompanionDevice: () => void;
   sendRemoteDeviceCommand: (
     targetDeviceId: string,
@@ -2681,6 +2714,38 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     processedJamRequestIds.clear();
   }
 
+  function syncOwnListeningPresence(): void {
+    if (!friendPresenceChannel || !friendPresenceReady) return;
+    const cur = get();
+    try {
+      if (
+        !cur.shareListeningActivity ||
+        !cur.isPlaying ||
+        !cur.currentTrack?.id ||
+        !cur.authState.connected ||
+        !cur.authState.userId
+      ) {
+        void friendPresenceChannel.untrack?.();
+        return;
+      }
+      void friendPresenceChannel.track?.({
+        userId: cur.authState.userId,
+        username: cur.userProfile?.username,
+        displayName: cur.userProfile?.displayName ?? cur.authState.displayName,
+        avatarUrl: cur.userProfile?.avatarUrl ?? cur.authState.avatarUrl,
+        trackId: cur.currentTrack.id,
+        trackTitle: cur.currentTrack.title,
+        trackArtist: cur.currentTrack.artists.map((a) => a.name).join(', '),
+        thumbnailUrl: cur.currentTrack.thumbnailUrl,
+        isPlaying: true,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch {
+      // ignore realtime presence error
+    }
+  }
+  triggerPresenceSync = syncOwnListeningPresence;
+
   function cleanupSocialRealtime(): void {
     if (socialRealtimeChannel) {
       try {
@@ -2691,7 +2756,20 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       }
       socialRealtimeChannel = null;
     }
+    if (friendPresenceChannel) {
+      try {
+        void friendPresenceChannel.untrack?.();
+        void friendPresenceChannel.unsubscribe?.();
+        getSyncSupabaseClient()?.removeChannel?.(friendPresenceChannel);
+      } catch {
+        // ignore
+      }
+      friendPresenceChannel = null;
+    }
+    friendPresenceReady = false;
+    friendPresenceUserId = '';
     socialSubscribedUserId = '';
+    set({ friendActivities: {} });
   }
 
   let lastHostJamPushAtMs = 0;
@@ -3704,6 +3782,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   friends: [],
   sharedPlaylists: [],
   socialSubTab: 'jam',
+  shareListeningActivity: readShareListeningPref(),
+  friendActivities: {},
+  personalTopStats: { '7d': null, '30d': null },
+  minimizeToTrayOnClose: true,
+  desktopTrackNotifications: false,
   activeJamCode: null,
   activeJamSession: null,
   activeJamRole: null,
@@ -4508,6 +4591,19 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       if (!isTestEnv && !dismissed) {
         set({ authOnboardingOpen: true });
       }
+    }
+
+    if (isElectronDesktopRuntime()) {
+      void getDesktopTrayPrefs()
+        .then((prefs) => {
+          if (prefs) {
+            set({
+              minimizeToTrayOnClose: prefs.minimizeToTrayOnClose,
+              desktopTrackNotifications: prefs.notifyOnTrackChange,
+            });
+          }
+        })
+        .catch(() => {});
     }
   },
 
@@ -6789,6 +6885,62 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           )
           .subscribe();
       }
+
+      if (friendPresenceUserId !== myUserId) {
+        friendPresenceUserId = myUserId;
+        friendPresenceReady = false;
+        const syncPresenceMap = () => {
+          if (!friendPresenceChannel) return;
+          const stNow = get();
+          const acceptedIds = new Set(
+            stNow.friends
+              .filter((f) => f.status === 'accepted')
+              .map((f) => f.otherProfile.userId)
+          );
+          const rawState = (friendPresenceChannel.presenceState?.() ?? {}) as Record<
+            string,
+            Array<Partial<FriendListeningActivity>>
+          >;
+          const nextActivities: Record<string, FriendListeningActivity> = {};
+          for (const entries of Object.values(rawState)) {
+            for (const entry of entries ?? []) {
+              const uid = entry?.userId;
+              if (!uid || uid === myUserId || !acceptedIds.has(uid) || !entry.trackTitle) {
+                continue;
+              }
+              const prev = nextActivities[uid];
+              if (!prev || (entry.updatedAt ?? '') >= prev.updatedAt) {
+                nextActivities[uid] = {
+                  userId: uid,
+                  username: entry.username,
+                  displayName: entry.displayName,
+                  avatarUrl: entry.avatarUrl,
+                  trackId: entry.trackId ?? uid,
+                  trackTitle: entry.trackTitle,
+                  trackArtist: entry.trackArtist ?? '',
+                  thumbnailUrl: entry.thumbnailUrl,
+                  isPlaying: entry.isPlaying !== false,
+                  updatedAt: entry.updatedAt ?? new Date().toISOString(),
+                };
+              }
+            }
+          }
+          set({ friendActivities: nextActivities });
+        };
+
+        friendPresenceChannel = sb
+          .channel('pmusic-friends-presence-v1')
+          .on('presence', { event: 'sync' }, syncPresenceMap)
+          .on('presence', { event: 'join' }, syncPresenceMap)
+          .on('presence', { event: 'leave' }, syncPresenceMap)
+          .subscribe((status: string) => {
+            if (status === 'SUBSCRIBED') {
+              friendPresenceReady = true;
+              syncOwnListeningPresence();
+              syncPresenceMap();
+            }
+          });
+      }
     } catch {
       // ignore offline social sync failure
     }
@@ -8802,6 +8954,72 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   closeWrappedModal: () => set({ wrappedModalOpen: false }),
 
+  setMinimizeToTrayOnClose: (enabled) => {
+    set({ minimizeToTrayOnClose: enabled });
+    void setDesktopTrayPrefs({ minimizeToTrayOnClose: enabled });
+  },
+
+  setDesktopTrackNotifications: (enabled) => {
+    set({ desktopTrackNotifications: enabled });
+    void setDesktopTrayPrefs({ notifyOnTrackChange: enabled });
+  },
+
+  setShareListeningActivity: (enabled) => {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(SHARE_LISTENING_STORAGE_KEY, enabled ? '1' : '0');
+      }
+    } catch {
+      // ignore storage errors
+    }
+    set({ shareListeningActivity: enabled });
+    syncOwnListeningPresence();
+  },
+
+  loadPersonalTopStats: async (window) => {
+    const localEvents = loadLocalWrappedEvents();
+    let remoteEvents: typeof localEvents = [];
+    try {
+      remoteEvents =
+        (await syncEngine.fetchYearListenEvents?.(new Date().getFullYear())) ?? [];
+    } catch {
+      remoteEvents = [];
+    }
+    const merged = mergeWrappedEvents(localEvents, remoteEvents);
+    const stats = computePeriodTopStats(merged, window);
+    set((prev) => ({
+      personalTopStats: { ...prev.personalTopStats, [window]: stats },
+    }));
+    return stats;
+  },
+
+  playFriendActivityTrack: async (activity) => {
+    const st = get();
+    const candidates: Track[] = [
+      ...st.playHistory.map((h) => h.track),
+      ...st.likedTracks.map((l) => l.track),
+      ...st.playlists.flatMap((p) => p.tracks),
+      ...st.homeShelves.flatMap((s) => s.tracks ?? []),
+    ];
+    const localMatch = candidates.find(
+      (t) =>
+        t?.id === activity.trackId ||
+        (t?.title.trim().toLowerCase() === activity.trackTitle.trim().toLowerCase() &&
+          (!activity.trackArtist ||
+            t.artists.some((a) =>
+              a.name.toLowerCase().includes(activity.trackArtist.toLowerCase())
+            )))
+    );
+    if (localMatch) {
+      await st.playTrack(localMatch);
+      return;
+    }
+    const query = [activity.trackTitle, activity.trackArtist].filter(Boolean).join(' ').trim();
+    if (query) {
+      await st.playFromVoiceQuery(query);
+    }
+  },
+
   pairDemoCompanionDevice: () => {
     syncEngine.upsertPeerDevice({
       device_id: 'pmusic_companion_android',
@@ -9453,8 +9671,26 @@ if (typeof window !== 'undefined') {
   let prevHome = usePMusicStore.getState().homeShelves;
   let prevPl = usePMusicStore.getState().playlists;
   let prevLiked = usePMusicStore.getState().likedTracks;
+  let prevPresenceTrackId = usePMusicStore.getState().currentTrack?.id;
+  let prevPresencePlaying = usePMusicStore.getState().isPlaying;
+  let prevPresenceShare = usePMusicStore.getState().shareListeningActivity;
   let carSyncTimer: ReturnType<typeof setTimeout> | null = null;
+  let presenceSyncTimer: ReturnType<typeof setTimeout> | null = null;
   usePMusicStore.subscribe((st) => {
+    if (
+      st.currentTrack?.id !== prevPresenceTrackId ||
+      st.isPlaying !== prevPresencePlaying ||
+      st.shareListeningActivity !== prevPresenceShare
+    ) {
+      prevPresenceTrackId = st.currentTrack?.id;
+      prevPresencePlaying = st.isPlaying;
+      prevPresenceShare = st.shareListeningActivity;
+      if (presenceSyncTimer) clearTimeout(presenceSyncTimer);
+      presenceSyncTimer = setTimeout(() => {
+        presenceSyncTimer = null;
+        triggerPresenceSync?.();
+      }, 300);
+    }
     if (st.homeShelves !== prevHome || st.playlists !== prevPl || st.likedTracks !== prevLiked) {
       prevHome = st.homeShelves;
       prevPl = st.playlists;

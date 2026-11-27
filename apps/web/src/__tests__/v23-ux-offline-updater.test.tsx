@@ -248,7 +248,7 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
       resolve(__dirname, '../../../mobile/scripts/build-apk.mjs'),
       'utf-8'
     );
-    expect(buildApkSrc).toMatch(/versionName="0\.23\.\d+"/);
+    expect(buildApkSrc).toMatch(/versionName="0\.2\d+\.\d+"/);
     expect(buildApkSrc).toContain('ic_media_play.xml');
     expect(buildApkSrc).toContain('ic_media_pause.xml');
     expect(buildApkSrc).toContain('ic_media_prev.xml');

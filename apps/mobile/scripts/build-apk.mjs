@@ -57,6 +57,7 @@ const resDir = resolve(workDir, 'res');
 const valuesDir = resolve(resDir, 'values');
 const drawableDir = resolve(resDir, 'drawable');
 const xmlDir = resolve(resDir, 'xml');
+const layoutDir = resolve(resDir, 'layout');
 const assetsPublicDir = resolve(workDir, 'assets/public');
 const javaSrcDir = resolve(workDir, 'java/es/pmusic/app');
 const classesDir = resolve(workDir, 'classes');
@@ -65,6 +66,7 @@ const dexDir = resolve(workDir, 'dex');
 mkdirSync(valuesDir, { recursive: true });
 mkdirSync(drawableDir, { recursive: true });
 mkdirSync(xmlDir, { recursive: true });
+mkdirSync(layoutDir, { recursive: true });
 mkdirSync(assetsPublicDir, { recursive: true });
 mkdirSync(javaSrcDir, { recursive: true });
 mkdirSync(classesDir, { recursive: true });
@@ -430,14 +432,193 @@ writeFileSync(
   'utf-8'
 );
 
+// Home screen widget drawables, metadata & layout
+writeFileSync(
+  resolve(drawableDir, 'widget_bg_default.xml'),
+  `<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <gradient
+        android:angle="135"
+        android:startColor="#1E1E2B"
+        android:endColor="#0A0A10" />
+    <corners android:radius="22dp" />
+    <stroke android:width="1dp" android:color="#26FFFFFF" />
+</shape>
+`,
+  'utf-8'
+);
+
+writeFileSync(
+  resolve(drawableDir, 'widget_btn_play_bg.xml'),
+  `<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <solid android:color="#7C3AED" />
+</shape>
+`,
+  'utf-8'
+);
+
+writeFileSync(
+  resolve(drawableDir, 'widget_btn_subtle_bg.xml'),
+  `<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <solid android:color="#26FFFFFF" />
+</shape>
+`,
+  'utf-8'
+);
+
+writeFileSync(
+  resolve(drawableDir, 'widget_cover_bg.xml'),
+  `<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#191922" />
+    <corners android:radius="14dp" />
+</shape>
+`,
+  'utf-8'
+);
+
+writeFileSync(
+  resolve(xmlDir, 'pmusic_widget_info.xml'),
+  `<?xml version="1.0" encoding="utf-8"?>
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="250dp"
+    android:minHeight="110dp"
+    android:minResizeWidth="220dp"
+    android:minResizeHeight="72dp"
+    android:targetCellWidth="4"
+    android:targetCellHeight="2"
+    android:resizeMode="horizontal|vertical"
+    android:updatePeriodMillis="0"
+    android:initialLayout="@layout/widget_pmusic"
+    android:previewImage="@drawable/ic_launcher"
+    android:widgetCategory="home_screen" />
+`,
+  'utf-8'
+);
+
+writeFileSync(
+  resolve(layoutDir, 'widget_pmusic.xml'),
+  `<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_bg_default">
+
+    <ImageView
+        android:id="@+id/widget_bg_image"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="fitXY"
+        android:contentDescription="@null" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="12dp">
+
+        <ImageView
+            android:id="@+id/widget_cover"
+            android:layout_width="62dp"
+            android:layout_height="62dp"
+            android:scaleType="centerCrop"
+            android:background="@drawable/widget_cover_bg"
+            android:src="@drawable/ic_launcher"
+            android:contentDescription="Portada actual" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:paddingStart="12dp"
+            android:paddingEnd="8dp">
+
+            <TextView
+                android:id="@+id/widget_badge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="pMusic"
+                android:textSize="10sp"
+                android:textColor="#C4B5FD"
+                android:textStyle="bold"
+                android:maxLines="1" />
+
+            <TextView
+                android:id="@+id/widget_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="pMusic"
+                android:textSize="15sp"
+                android:textColor="#FFFFFFFF"
+                android:textStyle="bold"
+                android:maxLines="1"
+                android:ellipsize="end" />
+
+            <TextView
+                android:id="@+id/widget_artist"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Toca para reproducir"
+                android:textSize="12sp"
+                android:textColor="#B8FFFFFF"
+                android:maxLines="1"
+                android:ellipsize="end" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <ImageButton
+                android:id="@+id/widget_prev"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:background="@drawable/widget_btn_subtle_bg"
+                android:src="@drawable/ic_media_prev"
+                android:scaleType="centerInside"
+                android:contentDescription="Anterior" />
+
+            <ImageButton
+                android:id="@+id/widget_toggle"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:layout_marginStart="6dp"
+                android:layout_marginEnd="6dp"
+                android:background="@drawable/widget_btn_play_bg"
+                android:src="@drawable/ic_media_play"
+                android:scaleType="centerInside"
+                android:contentDescription="Reproducir o pausar" />
+
+            <ImageButton
+                android:id="@+id/widget_next"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:background="@drawable/widget_btn_subtle_bg"
+                android:src="@drawable/ic_media_next"
+                android:scaleType="centerInside"
+                android:contentDescription="Siguiente" />
+        </LinearLayout>
+    </LinearLayout>
+</RelativeLayout>
+`,
+  'utf-8'
+);
+
 const manifestPath = resolve(workDir, 'AndroidManifest.xml');
 writeFileSync(
   manifestPath,
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="60"
-    android:versionName="0.23.16">
+    android:versionCode="61"
+    android:versionName="0.24.0">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -503,6 +684,18 @@ writeFileSync(
                 <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
         </service>
+
+        <receiver
+            android:name="es.pmusic.app.PMusicWidgetProvider"
+            android:exported="true"
+            android:label="pMusic">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/pmusic_widget_info" />
+        </receiver>
     </application>
 </manifest>
 `,
@@ -598,6 +791,22 @@ public class PMusicPlaybackService extends Service {
 
     public static boolean isCurrentlyPlaying() {
         return sIsPlaying;
+    }
+
+    public static boolean isServiceActive() {
+        return sServiceInstance != null;
+    }
+
+    public static String getWidgetTitle() {
+        return sTitle;
+    }
+
+    public static String getWidgetArtist() {
+        return sArtist;
+    }
+
+    public static Bitmap getWidgetCoverBitmap() {
+        return (!sArtworkUrl.isEmpty() ? getCachedBitmap(sArtworkUrl) : null);
     }
 
     public static synchronized MediaSession.Token getOrCreateSessionToken(Context ctx) {
@@ -1043,6 +1252,7 @@ public class PMusicPlaybackService extends Service {
             if (nm != null) {
                 nm.notify(NOTIFICATION_ID, notif);
             }
+            PMusicWidgetProvider.updateAllWidgets(this, sTitle, sArtist, sIsPlaying, artBmp);
         } catch (Throwable ignored) {
         }
     }
@@ -2347,7 +2557,7 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) {
         }
 
-        handleDeepLinkIntent(getIntent());
+        handleDeepLinkIntent(getIntent(), true);
         try {
             carModeReceiver = new BroadcastReceiver() {
                 @Override
@@ -2775,11 +2985,21 @@ public class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        handleDeepLinkIntent(intent);
+        handleDeepLinkIntent(intent, false);
     }
 
-    private void handleDeepLinkIntent(Intent intent) {
+    private void handleDeepLinkIntent(Intent intent, boolean isInitialCreate) {
         if (intent == null) return;
+        String widgetAct = intent.getStringExtra("pmusic_widget_action");
+        if (widgetAct != null && !widgetAct.isEmpty()) {
+            intent.removeExtra("pmusic_widget_action");
+            if (isInitialCreate) {
+                sPendingMediaAction = widgetAct;
+                sPendingMediaSeek = -1;
+            } else {
+                dispatchMediaAction(this, widgetAct, -1);
+            }
+        }
         Uri data = intent.getData();
         if (data != null && "pmusic".equalsIgnoreCase(data.getScheme())) {
             String fullUrl = data.toString();
@@ -3964,6 +4184,226 @@ public class PMusicApkProvider extends ContentProvider {
   'utf-8'
 );
 
+writeFileSync(
+  resolve(javaSrcDir, 'PMusicWidgetProvider.java'),
+  `package es.pmusic.app;
+
+import android.app.PendingIntent;
+import android.appwidget.AppWidgetManager;
+import android.appwidget.AppWidgetProvider;
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.LinearGradient;
+import android.graphics.Paint;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffXfermode;
+import android.graphics.Rect;
+import android.graphics.RectF;
+import android.graphics.Shader;
+import android.os.Build;
+import android.widget.RemoteViews;
+
+public class PMusicWidgetProvider extends AppWidgetProvider {
+    public static final String ACTION_WIDGET_PREV = "es.pmusic.app.WIDGET_PREV";
+    public static final String ACTION_WIDGET_TOGGLE = "es.pmusic.app.WIDGET_TOGGLE";
+    public static final String ACTION_WIDGET_NEXT = "es.pmusic.app.WIDGET_NEXT";
+
+    @Override
+    public void onUpdate(Context context, AppWidgetManager appWidgetManager, int[] appWidgetIds) {
+        updateWidgetIds(
+                context,
+                appWidgetManager,
+                appWidgetIds,
+                PMusicPlaybackService.getWidgetTitle(),
+                PMusicPlaybackService.getWidgetArtist(),
+                PMusicPlaybackService.isCurrentlyPlaying(),
+                PMusicPlaybackService.getWidgetCoverBitmap()
+        );
+    }
+
+    @Override
+    public void onReceive(Context context, Intent intent) {
+        super.onReceive(context, intent);
+        if (intent == null) return;
+        String action = intent.getAction();
+        String serviceAction = null;
+        String jsAction = null;
+        if (ACTION_WIDGET_PREV.equals(action)) {
+            serviceAction = PMusicPlaybackService.ACTION_PREV;
+            jsAction = "previoustrack";
+        } else if (ACTION_WIDGET_TOGGLE.equals(action)) {
+            serviceAction = PMusicPlaybackService.ACTION_TOGGLE;
+            jsAction = "toggle";
+        } else if (ACTION_WIDGET_NEXT.equals(action)) {
+            serviceAction = PMusicPlaybackService.ACTION_NEXT;
+            jsAction = "nexttrack";
+        }
+        if (serviceAction == null) return;
+
+        if (PMusicPlaybackService.isServiceActive()) {
+            Intent svc = new Intent(context, PMusicPlaybackService.class);
+            svc.setAction(serviceAction);
+            try {
+                if (Build.VERSION.SDK_INT >= 26) {
+                    context.startForegroundService(svc);
+                } else {
+                    context.startService(svc);
+                }
+            } catch (Throwable ignored) {
+            }
+        } else {
+            Intent openApp = new Intent(context, MainActivity.class);
+            openApp.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            openApp.putExtra("pmusic_widget_action", jsAction);
+            try {
+                context.startActivity(openApp);
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    public static void updateAllWidgets(
+            Context ctx,
+            String title,
+            String artist,
+            boolean isPlaying,
+            Bitmap coverBmp
+    ) {
+        if (ctx == null) return;
+        try {
+            AppWidgetManager mgr = AppWidgetManager.getInstance(ctx);
+            if (mgr == null) return;
+            ComponentName cn = new ComponentName(ctx, PMusicWidgetProvider.class);
+            int[] ids = mgr.getAppWidgetIds(cn);
+            if (ids == null || ids.length == 0) return;
+            updateWidgetIds(ctx, mgr, ids, title, artist, isPlaying, coverBmp);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void updateWidgetIds(
+            Context ctx,
+            AppWidgetManager mgr,
+            int[] ids,
+            String title,
+            String artist,
+            boolean isPlaying,
+            Bitmap coverBmp
+    ) {
+        if (ids == null || ids.length == 0) return;
+        String safeTitle = (title != null && !title.trim().isEmpty()) ? title.trim() : "pMusic";
+        String safeArtist = (artist != null && !artist.trim().isEmpty()) ? artist.trim() : "Toca para reproducir";
+
+        Bitmap bgBmp = coverBmp != null ? createTintedBackgroundBitmap(coverBmp) : null;
+        Bitmap roundedCover = coverBmp != null ? createRoundedCoverBitmap(coverBmp, 144, 24f) : null;
+
+        int piFlags = Build.VERSION.SDK_INT >= 23
+                ? PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                : PendingIntent.FLAG_UPDATE_CURRENT;
+
+        Intent openIntent = new Intent(ctx, MainActivity.class);
+        openIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        PendingIntent openPi = PendingIntent.getActivity(ctx, 200, openIntent, piFlags);
+
+        PendingIntent prevPi = makeActionBroadcast(ctx, ACTION_WIDGET_PREV, 201, piFlags);
+        PendingIntent togglePi = makeActionBroadcast(ctx, ACTION_WIDGET_TOGGLE, 202, piFlags);
+        PendingIntent nextPi = makeActionBroadcast(ctx, ACTION_WIDGET_NEXT, 203, piFlags);
+
+        for (int appWidgetId : ids) {
+            RemoteViews rv = new RemoteViews(ctx.getPackageName(), R.layout.widget_pmusic);
+            rv.setTextViewText(R.id.widget_title, safeTitle);
+            rv.setTextViewText(R.id.widget_artist, safeArtist);
+            rv.setTextViewText(R.id.widget_badge, isPlaying ? "SONANDO EN PMUSIC" : "PMUSIC");
+            rv.setImageViewResource(R.id.widget_toggle, isPlaying ? R.drawable.ic_media_pause : R.drawable.ic_media_play);
+
+            if (bgBmp != null) {
+                rv.setImageViewBitmap(R.id.widget_bg_image, bgBmp);
+            } else {
+                rv.setImageViewBitmap(R.id.widget_bg_image, null);
+            }
+
+            if (roundedCover != null) {
+                rv.setImageViewBitmap(R.id.widget_cover, roundedCover);
+            } else {
+                rv.setImageViewResource(R.id.widget_cover, R.drawable.ic_launcher);
+            }
+
+            rv.setOnClickPendingIntent(R.id.widget_root, openPi);
+            rv.setOnClickPendingIntent(R.id.widget_cover, openPi);
+            rv.setOnClickPendingIntent(R.id.widget_prev, prevPi);
+            rv.setOnClickPendingIntent(R.id.widget_toggle, togglePi);
+            rv.setOnClickPendingIntent(R.id.widget_next, nextPi);
+
+            mgr.updateAppWidget(appWidgetId, rv);
+        }
+    }
+
+    private static PendingIntent makeActionBroadcast(Context ctx, String action, int reqCode, int flags) {
+        Intent i = new Intent(ctx, PMusicWidgetProvider.class);
+        i.setAction(action);
+        return PendingIntent.getBroadcast(ctx, reqCode, i, flags);
+    }
+
+    private static Bitmap createRoundedCoverBitmap(Bitmap src, int sizePx, float radiusPx) {
+        try {
+            Bitmap scaled = Bitmap.createScaledBitmap(src, sizePx, sizePx, true);
+            Bitmap out = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(out);
+            Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            Rect rect = new Rect(0, 0, sizePx, sizePx);
+            RectF rectF = new RectF(rect);
+            canvas.drawARGB(0, 0, 0, 0);
+            canvas.drawRoundRect(rectF, radiusPx, radiusPx, paint);
+            paint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.SRC_IN));
+            canvas.drawBitmap(scaled, rect, rect, paint);
+            return out;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static Bitmap createTintedBackgroundBitmap(Bitmap src) {
+        try {
+            Bitmap tiny = Bitmap.createScaledBitmap(src, 8, 8, true);
+            long rSum = 0L, gSum = 0L, bSum = 0L;
+            int count = 0;
+            for (int y = 0; y < tiny.getHeight(); y++) {
+                for (int x = 0; x < tiny.getWidth(); x++) {
+                    int c = tiny.getPixel(x, y);
+                    rSum += Color.red(c);
+                    gSum += Color.green(c);
+                    bSum += Color.blue(c);
+                    count++;
+                }
+            }
+            int avgR = count > 0 ? (int) (rSum / count) : 28;
+            int avgG = count > 0 ? (int) (gSum / count) : 28;
+            int avgB = count > 0 ? (int) (bSum / count) : 42;
+
+            int startColor = Color.argb(245, Math.min(82, Math.max(20, (int) (avgR * 0.42))), Math.min(82, Math.max(20, (int) (avgG * 0.42))), Math.min(96, Math.max(24, (int) (avgB * 0.46))));
+            int endColor = Color.argb(250, Math.min(26, Math.max(10, (int) (avgR * 0.14))), Math.min(26, Math.max(10, (int) (avgG * 0.14))), Math.min(32, Math.max(14, (int) (avgB * 0.16))));
+
+            int w = 256;
+            int h = 128;
+            Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+            Canvas c = new Canvas(out);
+            Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+            p.setShader(new LinearGradient(0f, 0f, w, h, startColor, endColor, Shader.TileMode.CLAMP));
+            c.drawRoundRect(new RectF(0f, 0f, w, h), 28f, 28f, p);
+            return out;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+}
+`,
+  'utf-8'
+);
+
 // 6. Compile resources with aapt2 compile & link (WITHOUT -A so Windows aapt2 never emits '\' ZIP entries)
 const compiledResZip = resolve(workDir, 'compiled_res.zip');
 const unalignedApk = resolve(workDir, 'unaligned.apk');
@@ -4003,6 +4443,7 @@ execFileSync(
     resolve(rJavaDir, 'es/pmusic/app/R.java'),
     resolve(javaSrcDir, 'PMusicPlaybackService.java'),
     resolve(javaSrcDir, 'PMusicMediaBrowserService.java'),
+    resolve(javaSrcDir, 'PMusicWidgetProvider.java'),
     resolve(javaSrcDir, 'PMusicApkProvider.java'),
     resolve(javaSrcDir, 'MainActivity.java'),
   ],

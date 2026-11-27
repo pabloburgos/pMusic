@@ -37,6 +37,17 @@ interface ElectronDesktopWindowBridge {
     symbolColor?: string;
     height?: number;
   }) => Promise<void>;
+  getDesktopTrayPrefs?: () => Promise<{
+    minimizeToTrayOnClose: boolean;
+    notifyOnTrackChange: boolean;
+  }>;
+  setDesktopTrayPrefs?: (patch: {
+    minimizeToTrayOnClose?: boolean;
+    notifyOnTrackChange?: boolean;
+  }) => Promise<{
+    minimizeToTrayOnClose: boolean;
+    notifyOnTrackChange: boolean;
+  }>;
   toggleFullscreen?: () => Promise<boolean>;
   getFullscreen?: () => Promise<boolean>;
   onFullscreenChange?: (cb: (isFs: boolean) => void) => Unsubscribe;
@@ -102,6 +113,29 @@ export async function setDesktopTitleBarOverlay(opts: {
   if (typeof window === 'undefined') return;
   const win = window as unknown as { pmusicDesktop?: ElectronDesktopWindowBridge };
   await win.pmusicDesktop?.setTitleBarOverlay?.(opts);
+}
+
+export async function getDesktopTrayPrefs(): Promise<{
+  minimizeToTrayOnClose: boolean;
+  notifyOnTrackChange: boolean;
+} | null> {
+  if (typeof window === 'undefined') return null;
+  const win = window as unknown as { pmusicDesktop?: ElectronDesktopWindowBridge };
+  if (!win.pmusicDesktop?.getDesktopTrayPrefs) return null;
+  return win.pmusicDesktop.getDesktopTrayPrefs();
+}
+
+export async function setDesktopTrayPrefs(patch: {
+  minimizeToTrayOnClose?: boolean;
+  notifyOnTrackChange?: boolean;
+}): Promise<{
+  minimizeToTrayOnClose: boolean;
+  notifyOnTrackChange: boolean;
+} | null> {
+  if (typeof window === 'undefined') return null;
+  const win = window as unknown as { pmusicDesktop?: ElectronDesktopWindowBridge };
+  if (!win.pmusicDesktop?.setDesktopTrayPrefs) return null;
+  return win.pmusicDesktop.setDesktopTrayPrefs(patch);
 }
 
 let androidFullscreenState = false;

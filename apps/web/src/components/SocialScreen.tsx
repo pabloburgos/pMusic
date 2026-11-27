@@ -2,7 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
   Check,
+  Clock,
   Copy,
+  Flame,
+  Headphones,
   Link2,
   ListMusic,
   Loader2,
@@ -18,6 +21,7 @@ import {
 } from 'lucide-react';
 import type { UserProfile } from '@pmusic/core';
 import { getSyncSupabaseClient, usePMusicStore } from '../store/usePMusicStore.ts';
+import type { TopStatsWindow } from '../lib/wrapped-stats.ts';
 import {
   buildJamQrImageUrl,
   buildJamShareUrl,
@@ -25,6 +29,8 @@ import {
   isJamQueueOpRequest,
   searchProfilesByUsername,
 } from '../services/social-service.ts';
+import { PMusicSwitch } from './PMusicSwitch.tsx';
+import { TrackArtwork } from './TrackArtwork.tsx';
 import { UserAvatar } from './UserAvatar.tsx';
 
 export const SocialScreen: React.FC = React.memo(() => {
@@ -34,10 +40,18 @@ export const SocialScreen: React.FC = React.memo(() => {
     socialSubTab,
     friends,
     sharedPlaylists,
+    shareListeningActivity,
+    friendActivities,
+    personalTopStats,
     activeJamSession,
     activeJamRole,
     activeJamRequests,
     setSocialSubTab,
+    setShareListeningActivity,
+    loadPersonalTopStats,
+    playFriendActivityTrack,
+    openWrappedModal,
+    playFromVoiceQuery,
     hydrateSocialAndSubscribe,
     startJam,
     joinJamInApp,
@@ -63,10 +77,18 @@ export const SocialScreen: React.FC = React.memo(() => {
       socialSubTab: s.socialSubTab,
       friends: s.friends,
       sharedPlaylists: s.sharedPlaylists,
+      shareListeningActivity: s.shareListeningActivity,
+      friendActivities: s.friendActivities,
+      personalTopStats: s.personalTopStats,
       activeJamSession: s.activeJamSession,
       activeJamRole: s.activeJamRole,
       activeJamRequests: s.activeJamRequests,
       setSocialSubTab: s.setSocialSubTab,
+      setShareListeningActivity: s.setShareListeningActivity,
+      loadPersonalTopStats: s.loadPersonalTopStats,
+      playFriendActivityTrack: s.playFriendActivityTrack,
+      openWrappedModal: s.openWrappedModal,
+      playFromVoiceQuery: s.playFromVoiceQuery,
       hydrateSocialAndSubscribe: s.hydrateSocialAndSubscribe,
       startJam: s.startJam,
       joinJamInApp: s.joinJamInApp,
@@ -97,6 +119,7 @@ export const SocialScreen: React.FC = React.memo(() => {
   const [jamBusy, setJamBusy] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState(false);
   const [joinJamInput, setJoinJamInput] = useState('');
+  const [topWindow, setTopWindow] = useState<TopStatsWindow>('7d');
 
   const sb = getSyncSupabaseClient();
   const myUserId = authState.userId;
@@ -106,6 +129,12 @@ export const SocialScreen: React.FC = React.memo(() => {
       void hydrateSocialAndSubscribe();
     }
   }, [authState.connected, myUserId, hydrateSocialAndSubscribe]);
+
+  useEffect(() => {
+    if (socialSubTab === 'top') {
+      void loadPersonalTopStats(topWindow);
+    }
+  }, [socialSubTab, topWindow, loadPersonalTopStats]);
 
   const handleStartJamClick = async () => {
     setJamBusy(true);
@@ -206,7 +235,7 @@ export const SocialScreen: React.FC = React.memo(() => {
           </div>
         </div>
 
-        <div className="grid w-full grid-cols-3 rounded-full border pm-border bg-white/[0.04] p-1 sm:inline-flex sm:w-auto">
+        <div className="grid w-full grid-cols-2 gap-1 rounded-[20px] border pm-border bg-white/[0.04] p-1 sm:inline-flex sm:w-auto sm:gap-0 sm:rounded-full">
           {[
             {
               id: 'jam' as const,
@@ -214,6 +243,7 @@ export const SocialScreen: React.FC = React.memo(() => {
             },
             { id: 'amigos' as const, label: `Amigos (${acceptedFriends.length})` },
             { id: 'compartidas' as const, label: `Listas (${sharedPlaylists.length})` },
+            { id: 'top' as const, label: 'Mi Top' },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -452,6 +482,87 @@ export const SocialScreen: React.FC = React.memo(() => {
       {/* 2. AMIGOS (@usuario) EN TIEMPO REAL */}
       {socialSubTab === 'amigos' && (
         <div className="space-y-4">
+          <div className="pm-surface-card flex items-center justify-between gap-3 rounded-2xl p-4">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-400">
+                <Headphones className="h-4 w-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-xs font-bold pm-text-primary">
+                  Compartir lo que escucho con amigos
+                </div>
+                <div className="truncate text-[11px] pm-text-secondary">
+                  Muestra en vivo qué canción suena en tu sesión solo a tus amigos aceptados
+                </div>
+              </div>
+            </div>
+            <PMusicSwitch
+              checked={shareListeningActivity}
+              onChange={() => setShareListeningActivity(!shareListeningActivity)}
+              ariaLabel="Compartir lo que escucho con amigos"
+              testId="social-share-listening-toggle"
+            />
+          </div>
+
+          {(() => {
+            const liveList = Object.values(friendActivities);
+            if (liveList.length === 0) return null;
+            return (
+              <div className="pm-surface-card space-y-2.5 rounded-2xl border border-emerald-400/20 bg-emerald-500/[0.05] p-4">
+                <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-emerald-300">
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
+                  Escuchando ahora ({liveList.length})
+                </div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {liveList.map((act) => {
+                    const matchedFriend = acceptedFriends.find(
+                      (f) => f.otherProfile.userId === act.userId
+                    );
+                    const friendName =
+                      act.displayName ||
+                      matchedFriend?.otherProfile.displayName ||
+                      (act.username ? `@${act.username}` : 'Amigo');
+                    return (
+                      <div
+                        key={act.userId}
+                        data-testid="friend-live-activity-card"
+                        className="flex items-center justify-between gap-2.5 rounded-xl border pm-border bg-white/[0.03] p-2.5"
+                      >
+                        <div className="flex min-w-0 items-center gap-2.5">
+                          <TrackArtwork
+                            src={act.thumbnailUrl}
+                            alt={act.trackTitle}
+                            variant="list"
+                            className="h-10 w-10 shrink-0 rounded-lg"
+                          />
+                          <div className="min-w-0">
+                            <div className="truncate text-[11px] font-bold text-emerald-300">
+                              {friendName}
+                            </div>
+                            <div className="truncate text-xs font-bold pm-text-primary">
+                              {act.trackTitle}
+                            </div>
+                            <div className="truncate text-[11px] pm-text-secondary">
+                              {act.trackArtist}
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          aria-label={`Reproducir ${act.trackTitle}`}
+                          onClick={() => void playFriendActivityTrack(act)}
+                          className="pm-btn-primary inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full shadow-sm"
+                        >
+                          <Play className="h-3.5 w-3.5 translate-x-[0.5px] fill-current" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
           <form onSubmit={handleSearchFriends} className="flex gap-2">
             <div className="relative flex-1">
               <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 pm-text-tertiary" />
@@ -734,6 +845,171 @@ export const SocialScreen: React.FC = React.memo(() => {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* 4. MI TOP SEMANAL Y MENSUAL (7d / 30d) */}
+      {socialSubTab === 'top' && (
+        <div data-testid="social-top-panel" className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="inline-flex rounded-full border pm-border bg-white/[0.04] p-1">
+              <button
+                type="button"
+                data-testid="top-window-7d"
+                onClick={() => setTopWindow('7d')}
+                className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition ${
+                  topWindow === '7d' ? 'pm-btn-primary shadow-sm' : 'pm-text-secondary'
+                }`}
+              >
+                Últimos 7 días
+              </button>
+              <button
+                type="button"
+                data-testid="top-window-30d"
+                onClick={() => setTopWindow('30d')}
+                className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition ${
+                  topWindow === '30d' ? 'pm-btn-primary shadow-sm' : 'pm-text-secondary'
+                }`}
+              >
+                Últimos 30 días
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => void openWrappedModal()}
+              className="pm-btn-secondary inline-flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-bold"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              <span>Ver pMusic Wrapped</span>
+            </button>
+          </div>
+
+          {(() => {
+            const stats = personalTopStats[topWindow];
+            if (!stats) {
+              return (
+                <div className="pm-surface-card flex items-center justify-center rounded-2xl p-8 text-xs pm-text-secondary">
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Calculando tus estadísticas...
+                </div>
+              );
+            }
+            if (stats.totalPlays === 0) {
+              return (
+                <div className="pm-surface-card rounded-2xl p-8 text-center text-xs pm-text-secondary">
+                  Todavía no hay escuchas registradas en los últimos {topWindow === '7d' ? '7' : '30'} días.
+                </div>
+              );
+            }
+            return (
+              <>
+                <div className="grid grid-cols-3 gap-2.5">
+                  <div className="pm-surface-card rounded-2xl p-3.5">
+                    <div className="flex items-center gap-1.5 text-[11px] font-semibold pm-text-tertiary">
+                      <Clock className="h-3.5 w-3.5" /> Minutos
+                    </div>
+                    <div className="mt-1 text-2xl font-black pm-text-primary">
+                      {stats.totalMinutes}
+                    </div>
+                  </div>
+                  <div className="pm-surface-card rounded-2xl p-3.5">
+                    <div className="flex items-center gap-1.5 text-[11px] font-semibold pm-text-tertiary">
+                      <Flame className="h-3.5 w-3.5" /> Escuchas
+                    </div>
+                    <div className="mt-1 text-2xl font-black pm-text-primary">
+                      {stats.totalPlays}
+                    </div>
+                  </div>
+                  <div className="pm-surface-card rounded-2xl p-3.5">
+                    <div className="flex items-center gap-1.5 text-[11px] font-semibold pm-text-tertiary">
+                      <Users className="h-3.5 w-3.5" /> Artistas
+                    </div>
+                    <div className="mt-1 text-2xl font-black pm-text-primary">
+                      {stats.uniqueArtists}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                  <div className="pm-surface-card space-y-2.5 rounded-2xl p-4">
+                    <div className="text-xs font-bold uppercase tracking-wider pm-text-tertiary">
+                      Top Canciones ({topWindow === '7d' ? '7 días' : '30 días'})
+                    </div>
+                    <div className="space-y-1.5">
+                      {stats.topTracks.map((item, idx) => (
+                        <button
+                          key={item.key}
+                          type="button"
+                          onClick={() =>
+                            void playFromVoiceQuery(
+                              `${item.title} ${item.subtitle ?? ''}`.trim()
+                            )
+                          }
+                          className="pm-hover flex w-full items-center justify-between gap-3 rounded-xl px-2 py-1.5 text-left"
+                        >
+                          <div className="flex min-w-0 items-center gap-2.5">
+                            <span className="w-5 text-center text-xs font-black pm-text-tertiary">
+                              {idx + 1}
+                            </span>
+                            <TrackArtwork
+                              src={item.thumbnailUrl}
+                              alt={item.title}
+                              variant="list"
+                              className="h-9 w-9 shrink-0 rounded-lg"
+                            />
+                            <div className="min-w-0">
+                              <div className="truncate text-xs font-bold pm-text-primary">
+                                {item.title}
+                              </div>
+                              <div className="truncate text-[11px] pm-text-secondary">
+                                {item.subtitle}
+                              </div>
+                            </div>
+                          </div>
+                          <span className="shrink-0 text-[11px] font-semibold pm-text-tertiary">
+                            {item.plays} rep · {item.minutes}m
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="pm-surface-card space-y-2.5 rounded-2xl p-4">
+                    <div className="text-xs font-bold uppercase tracking-wider pm-text-tertiary">
+                      Top Artistas ({topWindow === '7d' ? '7 días' : '30 días'})
+                    </div>
+                    <div className="space-y-1.5">
+                      {stats.topArtists.map((artist, idx) => (
+                        <button
+                          key={artist.key}
+                          type="button"
+                          onClick={() => void playFromVoiceQuery(artist.title)}
+                          className="pm-hover flex w-full items-center justify-between gap-3 rounded-xl px-2 py-1.5 text-left"
+                        >
+                          <div className="flex min-w-0 items-center gap-2.5">
+                            <span className="w-5 text-center text-xs font-black pm-text-tertiary">
+                              {idx + 1}
+                            </span>
+                            <TrackArtwork
+                              src={artist.thumbnailUrl}
+                              alt={artist.title}
+                              variant="list"
+                              className="h-9 w-9 shrink-0 rounded-full"
+                            />
+                            <div className="truncate text-xs font-bold pm-text-primary">
+                              {artist.title}
+                            </div>
+                          </div>
+                          <span className="shrink-0 text-[11px] font-semibold pm-text-tertiary">
+                            {artist.minutes} min · {artist.plays} rep
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
         </div>
       )}
     </div>

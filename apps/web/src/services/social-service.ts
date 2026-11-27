@@ -51,6 +51,19 @@ export interface FriendRecord {
   isIncoming: boolean;
 }
 
+export interface FriendListeningActivity {
+  userId: string;
+  username?: string;
+  displayName?: string;
+  avatarUrl?: string | null;
+  trackId: string;
+  trackTitle: string;
+  trackArtist: string;
+  thumbnailUrl?: string;
+  isPlaying: boolean;
+  updatedAt: string;
+}
+
 export interface SharedPlaylistRecord {
   id: string;
   ownerId: string;

@@ -5,7 +5,17 @@ import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { deflateSync } from 'node:zlib';
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, shell } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  globalShortcut,
+  ipcMain,
+  Menu,
+  nativeImage,
+  Notification,
+  shell,
+  Tray,
+} from 'electron';
 import { createPMusicApiHandler } from '@pmusic/providers';
 import type {
   DiscordPresenceState,
@@ -45,10 +55,80 @@ app.commandLine.appendSwitch('gpu-program-cache-size-kb', '12288');
 app.commandLine.appendSwitch('disable-features', 'MediaRouter,OptimizationHints');
 
 let mainWindow: BrowserWindow | null = null;
+let appTray: Tray | null = null;
+let isQuitting = false;
 let loopbackServer: Server | null = null;
 let loopbackPort = 0;
 const loopbackAuthToken = randomBytes(24).toString('hex');
 let pendingAuthCallbackUrl: string | null = null;
+
+interface DesktopTrayPrefs {
+  minimizeToTrayOnClose: boolean;
+  notifyOnTrackChange: boolean;
+}
+
+let cachedTrayPrefs: DesktopTrayPrefs | null = null;
+let trayTrackTitle = '';
+let trayTrackArtist = '';
+let trayIsPlaying = false;
+let lastNotifiedTrackKey = '';
+
+function getDesktopTrayPrefsPath(): string {
+  return join(app.getPath('userData'), 'desktop-tray.json');
+}
+
+function readDesktopTrayPrefs(): DesktopTrayPrefs {
+  if (cachedTrayPrefs) return cachedTrayPrefs;
+  const fallback: DesktopTrayPrefs = {
+    minimizeToTrayOnClose: true,
+    notifyOnTrackChange: false,
+  };
+  try {
+    const p = getDesktopTrayPrefsPath();
+    if (existsSync(p)) {
+      const parsed = JSON.parse(readFileSync(p, 'utf8')) as Partial<DesktopTrayPrefs>;
+      cachedTrayPrefs = {
+        minimizeToTrayOnClose:
+          typeof parsed.minimizeToTrayOnClose === 'boolean' ? parsed.minimizeToTrayOnClose : true,
+        notifyOnTrackChange:
+          typeof parsed.notifyOnTrackChange === 'boolean' ? parsed.notifyOnTrackChange : false,
+      };
+      return cachedTrayPrefs;
+    }
+  } catch {
+    // ignore corrupt prefs file
+  }
+  cachedTrayPrefs = fallback;
+  return cachedTrayPrefs;
+}
+
+function writeDesktopTrayPrefs(patch: Partial<DesktopTrayPrefs>): DesktopTrayPrefs {
+  const curr = readDesktopTrayPrefs();
+  const next: DesktopTrayPrefs = {
+    minimizeToTrayOnClose:
+      typeof patch.minimizeToTrayOnClose === 'boolean'
+        ? patch.minimizeToTrayOnClose
+        : curr.minimizeToTrayOnClose,
+    notifyOnTrackChange:
+      typeof patch.notifyOnTrackChange === 'boolean'
+        ? patch.notifyOnTrackChange
+        : curr.notifyOnTrackChange,
+  };
+  cachedTrayPrefs = next;
+  try {
+    writeFileSync(getDesktopTrayPrefsPath(), JSON.stringify(next), 'utf8');
+  } catch {
+    // ignore write failure
+  }
+  return next;
+}
+
+function showAndFocusMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!mainWindow.isVisible()) mainWindow.show();
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
+}
 
 function dispatchAuthCallbackUrl(url: string): void {
   if (!url || !url.toLowerCase().startsWith('pmusic://')) return;
@@ -70,9 +150,8 @@ if (!gotSingleInstanceLock) {
     const deepLink = argv.find((arg) => typeof arg === 'string' && arg.toLowerCase().startsWith('pmusic://'));
     if (deepLink) {
       dispatchAuthCallbackUrl(deepLink);
-    } else if (mainWindow && !mainWindow.isDestroyed()) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
+    } else {
+      showAndFocusMainWindow();
     }
   });
 }
@@ -437,6 +516,58 @@ let cachedThumbarIcons: Record<'prev' | 'play' | 'pause' | 'next', Electron.Nati
 let lastThumbarPlaying: boolean | null = null;
 let lastWindowTitle = '';
 
+function rebuildTrayMenu(): void {
+  if (!appTray || appTray.isDestroyed()) return;
+  const tooltipTitle = trayTrackTitle
+    ? trayTrackArtist
+      ? `${trayTrackTitle} — ${trayTrackArtist}`
+      : trayTrackTitle
+    : 'pMusic';
+  appTray.setToolTip(tooltipTitle.slice(0, 120));
+  const statusLabel = trayTrackTitle
+    ? trayTrackArtist
+      ? `${trayTrackTitle} · ${trayTrackArtist}`
+      : trayTrackTitle
+    : 'pMusic · Listo para reproducir';
+  const menu = Menu.buildFromTemplate([
+    { label: statusLabel.slice(0, 64), enabled: false },
+    { type: 'separator' },
+    {
+      label: trayIsPlaying ? 'Pausar' : 'Reproducir',
+      click: () => sendMediaAction({ type: 'toggle' }),
+    },
+    { label: 'Siguiente pista', click: () => sendMediaAction({ type: 'nexttrack' }) },
+    { label: 'Pista anterior', click: () => sendMediaAction({ type: 'previoustrack' }) },
+    { type: 'separator' },
+    { label: 'Abrir pMusic', click: () => showAndFocusMainWindow() },
+    {
+      label: 'Salir de pMusic',
+      click: () => {
+        isQuitting = true;
+        app.quit();
+      },
+    },
+  ]);
+  appTray.setContextMenu(menu);
+}
+
+function initSystemTray(iconPath?: string): void {
+  if (appTray && !appTray.isDestroyed()) return;
+  try {
+    let iconImg = iconPath ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
+    if (iconImg.isEmpty()) {
+      iconImg = makeThumbarIcon('play');
+    } else if (process.platform === 'win32') {
+      iconImg = iconImg.resize({ width: 16, height: 16 });
+    }
+    appTray = new Tray(iconImg);
+    appTray.on('click', () => showAndFocusMainWindow());
+    rebuildTrayMenu();
+  } catch {
+    // ignore tray initialization failure in headless environments
+  }
+}
+
 function updateTaskbarThumbar(isPlaying: boolean): void {
   if (process.platform !== 'win32' || !mainWindow || mainWindow.isDestroyed()) return;
   try {
@@ -543,7 +674,14 @@ async function createMainWindow(): Promise<void> {
   lastThumbarPlaying = false;
   lastWindowTitle = '';
   updateTaskbarThumbar(false);
+  initSystemTray(windowIconPath);
 
+  mainWindow.on('close', (event) => {
+    if (!isQuitting && process.platform === 'win32' && readDesktopTrayPrefs().minimizeToTrayOnClose) {
+      event.preventDefault();
+      mainWindow?.hide();
+    }
+  });
   mainWindow.on('minimize', () => {
     mainWindow?.webContents.setBackgroundThrottling(true);
     mainWindow?.webContents.send('pmusic:window-visibility', false);
@@ -575,19 +713,52 @@ ipcMain.handle('pmusic:update-discord', async (_event, state: DiscordPresenceSta
 });
 ipcMain.handle('pmusic:update-media-session', (_event, state: NativeMediaSessionState) => {
   const nextPlaying = Boolean(state?.isPlaying);
+  const tTitle = state?.track?.title?.trim() ?? '';
+  const tArtist = state?.track?.artists?.[0]?.name?.trim() ?? '';
   if (nextPlaying !== lastThumbarPlaying) {
     lastThumbarPlaying = nextPlaying;
     updateTaskbarThumbar(nextPlaying);
   }
+  trayIsPlaying = nextPlaying;
+  trayTrackTitle = tTitle;
+  trayTrackArtist = tArtist;
+  rebuildTrayMenu();
+
   if (mainWindow && !mainWindow.isDestroyed()) {
-    const tTitle = state?.track?.title?.trim();
     const nextTitle = tTitle ? `${tTitle} — pMusic` : 'pMusic';
     if (nextTitle !== lastWindowTitle) {
       lastWindowTitle = nextTitle;
       mainWindow.setTitle(nextTitle);
     }
+    const trackKey = state?.track?.id || `${tTitle}::${tArtist}`;
+    const isHiddenOrMin = !mainWindow.isVisible() || mainWindow.isMinimized();
+    if (
+      readDesktopTrayPrefs().notifyOnTrackChange &&
+      nextPlaying &&
+      tTitle &&
+      isHiddenOrMin &&
+      trackKey !== lastNotifiedTrackKey &&
+      Notification.isSupported()
+    ) {
+      lastNotifiedTrackKey = trackKey;
+      try {
+        const notif = new Notification({
+          title: tTitle,
+          body: tArtist || 'Reproduciendo en pMusic',
+          silent: true,
+        });
+        notif.on('click', () => showAndFocusMainWindow());
+        notif.show();
+      } catch {
+        // ignore desktop notification failure
+      }
+    }
   }
 });
+ipcMain.handle('pmusic:get-desktop-tray-prefs', () => readDesktopTrayPrefs());
+ipcMain.handle('pmusic:set-desktop-tray-prefs', (_event, patch: Partial<DesktopTrayPrefs>) =>
+  writeDesktopTrayPrefs(patch ?? {})
+);
 ipcMain.handle('pmusic:configure-discord', async (_event, clientId: string) => {
   return discordRpc.configureAndReconnect(clientId ?? '');
 });
@@ -802,7 +973,7 @@ ipcMain.handle('pmusic:check-and-apply-update', async () => {
     const clean = (v: string) =>
       v.replace(/^v/i, '').split('-')[0]?.split('.').map((n) => parseInt(n, 10) || 0) ?? [0, 0, 0];
     const r = clean(latestVer);
-    const l = clean('0.23.2');
+    const l = clean(app.getVersion() || '0.24.0');
     const newer = [0, 1, 2].some((i, _a, arr) => {
       for (let j = 0; j < i; j++) if ((r[j] ?? 0) !== (l[j] ?? 0)) return false;
       return (r[i] ?? 0) > (l[i] ?? 0);
@@ -879,8 +1050,14 @@ void app.whenReady().then(async () => {
   }
 });
 
+app.on('before-quit', () => {
+  isQuitting = true;
+});
+
 app.on('window-all-closed', () => {
   globalShortcut.unregisterAll();
+  appTray?.destroy();
+  appTray = null;
   discordRpc.dispose();
   loopbackServer?.close();
   if (process.platform !== 'darwin') {

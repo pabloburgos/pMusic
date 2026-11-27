@@ -26,6 +26,17 @@ contextBridge.exposeInMainWorld('pmusicDesktop', {
     symbolColor?: string;
     height?: number;
   }): Promise<void> => ipcRenderer.invoke('pmusic:set-titlebar-overlay', opts),
+  getDesktopTrayPrefs: (): Promise<{
+    minimizeToTrayOnClose: boolean;
+    notifyOnTrackChange: boolean;
+  }> => ipcRenderer.invoke('pmusic:get-desktop-tray-prefs'),
+  setDesktopTrayPrefs: (patch: {
+    minimizeToTrayOnClose?: boolean;
+    notifyOnTrackChange?: boolean;
+  }): Promise<{
+    minimizeToTrayOnClose: boolean;
+    notifyOnTrackChange: boolean;
+  }> => ipcRenderer.invoke('pmusic:set-desktop-tray-prefs', patch),
   toggleFullscreen: (): Promise<boolean> => ipcRenderer.invoke('pmusic:toggle-fullscreen'),
   getFullscreen: (): Promise<boolean> => ipcRenderer.invoke('pmusic:get-fullscreen'),
   onFullscreenChange: (cb: (isFs: boolean) => void): (() => void) => {

@@ -421,3 +421,113 @@ export function computeWrappedSummary(
     mostLoopedTrack,
   };
 }
+
+export type TopStatsWindow = '7d' | '30d';
+
+export interface PeriodTopStats {
+  window: TopStatsWindow;
+  totalMinutes: number;
+  totalPlays: number;
+  uniqueTracks: number;
+  uniqueArtists: number;
+  topTracks: WrappedRankedItem[];
+  topArtists: WrappedRankedItem[];
+  topGenres: WrappedGenreItem[];
+}
+
+export function computePeriodTopStats(
+  allEvents: WrappedListenEvent[],
+  window: TopStatsWindow,
+  nowMs: number = Date.now()
+): PeriodTopStats {
+  const days = window === '7d' ? 7 : 30;
+  const cutoffMs = nowMs - days * 86_400_000;
+  const filtered = allEvents.filter((ev) => {
+    const ts = new Date(ev.playedAt).getTime();
+    return Number.isFinite(ts) && ts >= cutoffMs && ts <= nowMs + 60_000;
+  });
+
+  let totalSec = 0;
+  const trackMap = new Map<string, WrappedRankedItem>();
+  const artistMap = new Map<string, WrappedRankedItem>();
+  const genreMap = new Map<string, { plays: number; sec: number }>();
+
+  for (const ev of filtered) {
+    const sec = Math.max(0, ev.playedSec || 0);
+    totalSec += sec;
+
+    const existingTrack = trackMap.get(ev.trackId);
+    if (existingTrack) {
+      existingTrack.plays += 1;
+      existingTrack.minutes += sec / 60;
+      if (!existingTrack.thumbnailUrl && ev.thumbnailUrl) {
+        existingTrack.thumbnailUrl = ev.thumbnailUrl;
+      }
+    } else {
+      trackMap.set(ev.trackId, {
+        key: ev.trackId,
+        title: ev.title,
+        subtitle: ev.artist,
+        thumbnailUrl: ev.thumbnailUrl,
+        plays: 1,
+        minutes: sec / 60,
+      });
+    }
+
+    const artistKey = ev.artist.trim().toLowerCase() || 'desconocido';
+    const existingArtist = artistMap.get(artistKey);
+    if (existingArtist) {
+      existingArtist.plays += 1;
+      existingArtist.minutes += sec / 60;
+      if (!existingArtist.thumbnailUrl && ev.thumbnailUrl) {
+        existingArtist.thumbnailUrl = ev.thumbnailUrl;
+      }
+    } else {
+      artistMap.set(artistKey, {
+        key: artistKey,
+        title: ev.artist || 'Artista',
+        thumbnailUrl: ev.thumbnailUrl,
+        plays: 1,
+        minutes: sec / 60,
+      });
+    }
+
+    const genre = ev.genre || 'Pop / Urbano';
+    const gEntry = genreMap.get(genre) ?? { plays: 0, sec: 0 };
+    gEntry.plays += 1;
+    gEntry.sec += sec;
+    genreMap.set(genre, gEntry);
+  }
+
+  const totalPlays = filtered.length;
+  const topTracks = Array.from(trackMap.values())
+    .sort((a, b) => b.plays - a.plays || b.minutes - a.minutes)
+    .slice(0, 10)
+    .map((item) => ({ ...item, minutes: Math.max(1, Math.round(item.minutes)) }));
+
+  const topArtists = Array.from(artistMap.values())
+    .sort((a, b) => b.minutes - a.minutes || b.plays - a.plays)
+    .slice(0, 8)
+    .map((item) => ({ ...item, minutes: Math.max(1, Math.round(item.minutes)) }));
+
+  const topGenres: WrappedGenreItem[] = Array.from(genreMap.entries())
+    .map(([genre, v]) => ({
+      genre,
+      plays: v.plays,
+      minutes: Math.max(1, Math.round(v.sec / 60)),
+      percent: totalPlays > 0 ? Math.max(1, Math.round((v.plays / totalPlays) * 100)) : 0,
+    }))
+    .sort((a, b) => b.plays - a.plays || b.minutes - a.minutes)
+    .slice(0, 5);
+
+  return {
+    window,
+    totalMinutes: Math.round(totalSec / 60),
+    totalPlays,
+    uniqueTracks: trackMap.size,
+    uniqueArtists: artistMap.size,
+    topTracks,
+    topArtists,
+    topGenres,
+  };
+}
