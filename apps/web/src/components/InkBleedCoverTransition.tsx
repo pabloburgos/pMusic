@@ -4,6 +4,8 @@ import {
   prefetchSharedCorsCoverImage,
   registerBackdropCleanupHook,
 } from '../utils/cover-color.ts';
+import { optimizeArtworkUrl } from '../utils/image-opt.ts';
+import { getLivePlaybackPosition } from '../store/usePMusicStore.ts';
 
 interface InkBleedCoverTransitionProps {
   outgoingUrl: string;
@@ -22,7 +24,9 @@ const DEFAULT_CANVAS_SIDE = 384;
  * via the shared deduplicated cover cache so WebGL ink-bleed crossfades start cleanly at t=0.
  */
 export function prefetchInkCoverImage(url?: string | null): void {
-  prefetchSharedCorsCoverImage(url);
+  if (!url) return;
+  const isMobile = typeof window !== 'undefined' && window.innerWidth > 0 && window.innerWidth < 768;
+  prefetchSharedCorsCoverImage(isMobile ? optimizeArtworkUrl(url, 'card') : url);
 }
 
 const VERTEX_SRC = `
@@ -413,7 +417,6 @@ export const InkBleedCoverTransition: React.FC<InkBleedCoverTransitionProps> = R
       let safetyTimer: ReturnType<typeof setTimeout> | null = null;
 
       const totalMs = Math.max(900, Math.round(durationSec * 1000));
-      const mountedAtMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
       const seedNum = computeSeedNumber(seedKey);
       const container = containerRef.current;
       const inEl = incomingImgRef.current;
@@ -503,10 +506,13 @@ export const InkBleedCoverTransition: React.FC<InkBleedCoverTransitionProps> = R
       }
 
       const { gl, canvas } = pool;
+      const isMobileViewport =
+        typeof window !== 'undefined' && window.innerWidth > 0 && window.innerWidth < 768;
+      const maxSide = isMobileViewport ? 320 : DEFAULT_CANVAS_SIDE;
       const rectW = container.getBoundingClientRect().width || 0;
-      const dpr = typeof window !== 'undefined' ? Math.min(window.devicePixelRatio || 1, 1.5) : 1;
+      const dpr = typeof window !== 'undefined' ? Math.min(window.devicePixelRatio || 1, isMobileViewport ? 1.25 : 1.5) : 1;
       const side =
-        rectW > 0 ? Math.min(DEFAULT_CANVAS_SIDE, Math.max(256, Math.round(rectW * dpr))) : DEFAULT_CANVAS_SIDE;
+        rectW > 0 ? Math.min(maxSide, Math.max(224, Math.round(rectW * dpr))) : maxSide;
       if (canvas.width !== side || canvas.height !== side) {
         canvas.width = side;
         canvas.height = side;
@@ -593,12 +599,7 @@ export const InkBleedCoverTransition: React.FC<InkBleedCoverTransitionProps> = R
 
         // Anchor clock strictly to RAF timeline and enforce monotonic 0->1 progress.
         // If cover decode/proxy took time, smoothly compress remaining duration so ink-bleed reaches 1.0 before unmount!
-        const startNowMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
-        const loadDelayMs = Math.max(0, startNowMs - mountedAtMs);
-        const effectiveTotalMs = Math.max(
-          420,
-          totalMs - Math.min(totalMs * 0.45, loadDelayMs)
-        );
+        const effectiveTotalMs = Math.max(850, totalMs);
         let animStartMs: number | null = null;
         let maxProgress = 0;
 
@@ -629,8 +630,21 @@ export const InkBleedCoverTransition: React.FC<InkBleedCoverTransitionProps> = R
           if (animStartMs === null) {
             animStartMs = now;
           }
-          const rawP = Math.max(0, Math.min(1, (now - animStartMs) / effectiveTotalMs));
-          paintAt(rawP);
+          const rafP = Math.max(0, Math.min(1, (now - animStartMs) / effectiveTotalMs));
+          let targetP = rafP;
+          try {
+            const snap = getLivePlaybackPosition();
+            if (snap.isTransitioning && snap.transitionProgress01 >= 0) {
+              // Anchor pace to actual audio deck crossfade progression while keeping RAF 60fps smoothness
+              targetP = Math.max(
+                rafP * 0.45,
+                Math.min(1, Math.min(snap.transitionProgress01 + 0.08, (rafP + snap.transitionProgress01) * 0.5))
+              );
+            }
+          } catch {
+            // ignore outside store lifecycle
+          }
+          paintAt(targetP);
 
           if (maxProgress < 1 && typeof requestAnimationFrame === 'function') {
             rafId = requestAnimationFrame(renderFrame);
@@ -643,11 +657,14 @@ export const InkBleedCoverTransition: React.FC<InkBleedCoverTransitionProps> = R
         }
       };
 
-      // Guard if network image takes too long -> smoothly trigger CSS GPU transition
-      safetyTimer = setTimeout(failToCssFallback, 750);
+      // Extended guard on mobile cellular so WebGL CORS texture decode reliably finishes without falling back prematurely
+      safetyTimer = setTimeout(failToCssFallback, 1800);
+
+      const loadOutgoingUrl = isMobileViewport ? optimizeArtworkUrl(outgoingUrl, 'card') : outgoingUrl;
+      const loadIncomingUrl = isMobileViewport ? optimizeArtworkUrl(incomingUrl, 'card') : incomingUrl;
 
       const cancelOutLoad = loadSharedCorsCoverImage(
-        outgoingUrl,
+        loadOutgoingUrl,
         (img) => {
           if (cancelled || fellBack) return;
           outAspect = img.naturalWidth / Math.max(1, img.naturalHeight);
@@ -662,7 +679,7 @@ export const InkBleedCoverTransition: React.FC<InkBleedCoverTransitionProps> = R
       );
 
       const cancelInLoad = loadSharedCorsCoverImage(
-        incomingUrl,
+        loadIncomingUrl,
         (img) => {
           if (cancelled || fellBack) return;
           inAspect = img.naturalWidth / Math.max(1, img.naturalHeight);

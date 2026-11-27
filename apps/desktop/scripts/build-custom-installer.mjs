@@ -537,12 +537,19 @@ namespace PMusicSetup {
         }
         Directory.CreateDirectory(targetDir);
         try {
-          foreach (Process proc in Process.GetProcessesByName("pmusic")) {
-            try { proc.WaitForExit(4500); } catch {}
-            if (!proc.HasExited) {
-              try { proc.Kill(); proc.WaitForExit(2500); } catch {}
-            }
+          int myPid = Process.GetCurrentProcess().Id;
+          foreach (Process proc in Process.GetProcesses()) {
+            try {
+              if (proc.Id != myPid && string.Equals(proc.ProcessName, "pmusic", StringComparison.OrdinalIgnoreCase)) {
+                proc.WaitForExit(7000);
+                if (!proc.HasExited) {
+                  proc.Kill();
+                  proc.WaitForExit(3500);
+                }
+              }
+            } catch {}
           }
+          System.Threading.Thread.Sleep(450);
         } catch {}
 
         using (Stream resStream = Assembly.GetExecutingAssembly().GetManifestResourceStream("pMusic.payload.zip")) {
@@ -555,12 +562,18 @@ namespace PMusicSetup {
                 Directory.CreateDirectory(destPath);
               } else {
                 Directory.CreateDirectory(Path.GetDirectoryName(destPath));
-                for (int retry = 0; retry < 5; retry++) {
+                bool extracted = false;
+                for (int retry = 0; retry < 16 && !extracted; retry++) {
                   try {
+                    if (retry >= 4 && File.Exists(destPath)) {
+                      string stalePath = destPath + ".old";
+                      try { if (File.Exists(stalePath)) File.Delete(stalePath); } catch {}
+                      try { File.Move(destPath, stalePath); } catch {}
+                    }
                     entry.ExtractToFile(destPath, true);
-                    break;
+                    extracted = true;
                   } catch {
-                    System.Threading.Thread.Sleep(300);
+                    System.Threading.Thread.Sleep(250);
                   }
                 }
               }
@@ -569,9 +582,13 @@ namespace PMusicSetup {
         }
 
         string exePath = Path.Combine(targetDir, "pmusic.exe");
+        string asarPath = Path.Combine(targetDir, "resources", "app.asar");
+        if (!File.Exists(exePath) || !File.Exists(asarPath)) {
+          return 3;
+        }
         RegisterProtocol(exePath);
         RegisterUninstallEntry(targetDir, exePath);
-        if (relaunch && File.Exists(exePath)) {
+        if (relaunch) {
           Process.Start(new ProcessStartInfo(exePath) { WorkingDirectory = targetDir });
         }
         return 0;

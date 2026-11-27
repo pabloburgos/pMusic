@@ -120,7 +120,7 @@ writeFileSync(zipPath, zipBuf);
 
 const manifest = {
   version,
-  minNativeVersion: '0.24.5',
+  minNativeVersion: '0.24.6',
   bundleUrl: 'https://raw.githubusercontent.com/pabloburgos/pMusic/main/ota/pMusic-web-bundle.zip',
   apkUrl: `https://github.com/pabloburgos/pMusic/releases/download/v${version}/pMusic-Android.apk`,
   exeUrl: `https://github.com/pabloburgos/pMusic/releases/download/v${version}/pMusic-Setup-${version}.exe`,

@@ -251,7 +251,10 @@ export interface IAudioEngine {
   setUserEq(config: UserEqConfig): void;
   setSafeCrossfade(config: SafeCrossfadeConfig): void;
   setDjMode(config: DjModeConfig): void;
-  executeTransition(plan: DeckTransitionPlan): Promise<void>;
+  executeTransition(
+    plan: DeckTransitionPlan,
+    onAudioFadeStart?: (effectiveDurationSec: number) => void
+  ): Promise<void>;
   cancelActiveTransition(): void;
   getAnalyserData(): AudioAnalyserData;
   getState(): AudioEngineState;

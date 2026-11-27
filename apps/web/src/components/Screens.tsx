@@ -75,6 +75,7 @@ import { SwipeableTrackRow } from './SwipeableTrackRow.tsx';
 import { RoundedPauseIcon, RoundedPlayIcon } from './TransportIcons.tsx';
 import { getLowResPreviewUrl, optimizeArtworkUrl } from '../utils/image-opt.ts';
 import { buildSearchHomeRecommendations } from '../utils/instant-search.ts';
+import { syncNativeSystemBars } from '../utils/system-bars.ts';
 
 const SPANISH_SHORT_MONTHS = [
   'ene',
@@ -361,7 +362,7 @@ export const TrackListRow: React.FC<{
     recordPlaylistPlay,
   } = usePMusicStore(
     useShallow((s) => {
-      const cur = s.currentTrack.id === track.id;
+      const cur = s.currentTrack?.id === track.id;
       return {
         isCurrent: cur,
         isPlaying: cur ? s.isPlaying : false,
@@ -799,6 +800,8 @@ const CarouselSection: React.FC<{
 export const DetailViewPanel: React.FC = React.memo(() => {
   const {
     activeDetailView,
+    nowPlayingOpen,
+    themeId,
     currentTrack,
     isPlaying,
     shuffleEnabled,
@@ -848,6 +851,8 @@ export const DetailViewPanel: React.FC = React.memo(() => {
   } = usePMusicStore(
     useShallow((s) => ({
       activeDetailView: s.activeDetailView,
+      nowPlayingOpen: s.nowPlayingOpen,
+      themeId: s.themeId,
       currentTrack: s.currentTrack,
       isPlaying: s.isPlaying,
       shuffleEnabled: s.shuffleEnabled,
@@ -924,6 +929,7 @@ export const DetailViewPanel: React.FC = React.memo(() => {
   const [artistHeaderRgb, setArtistHeaderRgb] = useState<RgbTriple | null>(null);
   const [heroCandidateIdx, setHeroCandidateIdx] = useState(0);
   const [heroLoadedUrl, setHeroLoadedUrl] = useState<string | null>(null);
+  const [heroBarIsLight, setHeroBarIsLight] = useState<boolean>(false);
   const recTrackIdsRef = useRef<{ plId: string; ids: Set<string> }>({
     plId: '',
     ids: new Set(),
@@ -935,6 +941,107 @@ export const DetailViewPanel: React.FC = React.memo(() => {
     activeDetailView?.kind === 'artist' ? activeDetailView.data.bannerUrl : undefined;
   const activeArtistThumbUrl =
     activeDetailView?.kind === 'artist' ? activeDetailView.data.artist.thumbnailUrl : undefined;
+
+  const activeHeroImageForBars = (() => {
+    if (!activeDetailView) return null;
+    if (activeDetailView.kind === 'artist') {
+      return activeDetailView.data.bannerUrl || activeDetailView.data.artist.thumbnailUrl || null;
+    }
+    if (activeDetailView.kind === 'album') {
+      return (
+        activeDetailView.data.album.thumbnailUrl ||
+        activeDetailView.data.tracks[0]?.thumbnailHighUrl ||
+        activeDetailView.data.tracks[0]?.thumbnailUrl ||
+        null
+      );
+    }
+    if (activeDetailView.kind === 'playlist') {
+      return (
+        activeDetailView.data.playlist.thumbnailUrl ||
+        activeDetailView.data.tracks[0]?.thumbnailHighUrl ||
+        activeDetailView.data.tracks[0]?.thumbnailUrl ||
+        null
+      );
+    }
+    if (activeDetailView.kind === 'local_playlist') {
+      const lpl = playlists.find((p) => p.id === activeDetailView.playlistId);
+      if (!lpl) return null;
+      const app = playlistAppearances[lpl.id];
+      const bannerEnabled = app?.bannerEnabled ?? lpl.bannerEnabled ?? true;
+      if (!bannerEnabled) return null;
+      const banner = app && 'bannerUrl' in app ? app.bannerUrl : lpl.bannerUrl;
+      const cover = app && 'coverUrl' in app ? app.coverUrl : lpl.coverUrl;
+      return (
+        (banner && banner.trim()) ||
+        (cover && cover.trim()) ||
+        lpl.tracks[0]?.thumbnailHighUrl ||
+        lpl.tracks[0]?.thumbnailUrl ||
+        null
+      );
+    }
+    if (activeDetailView.kind === 'shared_playlist') {
+      const spl = sharedPlaylists.find((p) => p.id === activeDetailView.sharedId);
+      if (!spl) return null;
+      const app = playlistAppearances[spl.id];
+      const bannerEnabled = app?.bannerEnabled ?? true;
+      if (!bannerEnabled) return null;
+      const banner = app && 'bannerUrl' in app ? app.bannerUrl : undefined;
+      const cover = app && 'coverUrl' in app ? app.coverUrl : spl.coverUrl;
+      return (
+        (banner && banner.trim()) ||
+        (cover && cover.trim()) ||
+        spl.tracks[0]?.thumbnailHighUrl ||
+        spl.tracks[0]?.thumbnailUrl ||
+        null
+      );
+    }
+    return null;
+  })();
+
+  useEffect(() => {
+    setHeroBarIsLight(false);
+    if (!activeDetailView || nowPlayingOpen) return;
+    const isHeroKind =
+      activeDetailView.kind === 'artist' ||
+      activeDetailView.kind === 'album' ||
+      activeDetailView.kind === 'playlist' ||
+      activeDetailView.kind === 'local_playlist' ||
+      activeDetailView.kind === 'shared_playlist';
+    if (!isHeroKind) return;
+
+    const hasVisual = Boolean(activeHeroImageForBars);
+    const fallbackLight = themeId === 'nordic-light';
+    syncNativeSystemBars({
+      nowPlayingOpen: false,
+      isLightBackdrop: false,
+      transparentStatusBar: hasVisual,
+      isLightStatusBar: hasVisual ? false : fallbackLight,
+      themeId,
+    });
+
+    if (!activeHeroImageForBars) return;
+    let cancelled = false;
+    void extractCharacteristicImageColor([optimizeArtworkUrl(activeHeroImageForBars, 'row')]).then(
+      (rgb) => {
+        if (cancelled || !rgb) return;
+        const luma = (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255;
+        const isLightHero = luma >= 0.54;
+        setHeroBarIsLight(isLightHero);
+        if (!nowPlayingOpen) {
+          syncNativeSystemBars({
+            nowPlayingOpen: false,
+            isLightBackdrop: false,
+            transparentStatusBar: true,
+            isLightStatusBar: isLightHero,
+            themeId,
+          });
+        }
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [activeDetailView?.kind, activeHeroImageForBars, nowPlayingOpen, themeId]);
 
   useEffect(() => {
     setArtistDiscoTab('all');
@@ -1391,8 +1498,9 @@ export const DetailViewPanel: React.FC = React.memo(() => {
                 aria-hidden="true"
                 className="pointer-events-none absolute inset-0"
                 style={{
-                  background:
-                    'linear-gradient(180deg, color-mix(in srgb, var(--pm-bg-canvas) 18%, transparent) 0%, transparent 24%, color-mix(in srgb, var(--pm-bg-canvas) 14%, transparent) 46%, color-mix(in srgb, var(--pm-bg-canvas) 52%, transparent) 66%, color-mix(in srgb, var(--pm-bg-canvas) 84%, transparent) 82%, color-mix(in srgb, var(--pm-bg-canvas) 97%, transparent) 93%, var(--pm-bg-canvas) 100%)',
+                  background: heroBarIsLight
+                    ? 'linear-gradient(180deg, transparent 0%, transparent 32%, color-mix(in srgb, var(--pm-bg-canvas) 45%, transparent) 66%, color-mix(in srgb, var(--pm-bg-canvas) 84%, transparent) 84%, var(--pm-bg-canvas) 100%)'
+                    : 'linear-gradient(180deg, transparent 0%, transparent 22%, color-mix(in srgb, var(--pm-bg-canvas) 16%, transparent) 46%, color-mix(in srgb, var(--pm-bg-canvas) 52%, transparent) 66%, color-mix(in srgb, var(--pm-bg-canvas) 84%, transparent) 82%, color-mix(in srgb, var(--pm-bg-canvas) 97%, transparent) 93%, var(--pm-bg-canvas) 100%)',
                 }}
               />
               <div
@@ -1895,7 +2003,7 @@ export const DetailViewPanel: React.FC = React.memo(() => {
             className="pointer-events-none absolute inset-0"
             style={{
               background:
-                'linear-gradient(180deg, color-mix(in srgb, var(--pm-bg-canvas) 22%, transparent) 0%, color-mix(in srgb, var(--pm-bg-canvas) 54%, transparent) 55%, var(--pm-bg-canvas) 100%)',
+                'linear-gradient(180deg, transparent 0%, color-mix(in srgb, var(--pm-bg-canvas) 46%, transparent) 58%, var(--pm-bg-canvas) 100%)',
             }}
           />
           <div
@@ -2152,7 +2260,7 @@ export const DetailViewPanel: React.FC = React.memo(() => {
             className="pointer-events-none absolute inset-0"
             style={{
               background:
-                'linear-gradient(180deg, color-mix(in srgb, var(--pm-bg-canvas) 22%, transparent) 0%, color-mix(in srgb, var(--pm-bg-canvas) 55%, transparent) 55%, var(--pm-bg-canvas) 100%)',
+                'linear-gradient(180deg, transparent 0%, color-mix(in srgb, var(--pm-bg-canvas) 48%, transparent) 58%, var(--pm-bg-canvas) 100%)',
             }}
           />
           <div className="relative z-10 flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
@@ -2631,7 +2739,9 @@ export const DetailViewPanel: React.FC = React.memo(() => {
           aria-hidden="true"
           className={`pointer-events-none absolute inset-0 h-full w-full object-cover ${
             isBannerAutoFromCover
-              ? 'scale-110 object-center blur-2xl brightness-75 saturate-125'
+              ? heroBarIsLight
+                ? 'scale-110 object-center blur-2xl brightness-100 saturate-110'
+                : 'scale-110 object-center blur-2xl brightness-75 saturate-125'
               : 'scale-[1.02] object-[50%_25%] opacity-90'
           }`}
         />
@@ -2640,7 +2750,7 @@ export const DetailViewPanel: React.FC = React.memo(() => {
           className="pointer-events-none absolute inset-0"
           style={{
             background:
-              'linear-gradient(180deg, color-mix(in srgb, var(--pm-bg-canvas) 20%, transparent) 0%, color-mix(in srgb, var(--pm-bg-canvas) 48%, transparent) 52%, color-mix(in srgb, var(--pm-bg-canvas) 88%, transparent) 84%, var(--pm-bg-canvas) 100%)',
+              'linear-gradient(180deg, transparent 0%, color-mix(in srgb, var(--pm-bg-canvas) 44%, transparent) 56%, color-mix(in srgb, var(--pm-bg-canvas) 88%, transparent) 84%, var(--pm-bg-canvas) 100%)',
           }}
         />
         <div
@@ -3650,6 +3760,23 @@ export const HomeScreen: React.FC = React.memo(() => {
   const show = (name: (typeof HOME_CHIPS)[number]) =>
     chip === 'Todo' || chip === name;
 
+  const liveCoverByTrackId = new Map<string, string>();
+  const recordLiveCover = (tr?: Track | null) => {
+    if (!tr?.id) return;
+    const u = (tr.thumbnailHighUrl ?? tr.thumbnailUrl ?? '').trim();
+    if (!u || liveCoverByTrackId.has(tr.id)) return;
+    liveCoverByTrackId.set(tr.id, u);
+  };
+  recordLiveCover(currentTrack);
+  for (const pl of playlists) {
+    for (const tr of pl.tracks) recordLiveCover(tr);
+  }
+  for (const spl of sharedPlaylists) {
+    for (const tr of spl.tracks) recordLiveCover(tr);
+  }
+  for (const l of likedTracks) recordLiveCover(l.track);
+  for (const h of playHistory) recordLiveCover(h.track);
+
   // Build "Tus artistas favoritos" strictly from liked artists (heart) OR >= 2 songs in user playlists / likes / real listening history
   const userRealTracks: Track[] = [
     ...playlists.flatMap((p) => p.tracks),
@@ -3853,8 +3980,14 @@ export const HomeScreen: React.FC = React.memo(() => {
         <section aria-label="Escuchar de nuevo">
           <div className="grid grid-cols-2 gap-2 sm:gap-2.5 lg:grid-cols-3">
             {frequentPlaylists.map((pl) => {
+              const appEntry = playlistAppearances[pl.id];
+              const customCover =
+                appEntry && 'coverUrl' in appEntry ? appEntry.coverUrl : pl.coverUrl;
               const plCover =
-                playlistAppearances[pl.id]?.coverUrl ?? pl.coverUrl ?? pl.tracks[0]?.thumbnailUrl;
+                (customCover && customCover.trim()) ||
+                pl.tracks[0]?.thumbnailHighUrl ||
+                pl.tracks[0]?.thumbnailUrl ||
+                '';
               return (
                 <div
                   key={`quick-pl-${pl.id}`}
@@ -3872,21 +4005,17 @@ export const HomeScreen: React.FC = React.memo(() => {
                   }}
                   className="pm-quick-tile pm-card-lift group flex cursor-pointer items-center gap-2.5 overflow-hidden rounded-[10px] pr-2.5 sm:gap-3 sm:rounded-[8px]"
                 >
-                  <div className="h-[52px] w-[52px] shrink-0 overflow-hidden bg-white/[0.05] sm:h-14 sm:w-14">
-                    {plCover ? (
-                      <img
-                        src={optimizeArtworkUrl(plCover, 'thumb')}
-                        alt={pl.name}
-                        loading="lazy"
-                        decoding="async"
-                        fetchPriority="low"
-                        className="pm-skeleton-shimmer h-full w-full object-cover"
-                      />
-                    ) : (
-                      <div className="pm-elevated flex h-full w-full items-center justify-center text-sm font-bold pm-text-secondary">
-                        {pl.name.slice(0, 1).toUpperCase()}
-                      </div>
-                    )}
+                  <div className="relative h-[52px] w-[52px] shrink-0 overflow-hidden bg-white/[0.05] sm:h-14 sm:w-14">
+                    <TrackArtwork
+                      trackId={pl.tracks[0]?.id}
+                      src={plCover}
+                      title={pl.name}
+                      artistName={pl.tracks[0]?.artists[0]?.name}
+                      artistId={pl.tracks[0]?.artists[0]?.id}
+                      alt={pl.name}
+                      variant="list"
+                      imgClassName="h-full w-full object-cover"
+                    />
                   </div>
                   <div className="min-w-0 flex-1 py-1">
                     <div className="line-clamp-2 text-left text-[12.5px] font-semibold leading-[1.2] pm-text-primary sm:truncate sm:text-[14px]">
@@ -3914,7 +4043,8 @@ export const HomeScreen: React.FC = React.memo(() => {
               );
             })}
             {quick.map((t) => {
-              const isTilePlaying = currentTrack.id === t.id;
+              const isTilePlaying = currentTrack?.id === t.id;
+              const liveThumb = liveCoverByTrackId.get(t.id) ?? t.thumbnailHighUrl ?? t.thumbnailUrl;
               return (
                 <div
                   key={t.id}
@@ -3939,14 +4069,16 @@ export const HomeScreen: React.FC = React.memo(() => {
                   }}
                   className="pm-quick-tile pm-card-lift group flex cursor-pointer items-center gap-2.5 overflow-hidden rounded-[10px] pr-2.5 sm:gap-3 sm:rounded-[8px]"
                 >
-                  <div className="h-[52px] w-[52px] shrink-0 overflow-hidden bg-white/[0.05] sm:h-14 sm:w-14">
-                    <img
-                      src={optimizeArtworkUrl(t.thumbnailUrl, 'thumb')}
+                  <div className="relative h-[52px] w-[52px] shrink-0 overflow-hidden bg-white/[0.05] sm:h-14 sm:w-14">
+                    <TrackArtwork
+                      trackId={t.id}
+                      src={liveThumb}
+                      title={t.title}
+                      artistName={t.artists[0]?.name}
+                      artistId={t.artists[0]?.id}
                       alt={t.title}
-                      loading="lazy"
-                      decoding="async"
-                      fetchPriority="low"
-                      className="pm-skeleton-shimmer h-full w-full object-cover"
+                      variant="list"
+                      imgClassName="h-full w-full object-cover"
                     />
                   </div>
                   <div className="min-w-0 flex-1 py-1">

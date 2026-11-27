@@ -218,6 +218,7 @@ import {
   applyAmbientPaletteFromCover,
   getActiveAmbientTrackKey,
   prebakeMobileBackdrop,
+  prefetchSharedCorsCoverImage,
   trimBackdropMemoryCaches,
 } from '../utils/cover-color.ts';
 import {
@@ -936,6 +937,13 @@ const preloadedCoverUrls = new Set<string>();
 function preloadTrackCoverArt(track: Track | null | undefined): void {
   if (!track || typeof Image === 'undefined') return;
   const shouldPrebakeMobile = isMobileHardwareVolumeRuntime();
+  const isMobile = typeof window !== 'undefined' && window.innerWidth > 0 && window.innerWidth < 768;
+  const inkPrefetchUrl = track.thumbnailHighUrl ?? track.thumbnailUrl;
+  if (inkPrefetchUrl && resolveEffectiveStreamQuality(currentStreamQualityPref) !== 'low') {
+    prefetchSharedCorsCoverImage(
+      isMobile ? optimizeArtworkUrl(inkPrefetchUrl, 'card') : inkPrefetchUrl
+    );
+  }
   for (const url of [track.thumbnailHighUrl, track.thumbnailUrl]) {
     if (!url || preloadedCoverUrls.has(url)) continue;
     preloadedCoverUrls.add(url);
@@ -2444,39 +2452,47 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
       if (isCancelled()) return;
 
-      // Act 1: Reveal incoming track transition state before swapping title & cover at deck handoff (~48%)
-      set({
-        outgoingTransitionTrack: prevTrack,
-        incomingTransitionTrack: nextTrack,
-        transitionDurationSec: plan.transitionDurationSec,
-      });
-      void hydrateTrackContributorsIfNeeded(nextTrack);
-      // Animate ambient backdrop colors linearly 0->10->20->...->100 over the FULL transition for BOTH DJ & crossfade!
-      applyAmbientPaletteForTrack(
-        nextTrack,
-        Math.round(Math.max(1.2, plan.transitionDurationSec) * 1000)
-      );
-      if (!isPlainCrossfade) {
-        suppressedAutoTransitionTrackId = null;
-        lastObservedPlayback = { trackId: nextTrack.id, posSec: plan.cueInSec };
-      }
-
-      const handoffDelayMs = Math.max(
-        380,
-        Math.round(plan.transitionDurationSec * 500)
-      );
-      handoffTimer = setTimeout(() => {
-        if (!isCancelled()) {
-          commitTrackSwap();
+      // Sync visual transition (InkBleed, backdrop, and 50% track swap) strictly to the exact moment
+      // the incoming audio deck finishes buffering and begins its real crossfade!
+      let visualFadeStarted = false;
+      const startVisualFade = (effectiveDurSec: number) => {
+        if (visualFadeStarted || isCancelled()) return;
+        visualFadeStarted = true;
+        const syncDurSec = Math.max(1.2, effectiveDurSec || plan.transitionDurationSec);
+        set({
+          outgoingTransitionTrack: prevTrack,
+          incomingTransitionTrack: nextTrack,
+          transitionDurationSec: syncDurSec,
+        });
+        void hydrateTrackContributorsIfNeeded(nextTrack);
+        applyAmbientPaletteForTrack(
+          nextTrack,
+          Math.round(syncDurSec * 1000)
+        );
+        if (!isPlainCrossfade) {
+          suppressedAutoTransitionTrackId = null;
+          lastObservedPlayback = { trackId: nextTrack.id, posSec: plan.cueInSec };
         }
-      }, handoffDelayMs);
+        const handoffDelayMs = Math.max(
+          380,
+          Math.round(syncDurSec * 500)
+        );
+        handoffTimer = setTimeout(() => {
+          if (!isCancelled()) {
+            commitTrackSwap();
+          }
+        }, handoffDelayMs);
+      };
 
       try {
         const transTimeoutMs = Math.max(7000, Math.round(plan.transitionDurationSec * 1000) + 5500);
         const transitionedOk = await runWithTimeout(
-          audioEngine.executeTransition(plan),
+          audioEngine.executeTransition(plan, startVisualFade),
           transTimeoutMs
         );
+        if (!visualFadeStarted && transitionedOk && !isCancelled()) {
+          startVisualFade(plan.transitionDurationSec);
+        }
         if (isCancelled()) {
           if (handoffTimer) {
             clearTimeout(handoffTimer);
@@ -3575,6 +3591,129 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }
   }
 
+  function hydrateShelvesWithLiveCovers(shelves: HomeEditorialShelf[]): HomeEditorialShelf[] {
+    const st = get();
+    const freshCoverMap = new Map<string, { thumb: string; hi?: string }>();
+    const addTrackCover = (tr?: Track | null) => {
+      if (!tr?.id) return;
+      const hi = (tr.thumbnailHighUrl ?? '').trim();
+      const th = (tr.thumbnailUrl ?? '').trim();
+      if (!th && !hi) return;
+      if (!freshCoverMap.has(tr.id)) {
+        freshCoverMap.set(tr.id, { thumb: th || hi, ...(hi ? { hi } : {}) });
+      }
+    };
+    addTrackCover(st.currentTrack);
+    for (const pl of st.playlists) {
+      for (const tr of pl.tracks) addTrackCover(tr);
+    }
+    for (const spl of st.sharedPlaylists) {
+      for (const tr of spl.tracks) addTrackCover(tr);
+    }
+    for (const l of st.likedTracks) addTrackCover(l.track);
+    for (const h of st.playHistory) addTrackCover(h.track);
+    if (freshCoverMap.size === 0) return shelves;
+    const patchTrack = (tr: Track): Track => {
+      const live = freshCoverMap.get(tr.id);
+      if (!live) return tr;
+      return {
+        ...tr,
+        thumbnailUrl: live.thumb || tr.thumbnailUrl,
+        ...(live.hi ? { thumbnailHighUrl: live.hi } : {}),
+      };
+    };
+    return shelves.map((sh) => ({
+      ...sh,
+      ...(sh.tracks ? { tracks: sh.tracks.map(patchTrack) } : {}),
+      ...(sh.mixes
+        ? {
+            mixes: sh.mixes.map((mx) => ({
+              ...mx,
+              tracks: mx.tracks.map(patchTrack),
+            })),
+          }
+        : {}),
+    }));
+  }
+
+  function syncAndroidWidgetRecents(): void {
+    if (typeof window === 'undefined') return;
+    const native = (window as unknown as {
+      PMusicNative?: { updateWidgetRecents?: (json: string) => void };
+    }).PMusicNative;
+    if (!native?.updateWidgetRecents) return;
+    try {
+      const st = get();
+      const items: Array<{
+        id: string;
+        kind: 'playlist' | 'shared_playlist' | 'track';
+        title: string;
+        artist: string;
+        coverUrl: string;
+      }> = [];
+      const seenKeys = new Set<string>();
+
+      const freqSorted = [...st.playlists]
+        .filter((p) => p.tracks.length > 0)
+        .sort((a, b) => {
+          const ka = a.name.trim().toLowerCase().replace(/\s+/g, ' ');
+          const kb = b.name.trim().toLowerCase().replace(/\s+/g, ' ');
+          const ca = st.playlistPlayCounts[ka]?.count ?? 0;
+          const cb = st.playlistPlayCounts[kb]?.count ?? 0;
+          return cb - ca;
+        });
+      for (const pl of freqSorted.slice(0, 2)) {
+        const app = st.playlistAppearances[pl.id];
+        const custom = app && 'coverUrl' in app ? app.coverUrl : pl.coverUrl;
+        const coverUrl =
+          (custom && custom.trim()) ||
+          pl.tracks[0]?.thumbnailHighUrl ||
+          pl.tracks[0]?.thumbnailUrl ||
+          '';
+        seenKeys.add(`pl:${pl.id}`);
+        items.push({
+          id: pl.id,
+          kind: 'playlist',
+          title: pl.name,
+          artist: `${pl.tracks.length} temas`,
+          coverUrl: optimizeArtworkUrl(coverUrl, 'thumb'),
+        });
+      }
+
+      for (const h of st.playHistory) {
+        if (items.length >= 4) break;
+        const tr = h.track;
+        if (!tr?.id || seenKeys.has(`tr:${tr.id}`)) continue;
+        seenKeys.add(`tr:${tr.id}`);
+        items.push({
+          id: tr.id,
+          kind: 'track',
+          title: tr.title,
+          artist: tr.artists.map((a) => a.name).join(', '),
+          coverUrl: optimizeArtworkUrl(tr.thumbnailHighUrl ?? tr.thumbnailUrl, 'thumb'),
+        });
+      }
+
+      const listenShelf = st.homeShelves.find((s) => s.kind === 'listen_again')?.tracks ?? [];
+      for (const tr of listenShelf) {
+        if (items.length >= 4) break;
+        if (!tr?.id || seenKeys.has(`tr:${tr.id}`)) continue;
+        seenKeys.add(`tr:${tr.id}`);
+        items.push({
+          id: tr.id,
+          kind: 'track',
+          title: tr.title,
+          artist: tr.artists.map((a) => a.name).join(', '),
+          coverUrl: optimizeArtworkUrl(tr.thumbnailHighUrl ?? tr.thumbnailUrl, 'thumb'),
+        });
+      }
+
+      native.updateWidgetRecents(JSON.stringify(items.slice(0, 4)));
+    } catch {
+      // ignore widget bridge errors
+    }
+  }
+
   return {
   activeTab: 'Inicio',
   appReady: false,
@@ -4268,7 +4407,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       }));
 
     const commitShelvesAndSeedPlayer = async (builtShelves: HomeEditorialShelf[]) => {
-      const canonicalShelves = canonicalizeShelves(builtShelves);
+      const canonicalShelves = hydrateShelvesWithLiveCovers(canonicalizeShelves(builtShelves));
       const allRealTracks = Array.from(
         new Map(canonicalShelves.flatMap((s) => s.tracks ?? []).map((t) => [t.id, t])).values()
       );
@@ -4313,6 +4452,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       }));
       if (isLiveRuntime()) {
         void preloadTopHomeCovers(canonicalShelves);
+        syncAndroidWidgetRecents();
       }
     };
 
@@ -5396,6 +5536,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         });
       }
       syncDiscordPresenceState();
+      syncAndroidWidgetRecents();
       pushHostJamStateSoon();
 
       if (
@@ -5487,6 +5628,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       });
       void syncEngine.updatePresence({ is_playing: false });
       syncDiscordPresenceState();
+      syncAndroidWidgetRecents();
       pushHostJamStateSoon();
     } else {
       const snapshots =
@@ -7951,6 +8093,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }
     scheduleLibraryCloudSync(true);
     persistPrefsFromStore(true);
+    syncAndroidWidgetRecents();
   },
 
   downloadPlaylistOffline: async (playlistId, tracks, playlistName) => {

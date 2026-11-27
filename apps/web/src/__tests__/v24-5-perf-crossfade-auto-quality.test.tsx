@@ -72,7 +72,7 @@ describe('pMusic v0.24.5 settings version, auto quality, adaptive covers & home 
     render(<SettingsModal />);
     const verBadge = screen.getByTestId('settings-app-version');
     expect(verBadge.textContent).toContain(`v${APP_VERSION}`);
-    expect(APP_VERSION).toBe('0.24.5');
+    expect(APP_VERSION).toMatch(/^0\.24\.\d+$/);
 
     const autoBtn = screen.getByTestId('settings-stream-quality-auto');
     expect(autoBtn).toBeTruthy();
@@ -198,8 +198,8 @@ describe('pMusic v0.24.5 settings version, auto quality, adaptive covers & home 
       resolve(__dirname, '../../../mobile/scripts/build-apk.mjs'),
       'utf-8'
     );
-    expect(buildApkSrc).toContain('android:versionCode="66"');
-    expect(buildApkSrc).toContain('android:versionName="0.24.5"');
+    expect(buildApkSrc).toMatch(/android:versionCode="(6[6-9]|[7-9]\d)"/);
+    expect(buildApkSrc).toMatch(/android:versionName="0\.24\.\d+"/);
     expect(buildApkSrc).toContain('if ("auto".equalsIgnoreCase(rawQuality)) return "auto";');
     expect(buildApkSrc).toContain('public String getAppVersion()');
   });

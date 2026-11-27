@@ -1324,7 +1324,10 @@ export class DualDeckAudioEngine implements IAudioEngine {
     }
   }
 
-  public async executeTransition(plan: DeckTransitionPlan): Promise<void> {
+  public async executeTransition(
+    plan: DeckTransitionPlan,
+    onAudioFadeStart?: (effectiveDurationSec: number) => void
+  ): Promise<void> {
     await this.init();
     if (this.isTransitioning) {
       this.cancelActiveTransition();
@@ -1436,6 +1439,11 @@ export class DualDeckAudioEngine implements IAudioEngine {
         1.2,
         Math.min(plan.transitionDurationSec, outRemainingSec)
       );
+      try {
+        onAudioFadeStart?.(effectiveTransSec);
+      } catch {
+        // ignore UI callback errors
+      }
 
       const totalMs = Math.max(250, Math.min(14_000, Math.round(effectiveTransSec * 1000)));
       const estFromBpm = Math.max(

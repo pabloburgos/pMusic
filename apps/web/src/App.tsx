@@ -497,10 +497,39 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
   }, [initialJamCode, appReady, authState.connected, joinJamInApp]);
 
   useEffect(() => {
-    if (!nowPlayingOpen) {
-      syncNativeSystemBars({ nowPlayingOpen: false, isLightBackdrop: false, themeId });
-    }
-  }, [nowPlayingOpen, themeId]);
+    if (typeof window === 'undefined') return;
+    const onWidgetOpen = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ kind?: string; id?: string }>).detail;
+      if (!detail?.id) return;
+      const st = usePMusicStore.getState();
+      if (detail.kind === 'playlist') {
+        st.openLocalPlaylistDetail(detail.id);
+        const pl = st.playlists.find((p) => p.id === detail.id);
+        if (pl && pl.tracks.length > 0) {
+          st.recordPlaylistPlay(pl);
+          void st.playCollection(pl.tracks, { isPlaylist: true });
+        }
+      } else if (detail.kind === 'shared_playlist') {
+        st.openSharedPlaylistDetail(detail.id);
+        const spl = st.sharedPlaylists.find((p) => p.id === detail.id);
+        if (spl && spl.tracks.length > 0) {
+          void st.playCollection(spl.tracks, { isPlaylist: true });
+        }
+      } else {
+        const allPool = [
+          ...st.playHistory.map((h) => h.track),
+          ...st.playlists.flatMap((p) => p.tracks),
+          ...st.likedTracks.map((l) => l.track),
+        ];
+        const found = allPool.find((t) => t.id === detail.id);
+        if (found) {
+          void st.playTrack(found);
+        }
+      }
+    };
+    window.addEventListener('pmusic:widget-open-item', onWidgetOpen);
+    return () => window.removeEventListener('pmusic:widget-open-item', onWidgetOpen);
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1500,6 +1529,21 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
           (playlistAppearances[activeDetailView.sharedId]?.bannerEnabled ?? true)))
   );
 
+  useEffect(() => {
+    if (!nowPlayingOpen && !isFullBleedHeroView) {
+      syncNativeSystemBars({ nowPlayingOpen: false, isLightBackdrop: false, themeId });
+    } else if (!nowPlayingOpen && isFullBleedHeroView) {
+      const isLightTheme = themeId === 'nordic-light';
+      syncNativeSystemBars({
+        nowPlayingOpen: false,
+        isLightBackdrop: false,
+        transparentStatusBar: true,
+        isLightStatusBar: isLightTheme,
+        themeId,
+      });
+    }
+  }, [nowPlayingOpen, themeId, isFullBleedHeroView]);
+
   const viewTransitionKey = activeDetailView
     ? activeDetailView.kind === 'artist'
       ? `artist:${activeDetailView.transitionKey ?? activeDetailView.data.artist.id}`
@@ -1729,7 +1773,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
           data-testid="mobile-top-header"
           className={`${nowPlayingOpen ? 'pm-behind-nowplaying ' : ''}${
             isFullBleedHeroView
-              ? 'fixed inset-x-0 top-0 z-40 flex items-center justify-between gap-3 bg-gradient-to-b from-black/35 via-black/15 to-transparent px-4 pt-[calc(var(--pm-safe-top,env(safe-area-inset-top,0px))+0.6rem)] pb-3'
+              ? 'fixed inset-x-0 top-0 z-40 flex items-center justify-between gap-3 bg-transparent px-4 pt-[calc(var(--pm-safe-top,env(safe-area-inset-top,0px))+0.6rem)] pb-3'
               : 'pm-mobile-glass-header sticky top-0 z-40 flex shrink-0 items-center justify-between gap-3 px-4 pt-[max(0.8rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3'
           }`}
         >

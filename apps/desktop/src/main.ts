@@ -1,4 +1,4 @@
-import { createWriteStream, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawn } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { randomBytes } from 'node:crypto';
@@ -986,11 +986,56 @@ ipcMain.handle('pmusic:get-fullscreen', () => {
   if (!mainWindow || mainWindow.isDestroyed()) return false;
   return mainWindow.isFullScreen();
 });
-ipcMain.handle('pmusic:check-and-apply-update', async () => {
+interface DesktopUpdateGuard {
+  version: string;
+  attempts: number;
+  lastAttemptMs: number;
+}
+
+function getUpdateGuardPath(): string {
+  return join(app.getPath('userData'), 'update-guard.json');
+}
+
+function readUpdateGuard(): DesktopUpdateGuard | null {
+  try {
+    const p = getUpdateGuardPath();
+    if (!existsSync(p)) return null;
+    const parsed = JSON.parse(readFileSync(p, 'utf8')) as Partial<DesktopUpdateGuard>;
+    if (typeof parsed?.version === 'string') {
+      return {
+        version: parsed.version,
+        attempts: typeof parsed.attempts === 'number' ? parsed.attempts : 0,
+        lastAttemptMs: typeof parsed.lastAttemptMs === 'number' ? parsed.lastAttemptMs : 0,
+      };
+    }
+  } catch {
+    // ignore corrupt guard
+  }
+  return null;
+}
+
+function writeUpdateGuard(guard: DesktopUpdateGuard): void {
+  try {
+    writeFileSync(getUpdateGuardPath(), JSON.stringify(guard), 'utf8');
+  } catch {
+    // ignore
+  }
+}
+
+ipcMain.handle('pmusic:check-and-apply-update', async (_event, currentWebVersion?: string) => {
   if (!app.isPackaged || process.platform !== 'win32') return { updated: false };
+  const sendProgress = (phase: string, version: string, percent: number, message: string) => {
+    try {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('pmusic:update-progress', { phase, version, percent, message });
+      }
+    } catch {
+      // ignore window teardown errors
+    }
+  };
   try {
     const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), 1600);
+    const t = setTimeout(() => ac.abort(), 2200);
     const relRes = await fetch('https://api.github.com/repos/pabloburgos/pMusic/releases/latest', {
       signal: ac.signal,
       headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'pMusic-Updater' },
@@ -1003,26 +1048,60 @@ ipcMain.handle('pmusic:check-and-apply-update', async () => {
     const latestVer = String(relJson?.tag_name ?? '').trim().replace(/^v/i, '');
     const clean = (v: string) =>
       v.replace(/^v/i, '').split('-')[0]?.split('.').map((n) => parseInt(n, 10) || 0) ?? [0, 0, 0];
-    const r = clean(latestVer);
-    const l = clean(app.getVersion() || '0.24.4');
-    const newer = [0, 1, 2].some((i, _a, arr) => {
-      for (let j = 0; j < i; j++) if ((r[j] ?? 0) !== (l[j] ?? 0)) return false;
-      return (r[i] ?? 0) > (l[i] ?? 0);
-    });
-    if (!latestVer || !newer) return { updated: false };
+    const isGreater = (aRaw: string, bRaw: string): boolean => {
+      const r = clean(aRaw);
+      const l = clean(bRaw);
+      return [0, 1, 2].some((i) => {
+        for (let j = 0; j < i; j++) if ((r[j] ?? 0) !== (l[j] ?? 0)) return false;
+        return (r[i] ?? 0) > (l[i] ?? 0);
+      });
+    };
+    const nativeVer = app.getVersion() || '0.24.6';
+    const webVer = typeof currentWebVersion === 'string' && currentWebVersion.trim() ? currentWebVersion.trim() : '0.0.0';
+    const effectiveLocalVer = isGreater(webVer, nativeVer) ? webVer : nativeVer;
+    if (!latestVer || !isGreater(latestVer, effectiveLocalVer)) {
+      return { updated: false };
+    }
+
+    // Loop-proof guard: never retry the same target version infinitely if an install fails or was just attempted
+    const nowMs = Date.now();
+    const prevGuard = readUpdateGuard();
+    if (prevGuard && prevGuard.version === latestVer) {
+      if (nowMs - prevGuard.lastAttemptMs < 90_000) {
+        return { updated: false };
+      }
+      if (prevGuard.attempts >= 2 && nowMs - prevGuard.lastAttemptMs < 12 * 3600_000) {
+        return { updated: false };
+      }
+    }
+
     const exeAsset = (relJson.assets ?? []).find((a) => /pMusic-Setup.*\.exe$/i.test(a.name ?? ''));
     if (!exeAsset?.browser_download_url) return { updated: false };
+    sendProgress('downloading', latestVer, 12, `Descargando pMusic v${latestVer}…`);
     const dlRes = await fetch(exeAsset.browser_download_url, {
       headers: { 'User-Agent': 'pMusic-Updater' },
     });
     if (!dlRes.ok || !dlRes.body) return { updated: false };
+    const totalBytes = Number(dlRes.headers.get('content-length') || 0);
     const installerPath = join(tmpdir(), `pMusic-Setup-Update-${latestVer}.exe`);
     const ws = createWriteStream(installerPath);
     const reader = dlRes.body.getReader();
+    let receivedBytes = 0;
+    let lastPct = 12;
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (value) ws.write(Buffer.from(value));
+      if (value) {
+        ws.write(Buffer.from(value));
+        receivedBytes += value.byteLength;
+        if (totalBytes > 0) {
+          const pct = Math.min(88, Math.max(12, Math.round(12 + (receivedBytes / totalBytes) * 76)));
+          if (pct - lastPct >= 4) {
+            lastPct = pct;
+            sendProgress('downloading', latestVer, pct, `Descargando pMusic v${latestVer}…`);
+          }
+        }
+      }
     }
     await new Promise<void>((resolve, reject) => {
       ws.end(() => resolve());
@@ -1031,13 +1110,42 @@ ipcMain.handle('pmusic:check-and-apply-update', async () => {
     if (!existsSync(installerPath) || statSync(installerPath).size < 10_000_000) {
       return { updated: false };
     }
+
+    writeUpdateGuard({
+      version: latestVer,
+      attempts: prevGuard && prevGuard.version === latestVer ? prevGuard.attempts + 1 : 1,
+      lastAttemptMs: Date.now(),
+    });
+    sendProgress('installing', latestVer, 95, `Instalando pMusic v${latestVer}…`);
+
+    // Tear down tray, server and window cleanly and force hard exit so Electron releases all binary/asar locks immediately
+    isQuitting = true;
+    try {
+      appTray?.destroy();
+      appTray = null;
+    } catch {}
+    try {
+      loopbackServer?.close();
+    } catch {}
+    try {
+      globalShortcut.unregisterAll();
+    } catch {}
+    try {
+      discordRpc.dispose();
+    } catch {}
+
     const child = spawn(
       installerPath,
       ['/silent', `/dir=${dirname(process.execPath)}`, '/relaunch'],
       { detached: true, stdio: 'ignore', windowsHide: true }
     );
     child.unref();
-    setTimeout(() => app.quit(), 300);
+    setTimeout(() => {
+      try {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy();
+      } catch {}
+      app.exit(0);
+    }, 180);
     return { updated: true, version: latestVer };
   } catch {
     return { updated: false };
@@ -1049,6 +1157,30 @@ if (process.platform === 'win32') {
 }
 
 void app.whenReady().then(async () => {
+  try {
+    if (app.isPackaged && process.platform === 'win32') {
+      const execDir = dirname(process.execPath);
+      for (const name of readdirSync(execDir)) {
+        if (name.endsWith('.old')) {
+          try {
+            unlinkSync(join(execDir, name));
+          } catch {}
+        }
+      }
+      const resDir = join(execDir, 'resources');
+      if (existsSync(resDir)) {
+        for (const name of readdirSync(resDir)) {
+          if (name.endsWith('.old')) {
+            try {
+              unlinkSync(join(resDir, name));
+            } catch {}
+          }
+        }
+      }
+    }
+  } catch {
+    // ignore leftover cleanup errors
+  }
   try {
     if (process.defaultApp && process.argv.length >= 2 && process.argv[1]) {
       app.setAsDefaultProtocolClient('pmusic', process.execPath, [process.argv[1]]);
