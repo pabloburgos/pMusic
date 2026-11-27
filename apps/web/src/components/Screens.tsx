@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
+  ArrowDownAZ,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -14,6 +15,7 @@ import {
   Heart,
   Link2,
   ListMusic,
+  ListOrdered,
   ListPlus,
   Loader2,
   MoreHorizontal,
@@ -29,7 +31,9 @@ import {
   Share2,
   Shuffle,
   Sparkles,
+  Timer,
   Trash2,
+  User,
   UserPlus,
   Users,
   X,
@@ -70,6 +74,186 @@ import { TrackArtwork } from './TrackArtwork.tsx';
 import { SwipeableTrackRow } from './SwipeableTrackRow.tsx';
 import { RoundedPauseIcon, RoundedPlayIcon } from './TransportIcons.tsx';
 import { optimizeArtworkUrl } from '../utils/image-opt.ts';
+import { buildSearchHomeRecommendations } from '../utils/instant-search.ts';
+
+const SPANISH_SHORT_MONTHS = [
+  'ene',
+  'feb',
+  'mar',
+  'abr',
+  'may',
+  'jun',
+  'jul',
+  'ago',
+  'sep',
+  'oct',
+  'nov',
+  'dic',
+] as const;
+
+export function formatSpanishReleaseDate(
+  iso?: string | null,
+  fallbackYear?: number | null
+): string {
+  const raw = (iso ?? '').trim();
+  const fullMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (fullMatch) {
+    const year = Number.parseInt(fullMatch[1]!, 10);
+    const month = Number.parseInt(fullMatch[2]!, 10);
+    const day = Number.parseInt(fullMatch[3]!, 10);
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return `${day} ${SPANISH_SHORT_MONTHS[month - 1]} ${year}`;
+    }
+  }
+  const yearMatch = raw.match(/^(\d{4})$/);
+  if (yearMatch) return yearMatch[1]!;
+  if (typeof fallbackYear === 'number' && Number.isFinite(fallbackYear) && fallbackYear > 0) {
+    return String(fallbackYear);
+  }
+  return '';
+}
+
+const PLAYLIST_SORT_OPTIONS: ReadonlyArray<{
+  id: PlaylistSortMode;
+  label: string;
+  shortLabel: string;
+  icon: React.ComponentType<{ className?: string }>;
+}> = [
+  { id: 'custom', label: 'Orden personalizado', shortLabel: 'Manual', icon: ListOrdered },
+  { id: 'recent', label: 'Más recientes', shortLabel: 'Recientes', icon: Clock },
+  { id: 'title', label: 'Título (A–Z)', shortLabel: 'Título', icon: ArrowDownAZ },
+  { id: 'artist', label: 'Artista', shortLabel: 'Artista', icon: User },
+  { id: 'duration', label: 'Duración', shortLabel: 'Duración', icon: Timer },
+];
+
+export const PlaylistSortControl: React.FC<{
+  mode: PlaylistSortMode;
+  onChange: (next: PlaylistSortMode) => void;
+}> = ({ mode, onChange }) => {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const activeOpt =
+    PLAYLIST_SORT_OPTIONS.find((opt) => opt.id === mode) ?? PLAYLIST_SORT_OPTIONS[0]!;
+  const ActiveIcon = activeOpt.icon;
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (!containerRef.current?.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [menuOpen]);
+
+  return (
+    <div ref={containerRef} className="relative w-full sm:w-auto">
+      {/* Desktop custom dark glass dropdown */}
+      <div className="hidden sm:block">
+        <button
+          type="button"
+          data-testid="playlist-sort-select"
+          aria-label="Ordenar vista de playlist"
+          aria-haspopup="listbox"
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen((prev) => !prev)}
+          className={`pm-pressable inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-all ${
+            menuOpen
+              ? 'border-white/25 bg-white/[0.14] text-white shadow-lg'
+              : 'border-white/12 bg-white/[0.06] text-white/90 hover:border-white/22 hover:bg-white/[0.1]'
+          }`}
+        >
+          <ActiveIcon className="h-3.5 w-3.5 shrink-0 text-white/80" />
+          <span>{activeOpt.label}</span>
+          <ChevronDown
+            className={`h-3.5 w-3.5 shrink-0 text-white/65 transition-transform duration-150 ${
+              menuOpen ? 'rotate-180' : ''
+            }`}
+          />
+        </button>
+
+        {menuOpen && (
+          <div
+            role="listbox"
+            aria-label="Ordenar vista de playlist"
+            data-testid="playlist-sort-menu"
+            className="pm-glass-frosted-neutral pm-hud-dark absolute right-0 top-[calc(100%+6px)] z-40 min-w-[216px] rounded-[16px] border border-white/15 p-1.5 shadow-2xl"
+          >
+            {PLAYLIST_SORT_OPTIONS.map((opt) => {
+              const Icon = opt.icon;
+              const selected = opt.id === mode;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  data-testid={`playlist-sort-option-${opt.id}`}
+                  onClick={() => {
+                    onChange(opt.id);
+                    setMenuOpen(false);
+                  }}
+                  className={`flex w-full items-center justify-between gap-2.5 rounded-[11px] px-2.5 py-2 text-left text-xs font-semibold transition-colors ${
+                    selected
+                      ? 'bg-white text-black shadow-sm'
+                      : 'text-white/85 hover:bg-white/10 hover:text-white'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <Icon className="h-3.5 w-3.5 shrink-0" />
+                    <span>{opt.label}</span>
+                  </span>
+                  {selected && <Check className="h-3.5 w-3.5 shrink-0" />}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Mobile interactive one-tap icon switcher */}
+      <div
+        role="radiogroup"
+        aria-label="Ordenar vista de playlist"
+        data-testid="playlist-sort-mobile-switcher"
+        className="flex w-full items-center justify-between gap-1 rounded-full border border-white/12 bg-white/[0.06] p-1 sm:hidden"
+      >
+        {PLAYLIST_SORT_OPTIONS.map((opt) => {
+          const Icon = opt.icon;
+          const active = opt.id === mode;
+          return (
+            <button
+              key={opt.id}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              aria-label={opt.label}
+              title={opt.label}
+              data-testid={`playlist-sort-mobile-${opt.id}`}
+              onClick={() => onChange(opt.id)}
+              className={`pm-pressable inline-flex h-8 items-center justify-center gap-1.5 rounded-full text-[11px] font-bold transition-all ${
+                active
+                  ? 'flex-[1.6] bg-white px-3 text-black shadow-sm'
+                  : 'flex-1 text-white/75 hover:bg-white/[0.08] hover:text-white'
+              }`}
+            >
+              <Icon className="h-3.5 w-3.5 shrink-0" />
+              {active && <span className="truncate">{opt.shortLabel}</span>}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
 
 function getSpanishGreeting(): string {
   const hour = new Date().getHours();
@@ -267,7 +451,6 @@ export const TrackListRow: React.FC<{
         e.preventDefault();
         openTrackMenu(track, e.clientX, e.clientY, playlistId);
       }}
-      style={{ contentVisibility: 'auto', containIntrinsicSize: '64px' }}
       className={`pm-hover group flex h-16 items-center justify-between gap-3 overflow-hidden rounded-[10px] px-2.5 transition-colors ${
         isCurrent ? 'pm-active-row' : ''
       } ${isUnavailableOffline ? 'opacity-45' : ''} ${dragOver ? 'border-t-2 border-[var(--pm-accent-primary)] pm-active-row' : ''}`}
@@ -313,7 +496,7 @@ export const TrackListRow: React.FC<{
             artistId={track.artists[0]?.id}
             alt={track.title}
             variant="list"
-            loading="lazy"
+            loading="eager"
             draggable={false}
             imgClassName="pointer-events-none h-full w-full select-none object-cover"
           />
@@ -466,6 +649,7 @@ const CoverCard: React.FC<{
   badge?: string;
   round?: boolean;
   dragTrack?: Track;
+  fullWidth?: boolean;
   onOpen: () => void;
   onPlay?: () => void;
 }> = ({
@@ -476,6 +660,7 @@ const CoverCard: React.FC<{
   badge,
   round,
   dragTrack,
+  fullWidth,
   onOpen,
   onPlay,
 }) => {
@@ -496,7 +681,9 @@ const CoverCard: React.FC<{
         e.preventDefault();
         openTrackMenu(dragTrack, e.clientX, e.clientY);
       }}
-      className="pm-cover-card pm-card-lift pm-surface-card group w-[144px] shrink-0 snap-start rounded-[14px] p-2.5 sm:w-[166px] sm:rounded-[12px] md:w-[178px]"
+      className={`pm-cover-card pm-card-lift pm-surface-card group rounded-[14px] p-2.5 sm:rounded-[12px] ${
+        fullWidth ? 'w-full' : 'w-[144px] shrink-0 snap-start sm:w-[166px] md:w-[178px]'
+      }`}
     >
       <div className="relative">
         <button
@@ -734,6 +921,9 @@ export const DetailViewPanel: React.FC = React.memo(() => {
   const [isLoadingRecs, setIsLoadingRecs] = useState(false);
   const [sessionSkippedIds, setSessionSkippedIds] = useState<string[]>([]);
   const [artistDiscoTab, setArtistDiscoTab] = useState<'all' | 'albums' | 'singles'>('all');
+  const [artistDiscoExpanded, setArtistDiscoExpanded] = useState(false);
+  const artistDiscoRailRef = useRef<HTMLDivElement | null>(null);
+  const [resolvedAppearanceDates, setResolvedAppearanceDates] = useState<Record<string, string>>({});
   const [showAllPopular, setShowAllPopular] = useState(false);
   const heroSectionRef = useRef<HTMLElement | null>(null);
   const [artistStickyVisible, setArtistStickyVisible] = useState(false);
@@ -754,6 +944,7 @@ export const DetailViewPanel: React.FC = React.memo(() => {
 
   useEffect(() => {
     setArtistDiscoTab('all');
+    setArtistDiscoExpanded(false);
     setShowAllPopular(false);
     setArtistStickyVisible(false);
     setArtistHeaderRgb(null);
@@ -892,6 +1083,41 @@ export const DetailViewPanel: React.FC = React.memo(() => {
     fetchPlaylistRecommendations,
   ]);
 
+  const activeArtistLatestAppearanceCandidate = (() => {
+    if (activeDetailView?.kind !== 'artist') return null;
+    const { artist, appearances = [], topSongs = [] } = activeDetailView.data;
+    const artistKeyNorm = artist.name.trim().toLowerCase();
+    const pool = Array.from(
+      new Map<string, Track>([...appearances, ...topSongs].map((t) => [t.id, t])).values()
+    ).filter(
+      (t) =>
+        t.artists.length > 1 || (t.artists[0]?.name ?? '').trim().toLowerCase() !== artistKeyNorm
+    );
+    return pool[0] ?? null;
+  })();
+
+  useEffect(() => {
+    const tr = activeArtistLatestAppearanceCandidate;
+    if (!tr || tr.releaseDate || !tr.id.startsWith('dz_')) return;
+    if (resolvedAppearanceDates[tr.id]) return;
+    const dzId = tr.id.slice(3);
+    if (!dzId) return;
+    let cancelled = false;
+    void fetch(`/api/dz-proxy?path=${encodeURIComponent(`/track/${dzId}`)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data) return;
+        const relDate = String(data.release_date ?? data.album?.release_date ?? '').trim();
+        if (relDate) {
+          setResolvedAppearanceDates((prev) => ({ ...prev, [tr.id]: relDate }));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [activeArtistLatestAppearanceCandidate?.id, activeArtistLatestAppearanceCandidate?.releaseDate, resolvedAppearanceDates]);
+
   if (!activeDetailView) return null;
 
   if (activeDetailView.kind === 'artist') {
@@ -924,9 +1150,44 @@ export const DetailViewPanel: React.FC = React.memo(() => {
       : null;
     const hasHeroPhoto = Boolean(optimizedHeroUrl || lowResHeroPlaceholder);
 
+    const dedupedSingles = (() => {
+      const rawSingles = singles ?? [];
+      if (!albums.length || !rawSingles.length) return rawSingles;
+      const hashRe = /\/images\/cover\/([a-f0-9]{16,})\//i;
+      const parseTs = (iso?: string): number | null => {
+        if (!iso || !/^\d{4}-\d{2}-\d{2}/.test(iso)) return null;
+        const ms = Date.parse(iso.slice(0, 10));
+        return Number.isFinite(ms) ? ms : null;
+      };
+      const albumByCover = new Map<string, Array<{ ts: number | null; year?: number }>>();
+      for (const al of albums) {
+        const m = (al.thumbnailUrl ?? '').match(hashRe);
+        if (!m?.[1]) continue;
+        const hash = m[1].toLowerCase();
+        const list = albumByCover.get(hash) ?? [];
+        list.push({ ts: parseTs(al.releaseDate), year: al.year });
+        albumByCover.set(hash, list);
+      }
+      const WATERFALL_WINDOW_MS = 21 * 86_400_000;
+      return rawSingles.filter((sg) => {
+        const m = (sg.thumbnailUrl ?? '').match(hashRe);
+        if (!m?.[1]) return true;
+        const candidates = albumByCover.get(m[1].toLowerCase());
+        if (!candidates?.length) return true;
+        const sTs = parseTs(sg.releaseDate);
+        for (const al of candidates) {
+          if (sTs !== null && al.ts !== null) {
+            if (Math.abs(sTs - al.ts) <= WATERFALL_WINDOW_MS) return false;
+          } else if (!sg.year || !al.year || sg.year === al.year) {
+            return false;
+          }
+        }
+        return true;
+      });
+    })();
     const allReleases = [
       ...albums.map((al) => ({ ...al, releaseKind: 'Álbum' as const })),
-      ...(singles ?? []).map((sg) => ({ ...sg, releaseKind: 'Sencillo' as const })),
+      ...dedupedSingles.map((sg) => ({ ...sg, releaseKind: 'Sencillo' as const })),
     ].sort((a, b) => {
       const da = a.releaseDate ?? `${a.year ?? 0}-01-01`;
       const db = b.releaseDate ?? `${b.year ?? 0}-01-01`;
@@ -967,7 +1228,7 @@ export const DetailViewPanel: React.FC = React.memo(() => {
       artistDiscoTab === 'albums'
         ? albums.map((al) => ({ ...al, releaseKind: 'Álbum' as const }))
         : artistDiscoTab === 'singles'
-          ? (singles ?? []).map((sg) => ({ ...sg, releaseKind: 'Sencillo' as const }))
+          ? dedupedSingles.map((sg) => ({ ...sg, releaseKind: 'Sencillo' as const }))
           : allReleases;
     const trimmedDesc = (description ?? '').trim();
     const hasBioText =
@@ -1302,14 +1563,18 @@ export const DetailViewPanel: React.FC = React.memo(() => {
                           className="h-24 w-24 shrink-0 rounded-[12px] object-cover shadow-lg transition-transform duration-300 group-hover:scale-[1.04]"
                         />
                         <div className="min-w-0 flex-1 space-y-1">
-                          <span className="inline-block rounded-full bg-white/[0.08] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider pm-text-secondary">
-                            {latestRelease.releaseKind}
-                            {latestRelease.releaseDate
-                              ? ` · ${latestRelease.releaseDate}`
-                              : latestRelease.year
-                                ? ` · ${latestRelease.year}`
-                                : ''}
-                          </span>
+                          {(() => {
+                            const relDateLabel = formatSpanishReleaseDate(
+                              latestRelease.releaseDate,
+                              latestRelease.year
+                            );
+                            return (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-white/[0.08] bg-white/[0.08] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider pm-text-secondary">
+                                {latestRelease.releaseKind}
+                                {relDateLabel ? ` · ${relDateLabel}` : ''}
+                              </span>
+                            );
+                          })()}
                           <div className="line-clamp-2 text-base font-bold leading-snug pm-text-primary group-hover:underline">
                             {latestRelease.title}
                           </div>
@@ -1341,14 +1606,19 @@ export const DetailViewPanel: React.FC = React.memo(() => {
                             className="h-24 w-24 shrink-0 rounded-[12px] object-cover shadow-lg transition-transform duration-300 group-hover:scale-[1.04]"
                           />
                           <div className="min-w-0 flex-1 space-y-1">
-                            <span className="inline-block rounded-full bg-purple-500/20 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-purple-200">
-                              Colaboración · feat.
-                              {latestAppearance.releaseDate
-                                ? ` · ${latestAppearance.releaseDate}`
-                                : latestAppearance.releaseYear
-                                  ? ` · ${latestAppearance.releaseYear}`
-                                  : ''}
-                            </span>
+                            {(() => {
+                              const appearanceDateLabel = formatSpanishReleaseDate(
+                                latestAppearance.releaseDate ||
+                                  resolvedAppearanceDates[latestAppearance.id],
+                                latestAppearance.releaseYear
+                              );
+                              return (
+                                <span className="inline-flex items-center gap-1 rounded-full border border-white/[0.08] bg-white/[0.08] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider pm-text-secondary">
+                                  <Clock className="h-3 w-3 shrink-0 opacity-80" />
+                                  <span>{appearanceDateLabel || 'Sencillo'}</span>
+                                </span>
+                              );
+                            })()}
                             <div className="line-clamp-2 text-base font-bold leading-snug pm-text-primary group-hover:underline">
                               {latestAppearance.title}
                             </div>
@@ -1379,14 +1649,18 @@ export const DetailViewPanel: React.FC = React.memo(() => {
                               className="h-24 w-24 shrink-0 rounded-[12px] object-cover shadow-lg transition-transform duration-300 group-hover:scale-[1.04]"
                             />
                             <div className="min-w-0 flex-1 space-y-1">
-                              <span className="inline-block rounded-full bg-white/[0.08] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider pm-text-secondary">
-                                Último lanzamiento
-                                {latestRelease.releaseDate
-                                  ? ` · ${latestRelease.releaseDate}`
-                                  : latestRelease.year
-                                    ? ` · ${latestRelease.year}`
-                                    : ''}
-                              </span>
+                              {(() => {
+                                const relDateLabel = formatSpanishReleaseDate(
+                                  latestRelease.releaseDate,
+                                  latestRelease.year
+                                );
+                                return (
+                                  <span className="inline-flex items-center gap-1 rounded-full border border-white/[0.08] bg-white/[0.08] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider pm-text-secondary">
+                                    Último lanzamiento
+                                    {relDateLabel ? ` · ${relDateLabel}` : ''}
+                                  </span>
+                                );
+                              })()}
                               <div className="line-clamp-2 text-base font-bold leading-snug pm-text-primary group-hover:underline">
                                 {latestRelease.title}
                               </div>
@@ -1404,61 +1678,144 @@ export const DetailViewPanel: React.FC = React.memo(() => {
             )}
           </div>
 
-          {/* Discography Section with Interactive All / Albums / Singles Filter Pills */}
+          {/* Discography Section with Interactive All / Albums / Singles Filter Pills, Desktop Scroll Arrows & Full Grid View */}
           {allReleases.length > 0 && (
             <section className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-[20px] font-bold tracking-tight pm-text-primary md:text-[22px]">
                   Discografía
                 </h2>
-                <div className="flex items-center gap-1.5" role="tablist" aria-label="Filtrar discografía">
-                  {(
-                    [
-                      { id: 'all', label: 'Todo', count: allReleases.length },
-                      { id: 'albums', label: 'Álbumes', count: albums.length },
-                      { id: 'singles', label: 'Sencillos y EP', count: (singles ?? []).length },
-                    ] as const
-                  )
-                    .filter((tab) => tab.id === 'all' || tab.count > 0)
-                    .map((tab) => (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <div className="flex items-center gap-1.5" role="tablist" aria-label="Filtrar discografía">
+                    {(
+                      [
+                        { id: 'all', label: 'Todo', count: allReleases.length },
+                        { id: 'albums', label: 'Álbumes', count: albums.length },
+                        { id: 'singles', label: 'Sencillos y EP', count: dedupedSingles.length },
+                      ] as const
+                    )
+                      .filter((tab) => tab.id === 'all' || tab.count > 0)
+                      .map((tab) => (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          role="tab"
+                          aria-selected={artistDiscoTab === tab.id}
+                          onClick={() => setArtistDiscoTab(tab.id)}
+                          className={`pm-pressable rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+                            artistDiscoTab === tab.id
+                              ? 'pm-btn-primary'
+                              : 'pm-btn-secondary'
+                          }`}
+                        >
+                          {tab.label}
+                        </button>
+                      ))}
+                  </div>
+                  {filteredDiscography.length > 3 && (
+                    <button
+                      type="button"
+                      data-testid="artist-disco-expand-btn"
+                      onClick={() => setArtistDiscoExpanded((prev) => !prev)}
+                      className={`pm-pressable rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
+                        artistDiscoExpanded ? 'pm-btn-primary' : 'pm-btn-secondary'
+                      }`}
+                    >
+                      {artistDiscoExpanded ? 'Carrusel' : 'Ver todo'}
+                    </button>
+                  )}
+                  {!artistDiscoExpanded && (
+                    <div className="hidden items-center gap-1 md:flex">
                       <button
-                        key={tab.id}
                         type="button"
-                        role="tab"
-                        aria-selected={artistDiscoTab === tab.id}
-                        onClick={() => setArtistDiscoTab(tab.id)}
-                        className={`pm-pressable rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
-                          artistDiscoTab === tab.id
-                            ? 'pm-btn-primary'
-                            : 'pm-btn-secondary'
-                        }`}
+                        data-testid="artist-disco-scroll-left"
+                        aria-label="Desplazar discografía a la izquierda"
+                        onClick={() => {
+                          const el = artistDiscoRailRef.current;
+                          if (!el) return;
+                          const step = Math.max(360, Math.round(el.clientWidth * 0.75));
+                          el.scrollBy({ left: -step, behavior: 'smooth' });
+                        }}
+                        className="pm-btn-secondary inline-flex h-8 w-8 items-center justify-center rounded-full"
                       >
-                        {tab.label}
+                        <ChevronLeft className="h-4 w-4" />
                       </button>
-                    ))}
+                      <button
+                        type="button"
+                        data-testid="artist-disco-scroll-right"
+                        aria-label="Desplazar discografía a la derecha"
+                        onClick={() => {
+                          const el = artistDiscoRailRef.current;
+                          if (!el) return;
+                          const step = Math.max(360, Math.round(el.clientWidth * 0.75));
+                          el.scrollBy({ left: step, behavior: 'smooth' });
+                        }}
+                        className="pm-btn-secondary inline-flex h-8 w-8 items-center justify-center rounded-full"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <div className="pm-no-scrollbar -mx-4 flex snap-x scroll-pl-4 gap-3.5 overflow-x-auto px-4 py-1.5 sm:mx-0 sm:scroll-pl-1 sm:gap-4 sm:px-1 sm:py-2">
-                {filteredDiscography.map((al) => (
-                  <CoverCard
-                    key={`${al.releaseKind}-${al.id}`}
-                    image={al.thumbnailUrl}
-                    title={al.title}
-                    subtitle={
-                      al.year ? `${al.year} · ${al.releaseKind}` : al.releaseKind
-                    }
-                    badge={al.releaseKind}
-                    onOpen={() =>
-                      void openAlbumDetail(al.id, {
-                        title: al.title,
-                        artist: al.artists?.[0]?.name ?? artist.name,
-                        thumbnailUrl: al.thumbnailUrl,
-                      })
-                    }
-                  />
-                ))}
-              </div>
+              {artistDiscoExpanded ? (
+                <div
+                  data-testid="artist-disco-full-grid"
+                  className="grid grid-cols-2 gap-3.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 sm:gap-4"
+                >
+                  {filteredDiscography.map((al) => (
+                    <CoverCard
+                      key={`${al.releaseKind}-${al.id}`}
+                      image={al.thumbnailUrl}
+                      title={al.title}
+                      subtitle={
+                        al.year ? `${al.year} · ${al.releaseKind}` : al.releaseKind
+                      }
+                      badge={al.releaseKind}
+                      fullWidth
+                      onOpen={() =>
+                        void openAlbumDetail(al.id, {
+                          title: al.title,
+                          artist: al.artists?.[0]?.name ?? artist.name,
+                          thumbnailUrl: al.thumbnailUrl,
+                        })
+                      }
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div
+                  ref={artistDiscoRailRef}
+                  onWheel={(e) => {
+                    if (!e.shiftKey) return;
+                    const el = artistDiscoRailRef.current;
+                    if (!el || Math.abs(e.deltaY) === 0) return;
+                    e.preventDefault();
+                    el.scrollLeft += e.deltaY;
+                  }}
+                  className="pm-no-scrollbar -mx-4 flex snap-x scroll-pl-4 gap-3.5 overflow-x-auto px-4 py-1.5 sm:mx-0 sm:scroll-pl-1 sm:gap-4 sm:px-1 sm:py-2"
+                >
+                  {filteredDiscography.map((al) => (
+                    <CoverCard
+                      key={`${al.releaseKind}-${al.id}`}
+                      image={al.thumbnailUrl}
+                      title={al.title}
+                      subtitle={
+                        al.year ? `${al.year} · ${al.releaseKind}` : al.releaseKind
+                      }
+                      badge={al.releaseKind}
+                      onOpen={() =>
+                        void openAlbumDetail(al.id, {
+                          title: al.title,
+                          artist: al.artists?.[0]?.name ?? artist.name,
+                          thumbnailUrl: al.thumbnailUrl,
+                        })
+                      }
+                    />
+                  ))}
+                </div>
+              )}
             </section>
           )}
 
@@ -2493,8 +2850,8 @@ export const DetailViewPanel: React.FC = React.memo(() => {
           return (
             <>
               {sharedPl.tracks.length > 0 && (
-                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                  <div className="relative min-w-[200px] flex-1 sm:max-w-[300px]">
+                <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="relative w-full flex-1 sm:max-w-[300px]">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 pm-text-tertiary" />
                     <input
                       type="text"
@@ -2515,19 +2872,7 @@ export const DetailViewPanel: React.FC = React.memo(() => {
                       </button>
                     )}
                   </div>
-                  <select
-                    value={playlistSortMode}
-                    onChange={(e) => setPlaylistSortMode(e.target.value as PlaylistSortMode)}
-                    aria-label="Ordenar vista de playlist"
-                    data-testid="playlist-sort-select"
-                    className="pm-input rounded-full px-3 py-1.5 text-xs font-medium"
-                  >
-                    <option value="custom">Orden personalizado</option>
-                    <option value="recent">Más recientes</option>
-                    <option value="title">Título (A–Z)</option>
-                    <option value="artist">Artista</option>
-                    <option value="duration">Duración</option>
-                  </select>
+                  <PlaylistSortControl mode={playlistSortMode} onChange={setPlaylistSortMode} />
                 </div>
               )}
 
@@ -2929,8 +3274,8 @@ export const DetailViewPanel: React.FC = React.memo(() => {
         return (
           <>
             {localPl.tracks.length > 0 && (
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="relative min-w-[200px] flex-1 sm:max-w-[300px]">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="relative w-full flex-1 sm:max-w-[300px]">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 pm-text-tertiary" />
                   <input
                     type="text"
@@ -2951,19 +3296,7 @@ export const DetailViewPanel: React.FC = React.memo(() => {
                     </button>
                   )}
                 </div>
-                <select
-                  value={playlistSortMode}
-                  onChange={(e) => setPlaylistSortMode(e.target.value as PlaylistSortMode)}
-                  aria-label="Ordenar vista de playlist"
-                  data-testid="playlist-sort-select"
-                  className="pm-input rounded-full px-3 py-1.5 text-xs font-medium"
-                >
-                  <option value="custom">Orden personalizado</option>
-                  <option value="recent">Más recientes</option>
-                  <option value="title">Título (A–Z)</option>
-                  <option value="artist">Artista</option>
-                  <option value="duration">Duración</option>
-                </select>
+                <PlaylistSortControl mode={playlistSortMode} onChange={setPlaylistSortMode} />
               </div>
             )}
 
@@ -4086,10 +4419,21 @@ export const SearchScreen: React.FC = React.memo(() => {
     bestResult,
     autocompleteSuggestions,
     recentSearches,
+    recentSearchItems,
+    likedTracks,
+    playHistory,
+    playlists,
+    favoriteArtists,
+    homeShelves,
+    affinityProfile,
     setSearchQuery,
     submitSearch,
     setSearchScope,
     clearRecentSearches,
+    addRecentSearchTrack,
+    addRecentSearchArtist,
+    removeRecentSearchItem,
+    clearRecentSearchItems,
     playTrack,
     openArtistDetail,
     openAlbumDetail,
@@ -4105,16 +4449,39 @@ export const SearchScreen: React.FC = React.memo(() => {
       bestResult: s.bestResult,
       autocompleteSuggestions: s.autocompleteSuggestions,
       recentSearches: s.recentSearches,
+      recentSearchItems: s.recentSearchItems,
+      likedTracks: s.likedTracks,
+      playHistory: s.playHistory,
+      playlists: s.playlists,
+      favoriteArtists: s.favoriteArtists,
+      homeShelves: s.homeShelves,
+      affinityProfile: s.affinityProfile,
       setSearchQuery: s.setSearchQuery,
       submitSearch: s.submitSearch,
       setSearchScope: s.setSearchScope,
       clearRecentSearches: s.clearRecentSearches,
+      addRecentSearchTrack: s.addRecentSearchTrack,
+      addRecentSearchArtist: s.addRecentSearchArtist,
+      removeRecentSearchItem: s.removeRecentSearchItem,
+      clearRecentSearchItems: s.clearRecentSearchItems,
       playTrack: s.playTrack,
       openArtistDetail: s.openArtistDetail,
       openAlbumDetail: s.openAlbumDetail,
       openPlaylistDetail: s.openPlaylistDetail,
     }))
   );
+
+  const { recommendedTracks, recommendedArtists } = buildSearchHomeRecommendations({
+    likedTracks,
+    playHistory,
+    playlists,
+    recentSearchItems,
+    recentSearches,
+    favoriteArtists,
+    homeShelves,
+    affinityProfile,
+  });
+  const hasSearchText = Boolean(searchQuery.trim());
 
   const scopes: readonly SearchScopeTab[] = [
     'Todo',
@@ -4232,6 +4599,170 @@ export const SearchScreen: React.FC = React.memo(() => {
         )}
       </div>
 
+      {/* Personal Recent Searches & Personalized Recommendations when query is empty */}
+      {!hasSearchText && !spotlightOpen && (
+        <div className="space-y-6">
+          {(recentSearchItems.length > 0 || recentSearches.length > 0) && (
+            <section data-testid="search-recent-items" className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="text-[18px] font-bold pm-text-primary">Tus búsquedas recientes</h2>
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearRecentSearchItems();
+                    clearRecentSearches();
+                  }}
+                  className="text-xs font-medium pm-text-secondary hover:text-[var(--pm-text-primary)] hover:underline"
+                >
+                  Borrar todo
+                </button>
+              </div>
+              {recentSearchItems.length > 0 && (
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {recentSearchItems.slice(0, 6).map((item) =>
+                    item.kind === 'artist' ? (
+                      <div
+                        key={`search-rec-${item.id}`}
+                        className="pm-surface-card pm-hover flex items-center gap-2.5 rounded-[12px] p-2.5"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            addRecentSearchArtist({
+                              id: item.artistId,
+                              name: item.name,
+                              thumbnailUrl: item.thumbnailUrl,
+                            });
+                            void openArtistDetail(item.artistId, {
+                              name: item.name,
+                              thumbnailUrl: item.thumbnailUrl,
+                            });
+                          }}
+                          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                        >
+                          <img
+                            src={item.thumbnailUrl}
+                            alt={item.name}
+                            className="h-10 w-10 shrink-0 rounded-full object-cover"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-[13.5px] font-semibold pm-text-primary">
+                              {item.name}
+                            </div>
+                            <div className="truncate text-[11px] pm-text-tertiary">Artista</div>
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Quitar ${item.name} de recientes`}
+                          onClick={() => removeRecentSearchItem(item.id)}
+                          className="pm-text-tertiary hover:pm-text-primary flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div
+                        key={`search-rec-${item.id}`}
+                        className="pm-surface-card pm-hover group flex items-center gap-2.5 rounded-[12px] p-2.5"
+                      >
+                        <button
+                          type="button"
+                          aria-label={`Reproducir ${item.track.title}`}
+                          onClick={() => {
+                            addRecentSearchTrack(item.track);
+                            void playTrack(item.track, [item.track]);
+                          }}
+                          className="relative h-10 w-10 shrink-0 overflow-hidden rounded-[8px]"
+                        >
+                          <img
+                            src={item.track.thumbnailUrl}
+                            alt={item.track.title}
+                            className="h-full w-full object-cover"
+                          />
+                          <span className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 transition-opacity group-hover:opacity-100">
+                            <Play className="h-3.5 w-3.5 translate-x-[1px] fill-current text-white" />
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            addRecentSearchTrack(item.track);
+                            void playTrack(item.track, [item.track]);
+                          }}
+                          className="min-w-0 flex-1 text-left"
+                        >
+                          <div className="truncate text-[13.5px] font-semibold pm-text-primary hover:underline">
+                            {item.track.title}
+                          </div>
+                          <div className="truncate text-[11px] pm-text-tertiary">
+                            {item.track.artists.map((a) => a.name).join(', ')}
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Quitar ${item.track.title} de recientes`}
+                          onClick={() => removeRecentSearchItem(item.id)}
+                          className="pm-text-tertiary hover:pm-text-primary flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    )
+                  )}
+                </div>
+              )}
+            </section>
+          )}
+
+          {recommendedArtists.length > 0 && (
+            <div data-testid="search-recommended-artists">
+              <CarouselSection title="Artistas para ti">
+                {recommendedArtists.map((artist) => (
+                  <CoverCard
+                    key={`rec-artist-${artist.id}-${artist.name}`}
+                    image={artist.thumbnailUrl}
+                    title={artist.name}
+                    subtitle={artist.subscribersText ?? 'Para ti'}
+                    round
+                    onOpen={() => {
+                      addRecentSearchArtist({
+                        id: artist.id,
+                        name: artist.name,
+                        thumbnailUrl: artist.thumbnailUrl,
+                      });
+                      void openArtistDetail(artist.id, {
+                        name: artist.name,
+                        thumbnailUrl: artist.thumbnailUrl,
+                      });
+                    }}
+                  />
+                ))}
+              </CarouselSection>
+            </div>
+          )}
+
+          {recommendedTracks.length > 0 && (
+            <section data-testid="search-recommended-for-you" className="space-y-2.5">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-white/80" />
+                <h2 className="text-[18px] font-bold pm-text-primary">Recomendado para ti</h2>
+              </div>
+              <div className="grid grid-cols-1 gap-x-6 md:grid-cols-2">
+                {recommendedTracks.slice(0, 8).map((track, idx) => (
+                  <TrackListRow
+                    key={`rec-row-${track.id}`}
+                    track={track}
+                    index={idx}
+                    queueContext={recommendedTracks}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
+      )}
+
       {/* 5 Scope Filter Tabs */}
       <div
         role="tablist"
@@ -4309,12 +4840,17 @@ export const SearchScreen: React.FC = React.memo(() => {
                     </button>
                     <button
                       type="button"
-                      onClick={() =>
+                      onClick={() => {
+                        addRecentSearchArtist({
+                          id: bestResult.item.id,
+                          name: bestResult.item.name,
+                          thumbnailUrl: bestResult.item.thumbnailUrl,
+                        });
                         void openArtistDetail(bestResult.item.id, {
                           name: bestResult.item.name,
                           thumbnailUrl: bestResult.item.thumbnailUrl,
-                        })
-                      }
+                        });
+                      }}
                       className="pm-btn-secondary rounded-full px-4 py-2 text-xs font-semibold"
                     >
                       Ver perfil
@@ -4353,9 +4889,10 @@ export const SearchScreen: React.FC = React.memo(() => {
                     <button
                       type="button"
                       aria-label={`Reproducir ${bestResult.item.title}`}
-                      onClick={() =>
-                        void playTrack(bestResult.item, [bestResult.item])
-                      }
+                      onClick={() => {
+                        addRecentSearchTrack(bestResult.item);
+                        void playTrack(bestResult.item, [bestResult.item]);
+                      }}
                       className="pm-btn-primary inline-flex items-center gap-1.5 rounded-full px-5 py-2 text-xs font-bold"
                     >
                       <Play className="h-4 w-4 fill-current" />
@@ -4512,12 +5049,17 @@ export const SearchScreen: React.FC = React.memo(() => {
                 title={artist.name}
                 subtitle={artist.subscribersText ?? 'Artista'}
                 round
-                onOpen={() =>
+                onOpen={() => {
+                  addRecentSearchArtist({
+                    id: artist.id,
+                    name: artist.name,
+                    thumbnailUrl: artist.thumbnailUrl,
+                  });
                   void openArtistDetail(artist.id, {
                     name: artist.name,
                     thumbnailUrl: artist.thumbnailUrl,
-                  })
-                }
+                  });
+                }}
               />
             ))}
           </CarouselSection>

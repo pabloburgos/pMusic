@@ -9,13 +9,11 @@ import {
   Link2,
   ListMusic,
   Loader2,
-  MessageCircle,
   Play,
   Plus,
   QrCode,
   Radio,
   Search,
-  Send,
   Sparkles,
   UserPlus,
   Users,
@@ -35,6 +33,7 @@ import {
 } from '../services/social-service.ts';
 import { openExternalUrl } from '../platform/web-bridge.ts';
 import { PMusicSwitch } from './PMusicSwitch.tsx';
+import { TelegramIcon, WhatsAppIcon } from './SocialBrandIcons.tsx';
 import { TrackArtwork } from './TrackArtwork.tsx';
 import { UserAvatar } from './UserAvatar.tsx';
 
@@ -366,7 +365,7 @@ export const SocialScreen: React.FC = React.memo(() => {
                       }
                       className="pm-pressable flex items-center justify-center gap-1.5 rounded-full bg-[#25D366] py-2 text-xs font-extrabold text-[#05180D]"
                     >
-                      <MessageCircle className="h-3.5 w-3.5" />
+                      <WhatsAppIcon className="h-4 w-4" />
                       WhatsApp
                     </button>
                     <button
@@ -378,7 +377,7 @@ export const SocialScreen: React.FC = React.memo(() => {
                       }
                       className="pm-pressable flex items-center justify-center gap-1.5 rounded-full bg-[#229ED9]/25 py-2 text-xs font-bold text-[#7DD3FC]"
                     >
-                      <Send className="h-3.5 w-3.5" />
+                      <TelegramIcon className="h-4 w-4" />
                       Telegram
                     </button>
                   </div>

@@ -288,7 +288,7 @@ describe('pMusic v0.24.2 HD covers, Jam OG, Android bars/widgets, Release Notifi
     const apkSrc = readFileSync(resolve(repoRoot, 'apps/mobile/scripts/build-apk.mjs'), 'utf-8');
     const otaSrc = readFileSync(resolve(repoRoot, 'scripts/build-ota-bundle.mjs'), 'utf-8');
 
-    expect(apkSrc).toContain('android:versionName="0.24.2"');
+    expect(apkSrc).toMatch(/android:versionName="0\.24\.\d+"/);
     expect(apkSrc).toContain('PMusicWidgetProvider');
     expect(apkSrc).toContain('PMusicCompactWidgetProvider');
     expect(apkSrc).toContain("resolve(resDir, 'xml-v31')");
@@ -298,7 +298,7 @@ describe('pMusic v0.24.2 HD covers, Jam OG, Android bars/widgets, Release Notifi
     expect(apkSrc).toContain('SYSTEM_UI_FLAG_LIGHT_STATUS_BAR');
     expect(apkSrc).toContain('showReleaseNotification');
 
-    expect(otaSrc).toContain("minNativeVersion: '0.24.2'");
+    expect(otaSrc).toMatch(/minNativeVersion:\s*'0\.24\.\d+'/);
     expect(otaSrc).toContain('pMusic-Android.apk');
   });
 });

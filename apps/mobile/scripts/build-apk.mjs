@@ -786,8 +786,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="63"
-    android:versionName="0.24.2">
+    android:versionCode="64"
+    android:versionName="0.24.3">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -798,6 +798,7 @@ writeFileSync(
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
@@ -879,6 +880,11 @@ writeFileSync(
                 android:name="android.appwidget.provider"
                 android:resource="@xml/pmusic_widget_compact_info" />
         </receiver>
+
+        <service
+            android:name="es.pmusic.app.PMusicReleaseCheckJobService"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="false" />
     </application>
 </manifest>
 `,
@@ -1770,7 +1776,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 public class MainActivity extends Activity {
-    private static final String NATIVE_APP_VERSION = "0.24.2";
+    private static final String NATIVE_APP_VERSION = "0.24.3";
     private volatile File activeOtaDir = null;
 
     private static int compareSemverNative(String a, String b) {
@@ -1828,6 +1834,7 @@ public class MainActivity extends Activity {
     private static volatile double sPendingMediaSeek = -1;
     private static volatile String sPendingCarSearch = null;
     private static volatile String sPendingCarMediaId = null;
+    private static volatile String sPendingReleaseJson = null;
 
     private static final String YT_IOS_UA = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)";
     private static final String YT_WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -2442,40 +2449,88 @@ public class MainActivity extends Activity {
 
             @android.webkit.JavascriptInterface
             public void showReleaseNotification(final String title, final String body, final String trackId) {
-                runOnUiThread(new Runnable() {
+                showReleaseNotificationDetailed(title, body, trackId, "", "");
+            }
+
+            @android.webkit.JavascriptInterface
+            public void showReleaseNotificationDetailed(
+                    final String title,
+                    final String artistOrBody,
+                    final String trackId,
+                    final String albumId,
+                    final String coverUrl
+            ) {
+                streamExecutor.execute(new Runnable() {
                     @Override
                     public void run() {
                         try {
-                            android.app.NotificationManager nm = (android.app.NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-                            if (nm == null) return;
-                            String channelId = "pmusic_releases_channel";
-                            if (Build.VERSION.SDK_INT >= 26) {
-                                android.app.NotificationChannel ch = new android.app.NotificationChannel(
-                                        channelId,
-                                        "Nuevos lanzamientos",
-                                        android.app.NotificationManager.IMPORTANCE_DEFAULT
-                                );
-                                nm.createNotificationChannel(ch);
+                            android.graphics.Bitmap bmp = (coverUrl != null && coverUrl.startsWith("https://"))
+                                    ? PMusicReleaseCheckJobService.downloadBitmap(coverUrl)
+                                    : null;
+                            String notifTitle = (title != null && !title.trim().isEmpty()) ? title.trim() : "Nuevo lanzamiento";
+                            String notifBody = (artistOrBody != null && !artistOrBody.trim().isEmpty())
+                                    ? artistOrBody.trim() + " · Toca para escuchar"
+                                    : "Toca para escuchar en pMusic";
+                            PMusicReleaseCheckJobService.postReleaseNotification(
+                                    getApplicationContext(),
+                                    notifTitle,
+                                    notifBody,
+                                    trackId != null ? trackId : "",
+                                    albumId != null ? albumId : "",
+                                    title != null ? title : "",
+                                    artistOrBody != null ? artistOrBody : "",
+                                    coverUrl != null ? coverUrl : "",
+                                    bmp
+                            );
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                });
+            }
+
+            @android.webkit.JavascriptInterface
+            public void syncFavoriteArtistsForReleases(final String json) {
+                if (json == null || json.trim().isEmpty()) return;
+                streamExecutor.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            org.json.JSONObject obj = new org.json.JSONObject(json);
+                            boolean enabled = obj.optBoolean("enabled", true);
+                            org.json.JSONArray artists = obj.optJSONArray("artists");
+                            org.json.JSONArray seen = obj.optJSONArray("seenIds");
+                            android.content.SharedPreferences prefs = getSharedPreferences("pmusic_release_prefs", Context.MODE_PRIVATE);
+                            android.content.SharedPreferences.Editor ed = prefs.edit();
+                            ed.putBoolean("enabled", enabled);
+                            if (artists != null) {
+                                ed.putString("favorite_artists_json", artists.toString());
                             }
-                            Intent openIntent = new Intent(MainActivity.this, MainActivity.class);
-                            openIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-                            if (trackId != null && !trackId.trim().isEmpty()) {
-                                openIntent.putExtra("pmusic_release_track_id", trackId.trim());
+                            if (seen != null) {
+                                org.json.JSONArray existingSeen;
+                                try {
+                                    existingSeen = new org.json.JSONArray(prefs.getString("seen_release_ids", "[]"));
+                                } catch (Exception e) {
+                                    existingSeen = new org.json.JSONArray();
+                                }
+                                java.util.LinkedHashSet<String> merged = new java.util.LinkedHashSet<String>();
+                                for (int i = 0; i < existingSeen.length(); i++) {
+                                    String v = existingSeen.optString(i, "");
+                                    if (!v.isEmpty()) merged.add(v);
+                                }
+                                for (int i = 0; i < seen.length(); i++) {
+                                    String v = seen.optString(i, "");
+                                    if (!v.isEmpty()) merged.add(v);
+                                }
+                                org.json.JSONArray outSeen = new org.json.JSONArray();
+                                int skip = Math.max(0, merged.size() - 200);
+                                int idx = 0;
+                                for (String s : merged) {
+                                    if (idx++ >= skip) outSeen.put(s);
+                                }
+                                ed.putString("seen_release_ids", outSeen.toString());
                             }
-                            int piFlags = Build.VERSION.SDK_INT >= 23
-                                    ? android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE
-                                    : android.app.PendingIntent.FLAG_UPDATE_CURRENT;
-                            android.app.PendingIntent pi = android.app.PendingIntent.getActivity(MainActivity.this, 5101, openIntent, piFlags);
-                            android.app.Notification.Builder nb = Build.VERSION.SDK_INT >= 26
-                                    ? new android.app.Notification.Builder(MainActivity.this, channelId)
-                                    : new android.app.Notification.Builder(MainActivity.this);
-                            nb.setSmallIcon(R.drawable.ic_stat_pmusic)
-                                    .setContentTitle(title != null && !title.trim().isEmpty() ? title : "Nuevo lanzamiento")
-                                    .setContentText(body != null ? body : "")
-                                    .setAutoCancel(true)
-                                    .setContentIntent(pi);
-                            int notifId = 5100 + Math.abs((title + "|" + body).hashCode() % 400);
-                            nm.notify(notifId, nb.build());
+                            ed.apply();
+                            PMusicReleaseCheckJobService.schedulePeriodicCheck(getApplicationContext(), enabled);
                         } catch (Throwable ignored) {
                         }
                     }
@@ -2521,6 +2576,11 @@ public class MainActivity extends Activity {
                 }
                 if (isCurrentlyInCarMode()) {
                     dispatchCarModeToJs(true);
+                }
+                if (sPendingReleaseJson != null) {
+                    String rJson = sPendingReleaseJson;
+                    sPendingReleaseJson = null;
+                    dispatchReleaseTrackToJs(rJson);
                 }
             }
 
@@ -3270,6 +3330,35 @@ public class MainActivity extends Activity {
 
     private void handleDeepLinkIntent(Intent intent, boolean isInitialCreate) {
         if (intent == null) return;
+        String relTrackId = intent.getStringExtra("pmusic_release_track_id");
+        String relAlbumId = intent.getStringExtra("pmusic_release_album_id");
+        String relTitle = intent.getStringExtra("pmusic_release_title");
+        String relArtist = intent.getStringExtra("pmusic_release_artist");
+        String relCover = intent.getStringExtra("pmusic_release_cover");
+        if ((relTrackId != null && !relTrackId.isEmpty())
+                || (relAlbumId != null && !relAlbumId.isEmpty())
+                || (relTitle != null && !relTitle.isEmpty())) {
+            intent.removeExtra("pmusic_release_track_id");
+            intent.removeExtra("pmusic_release_album_id");
+            intent.removeExtra("pmusic_release_title");
+            intent.removeExtra("pmusic_release_artist");
+            intent.removeExtra("pmusic_release_cover");
+            try {
+                org.json.JSONObject relObj = new org.json.JSONObject();
+                relObj.put("trackId", relTrackId != null ? relTrackId : "");
+                relObj.put("albumId", relAlbumId != null ? relAlbumId : "");
+                relObj.put("title", relTitle != null ? relTitle : "");
+                relObj.put("artist", relArtist != null ? relArtist : "");
+                relObj.put("coverUrl", relCover != null ? relCover : "");
+                String payload = relObj.toString();
+                if (isInitialCreate) {
+                    sPendingReleaseJson = payload;
+                } else {
+                    dispatchReleaseTrackToJs(payload);
+                }
+            } catch (Throwable ignored) {
+            }
+        }
         String widgetAct = intent.getStringExtra("pmusic_widget_action");
         if (widgetAct != null && !widgetAct.isEmpty()) {
             intent.removeExtra("pmusic_widget_action");
@@ -3286,6 +3375,20 @@ public class MainActivity extends Activity {
             pendingAuthCallbackUrl = fullUrl;
             dispatchAuthCallbackToJs(fullUrl);
         }
+    }
+
+    private void dispatchReleaseTrackToJs(final String payloadJson) {
+        if (webView == null || payloadJson == null || Build.VERSION.SDK_INT < 19) return;
+        final String js = "(function(){if(typeof window.__pmusicOpenReleaseTrack==='function'){window.__pmusicOpenReleaseTrack("
+                + org.json.JSONObject.quote(payloadJson) + ");}})();";
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (webView != null) {
+                    webView.evaluateJavascript(js, null);
+                }
+            }
+        });
     }
 
     private void dispatchAuthCallbackToJs(final String callbackUrl) {
@@ -4789,6 +4892,396 @@ public class PMusicCompactWidgetProvider extends AppWidgetProvider {
   'utf-8'
 );
 
+writeFileSync(
+  resolve(javaSrcDir, 'PMusicReleaseCheckJobService.java'),
+  `package es.pmusic.app;
+
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.app.job.JobInfo;
+import android.app.job.JobParameters;
+import android.app.job.JobScheduler;
+import android.app.job.JobService;
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.os.Build;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.net.URLEncoder;
+import java.text.Normalizer;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.TimeZone;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+public class PMusicReleaseCheckJobService extends JobService {
+    public static final int JOB_ID = 7401;
+    public static final String PREFS_NAME = "pmusic_release_prefs";
+    public static final String CHANNEL_ID = "pmusic_releases_channel";
+    private static final ExecutorService JOB_EXECUTOR = Executors.newSingleThreadExecutor();
+
+    public static void schedulePeriodicCheck(Context ctx, boolean enabled) {
+        if (ctx == null || Build.VERSION.SDK_INT < 21) return;
+        try {
+            JobScheduler scheduler = (JobScheduler) ctx.getSystemService(Context.JOB_SCHEDULER_SERVICE);
+            if (scheduler == null) return;
+            if (!enabled) {
+                scheduler.cancel(JOB_ID);
+                return;
+            }
+            JobInfo.Builder b = new JobInfo.Builder(
+                    JOB_ID,
+                    new ComponentName(ctx.getApplicationContext(), PMusicReleaseCheckJobService.class)
+            )
+                    .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+                    .setPeriodic(6L * 60L * 60L * 1000L);
+            try {
+                b.setPersisted(true);
+            } catch (Throwable ignored) {
+            }
+            scheduler.schedule(b.build());
+        } catch (Throwable ignored) {
+        }
+    }
+
+    @Override
+    public boolean onStartJob(final JobParameters params) {
+        JOB_EXECUTOR.execute(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    runReleaseScan();
+                } catch (Throwable ignored) {
+                } finally {
+                    jobFinished(params, false);
+                }
+            }
+        });
+        return true;
+    }
+
+    @Override
+    public boolean onStopJob(JobParameters params) {
+        return true;
+    }
+
+    private void runReleaseScan() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        if (!prefs.getBoolean("enabled", true)) return;
+
+        JSONArray artistsArr;
+        try {
+            artistsArr = new JSONArray(prefs.getString("favorite_artists_json", "[]"));
+        } catch (Exception e) {
+            return;
+        }
+        if (artistsArr.length() == 0) return;
+
+        Set<String> seenIds = new LinkedHashSet<String>();
+        try {
+            JSONArray sArr = new JSONArray(prefs.getString("seen_release_ids", "[]"));
+            for (int i = 0; i < sArr.length(); i++) {
+                String v = sArr.optString(i, "");
+                if (!v.isEmpty()) seenIds.add(v);
+            }
+        } catch (Exception ignored) {
+        }
+
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+        sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
+        long nowMs = System.currentTimeMillis();
+        String todayIso = sdf.format(new Date(nowMs));
+        String cutoff3Iso = sdf.format(new Date(nowMs - 3L * 86400000L));
+
+        Map<String, String> artistDisplayByNorm = new HashMap<String, String>();
+        for (int i = 0; i < Math.min(15, artistsArr.length()); i++) {
+            JSONObject aObj = artistsArr.optJSONObject(i);
+            if (aObj == null) continue;
+            String name = aObj.optString("name", "").trim();
+            String norm = normStr(name);
+            if (!norm.isEmpty() && !artistDisplayByNorm.containsKey(norm)) {
+                artistDisplayByNorm.put(norm, name);
+            }
+        }
+
+        int notifiedCount = 0;
+
+        // 1. Cross-check curated Release Radar against user's priority artists
+        String radarText = httpGetText("https://pmusic-olive.vercel.app/api/release-radar", 5500);
+        if (radarText != null && !radarText.isEmpty()) {
+            try {
+                JSONObject radarJson = new JSONObject(radarText);
+                JSONArray releases = radarJson.optJSONArray("releases");
+                if (releases != null) {
+                    for (int i = 0; i < releases.length() && notifiedCount < 3; i++) {
+                        JSONObject rel = releases.optJSONObject(i);
+                        if (rel == null) continue;
+                        String rd = rel.optString("releaseDate", "");
+                        if (rd.length() >= 10) rd = rd.substring(0, 10);
+                        if (rd.length() != 10 || rd.compareTo(cutoff3Iso) < 0 || rd.compareTo(todayIso) > 0) continue;
+                        String title = rel.optString("title", "").trim();
+                        if (title.isEmpty()) continue;
+                        JSONArray relArtists = rel.optJSONArray("artists");
+                        String matchedArtist = null;
+                        if (relArtists != null) {
+                            for (int k = 0; k < relArtists.length(); k++) {
+                                String an = relArtists.optString(k, "").trim();
+                                if (artistDisplayByNorm.containsKey(normStr(an))) {
+                                    matchedArtist = an;
+                                    break;
+                                }
+                            }
+                        }
+                        if (matchedArtist == null) continue;
+                        String relId = "radar:" + normStr(matchedArtist) + ":" + normStr(title) + ":" + rd;
+                        if (seenIds.contains(relId)) continue;
+
+                        JSONObject trackObj = rel.optJSONObject("track");
+                        String trackId = trackObj != null ? trackObj.optString("id", "") : "";
+                        String albumId = "";
+                        if (trackObj != null && trackObj.optJSONObject("album") != null) {
+                            albumId = trackObj.optJSONObject("album").optString("id", "");
+                        }
+                        String cover = rel.optString("thumbnailHighUrl", rel.optString("thumbnailUrl", ""));
+                        Bitmap bmp = downloadBitmap(cover);
+                        postReleaseNotification(
+                                getApplicationContext(),
+                                "Nuevo de " + matchedArtist,
+                                title + " · Toca para escuchar",
+                                trackId,
+                                albumId,
+                                title,
+                                matchedArtist,
+                                cover,
+                                bmp
+                        );
+                        seenIds.add(relId);
+                        notifiedCount++;
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+
+        // 2. Query user's top favorite / most-played artists directly on Deezer
+        for (int i = 0; i < Math.min(10, artistsArr.length()) && notifiedCount < 3; i++) {
+            JSONObject aObj = artistsArr.optJSONObject(i);
+            if (aObj == null) continue;
+            String artistName = aObj.optString("name", "").trim();
+            String artistId = aObj.optString("artistId", "").trim();
+            if (artistName.isEmpty()) continue;
+
+            if (artistId.isEmpty() || !artistId.matches("\\\\d+")) {
+                try {
+                    String sUrl = "https://api.deezer.com/search/artist?q=" + URLEncoder.encode(artistName, "UTF-8") + "&limit=3";
+                    String sTxt = httpGetText(sUrl, 4000);
+                    if (sTxt != null) {
+                        JSONArray hits = new JSONObject(sTxt).optJSONArray("data");
+                        if (hits != null && hits.length() > 0) {
+                            artistId = String.valueOf(hits.optJSONObject(0).optLong("id", 0));
+                        }
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+            if (artistId.isEmpty() || "0".equals(artistId)) continue;
+
+            String alTxt = httpGetText("https://api.deezer.com/artist/" + artistId + "/albums?limit=5", 4500);
+            if (alTxt == null) continue;
+            try {
+                JSONArray albums = new JSONObject(alTxt).optJSONArray("data");
+                if (albums == null) continue;
+                for (int j = 0; j < albums.length() && notifiedCount < 3; j++) {
+                    JSONObject al = albums.optJSONObject(j);
+                    if (al == null) continue;
+                    String rd = al.optString("release_date", "");
+                    if (rd.length() >= 10) rd = rd.substring(0, 10);
+                    if (rd.length() != 10 || rd.compareTo(cutoff3Iso) < 0 || rd.compareTo(todayIso) > 0) continue;
+                    long alIdNum = al.optLong("id", 0L);
+                    String title = al.optString("title", "").trim();
+                    if (alIdNum <= 0 || title.isEmpty()) continue;
+                    String alId = String.valueOf(alIdNum);
+                    String relId = "dz-al:" + alId + ":" + rd;
+                    if (seenIds.contains(relId)) continue;
+
+                    String firstTrackId = "";
+                    String trTxt = httpGetText("https://api.deezer.com/album/" + alId + "/tracks?limit=1", 3500);
+                    if (trTxt != null) {
+                        try {
+                            JSONArray trArr = new JSONObject(trTxt).optJSONArray("data");
+                            if (trArr != null && trArr.length() > 0) {
+                                long tid = trArr.optJSONObject(0).optLong("id", 0L);
+                                if (tid > 0) firstTrackId = "dz_" + tid;
+                            }
+                        } catch (Exception ignored) {
+                        }
+                    }
+
+                    String cover = al.optString("cover_big", al.optString("cover_medium", al.optString("cover", "")));
+                    Bitmap bmp = downloadBitmap(cover);
+                    postReleaseNotification(
+                            getApplicationContext(),
+                            "Nuevo de " + artistName,
+                            title + " · Toca para escuchar",
+                            firstTrackId,
+                            alId,
+                            title,
+                            artistName,
+                            cover,
+                            bmp
+                    );
+                    seenIds.add(relId);
+                    notifiedCount++;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+
+        JSONArray outSeen = new JSONArray();
+        int skip = Math.max(0, seenIds.size() - 200);
+        int idx = 0;
+        for (String s : seenIds) {
+            if (idx++ >= skip) outSeen.put(s);
+        }
+        prefs.edit()
+                .putString("seen_release_ids", outSeen.toString())
+                .putLong("last_bg_check_ms", nowMs)
+                .apply();
+    }
+
+    public static void postReleaseNotification(
+            Context ctx,
+            String notifTitle,
+            String notifBody,
+            String trackId,
+            String albumId,
+            String itemTitle,
+            String itemArtist,
+            String coverUrl,
+            Bitmap coverBmp
+    ) {
+        if (ctx == null) return;
+        try {
+            NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm == null) return;
+            if (Build.VERSION.SDK_INT >= 26) {
+                NotificationChannel ch = new NotificationChannel(
+                        CHANNEL_ID,
+                        "Nuevos lanzamientos",
+                        NotificationManager.IMPORTANCE_DEFAULT
+                );
+                nm.createNotificationChannel(ch);
+            }
+            Intent openIntent = new Intent(ctx, MainActivity.class);
+            openIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            openIntent.putExtra("pmusic_release_track_id", trackId != null ? trackId.trim() : "");
+            openIntent.putExtra("pmusic_release_album_id", albumId != null ? albumId.trim() : "");
+            openIntent.putExtra("pmusic_release_title", itemTitle != null ? itemTitle.trim() : "");
+            openIntent.putExtra("pmusic_release_artist", itemArtist != null ? itemArtist.trim() : "");
+            openIntent.putExtra("pmusic_release_cover", coverUrl != null ? coverUrl.trim() : "");
+
+            int reqCode = 5100 + Math.abs((notifTitle + "|" + notifBody).hashCode() % 400);
+            int piFlags = Build.VERSION.SDK_INT >= 23
+                    ? PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                    : PendingIntent.FLAG_UPDATE_CURRENT;
+            PendingIntent pi = PendingIntent.getActivity(ctx, reqCode, openIntent, piFlags);
+
+            Notification.Builder nb = Build.VERSION.SDK_INT >= 26
+                    ? new Notification.Builder(ctx, CHANNEL_ID)
+                    : new Notification.Builder(ctx);
+            nb.setSmallIcon(R.drawable.ic_stat_pmusic)
+                    .setContentTitle(notifTitle)
+                    .setContentText(notifBody)
+                    .setColor(0xFF070709)
+                    .setAutoCancel(true)
+                    .setContentIntent(pi);
+            if (coverBmp != null) {
+                nb.setLargeIcon(coverBmp);
+            }
+            nm.notify(reqCode, nb.build());
+        } catch (Throwable ignored) {
+        }
+    }
+
+    public static Bitmap downloadBitmap(String urlStr) {
+        if (urlStr == null || !urlStr.startsWith("https://")) return null;
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL(urlStr).openConnection();
+            conn.setConnectTimeout(3500);
+            conn.setReadTimeout(4500);
+            conn.setInstanceFollowRedirects(true);
+            conn.setRequestProperty("User-Agent", "pMusic-Android/0.24.3");
+            if (conn.getResponseCode() < 200 || conn.getResponseCode() >= 300) return null;
+            InputStream in = conn.getInputStream();
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) != -1) bos.write(buf, 0, n);
+            in.close();
+            byte[] bytes = bos.toByteArray();
+            return BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+        } catch (Throwable ignored) {
+            return null;
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    private static String httpGetText(String urlStr, int timeoutMs) {
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL(urlStr).openConnection();
+            conn.setConnectTimeout(timeoutMs);
+            conn.setReadTimeout(timeoutMs);
+            conn.setInstanceFollowRedirects(true);
+            conn.setRequestProperty("User-Agent", "pMusic-Android/0.24.3");
+            if (conn.getResponseCode() < 200 || conn.getResponseCode() >= 300) return null;
+            InputStream in = conn.getInputStream();
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) != -1) bos.write(buf, 0, n);
+            in.close();
+            return new String(bos.toByteArray(), "UTF-8");
+        } catch (Throwable ignored) {
+            return null;
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    private static String normStr(String raw) {
+        if (raw == null) return "";
+        String nfd = Normalizer.normalize(raw.toLowerCase(Locale.ROOT), Normalizer.Form.NFD);
+        return nfd.replaceAll("[\\\\p{InCombiningDiacriticalMarks}]", "")
+                .replaceAll("[^a-z0-9\\\\s]", " ")
+                .replaceAll("\\\\s+", " ")
+                .trim();
+    }
+}
+`,
+  'utf-8'
+);
+
 // 6. Compile resources with aapt2 compile & link (WITHOUT -A so Windows aapt2 never emits '\' ZIP entries)
 const compiledResZip = resolve(workDir, 'compiled_res.zip');
 const unalignedApk = resolve(workDir, 'unaligned.apk');
@@ -4830,6 +5323,7 @@ execFileSync(
     resolve(javaSrcDir, 'PMusicMediaBrowserService.java'),
     resolve(javaSrcDir, 'PMusicWidgetProvider.java'),
     resolve(javaSrcDir, 'PMusicCompactWidgetProvider.java'),
+    resolve(javaSrcDir, 'PMusicReleaseCheckJobService.java'),
     resolve(javaSrcDir, 'PMusicApkProvider.java'),
     resolve(javaSrcDir, 'MainActivity.java'),
   ],

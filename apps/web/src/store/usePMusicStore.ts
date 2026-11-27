@@ -29,6 +29,11 @@ import {
 import { optimizeArtworkUrl, setDataSaverMode, upgradeCoverUrlToHd } from '../utils/image-opt.ts';
 import { findPlaylistDuplicates, getTrackDuplicateKey } from '../utils/playlist-tools.ts';
 import {
+  buildInstantLocalSearchBundle,
+  buildPersonalSearchSignals,
+  mergeSearchBundles,
+} from '../utils/instant-search.ts';
+import {
   checkArtistNewReleases,
   extractPriorityArtists,
   loadReleaseNotificationsState,
@@ -225,6 +230,7 @@ import {
   isElectronDesktopRuntime,
   setDesktopTrayPrefs,
   showNativeReleaseNotification,
+  syncAndroidReleaseArtists,
 } from '../platform/web-bridge.ts';
 import {
   applyAmbientPaletteFromCover,
@@ -278,11 +284,12 @@ export type RecentSearchItem =
     };
 
 const RECENT_SEARCH_ITEMS_STORAGE_KEY = 'pmusic_recent_search_items_v1';
-const CLIENT_SEARCH_CACHE_TTL_MS = 3 * 60_000;
+const CLIENT_SEARCH_CACHE_TTL_MS = 10 * 60_000;
 const clientSearchCache = new Map<
   string,
   { at: number; bundle: SearchResultBundle; best?: TopResultMatch; suggestions: AutocompleteSuggestion[] }
 >();
+let activeSearchAbort: AbortController | null = null;
 
 function buildDefaultRecentSearchItems(): RecentSearchItem[] {
   const now = Date.now();
@@ -456,6 +463,7 @@ export interface DiscordRpcConfig {
   showArtwork: boolean;
   showWhenPaused: boolean;
   displayMode: 'song' | 'artist' | 'app';
+  displayModeUserSet?: boolean;
 }
 
 const USER_PREFS_STORAGE_KEY = 'pmusic_user_prefs_v1';
@@ -3458,6 +3466,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       discordRpcConfig: {
         ...prev.discordRpcConfig,
         ...(prefs.discordRpcConfig ?? {}),
+        displayMode:
+          prefs.discordRpcConfig?.displayMode === 'app' &&
+          !prefs.discordRpcConfig?.displayModeUserSet
+            ? 'song'
+            : (prefs.discordRpcConfig?.displayMode ?? 'song'),
         clientId:
           prefs.discordRpcConfig?.clientId?.trim() || DEFAULT_DISCORD_CLIENT_ID,
       },
@@ -3614,7 +3627,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     showTimestamps: true,
     showArtwork: true,
     showWhenPaused: true,
-    displayMode: 'app',
+    displayMode: 'song',
   },
   discordRpcStatus: {
     connected: false,
@@ -4151,6 +4164,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
             discordRpcConfig: {
               ...prev.discordRpcConfig,
               ...(hydratedPrefs.discordRpcConfig ?? {}),
+              displayMode:
+                hydratedPrefs.discordRpcConfig?.displayMode === 'app' &&
+                !hydratedPrefs.discordRpcConfig?.displayModeUserSet
+                  ? 'song'
+                  : (hydratedPrefs.discordRpcConfig?.displayMode ?? 'song'),
               clientId:
                 hydratedPrefs.discordRpcConfig?.clientId ||
                 rpcStatus?.clientId ||
@@ -4550,6 +4568,65 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
     // Expose native car/media callbacks for Android Auto, CarPlay & OS voice search
     if (typeof window !== 'undefined') {
+      (window as any).__pmusicOpenReleaseTrack = async (rawJson: string) => {
+        try {
+          const payload = JSON.parse(rawJson) as {
+            trackId?: string;
+            albumId?: string;
+            title?: string;
+            artist?: string;
+            coverUrl?: string;
+          };
+          const stCur = get();
+          const tId = (payload.trackId ?? '').trim();
+          const aId = (payload.albumId ?? '').trim();
+          const title = (payload.title ?? '').trim();
+          const artist = (payload.artist ?? '').trim();
+
+          if (aId && /^\d+$/.test(aId.replace(/^dz_al_/, ''))) {
+            const cleanAlId = aId.replace(/^dz_al_/, '');
+            const detail = await musicProvider.getAlbum(cleanAlId, undefined, {
+              title: title || undefined,
+              artist: artist || undefined,
+            });
+            if (detail?.tracks?.length > 0) {
+              const chosen =
+                (tId && detail.tracks.find((tr) => tr.id === tId)) || detail.tracks[0]!;
+              await stCur.playTrack(chosen, detail.tracks);
+              stCur.setNowPlayingOpen(true);
+              return;
+            }
+          }
+
+          if (tId) {
+            const cleanTitle = title || 'Nuevo lanzamiento';
+            const syntheticTrack: Track = {
+              id: tId,
+              title: cleanTitle,
+              artists: artist ? [{ name: artist }] : [{ name: 'pMusic' }],
+              durationSec: 180,
+              thumbnailUrl: payload.coverUrl || '',
+              isExplicit: false,
+              source: 'ytmusic',
+            };
+            await stCur.playTrack(syntheticTrack, [syntheticTrack]);
+            stCur.setNowPlayingOpen(true);
+            return;
+          }
+
+          const query = [artist, title].filter(Boolean).join(' ').trim();
+          if (query) {
+            const found = await stCur.searchTracksForPlaylist(query);
+            if (found.length > 0) {
+              await stCur.playTrack(found[0]!, found);
+              stCur.setNowPlayingOpen(true);
+            }
+          }
+        } catch {
+          // ignore malformed release notification payload
+        }
+      };
+
       (window as any).__pmusicSetCarMode = (active: boolean) => {
         get().setCarModeOpen(Boolean(active));
       };
@@ -4634,6 +4711,15 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       Boolean((import.meta as any).vitest) ||
       (import.meta as any).env?.MODE === 'test';
     if (!isTestEnvRel && typeof window !== 'undefined') {
+      const persistedRel = loadReleaseNotificationsState();
+      syncAndroidReleaseArtists({
+        enabled: get().releaseNotificationsEnabled,
+        artists: extractPriorityArtists(get().likedTracks, get().playHistory, 15).map((a) => ({
+          name: a.name,
+          artistId: a.artistId,
+        })),
+        seenIds: persistedRel.seenIds,
+      });
       window.setTimeout(() => {
         void get().checkNewArtistReleases(false);
       }, 6000);
@@ -6636,43 +6722,150 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   setSearchQuery: async (query, immediate = false) => {
     const trimmed = query.trim();
     const cacheKey = trimmed.toLowerCase();
+
+    if (activeSearchAbort) {
+      activeSearchAbort.abort();
+      activeSearchAbort = null;
+    }
+
+    const st = get();
+    const personalSignals = buildPersonalSearchSignals({
+      likedTracks: st.likedTracks,
+      playHistory: st.playHistory,
+      recentSearches: st.recentSearches,
+      recentSearchItems: st.recentSearchItems,
+      favoriteArtists: st.favoriteArtists,
+    });
+
     const cached = clientSearchCache.get(cacheKey);
     if (cached && Date.now() - cached.at < CLIENT_SEARCH_CACHE_TTL_MS) {
       ++searchTicket;
+      const rerankedCached = trimmed
+        ? recommendationEngine.rerankSearchBundle(query, cached.bundle, personalSignals)
+        : cached.bundle;
+      const rankedSugs = recommendationEngine.rankAutocomplete(
+        query,
+        cached.suggestions.map((s) => s.text),
+        personalSignals
+      );
       set({
         searchQuery: query,
-        autocompleteSuggestions: cached.suggestions,
-        searchResults: cached.bundle,
-        bestResult: cached.best,
+        autocompleteSuggestions: rankedSugs.length > 0 ? rankedSugs : cached.suggestions,
+        searchResults: rerankedCached,
+        bestResult: rerankedCached.topResult ?? cached.best,
         isSearching: false,
       });
       return;
     }
 
-    set({ searchQuery: query, isSearching: true });
+    // Empty query: instant local recommendations + autocomplete, abort network churn
+    if (!trimmed) {
+      ++searchTicket;
+      const localHomeBundle = buildInstantLocalSearchBundle('', {
+        likedTracks: st.likedTracks,
+        playHistory: st.playHistory,
+        playlists: st.playlists,
+        recentSearchItems: st.recentSearchItems,
+        recentSearches: st.recentSearches,
+        favoriteArtists: st.favoriteArtists,
+        homeShelves: st.homeShelves,
+        affinityProfile: st.affinityProfile,
+      });
+      const instantSugs = recommendationEngine.rankAutocomplete('', [], personalSignals);
+      set({
+        searchQuery: query,
+        autocompleteSuggestions: instantSugs,
+        ...(localHomeBundle.songs.length > 0 || localHomeBundle.artists.length > 0
+          ? {
+              searchResults: localHomeBundle,
+              bestResult: localHomeBundle.topResult,
+            }
+          : {}),
+        isSearching: false,
+      });
+      return;
+    }
+
+    // Collect cached bundles from prefix queries (e.g. "cru" -> "cruz") for instant 0ms intermediate preview
+    const cachedPrefixBundles: SearchResultBundle[] = [];
+    for (const [k, v] of clientSearchCache.entries()) {
+      if (k && (cacheKey.startsWith(k) || k.startsWith(cacheKey))) {
+        cachedPrefixBundles.push(v.bundle);
+      }
+    }
+
+    const instantLocal = buildInstantLocalSearchBundle(trimmed, {
+      likedTracks: st.likedTracks,
+      playHistory: st.playHistory,
+      playlists: st.playlists,
+      recentSearchItems: st.recentSearchItems,
+      recentSearches: st.recentSearches,
+      favoriteArtists: st.favoriteArtists,
+      homeShelves: st.homeShelves,
+      affinityProfile: st.affinityProfile,
+      cachedBundles: cachedPrefixBundles,
+    });
+    const instantSuggestions = recommendationEngine.rankAutocomplete(query, [], personalSignals);
+    const hasInstantHits =
+      instantLocal.songs.length > 0 ||
+      instantLocal.artists.length > 0 ||
+      instantLocal.albums.length > 0;
+
+    set({
+      searchQuery: query,
+      autocompleteSuggestions: instantSuggestions,
+      ...(hasInstantHits
+        ? {
+            searchResults: instantLocal,
+            bestResult:
+              instantLocal.topResult ??
+              recommendationEngine.selectBestResult(query, instantLocal, personalSignals),
+          }
+        : {}),
+      isSearching: true,
+    });
+
     const ticket = ++searchTicket;
-    if (!immediate && trimmed) {
-      await new Promise((r) => setTimeout(r, 120));
+    if (!immediate) {
+      await new Promise((r) => setTimeout(r, 70));
       if (ticket !== searchTicket) return;
     }
+
+    const abortCtrl = new AbortController();
+    activeSearchAbort = abortCtrl;
+
     try {
       const [rawBundle, remoteSuggestions] = await Promise.all([
-        musicProvider.search(query, 'all'),
+        musicProvider.search(query, 'all', abortCtrl.signal),
         trimmed.length >= 2
-          ? musicProvider.getSearchSuggestions(query).catch(() => [] as string[])
+          ? musicProvider.getSearchSuggestions(query, abortCtrl.signal).catch(() => [] as string[])
           : Promise.resolve([] as string[]),
       ]);
-      if (ticket !== searchTicket) return;
-      const ranked = recommendationEngine.rankAutocomplete(query, remoteSuggestions);
-      const bundle = recommendationEngine.rerankSearchBundle(query, rawBundle);
-      const best = bundle.topResult ?? recommendationEngine.selectBestResult(query, bundle);
+      if (ticket !== searchTicket || abortCtrl.signal.aborted) return;
+
+      const latestState = get();
+      const latestSignals = buildPersonalSearchSignals({
+        likedTracks: latestState.likedTracks,
+        playHistory: latestState.playHistory,
+        recentSearches: latestState.recentSearches,
+        recentSearchItems: latestState.recentSearchItems,
+        favoriteArtists: latestState.favoriteArtists,
+      });
+
+      const mergedRaw = mergeSearchBundles(instantLocal, rawBundle);
+      const ranked = recommendationEngine.rankAutocomplete(query, remoteSuggestions, latestSignals);
+      const bundle = recommendationEngine.rerankSearchBundle(query, mergedRaw, latestSignals);
+      const best =
+        bundle.topResult ??
+        recommendationEngine.selectBestResult(query, bundle, latestSignals);
+
       clientSearchCache.set(cacheKey, {
         at: Date.now(),
         bundle,
         best,
         suggestions: ranked,
       });
-      if (clientSearchCache.size > 60) {
+      if (clientSearchCache.size > 80) {
         clientSearchCache.delete(clientSearchCache.keys().next().value as string);
       }
       set({
@@ -6681,9 +6874,18 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         bestResult: best,
         isSearching: false,
       });
-    } catch {
-      if (ticket === searchTicket) {
+    } catch (err) {
+      const isAbort =
+        abortCtrl.signal.aborted ||
+        (err instanceof Error && err.name === 'AbortError');
+      if (ticket === searchTicket && !isAbort) {
         set({ isSearching: false });
+      } else if (ticket === searchTicket) {
+        set({ isSearching: false });
+      }
+    } finally {
+      if (activeSearchAbort === abortCtrl) {
+        activeSearchAbort = null;
       }
     }
   },
@@ -8174,6 +8376,15 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       affinityProfile: recommendationEngine.getAffinityProfile(),
       homeShelves: shelves,
     });
+    const relStateAfterLike = loadReleaseNotificationsState();
+    syncAndroidReleaseArtists({
+      enabled: get().releaseNotificationsEnabled,
+      artists: extractPriorityArtists(libraryStore.getLikedTracks(), get().playHistory, 15).map((a) => ({
+        name: a.name,
+        artistId: a.artistId,
+      })),
+      seenIds: relStateAfterLike.seenIds,
+    });
     scheduleLibraryCloudSync();
   },
 
@@ -9005,6 +9216,14 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       enabled,
       items: get().releaseNotifications,
     });
+    syncAndroidReleaseArtists({
+      enabled,
+      artists: extractPriorityArtists(get().likedTracks, get().playHistory, 15).map((a) => ({
+        name: a.name,
+        artistId: a.artistId,
+      })),
+      seenIds: cur.seenIds,
+    });
     set({ releaseNotificationsEnabled: enabled });
   },
 
@@ -9050,7 +9269,16 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         seenIds: nextSeenIds,
         items: mergedList,
       });
+      syncAndroidReleaseArtists({
+        enabled: st.releaseNotificationsEnabled,
+        artists: priorityArtists.map((a) => ({ name: a.name, artistId: a.artistId })),
+        seenIds: nextSeenIds,
+      });
       set({ releaseNotifications: mergedList });
+
+      const threeDaysCutoffIso = getRollingDaysAgoIso(3);
+      const freshDailyDrops = newlyDiscovered.filter((r) => r.releaseDate >= threeDaysCutoffIso);
+      const nativeBatch = freshDailyDrops.length > 0 ? freshDailyDrops : newlyDiscovered.slice(0, 1);
 
       if (newlyDiscovered.length > 0 && st.releaseNotificationsEnabled) {
         const newest = newlyDiscovered[0]!;
@@ -9059,11 +9287,16 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
             ? `Nuevo lanzamiento de ${newest.artistName}: ${newest.title}`
             : `${newlyDiscovered.length} nuevos lanzamientos de tus artistas favoritos`
         );
-        for (const rel of newlyDiscovered.slice(0, 2)) {
+        for (const rel of nativeBatch.slice(0, 2)) {
           showNativeReleaseNotification(
-            `Nuevo de ${rel.artistName}`,
             rel.title,
-            rel.trackId ?? rel.albumId ?? ''
+            rel.artistName,
+            rel.trackId ?? '',
+            {
+              artist: rel.artistName,
+              albumId: rel.albumId ?? '',
+              coverUrl: rel.coverUrl,
+            }
           );
         }
       } else if (force) {
@@ -9472,6 +9705,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     const merged: DiscordRpcConfig = {
       ...get().discordRpcConfig,
       ...patch,
+      ...(patch.displayMode !== undefined ? { displayModeUserSet: true } : {}),
     };
     const nextCfg: DiscordRpcConfig = {
       ...merged,

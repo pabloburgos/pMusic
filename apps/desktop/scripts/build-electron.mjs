@@ -173,7 +173,7 @@ import { Client as DiscordRpcClient } from '@xhayper/discord-rpc';
 import type { DiscordPresenceState, DiscordRpcStatus } from '@pmusic/core';
 import { createPMusicApiHandler } from '@pmusic/providers';
 
-const PMUSIC_DESKTOP_VERSION = '0.24.2';
+const PMUSIC_DESKTOP_VERSION = '0.24.3';
 
 function getOtaRootDir(): string {
   return join(app.getPath('userData'), 'ota_web');
@@ -551,7 +551,7 @@ class DiscordRpcManager {
           : {};
 
       const statusDisplayType =
-        state.displayMode === 'artist' ? 1 : state.displayMode === 'song' ? 2 : 0;
+        state.displayMode === 'app' ? 0 : state.displayMode === 'artist' ? 1 : 2;
 
       await this.client.user.setActivity({
         type: 2,

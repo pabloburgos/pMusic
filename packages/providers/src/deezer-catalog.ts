@@ -19,6 +19,44 @@ import type {
  * millones de canciones, artistas, álbumes y listas con carátulas oficiales.
  * El audio completo se resuelve aparte (YouTube) en el proxy de streaming.
  */
+const DEEZER_COVER_HASH_RE = /\/images\/cover\/([a-f0-9]{16,})\//i;
+
+export function filterWaterfallAlbumSingles<
+  T extends { id: string; title: string; thumbnailUrl?: string; releaseDate?: string; year?: number }
+>(albums: T[], singles: T[]): T[] {
+  if (!albums.length || !singles.length) return singles;
+  const parseTs = (iso?: string): number | null => {
+    if (!iso || !/^\d{4}-\d{2}-\d{2}/.test(iso)) return null;
+    const ms = Date.parse(iso.slice(0, 10));
+    return Number.isFinite(ms) ? ms : null;
+  };
+  const albumByCover = new Map<string, Array<{ ts: number | null; year?: number }>>();
+  for (const al of albums) {
+    const m = (al.thumbnailUrl ?? '').match(DEEZER_COVER_HASH_RE);
+    if (!m?.[1]) continue;
+    const hash = m[1].toLowerCase();
+    const list = albumByCover.get(hash) ?? [];
+    list.push({ ts: parseTs(al.releaseDate), year: al.year });
+    albumByCover.set(hash, list);
+  }
+  const WATERFALL_WINDOW_MS = 21 * 86_400_000;
+  return singles.filter((sg) => {
+    const m = (sg.thumbnailUrl ?? '').match(DEEZER_COVER_HASH_RE);
+    if (!m?.[1]) return true;
+    const candidates = albumByCover.get(m[1].toLowerCase());
+    if (!candidates?.length) return true;
+    const sTs = parseTs(sg.releaseDate);
+    for (const al of candidates) {
+      if (sTs !== null && al.ts !== null) {
+        if (Math.abs(sTs - al.ts) <= WATERFALL_WINDOW_MS) return false;
+      } else if (!sg.year || !al.year || sg.year === al.year) {
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
 const API = 'https://api.deezer.com';
 const YTM_WEB_REMIX_CLIENT = {
   clientName: 'WEB_REMIX',
@@ -534,6 +572,8 @@ export class DeezerCatalog {
   private readonly cache = new Map<string, { at: number; data: unknown }>();
   private readonly inFlight = new Map<string, Promise<Json>>();
   private readonly searchCache = new Map<string, { at: number; bundle: SearchResultBundle }>();
+  private readonly inFlightSearch = new Map<string, Promise<SearchResultBundle>>();
+  private readonly suggestionsCache = new Map<string, { at: number; list: string[] }>();
   private readonly ytmVisualsCache = new Map<
     string,
     {
@@ -873,7 +913,7 @@ export class DeezerCatalog {
           songsInit.push(mapped);
         }
       }
-      const songs = await this.enrichTracks(rawUnique, songsInit, 12, signal);
+      const songs = await this.enrichTracks(rawUnique, songsInit, 6, signal, 450);
       return {
         query,
         topResult: songs[0] ? { kind: 'song', item: songs[0] } : undefined,
@@ -897,8 +937,9 @@ export class DeezerCatalog {
       const songs = await this.enrichTracks(
         rawGenreTracks,
         rawGenreTracks.map((t: Json) => this.mapTrack(t)),
-        12,
-        signal
+        6,
+        signal,
+        450
       );
       const artistList = (artists.data ?? []).map((a: Json) => this.mapArtist(a));
       return {
@@ -919,15 +960,19 @@ export class DeezerCatalog {
     const rawQ = query.trim();
     const searchCacheKey = `${filter}::${normalizeSearchStr(rawQ)}`;
     const cachedBundle = this.searchCache.get(searchCacheKey);
-    if (cachedBundle && Date.now() - cachedBundle.at < 5 * 60_000) {
+    if (cachedBundle && Date.now() - cachedBundle.at < 10 * 60_000) {
       return cachedBundle.bundle;
+    }
+    if (!signal) {
+      const pending = this.inFlightSearch.get(searchCacheKey);
+      if (pending) return pending;
     }
 
     const q = encodeURIComponent(rawQ);
     const tokens = tokenizeSearchStr(rawQ);
     const want = (f: SearchFilter) => filter === 'all' || filter === f;
 
-    const runTimedGet = async (path: string, timeoutMs = 750): Promise<Json | null> => {
+    const runTimedGet = async (path: string, timeoutMs = 1100): Promise<Json | null> => {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), timeoutMs);
       const onOuter = () => ctrl.abort();
@@ -942,307 +987,355 @@ export class DeezerCatalog {
       }
     };
 
-    const isFastSongQuery = filter === 'song' && tokens.length >= 2;
-    const [songs, artists, albums, playlists] = await Promise.all([
-      want('song') || want('video') ? this.get(`/search?q=${q}&limit=${isFastSongQuery ? 12 : 25}`, signal) : null,
-      want('artist') ? this.get(`/search/artist?q=${q}&limit=35`, signal) : null,
-      want('album') || (!isFastSongQuery && (want('song') || want('video')) && tokens.length >= 2)
-        ? this.get(`/search/album?q=${q}&limit=10`, signal).catch(() => ({ data: [] }))
-        : null,
-      want('playlist') ? this.get(`/search/playlist?q=${q}&limit=8`, signal) : null,
-    ]);
+    const execSearch = (async (): Promise<SearchResultBundle> => {
+      const isFastSongQuery = filter === 'song' && tokens.length >= 2;
 
-    const rawArtistRows: Json[] = [...(artists?.data ?? [])];
-    const extraDotArtists: Json[] = [];
-    const extraArtistTracks: Json[] = [];
-    const aliasAlbums: Json[] = [];
-
-    // Canonical artist-alias companion search (e.g. searching Cruzzi also pulls Cruz Cafuné tracks/releases)
-    const normQueryLower = normalizeSearchStr(rawQ);
-    let aliasQuery: string | null = null;
-    if (normQueryLower.includes('cruzzi')) {
-      aliasQuery = rawQ.replace(/cruzzi/gi, 'Cruz Cafuné');
-    } else if (normQueryLower.includes('cruz cafune')) {
-      aliasQuery = rawQ.replace(/cruz\s*cafun[eé]/gi, 'Cruzzi');
-    }
-    if (aliasQuery && aliasQuery.trim().toLowerCase() !== rawQ.toLowerCase()) {
-      const aq = encodeURIComponent(aliasQuery.trim());
-      await Promise.all([
-        want('song') || want('video')
-          ? runTimedGet(`/search?q=${aq}&limit=15`, 850).then((res) => {
-              for (const t of res?.data ?? []) extraArtistTracks.push(t);
-            })
-          : Promise.resolve(),
-        want('artist')
-          ? runTimedGet(`/search/artist?q=${aq}&limit=10`, 850).then((res) => {
-              for (const row of res?.data ?? []) extraDotArtists.push(row);
-            })
-          : Promise.resolve(),
-        want('album')
-          ? runTimedGet(`/search/album?q=${aq}&limit=8`, 850).then((res) => {
-              for (const al of res?.data ?? []) aliasAlbums.push(al);
-            })
-          : Promise.resolve(),
-      ]);
-    }
-
-    // Single-token search enhancement for punctuated initial artist names (e.g. "valentino" -> "D.Valentino")
-    if (tokens.length === 1 && tokens[0] && tokens[0].length >= 4 && (want('artist') || want('song'))) {
-      const tok = tokens[0];
-      const dotVariants: string[] = [];
-      if (!tok.startsWith('d')) {
-        dotVariants.push(`D.${rawQ}`);
-      } else if (tok.length >= 5) {
-        dotVariants.push(`d.${rawQ.slice(1)}`);
+      // Compute alias & single-token punctuated artist variants BEFORE Wave 1 so everything fires in parallel
+      const normQueryLower = normalizeSearchStr(rawQ);
+      let aliasQuery: string | null = null;
+      if (normQueryLower.includes('cruzzi')) {
+        aliasQuery = rawQ.replace(/cruzzi/gi, 'Cruz Cafuné');
+      } else if (normQueryLower.includes('cruz cafune')) {
+        aliasQuery = rawQ.replace(/cruz\s*cafun[eé]/gi, 'Cruzzi');
       }
-      await Promise.all(
-        dotVariants.map((variant) =>
-          runTimedGet(`/search/artist?q=${encodeURIComponent(variant)}&limit=8`, 750).then((res) => {
-            for (const row of res?.data ?? []) {
-              extraDotArtists.push(row);
-            }
-          })
-        )
-      );
-    }
+      const hasAlias = Boolean(aliasQuery && aliasQuery.trim().toLowerCase() !== rawQ.toLowerCase());
+      const aq = hasAlias ? encodeURIComponent(aliasQuery!.trim()) : '';
 
-    const artistByCanonicalId = new Map<string, Json>();
-    const combinedRawArtists: Json[] = [];
-    for (const row of [...rawArtistRows, ...extraDotArtists]) {
-      const rawIdStr = row?.id ? String(row.id) : '';
-      if (!rawIdStr) continue;
-      const canonIdStr = CANONICAL_ARTIST_ID_REDIRECTS[rawIdStr] ?? rawIdStr;
-      const existing = artistByCanonicalId.get(canonIdStr);
-      if (!existing) {
-        const clone = { ...row };
-        artistByCanonicalId.set(canonIdStr, clone);
-        combinedRawArtists.push(clone);
-      } else {
-        existing.nb_fan = (Number(existing.nb_fan) || 0) + (Number(row.nb_fan) || 0);
-        if (String(row.id) === canonIdStr) {
-          existing.id = row.id;
-          existing.name = row.name;
-          if (row.picture_xl) existing.picture_xl = row.picture_xl;
-          if (row.picture_big) existing.picture_big = row.picture_big;
-          if (row.picture_medium) existing.picture_medium = row.picture_medium;
+      const dotVariants: string[] = [];
+      if (tokens.length === 1 && tokens[0] && tokens[0].length >= 4 && (want('artist') || want('song'))) {
+        const tok = tokens[0];
+        if (!tok.startsWith('d')) {
+          dotVariants.push(`D.${rawQ}`);
+        } else if (tok.length >= 5) {
+          dotVariants.push(`d.${rawQ.slice(1)}`);
         }
       }
-    }
 
-    // Fetch top tracks for dotted/initial artist variants so their Spanish songs appear alongside global hits
-    const dotMatchedArtists = extraDotArtists
-      .filter((raw) => scoreArtistForQuery(this.mapArtist(raw), rawQ) >= 120)
-      .slice(0, 2);
-    if (dotMatchedArtists.length > 0 && (want('song') || want('video'))) {
-      await Promise.all(
-        dotMatchedArtists.map((ar) =>
-          runTimedGet(`/artist/${encodeURIComponent(String(ar.id))}/top?limit=5`, 650).then((res) => {
-            for (const t of res?.data ?? []) {
-              extraArtistTracks.push(t);
-            }
-          })
-        )
-      );
-    }
+      const rawArtistRows: Json[] = [];
+      const extraDotArtists: Json[] = [];
+      const extraArtistTracks: Json[] = [];
+      const aliasAlbums: Json[] = [];
 
-    const albumListRaw: Json[] = [...(albums?.data ?? []), ...aliasAlbums];
-    const primaryRawSongs: Json[] = songs?.data ?? [];
-    const bestPrimaryScore = primaryRawSongs.reduce((best, raw) => {
-      const s = scoreTrackForQuery(this.mapTrack(raw), rawQ);
-      return s > best ? s : best;
-    }, 0);
-
-    const structuredTracks: Array<Json | null> = [];
-    const candidateAlbumTracks: Json[] = [];
-
-    if ((want('song') || want('video')) && tokens.length >= 2 && bestPrimaryScore < 165) {
-      const first = tokens[0]!;
-      const rest = tokens.slice(1).join(' ');
-      const last = tokens[tokens.length - 1]!;
-      const head = tokens.slice(0, -1).join(' ');
-      const matchingAlbums = albumListRaw
-        .map((al) => ({
-          al,
-          score: scoreAlbumForQuery(this.mapAlbum(al), rawQ),
-        }))
-        .filter((entry) => entry.score >= 60)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 2);
-
-      const secondaryCalls: Array<Promise<void>> = [
-        runTimedGet(`/search/track?q=${encodeURIComponent(`artist:"${first}" track:"${rest}"`)}&limit=8`).then((res) => {
-          if (res) structuredTracks.push(res);
-        }),
-        runTimedGet(`/search/track?q=${encodeURIComponent(`artist:"${last}" track:"${head}"`)}&limit=8`).then((res) => {
-          if (res) structuredTracks.push(res);
-        }),
-        ...matchingAlbums.map(({ al }) =>
-          runTimedGet(`/album/${encodeURIComponent(String(al.id))}/tracks?limit=20`).then((res) => {
-            const list = (res?.data ?? []).map((t: Json) => ({
-              ...t,
-              artist: t.artist ?? al.artist,
-              album: t.album ?? al,
-            }));
-            candidateAlbumTracks.push(...list);
+      const [songs, artists, albums, playlists] = await Promise.all([
+        want('song') || want('video')
+          ? runTimedGet(`/search?q=${q}&limit=${isFastSongQuery ? 12 : 25}`, isFastSongQuery ? 1100 : 1250)
+          : Promise.resolve(null),
+        want('artist')
+          ? runTimedGet(`/search/artist?q=${q}&limit=25`, 1250)
+          : Promise.resolve(null),
+        want('album') || (!isFastSongQuery && (want('song') || want('video')) && tokens.length >= 2)
+          ? runTimedGet(`/search/album?q=${q}&limit=10`, 950)
+          : Promise.resolve(null),
+        want('playlist')
+          ? runTimedGet(`/search/playlist?q=${q}&limit=8`, 950)
+          : Promise.resolve(null),
+        // Companion alias queries in parallel inside Wave 1
+        ...(hasAlias
+          ? [
+              want('song') || want('video')
+                ? runTimedGet(`/search?q=${aq}&limit=12`, 550).then((res) => {
+                    for (const t of res?.data ?? []) extraArtistTracks.push(t);
+                    return null;
+                  })
+                : Promise.resolve(null),
+              want('artist')
+                ? runTimedGet(`/search/artist?q=${aq}&limit=8`, 550).then((res) => {
+                    for (const row of res?.data ?? []) extraDotArtists.push(row);
+                    return null;
+                  })
+                : Promise.resolve(null),
+              want('album')
+                ? runTimedGet(`/search/album?q=${aq}&limit=8`, 550).then((res) => {
+                    for (const al of res?.data ?? []) aliasAlbums.push(al);
+                    return null;
+                  })
+                : Promise.resolve(null),
+            ]
+          : []),
+        // Punctuated artist variants in parallel inside Wave 1
+        ...dotVariants.map((variant) =>
+          runTimedGet(`/search/artist?q=${encodeURIComponent(variant)}&limit=6`, 450).then((res) => {
+            for (const row of res?.data ?? []) extraDotArtists.push(row);
+            return null;
           })
         ),
-      ];
-      await Promise.all(secondaryCalls);
-    }
+      ]);
 
-    const mergedRaw: Json[] = [];
-    const seenRawIds = new Set<string>();
-    const pushRawUnique = (list: Json[]) => {
-      for (const item of list) {
-        if (!item || !item.id) continue;
-        const idStr = String(item.id);
-        if (seenRawIds.has(idStr)) continue;
-        seenRawIds.add(idStr);
-        mergedRaw.push(item);
-      }
-    };
+      for (const row of artists?.data ?? []) rawArtistRows.push(row);
 
-    for (const sRes of structuredTracks) {
-      pushRawUnique(sRes?.data ?? []);
-    }
-    pushRawUnique(candidateAlbumTracks);
-    pushRawUnique(extraArtistTracks);
-    pushRawUnique(primaryRawSongs);
-
-    const enrichedList = await this.enrichTracks(
-      mergedRaw,
-      mergedRaw.map((t: Json) => this.mapTrack(t)),
-      isFastSongQuery ? 4 : 16,
-      signal
-    );
-
-    const songList = enrichedList
-      .map((track, idx) => ({ track, idx, score: scoreTrackForQuery(track, rawQ) }))
-      .sort((a, b) => b.score - a.score || a.idx - b.idx)
-      .map((x) => x.track);
-
-    const artistRanked = combinedRawArtists
-      .map((raw: Json, idx: number) => {
-        const artist = this.mapArtist(raw);
-        const fans = Number(raw.nb_fan) || 0;
-        const fanBoost = Math.log10(Math.max(1, fans) + 1) * 8;
-        return {
-          artist,
-          fans,
-          idx,
-          score: scoreArtistForQuery(artist, rawQ) + fanBoost,
-        };
-      })
-      .sort((a: { score: number; idx: number }, b: { score: number; idx: number }) => b.score - a.score || a.idx - b.idx);
-    const artistList = artistRanked.map((x: { artist: ArtistSummary }) => x.artist);
-
-    // Promote shared joint-album collaborators discovered in enriched search tracks onto album summaries
-    const albumExtraArtists = new Map<string, Map<string, { ref: { id?: string; name: string }; count: number }>>();
-    for (const song of songList) {
-      const aid = song.album?.id;
-      if (!aid || song.artists.length < 2) continue;
-      let arMap = albumExtraArtists.get(aid);
-      if (!arMap) {
-        arMap = new Map();
-        albumExtraArtists.set(aid, arMap);
-      }
-      for (const a of song.artists) {
-        const norm = normalizeSearchStr(a.name);
-        if (!norm) continue;
-        const prev = arMap.get(norm);
-        arMap.set(norm, { ref: prev?.ref ?? a, count: (prev?.count ?? 0) + 1 });
-      }
-    }
-
-    const albumList = (want('album') ? albumListRaw : [])
-      .map((a: Json) => {
-        const mapped = this.mapAlbum(a);
-        const extras = albumExtraArtists.get(mapped.id);
-        if (!extras) return mapped;
-        const have = new Set(mapped.artists.map((x) => normalizeSearchStr(x.name)));
-        const promoted = [...mapped.artists];
-        for (const [norm, entry] of extras.entries()) {
-          if (entry.count >= 2 && !have.has(norm)) {
-            have.add(norm);
-            promoted.push(entry.ref);
+      const artistByCanonicalId = new Map<string, Json>();
+      const combinedRawArtists: Json[] = [];
+      for (const row of [...rawArtistRows, ...extraDotArtists]) {
+        const rawIdStr = row?.id ? String(row.id) : '';
+        if (!rawIdStr) continue;
+        const canonIdStr = CANONICAL_ARTIST_ID_REDIRECTS[rawIdStr] ?? rawIdStr;
+        const existing = artistByCanonicalId.get(canonIdStr);
+        if (!existing) {
+          const clone = { ...row };
+          artistByCanonicalId.set(canonIdStr, clone);
+          combinedRawArtists.push(clone);
+        } else {
+          existing.nb_fan = (Number(existing.nb_fan) || 0) + (Number(row.nb_fan) || 0);
+          if (String(row.id) === canonIdStr) {
+            existing.id = row.id;
+            existing.name = row.name;
+            if (row.picture_xl) existing.picture_xl = row.picture_xl;
+            if (row.picture_big) existing.picture_big = row.picture_big;
+            if (row.picture_medium) existing.picture_medium = row.picture_medium;
           }
         }
-        return promoted.length > mapped.artists.length ? { ...mapped, artists: promoted } : mapped;
-      })
-      .map((album: AlbumSummary, idx: number) => ({
-        album,
-        idx,
-        score: scoreAlbumForQuery(album, rawQ),
-      }))
-      .sort((a: { score: number; idx: number }, b: { score: number; idx: number }) => b.score - a.score || a.idx - b.idx)
-      .map((x: { album: AlbumSummary }) => x.album);
+      }
 
-    const topSong = songList[0];
-    const topArtist = artistList[0];
-    const topArtistFans = artistRanked[0]?.fans ?? 0;
-    const topAlbum = albumList[0];
+      const albumListRaw: Json[] = [...(albums?.data ?? []), ...aliasAlbums];
+      const primaryRawSongs: Json[] = songs?.data ?? [];
+      const bestPrimaryScore = primaryRawSongs.reduce((best, raw) => {
+        const s = scoreTrackForQuery(this.mapTrack(raw), rawQ);
+        return s > best ? s : best;
+      }, 0);
 
-    const normQ = normalizeSearchStr(rawQ);
-    const qTokens = tokenizeSearchStr(rawQ);
-    const topSongNormTitle = topSong ? normalizeSearchStr(topSong.title) : '';
-    const topSongTitleWords = new Set(topSong ? tokenizeSearchStr(topSong.title) : []);
-    const topSongTitleHits = qTokens.filter((t) => topSongTitleWords.has(t)).length;
-    const topSongIsTitleIntent = Boolean(
-      topSong &&
-        (topSongNormTitle === normQ ||
-          (normQ.length >= 3 && topSongNormTitle.startsWith(normQ)) ||
-          (qTokens.length >= 2 && topSongTitleHits >= 1) ||
-          (qTokens.length === 1 && topSongTitleHits === 1))
-    );
+      const dotMatchedArtists =
+        want('song') || want('video')
+          ? extraDotArtists
+              .filter((raw) => scoreArtistForQuery(this.mapArtist(raw), rawQ) >= 120)
+              .slice(0, 2)
+          : [];
 
-    const rawSongScore = topSong ? scoreTrackForQuery(topSong, rawQ) : -1;
-    const songScore = topSong
-      ? topSongIsTitleIntent
-        ? rawSongScore
-        : Math.min(rawSongScore, 340)
-      : -1;
-    const rawArtistScore = topArtist ? scoreArtistForQuery(topArtist, rawQ) : -1;
-    const artistScore =
-      topSongNormTitle === normQ && topArtistFans < 500
-        ? Math.min(rawArtistScore, Math.max(0, songScore - 20))
-        : rawArtistScore;
-    const albumScore = topAlbum ? scoreAlbumForQuery(topAlbum, rawQ) : -1;
+      const structuredTracks: Array<Json | null> = [];
+      const candidateAlbumTracks: Json[] = [];
 
-    let topResult: SearchResultBundle['topResult'];
-    if (artistScore >= songScore && artistScore >= albumScore && topArtist) {
-      topResult = { kind: 'artist', item: topArtist };
-    } else if (songScore >= albumScore && topSong) {
-      topResult = { kind: 'song', item: topSong };
-    } else if (topAlbum) {
-      topResult = { kind: 'album', item: topAlbum };
-    } else if (topSong) {
-      topResult = { kind: 'song', item: topSong };
-    } else if (topArtist) {
-      topResult = { kind: 'artist', item: topArtist };
+      const needSplitExpansion =
+        (want('song') || want('video')) && tokens.length >= 2 && bestPrimaryScore < 165;
+
+      // Single fast parallel Wave 2 (only when needed) — no slow track enrichment waterfall!
+      if (dotMatchedArtists.length > 0 || needSplitExpansion) {
+        const wave2Calls: Array<Promise<void>> = dotMatchedArtists.map((ar) =>
+          runTimedGet(`/artist/${encodeURIComponent(String(ar.id))}/top?limit=5`, 400).then((res) => {
+            for (const t of res?.data ?? []) extraArtistTracks.push(t);
+          })
+        );
+
+        if (needSplitExpansion) {
+          const first = tokens[0]!;
+          const rest = tokens.slice(1).join(' ');
+          const last = tokens[tokens.length - 1]!;
+          const head = tokens.slice(0, -1).join(' ');
+          const matchingAlbums = albumListRaw
+            .map((al) => ({
+              al,
+              score: scoreAlbumForQuery(this.mapAlbum(al), rawQ),
+            }))
+            .filter((entry) => entry.score >= 60)
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 2);
+
+          wave2Calls.push(
+            runTimedGet(`/search/track?q=${encodeURIComponent(`artist:"${first}" track:"${rest}"`)}&limit=8`, 480).then((res) => {
+              if (res) structuredTracks.push(res);
+            }),
+            runTimedGet(`/search/track?q=${encodeURIComponent(`artist:"${last}" track:"${head}"`)}&limit=8`, 480).then((res) => {
+              if (res) structuredTracks.push(res);
+            }),
+            ...matchingAlbums.map(({ al }) =>
+              runTimedGet(`/album/${encodeURIComponent(String(al.id))}/tracks?limit=20`, 480).then((res) => {
+                const list = (res?.data ?? []).map((t: Json) => ({
+                  ...t,
+                  artist: t.artist ?? al.artist,
+                  album: t.album ?? al,
+                }));
+                candidateAlbumTracks.push(...list);
+              })
+            )
+          );
+        }
+
+        await Promise.all(wave2Calls);
+      }
+
+      const mergedRaw: Json[] = [];
+      const seenRawIds = new Set<string>();
+      const pushRawUnique = (list: Json[]) => {
+        for (const item of list) {
+          if (!item || !item.id) continue;
+          const idStr = String(item.id);
+          if (seenRawIds.has(idStr)) continue;
+          seenRawIds.add(idStr);
+          mergedRaw.push(item);
+        }
+      };
+
+      for (const sRes of structuredTracks) {
+        pushRawUnique(sRes?.data ?? []);
+      }
+      pushRawUnique(candidateAlbumTracks);
+      pushRawUnique(extraArtistTracks);
+      pushRawUnique(primaryRawSongs);
+
+      // Direct zero-latency mapping in search (featured artists already extracted via parseFeaturedArtistsFromTitle)
+      const songList = mergedRaw
+        .map((raw: Json, idx: number) => {
+          const track = this.mapTrack(raw);
+          return { track, idx, score: scoreTrackForQuery(track, rawQ) };
+        })
+        .sort((a, b) => b.score - a.score || a.idx - b.idx)
+        .map((x) => x.track);
+
+      const artistRanked = combinedRawArtists
+        .map((raw: Json, idx: number) => {
+          const artist = this.mapArtist(raw);
+          const fans = Number(raw.nb_fan) || 0;
+          const fanBoost = Math.log10(Math.max(1, fans) + 1) * 8;
+          return {
+            artist,
+            fans,
+            idx,
+            score: scoreArtistForQuery(artist, rawQ) + fanBoost,
+          };
+        })
+        .sort((a: { score: number; idx: number }, b: { score: number; idx: number }) => b.score - a.score || a.idx - b.idx);
+      const artistList = artistRanked.map((x: { artist: ArtistSummary }) => x.artist);
+
+      // Promote shared joint-album collaborators discovered in search tracks onto album summaries
+      const albumExtraArtists = new Map<string, Map<string, { ref: { id?: string; name: string }; count: number }>>();
+      for (const song of songList) {
+        const aid = song.album?.id;
+        if (!aid || song.artists.length < 2) continue;
+        let arMap = albumExtraArtists.get(aid);
+        if (!arMap) {
+          arMap = new Map();
+          albumExtraArtists.set(aid, arMap);
+        }
+        for (const a of song.artists) {
+          const norm = normalizeSearchStr(a.name);
+          if (!norm) continue;
+          const prev = arMap.get(norm);
+          arMap.set(norm, { ref: prev?.ref ?? a, count: (prev?.count ?? 0) + 1 });
+        }
+      }
+
+      const albumList = (want('album') ? albumListRaw : [])
+        .map((a: Json) => {
+          const mapped = this.mapAlbum(a);
+          const extras = albumExtraArtists.get(mapped.id);
+          if (!extras) return mapped;
+          const have = new Set(mapped.artists.map((x) => normalizeSearchStr(x.name)));
+          const promoted = [...mapped.artists];
+          for (const [norm, entry] of extras.entries()) {
+            if (entry.count >= 2 && !have.has(norm)) {
+              have.add(norm);
+              promoted.push(entry.ref);
+            }
+          }
+          return promoted.length > mapped.artists.length ? { ...mapped, artists: promoted } : mapped;
+        })
+        .map((album: AlbumSummary, idx: number) => ({
+          album,
+          idx,
+          score: scoreAlbumForQuery(album, rawQ),
+        }))
+        .sort((a: { score: number; idx: number }, b: { score: number; idx: number }) => b.score - a.score || a.idx - b.idx)
+        .map((x: { album: AlbumSummary }) => x.album);
+
+      const topSong = songList[0];
+      const topArtist = artistList[0];
+      const topArtistFans = artistRanked[0]?.fans ?? 0;
+      const topAlbum = albumList[0];
+
+      const normQ = normalizeSearchStr(rawQ);
+      const qTokens = tokenizeSearchStr(rawQ);
+      const topSongNormTitle = topSong ? normalizeSearchStr(topSong.title) : '';
+      const topSongTitleWords = new Set(topSong ? tokenizeSearchStr(topSong.title) : []);
+      const topSongTitleHits = qTokens.filter((t) => topSongTitleWords.has(t)).length;
+      const topSongIsTitleIntent = Boolean(
+        topSong &&
+          (topSongNormTitle === normQ ||
+            (normQ.length >= 3 && topSongNormTitle.startsWith(normQ)) ||
+            (qTokens.length >= 2 && topSongTitleHits >= 1) ||
+            (qTokens.length === 1 && topSongTitleHits === 1))
+      );
+
+      const rawSongScore = topSong ? scoreTrackForQuery(topSong, rawQ) : -1;
+      const songScore = topSong
+        ? topSongIsTitleIntent
+          ? rawSongScore
+          : Math.min(rawSongScore, 340)
+        : -1;
+      const rawArtistScore = topArtist ? scoreArtistForQuery(topArtist, rawQ) : -1;
+      const artistScore =
+        topSongNormTitle === normQ && topArtistFans < 500
+          ? Math.min(rawArtistScore, Math.max(0, songScore - 20))
+          : rawArtistScore;
+      const albumScore = topAlbum ? scoreAlbumForQuery(topAlbum, rawQ) : -1;
+
+      let topResult: SearchResultBundle['topResult'];
+      if (artistScore >= songScore && artistScore >= albumScore && topArtist) {
+        topResult = { kind: 'artist', item: topArtist };
+      } else if (songScore >= albumScore && topSong) {
+        topResult = { kind: 'song', item: topSong };
+      } else if (topAlbum) {
+        topResult = { kind: 'album', item: topAlbum };
+      } else if (topSong) {
+        topResult = { kind: 'song', item: topSong };
+      } else if (topArtist) {
+        topResult = { kind: 'artist', item: topArtist };
+      }
+
+      const bundle: SearchResultBundle = {
+        query,
+        topResult,
+        songs: songList,
+        videos: songList.slice(0, 4),
+        artists: artistList,
+        albums: albumList,
+        playlists: (playlists?.data ?? []).map((p: Json) => this.mapPlaylist(p)),
+      };
+      this.searchCache.set(searchCacheKey, { at: Date.now(), bundle });
+      if (this.searchCache.size > 64) {
+        this.searchCache.delete(this.searchCache.keys().next().value as string);
+      }
+      return bundle;
+    })();
+
+    if (!signal) {
+      this.inFlightSearch.set(searchCacheKey, execSearch);
     }
-
-    const bundle: SearchResultBundle = {
-      query,
-      topResult,
-      songs: songList,
-      videos: songList.slice(0, 4),
-      artists: artistList,
-      albums: albumList,
-      playlists: (playlists?.data ?? []).map((p: Json) => this.mapPlaylist(p)),
-    };
-    this.searchCache.set(searchCacheKey, { at: Date.now(), bundle });
-    if (this.searchCache.size > 24) {
-      this.searchCache.delete(this.searchCache.keys().next().value as string);
+    try {
+      return await execSearch;
+    } finally {
+      if (!signal && this.inFlightSearch.get(searchCacheKey) === execSearch) {
+        this.inFlightSearch.delete(searchCacheKey);
+      }
     }
-    return bundle;
   }
 
   public async suggestions(input: string, signal?: AbortSignal): Promise<string[]> {
-    const data = await this.get(`/search/autocomplete?q=${encodeURIComponent(input)}&limit=6`, signal);
-    const out = new Set<string>();
-    for (const a of data.artists?.data ?? []) out.add(a.name);
-    for (const t of data.tracks?.data ?? []) out.add(`${t.title_short ?? t.title} - ${t.artist?.name ?? ''}`.trim());
-    return [...out].slice(0, 8);
+    const clean = input.trim();
+    if (!clean) return [];
+    const key = normalizeSearchStr(clean);
+    const cached = this.suggestionsCache.get(key);
+    if (cached && Date.now() - cached.at < 10 * 60_000) {
+      return cached.list;
+    }
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 600);
+    const onOuter = () => ctrl.abort();
+    signal?.addEventListener('abort', onOuter, { once: true });
+    try {
+      const data = await this.get(`/search/autocomplete?q=${encodeURIComponent(clean)}&limit=6`, ctrl.signal);
+      const out = new Set<string>();
+      for (const a of data.artists?.data ?? []) out.add(a.name);
+      for (const t of data.tracks?.data ?? []) out.add(`${t.title_short ?? t.title} - ${t.artist?.name ?? ''}`.trim());
+      const list = [...out].slice(0, 8);
+      this.suggestionsCache.set(key, { at: Date.now(), list });
+      if (this.suggestionsCache.size > 64) {
+        this.suggestionsCache.delete(this.suggestionsCache.keys().next().value as string);
+      }
+      return list;
+    } catch {
+      return [];
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onOuter);
+    }
   }
 
   public async home(signal?: AbortSignal): Promise<HomeFeedResult> {
@@ -2343,9 +2436,10 @@ export class DeezerCatalog {
         filteredReleases.filter((al) => isAlbumRelease(al))
       ).map((al) => this.mapAlbum(al, a));
 
-      const singlesList = sortNewestFirst(
+      const rawSinglesList = sortNewestFirst(
         filteredReleases.filter((al) => !isAlbumRelease(al))
       ).map((al) => this.mapAlbum(al, a));
+      const singlesList = filterWaterfallAlbumSingles(albumsList, rawSinglesList);
 
       const sanitizedBanner =
         sanitizeArtistImageUrl(ytmVisuals?.bannerUrl) ||

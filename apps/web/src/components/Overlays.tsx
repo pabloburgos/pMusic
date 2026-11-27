@@ -15,7 +15,6 @@ import {
   Loader2,
   Lock,
   Maximize,
-  MessageCircle,
   MessageSquareQuote,
   Mic2,
   Minimize,
@@ -28,7 +27,6 @@ import {
   Repeat,
   Repeat1,
   Search,
-  Send,
   Share2,
   Shuffle,
   Sliders,
@@ -60,6 +58,7 @@ import { ExoticBackdropCanvas } from './ExoticBackdropCanvas.tsx';
 import { MarqueeText } from './MarqueeText.tsx';
 import { TrackArtwork } from './TrackArtwork.tsx';
 import { NowPlayingQueuePanel } from './NowPlayingQueuePanel.tsx';
+import { TelegramIcon, WhatsAppIcon } from './SocialBrandIcons.tsx';
 import { syncNativeSystemBars } from '../utils/system-bars.ts';
 import {
   buildJamQrImageUrl,
@@ -4354,7 +4353,7 @@ const JamInviteModalInner: React.FC = () => {
             }
             className="pm-pressable inline-flex items-center justify-center gap-1.5 rounded-full bg-[#25D366] py-2.5 text-xs font-extrabold text-[#05180D] hover:opacity-95"
           >
-            <MessageCircle className="h-3.5 w-3.5" />
+            <WhatsAppIcon className="h-4 w-4" />
             WhatsApp
           </button>
           <button
@@ -4367,7 +4366,7 @@ const JamInviteModalInner: React.FC = () => {
             }
             className="pm-pressable inline-flex items-center justify-center gap-1.5 rounded-full bg-[#229ED9]/25 py-2.5 text-xs font-bold text-[#7DD3FC] hover:bg-[#229ED9]/35"
           >
-            <Send className="h-3.5 w-3.5" />
+            <TelegramIcon className="h-4 w-4" />
             Telegram
           </button>
         </div>

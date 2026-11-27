@@ -356,7 +356,8 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
     const appCard = screen.getByTestId('artist-latest-appearance-card');
     expect(relCard.textContent).toContain('FILIPENSES');
     expect(appCard.textContent).toContain('LAMINE YAMAL (feat. Cruzzi)');
-    expect(appCard.textContent).toMatch(/Colaboración · feat\./i);
+    expect(appCard.textContent).not.toMatch(/Colaboración · feat\./i);
+    expect(appCard.textContent).toMatch(/22 nov 2026/i);
 
     const buildElectronSrc = readFileSync(
       resolve(__dirname, '../../../desktop/scripts/build-electron.mjs'),

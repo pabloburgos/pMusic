@@ -324,6 +324,95 @@ function tokenizeNormalized(input: string): string[] {
   return clean ? clean.split(' ') : [];
 }
 
+export interface SearchPersonalSignals {
+  likedTrackIds?: ReadonlySet<string>;
+  playCountsByTrackId?: ReadonlyMap<string, number>;
+  recentSearchQueries?: readonly string[];
+  recentTrackIds?: ReadonlySet<string>;
+  favoriteArtistKeys?: ReadonlySet<string>;
+  personalTracks?: readonly Track[];
+}
+
+export function computeBoundedEditDistance(a: string, b: string, maxDist = 2): number {
+  const m = a.length;
+  const n = b.length;
+  if (Math.abs(m - n) > maxDist) return maxDist + 1;
+  if (a === b) return 0;
+  if (m === 0) return n <= maxDist ? n : maxDist + 1;
+  if (n === 0) return m <= maxDist ? m : maxDist + 1;
+
+  // Check single adjacent transposition quickly when lengths match
+  if (m === n) {
+    let diffs = 0;
+    let firstDiff = -1;
+    let secondDiff = -1;
+    for (let i = 0; i < m; i++) {
+      if (a[i] !== b[i]) {
+        diffs++;
+        if (firstDiff === -1) firstDiff = i;
+        else if (secondDiff === -1) secondDiff = i;
+      }
+    }
+    if (
+      diffs === 2 &&
+      secondDiff === firstDiff + 1 &&
+      a[firstDiff] === b[secondDiff] &&
+      a[secondDiff] === b[firstDiff]
+    ) {
+      return 1;
+    }
+  }
+
+  let prev = new Array<number>(n + 1);
+  let curr = new Array<number>(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    let rowMin = curr[0];
+    const ca = a.charCodeAt(i - 1);
+    for (let j = 1; j <= n; j++) {
+      const cost = ca === b.charCodeAt(j - 1) ? 0 : 1;
+      const val = Math.min(prev[j]! + 1, curr[j - 1]! + 1, prev[j - 1]! + cost);
+      curr[j] = val;
+      if (val < rowMin) rowMin = val;
+    }
+    if (rowMin > maxDist) return maxDist + 1;
+    const tmp = prev;
+    prev = curr;
+    curr = tmp;
+  }
+  return prev[n]!;
+}
+
+export function scoreFuzzyTokenMatch(
+  queryToken: string,
+  targetWords: ReadonlySet<string>,
+  targetNorm: string
+): number {
+  if (!queryToken) return 0;
+  if (targetWords.has(queryToken)) return 1.0;
+
+  let best = 0;
+  for (const w of targetWords) {
+    if (!w) continue;
+    if (queryToken.length >= 2 && w.startsWith(queryToken)) {
+      best = Math.max(best, 0.85);
+      continue;
+    }
+    if (queryToken.length >= 4 && Math.abs(w.length - queryToken.length) <= 2) {
+      const maxDist = queryToken.length >= 7 ? 2 : 1;
+      const dist = computeBoundedEditDistance(queryToken, w, maxDist);
+      if (dist === 1) best = Math.max(best, 0.68);
+      else if (dist === 2 && queryToken.length >= 7) best = Math.max(best, 0.42);
+    }
+  }
+  if (best === 0 && queryToken.length >= 3 && targetNorm.includes(queryToken)) {
+    best = 0.55;
+  }
+  return best;
+}
+
 function scoreEntityQueryMatch(
   query: string,
   title: string,
@@ -342,7 +431,9 @@ function scoreEntityQueryMatch(
     .filter(Boolean);
   const collapsedArtists = artists.map((a) => collapseNormalized(a)).filter(Boolean);
   const artistWords = new Set(normArtists.flatMap((a) => tokenizeNormalized(a)));
+  const normArtistJoined = normArtists.join(' ');
   const albumWords = new Set(albumName ? tokenizeNormalized(albumName) : []);
+  const normAlbum = albumName ? normalizeSearchText(albumName).replace(/[^a-z0-9\s]+/g, ' ').replace(/\s+/g, ' ').trim() : '';
 
   let score = 0;
   if (normTitle === normQuery) score += 180;
@@ -361,29 +452,35 @@ function scoreEntityQueryMatch(
   let covered = 0;
 
   for (const tok of queryTokens) {
-    const hitTitle = titleWords.has(tok);
-    const hitArtist = artistWords.has(tok);
-    const hitAlbum = albumWords.has(tok);
+    const titleSim = scoreFuzzyTokenMatch(tok, titleWords, normTitle);
+    const artistSim = scoreFuzzyTokenMatch(tok, artistWords, normArtistJoined);
+    const hitAlbum = scoreFuzzyTokenMatch(tok, albumWords, normAlbum) >= 0.68;
 
-    if (hitTitle) {
+    if (titleSim === 1.0) {
       matchedTitle++;
       score += 34;
-    } else if (normTitle.includes(tok)) {
-      score += 6;
+    } else if (titleSim >= 0.68) {
+      matchedTitle++;
+      score += Math.round(34 * titleSim);
+    } else if (titleSim > 0) {
+      score += Math.round(14 * titleSim);
     }
 
-    if (hitArtist) {
+    if (artistSim === 1.0) {
       matchedArtist++;
       score += 30;
-    } else if (normArtists.some((a) => a.includes(tok))) {
-      score += 5;
+    } else if (artistSim >= 0.68) {
+      matchedArtist++;
+      score += Math.round(30 * artistSim);
+    } else if (artistSim > 0) {
+      score += Math.round(12 * artistSim);
     }
 
-    if (!hitTitle && !hitArtist && hitAlbum) {
+    if (titleSim < 0.68 && artistSim < 0.68 && hitAlbum) {
       score += 14;
     }
 
-    if (hitTitle || hitArtist || hitAlbum) {
+    if (titleSim >= 0.68 || artistSim >= 0.68 || hitAlbum) {
       covered++;
     }
   }
@@ -740,40 +837,76 @@ export class RecommendationEngine implements IRecommendationEngine {
 
   public rankAutocomplete(
     query: string,
-    remoteSuggestions: readonly string[]
+    remoteSuggestions: readonly string[],
+    personalSignals?: SearchPersonalSignals
   ): AutocompleteSuggestion[] {
     const normQuery = normalizeSearchText(query);
+    const queryTokens = tokenizeNormalized(query);
     const pool = new Map<string, AutocompleteSuggestion>();
 
-    // 1. Seed & high-affinity artists matching query prefix or tokens
+    // 1. Favorite, seed & high-affinity artists matching query (exact, prefix, or 1-edit fuzzy)
     const rankedArtists = this.getRankedArtists();
     for (const artist of rankedArtists) {
       const normArtist = normalizeSearchText(artist.name);
-      if (!normQuery || normArtist.includes(normQuery) || normQuery.includes(normArtist)) {
-        const prefixBonus = normQuery && normArtist.startsWith(normQuery) ? 5 : 2;
+      const artistWords = new Set(tokenizeNormalized(artist.name));
+      const directMatch =
+        !normQuery || normArtist.includes(normQuery) || normQuery.includes(normArtist);
+      const fuzzyMatch =
+        !directMatch &&
+        queryTokens.length > 0 &&
+        queryTokens.every((t) => scoreFuzzyTokenMatch(t, artistWords, normArtist) >= 0.68);
+      if (directMatch || fuzzyMatch) {
+        const prefixBonus = normQuery && normArtist.startsWith(normQuery) ? 6 : directMatch ? 2.5 : 1.5;
+        const favBonus = this.favoriteArtists.has(normalizeArtistKey(artist.name)) ? 10 : 0;
         pool.set(normArtist, {
           text: artist.name,
           kind: 'artist',
-          boostScore: Number((artist.affinity + prefixBonus).toFixed(2)),
+          boostScore: Number((artist.affinity + prefixBonus + favBonus).toFixed(2)),
         });
       }
     }
 
-    // 2. Recent search history
-    for (const histQuery of this.recentSearchQueries) {
+    // 2. Recent search history (prioritized over generic suggestions)
+    const recentSources = [
+      ...(personalSignals?.recentSearchQueries ?? []),
+      ...this.recentSearchQueries,
+    ];
+    for (let i = 0; i < recentSources.length; i++) {
+      const histQuery = recentSources[i]!;
       const normHist = normalizeSearchText(histQuery);
-      if (!normQuery || normHist.includes(normQuery)) {
-        if (!pool.has(normHist)) {
-          pool.set(normHist, {
-            text: histQuery,
-            kind: 'history',
-            boostScore: 6.5,
-          });
-        }
+      if (!normHist) continue;
+      const histWords = new Set(tokenizeNormalized(histQuery));
+      const hits =
+        !normQuery ||
+        normHist.includes(normQuery) ||
+        (queryTokens.length > 0 && queryTokens.every((t) => scoreFuzzyTokenMatch(t, histWords, normHist) >= 0.68));
+      if (hits && !pool.has(normHist)) {
+        pool.set(normHist, {
+          text: histQuery,
+          kind: 'history',
+          boostScore: Number((9.5 - Math.min(2, i * 0.2)).toFixed(2)),
+        });
       }
     }
 
-    // 3. Remote suggestions boosted by any matching artist affinity
+    // 3. Personal tracks (liked + recently played)
+    for (const tr of personalSignals?.personalTracks ?? []) {
+      const artistStr = tr.artists[0]?.name ?? '';
+      const label = artistStr ? `${tr.title} - ${artistStr}` : tr.title;
+      const normLabel = normalizeSearchText(label);
+      if (!normLabel || pool.has(normLabel)) continue;
+      const score = normQuery ? scoreEntityQueryMatch(query, tr.title, tr.artists.map((a) => a.name)) : 40;
+      if (score >= 28) {
+        const isLiked = personalSignals?.likedTrackIds?.has(tr.id);
+        pool.set(normLabel, {
+          text: label,
+          kind: 'suggestion',
+          boostScore: Number((7.5 + (isLiked ? 2 : 0) + Math.min(3, score / 100)).toFixed(2)),
+        });
+      }
+    }
+
+    // 4. Remote suggestions boosted by matching artist affinity
     for (let i = 0; i < remoteSuggestions.length; i++) {
       const text = remoteSuggestions[i]!.trim();
       if (!text) continue;
@@ -850,11 +983,63 @@ export class RecommendationEngine implements IRecommendationEngine {
     return bonus;
   }
 
-  public rerankSearchBundle(query: string, bundle: SearchResultBundle): SearchResultBundle {
-    const songs = this.rerankTracks(bundle.songs, { query });
+  private scoreTrackPersonalBonus(
+    track: Track,
+    matchScore: number,
+    personalSignals?: SearchPersonalSignals
+  ): number {
+    if (!personalSignals || (matchScore <= 0 && personalSignals)) {
+      if (!personalSignals) return 0;
+    }
+    if (matchScore <= 0) return 0;
+    let bonus = 0;
+    if (personalSignals.likedTrackIds?.has(track.id)) bonus += 115;
+    const playCount = personalSignals.playCountsByTrackId?.get(track.id) ?? 0;
+    if (playCount > 0) bonus += Math.min(75, playCount * 15);
+    if (personalSignals.recentTrackIds?.has(track.id)) bonus += 45;
+    if (personalSignals.favoriteArtistKeys?.size) {
+      const isFavArtist = track.artists.some((a) =>
+        personalSignals.favoriteArtistKeys!.has(normalizeArtistKey(a.name))
+      );
+      if (isFavArtist) bonus += 45;
+    }
+    return bonus;
+  }
+
+  public rerankSearchBundle(
+    query: string,
+    bundle: SearchResultBundle,
+    personalSignals?: SearchPersonalSignals
+  ): SearchResultBundle {
+    const baseSongs = this.rerankTracks(bundle.songs, { query });
     const normQuery = normalizeSearchText(query);
     const collapsedQuery = collapseNormalized(query);
     const queryTokens = tokenizeNormalized(query);
+
+    const songs = personalSignals
+      ? [...baseSongs]
+          .map((track, idx) => {
+            const qScore = normQuery
+              ? scoreEntityQueryMatch(
+                  query,
+                  track.title,
+                  track.artists.map((a) => a.name),
+                  track.album?.name
+                )
+              : 100;
+            const pBonus = this.scoreTrackPersonalBonus(track, qScore, personalSignals);
+            const affBonus =
+              qScore > 0
+                ? Math.min(
+                    90,
+                    track.artists.reduce((m, a) => Math.max(m, this.getEffectiveAffinity(a.name)), 0) * 6
+                  )
+                : 0;
+            return { track, idx, score: qScore + pBonus + affBonus - idx * 0.25 };
+          })
+          .sort((a, b) => b.score - a.score || a.idx - b.idx)
+          .map((x) => x.track)
+      : baseSongs;
 
     const trackSceneMap = new Map<string, number>();
     const songArtistNames = new Set<string>();
@@ -895,6 +1080,12 @@ export class RecommendationEngine implements IRecommendationEngine {
             (collapsedQuery.length >= 4 && collapsedName.includes(collapsedQuery)))
         ) {
           matchScore = 115;
+        } else if (queryTokens.length > 0) {
+          const sims = queryTokens.map((t) => scoreFuzzyTokenMatch(t, artistWordSet, normName));
+          if (sims.every((s) => s >= 0.68)) {
+            const avg = sims.reduce((acc, v) => acc + v, 0) / sims.length;
+            matchScore = Math.round(165 * avg);
+          }
         }
         const appearsInSongs =
           songArtistNames.has(normalizeArtistKey(artist.name)) ||
@@ -902,7 +1093,11 @@ export class RecommendationEngine implements IRecommendationEngine {
         if (normQuery.length > 0 && matchScore === 0 && !appearsInSongs) {
           return null;
         }
-        const affinityBonus = matchScore > 0 ? this.getEffectiveAffinity(artist.name) * 4 : 0;
+        const aff = this.getEffectiveAffinity(artist.name);
+        const isFavArtist =
+          this.favoriteArtists.has(normalizeArtistKey(artist.name)) ||
+          Boolean(personalSignals?.favoriteArtistKeys?.has(normalizeArtistKey(artist.name)));
+        const affinityBonus = matchScore > 0 ? aff * 4 + (isFavArtist ? 110 : 0) : 0;
         const sceneBonus = matchScore > 0 ? this.scoreArtistSceneBonus(artist, trackSceneMap) : 0;
         return {
           artist,
@@ -935,7 +1130,7 @@ export class RecommendationEngine implements IRecommendationEngine {
       artists,
       albums,
     };
-    const topResult = this.selectBestResult(query, reranked);
+    const topResult = this.selectBestResult(query, reranked, personalSignals);
     return {
       ...reranked,
       topResult,
@@ -965,7 +1160,8 @@ export class RecommendationEngine implements IRecommendationEngine {
 
   public selectBestResult(
     query: string,
-    bundle: SearchResultBundle
+    bundle: SearchResultBundle,
+    personalSignals?: SearchPersonalSignals
   ): TopResultMatch | undefined {
     const normQuery = normalizeSearchText(query);
     const collapsedQuery = collapseNormalized(query);
@@ -1009,7 +1205,20 @@ export class RecommendationEngine implements IRecommendationEngine {
         exact === 0 && normQuery.length > 0 && (normName.includes(normQuery) || normQuery.includes(normName))
           ? 140
           : 0;
-      let textMatch = Math.max(exact, allTokensInArtist, favoritePrefixBoost, partial);
+      let fuzzyArtist = 0;
+      if (exact === 0 && allTokensInArtist === 0 && queryTokens.length > 0) {
+        const sims = queryTokens.map((t) => scoreFuzzyTokenMatch(t, artistWordSet, normName));
+        if (sims.every((s) => s >= 0.68)) {
+          const avg = sims.reduce((acc, v) => acc + v, 0) / sims.length;
+          fuzzyArtist = Math.round(620 * avg);
+        } else if (
+          collapsedQuery.length >= 4 &&
+          computeBoundedEditDistance(collapsedQuery, collapsedName, 1) <= 1
+        ) {
+          fuzzyArtist = 530;
+        }
+      }
+      let textMatch = Math.max(exact, allTokensInArtist, favoritePrefixBoost, fuzzyArtist, partial);
       if (normQuery.length > 0 && textMatch === 0) {
         continue;
       }
@@ -1017,7 +1226,10 @@ export class RecommendationEngine implements IRecommendationEngine {
       if (subs !== null && subs < 500 && rawAffinity <= 0) {
         textMatch = Math.min(textMatch, 420);
       }
-      const affinity = Math.min(120, Math.max(-40, rawAffinity * 3));
+      const isFavArtist =
+        this.favoriteArtists.has(normalizeArtistKey(artist.name)) ||
+        Boolean(personalSignals?.favoriteArtistKeys?.has(normalizeArtistKey(artist.name)));
+      const affinity = Math.min(120, Math.max(-40, rawAffinity * 3)) + (isFavArtist ? 85 : 0);
       const sceneBonus = this.scoreArtistSceneBonus(artist, trackSceneMap) * 0.6;
       const score = textMatch + affinity + sceneBonus;
       if (score > bestScore) {
@@ -1050,8 +1262,9 @@ export class RecommendationEngine implements IRecommendationEngine {
           (m, a) => Math.max(m, this.getEffectiveAffinity(a.name)),
           0
         ) * 0.35;
+      const personalBonus = this.scoreTrackPersonalBonus(song, queryMatch, personalSignals) * 0.65;
       const sceneFit = spanishDom ? this.scoreTrackSceneFit(song) * 2.5 : 0;
-      const score = cappedQueryMatch + artistAffinity + sceneFit;
+      const score = cappedQueryMatch + artistAffinity + personalBonus + sceneFit;
       if (score > bestScore) {
         bestScore = score;
         bestCandidate = { kind: 'song', item: song };

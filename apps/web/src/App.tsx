@@ -15,10 +15,8 @@ import {
   ListStart,
   Loader2,
   Lock,
-  Maximize,
   Maximize2,
   Mic2,
-  Minimize,
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
@@ -1595,7 +1593,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     >
       {/* Unified Desktop Header & Integrated Frameless Windows Drag Bar (borderless unified canvas) */}
       {!isMobileViewport && (
-        <header className={`pm-canvas relative z-30 flex h-12 w-full shrink-0 items-center gap-2 px-3 ${nowPlayingOpen ? 'pm-behind-nowplaying' : ''}`}>
+        <header className={`pm-canvas relative z-30 flex h-12 w-full shrink-0 items-center justify-between gap-2 px-3 ${nowPlayingOpen ? 'pm-behind-nowplaying' : ''}`}>
           <div className="pm-no-drag relative z-20 flex shrink-0 items-center gap-2">
             <button
               type="button"
@@ -1622,12 +1620,12 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
 
           <div className="pm-drag-region h-full min-w-4 flex-1" aria-hidden="true" />
 
-          <div className="pm-no-drag relative z-20 flex shrink-0 items-center justify-center">
+          <div className="pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2">
             <button
               type="button"
               data-testid="top-center-search-btn"
               onClick={() => setSpotlightOpen(true)}
-              className="pm-no-drag pm-input pm-text-tertiary pointer-events-auto flex w-60 items-center justify-between gap-2 rounded-full px-3.5 py-1.5 text-xs transition-colors hover:border-[var(--pm-border-strong)] hover:text-[var(--pm-text-primary)] md:w-72 lg:w-96"
+              className="pm-no-drag pm-input pm-text-tertiary pointer-events-auto flex w-56 items-center justify-between gap-2 rounded-full px-3.5 py-1.5 text-xs transition-colors hover:border-[var(--pm-border-strong)] hover:text-[var(--pm-text-primary)] md:w-72 lg:w-96"
             >
               <span className="flex items-center gap-2">
                 <Search className="h-3.5 w-3.5 pm-text-secondary" />
@@ -1638,8 +1636,6 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
               </kbd>
             </button>
           </div>
-
-          <div className="pm-drag-region h-full min-w-4 flex-1" aria-hidden="true" />
 
           <div
             className={`pm-no-drag relative z-20 flex shrink-0 items-center gap-1.5 ${
@@ -1665,20 +1661,6 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
               )}
             </button>
 
-            <button
-              type="button"
-              data-testid="desktop-fullscreen-btn"
-              aria-label={isRealFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}
-              title={isRealFullscreen ? 'Salir de pantalla completa (F11)' : 'Pantalla completa (F11)'}
-              onClick={() => void toggleRealFullscreen().then(setIsRealFullscreen)}
-              className="pm-no-drag pm-btn-secondary pm-pressable inline-flex h-8 w-8 items-center justify-center rounded-full"
-            >
-              {isRealFullscreen ? (
-                <Minimize className="h-3.5 w-3.5" />
-              ) : (
-                <Maximize className="h-3.5 w-3.5" />
-              )}
-            </button>
             {sleepTimerMode !== 'off' && (
               <button
                 type="button"

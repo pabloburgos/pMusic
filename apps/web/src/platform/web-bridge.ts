@@ -161,18 +161,58 @@ export async function openExternalUrl(url: string): Promise<void> {
   window.open(url, '_blank', 'noopener,noreferrer');
 }
 
+export function syncAndroidReleaseArtists(payload: {
+  enabled: boolean;
+  artists: Array<{ name: string; artistId?: string }>;
+  seenIds: string[];
+}): void {
+  if (typeof window === 'undefined') return;
+  const win = window as unknown as {
+    PMusicNative?: {
+      syncFavoriteArtistsForReleases?: (json: string) => void;
+    };
+  };
+  try {
+    win.PMusicNative?.syncFavoriteArtistsForReleases?.(JSON.stringify(payload));
+  } catch {
+    // ignore non-Android platforms
+  }
+}
+
 export function showNativeReleaseNotification(
   title: string,
   body: string,
-  trackId?: string
+  trackId?: string,
+  meta?: { artist?: string; albumId?: string; coverUrl?: string }
 ): void {
   if (typeof window === 'undefined') return;
   const win = window as unknown as {
     pmusicDesktop?: ElectronDesktopWindowBridge;
     PMusicNative?: {
+      showReleaseNotificationDetailed?: (
+        title: string,
+        artist: string,
+        trackId: string,
+        albumId: string,
+        coverUrl: string
+      ) => void;
       showReleaseNotification?: (t: string, b: string, tid: string) => void;
     };
   };
+  if (win.PMusicNative?.showReleaseNotificationDetailed) {
+    try {
+      win.PMusicNative.showReleaseNotificationDetailed(
+        title,
+        meta?.artist ?? body,
+        trackId ?? '',
+        meta?.albumId ?? '',
+        meta?.coverUrl ?? ''
+      );
+      return;
+    } catch {
+      // fall through
+    }
+  }
   if (win.PMusicNative?.showReleaseNotification) {
     try {
       win.PMusicNative.showReleaseNotification(title, body, trackId ?? '');
