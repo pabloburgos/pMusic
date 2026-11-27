@@ -104,6 +104,10 @@ describe('pMusic v0.24.6 split status bars, 4 Android widgets, desktop updater g
       resolve(__dirname, '../../../desktop/src/main.ts'),
       'utf-8'
     );
+    const buildElectronSrc = readFileSync(
+      resolve(__dirname, '../../../desktop/scripts/build-electron.mjs'),
+      'utf-8'
+    );
     const customInstallerSrc = readFileSync(
       resolve(__dirname, '../../../desktop/scripts/build-custom-installer.mjs'),
       'utf-8'
@@ -111,6 +115,11 @@ describe('pMusic v0.24.6 split status bars, 4 Android widgets, desktop updater g
 
     expect(desktopMainSrc).toContain('update-guard.json');
     expect(desktopMainSrc).toContain('app.exit(0)');
+    expect(buildElectronSrc).toContain('desktopPkgVersion');
+    expect(buildElectronSrc).toContain('getEffectiveNativeVersion');
+    expect(buildElectronSrc).toContain('update-guard.json');
+    expect(buildElectronSrc).toContain('app.exit(0)');
+    expect(buildElectronSrc).not.toContain("const PMUSIC_DESKTOP_VERSION = '0.24.4'");
     expect(customInstallerSrc).toContain('RunSilentUpdate');
     expect(customInstallerSrc).toContain('.old');
     expect(customInstallerSrc).toContain('unpackedMainPath');

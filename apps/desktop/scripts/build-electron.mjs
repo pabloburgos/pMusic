@@ -6,6 +6,8 @@ import * as esbuild from 'esbuild';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(__dirname, '..');
+const desktopPkg = JSON.parse(readFileSync(resolve(desktopRoot, 'package.json'), 'utf-8'));
+const desktopPkgVersion = String(desktopPkg.version || '0.24.8').trim();
 const webDist = resolve(desktopRoot, '../web/dist');
 const desktopDist = resolve(desktopRoot, 'dist');
 const distElectron = resolve(desktopRoot, 'dist-electron');
@@ -164,7 +166,7 @@ const officialPathData =
 // Update src/main.ts to serve both static dist/ files AND /api/* over http://127.0.0.1:<port>
 const mainEntrySource = `import { createServer, type Server } from 'node:http';
 import { execFileSync, spawn } from 'node:child_process';
-import { createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join, normalize } from 'node:path';
 import { tmpdir } from 'node:os';
 import { deflateSync, inflateRawSync } from 'node:zlib';
@@ -173,7 +175,49 @@ import { Client as DiscordRpcClient } from '@xhayper/discord-rpc';
 import type { DiscordPresenceState, DiscordRpcStatus } from '@pmusic/core';
 import { createPMusicApiHandler } from '@pmusic/providers';
 
-const PMUSIC_DESKTOP_VERSION = '0.24.4';
+const PMUSIC_DESKTOP_VERSION = ${JSON.stringify(desktopPkgVersion)};
+function getEffectiveNativeVersion(): string {
+  const runtimeVer = (typeof app.getVersion === 'function' ? app.getVersion() : '') || '';
+  return runtimeVer && compareSemverDesktop(runtimeVer, PMUSIC_DESKTOP_VERSION) > 0
+    ? runtimeVer
+    : PMUSIC_DESKTOP_VERSION;
+}
+
+interface DesktopUpdateGuard {
+  version: string;
+  attempts: number;
+  lastAttemptMs: number;
+}
+
+function getUpdateGuardPath(): string {
+  return join(app.getPath('userData'), 'update-guard.json');
+}
+
+function readUpdateGuard(): DesktopUpdateGuard | null {
+  try {
+    const p = getUpdateGuardPath();
+    if (!existsSync(p)) return null;
+    const parsed = JSON.parse(readFileSync(p, 'utf-8')) as Partial<DesktopUpdateGuard>;
+    if (typeof parsed?.version === 'string') {
+      return {
+        version: parsed.version,
+        attempts: typeof parsed.attempts === 'number' ? parsed.attempts : 0,
+        lastAttemptMs: typeof parsed.lastAttemptMs === 'number' ? parsed.lastAttemptMs : 0,
+      };
+    }
+  } catch {
+    // ignore corrupt guard
+  }
+  return null;
+}
+
+function writeUpdateGuard(guard: DesktopUpdateGuard): void {
+  try {
+    writeFileSync(getUpdateGuardPath(), JSON.stringify(guard), 'utf-8');
+  } catch {
+    // ignore guard write failure
+  }
+}
 
 function getOtaRootDir(): string {
   return join(app.getPath('userData'), 'ota_web');
@@ -197,7 +241,7 @@ function getActiveWebDistRoot(): string {
     const currentDir = join(getOtaRootDir(), 'current');
     if (existsSync(join(currentDir, 'index.html'))) {
       const otaVer = readInstalledOtaVersion();
-      if (otaVer && compareSemverDesktop(otaVer, PMUSIC_DESKTOP_VERSION) >= 0) {
+      if (otaVer && compareSemverDesktop(otaVer, getEffectiveNativeVersion()) >= 0) {
         return currentDir;
       }
     }
@@ -1252,16 +1296,17 @@ ipcMain.handle('pmusic:check-and-apply-update', async (_event, runningWebVersion
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('pmusic:update-progress', {
         phase,
-        version: runningWebVersion ?? PMUSIC_DESKTOP_VERSION,
+        version: runningWebVersion ?? getEffectiveNativeVersion(),
         percent,
         message,
       });
     }
   };
+  const effectiveNativeVer = getEffectiveNativeVersion();
   const currentWebVer =
     typeof runningWebVersion === 'string' && runningWebVersion.trim()
       ? runningWebVersion.trim().replace(/^v/i, '')
-      : readInstalledOtaVersion() || PMUSIC_DESKTOP_VERSION;
+      : readInstalledOtaVersion() || effectiveNativeVer;
 
   // 1. Instant In-Splash OTA web bundle update (zero Setup.exe reinstall needed)
   try {
@@ -1280,7 +1325,7 @@ ipcMain.handle('pmusic:check-and-apply-update', async (_event, runningWebVersion
       const otaVer = String(ota?.version ?? '').trim().replace(/^v/i, '');
       const minNative = String(ota?.minNativeVersion ?? '').trim().replace(/^v/i, '');
       const nativeCompatible =
-        !minNative || compareSemverDesktop(minNative, PMUSIC_DESKTOP_VERSION) <= 0;
+        !minNative || compareSemverDesktop(minNative, effectiveNativeVer) <= 0;
       if (
         otaVer &&
         ota?.bundleUrl &&
@@ -1354,8 +1399,22 @@ ipcMain.handle('pmusic:check-and-apply-update', async (_event, runningWebVersion
       assets?: Array<{ name?: string; browser_download_url?: string }>;
     };
     const latestVer = String(relJson?.tag_name ?? '').trim().replace(/^v/i, '');
-    if (!latestVer || compareSemverDesktop(latestVer, PMUSIC_DESKTOP_VERSION) <= 0) {
+    const effectiveLocalVer =
+      compareSemverDesktop(currentWebVer, effectiveNativeVer) > 0
+        ? currentWebVer
+        : effectiveNativeVer;
+    if (!latestVer || compareSemverDesktop(latestVer, effectiveLocalVer) <= 0) {
       return { updated: false };
+    }
+    const nowMsGuard = Date.now();
+    const prevGuard = readUpdateGuard();
+    if (prevGuard && prevGuard.version === latestVer) {
+      if (nowMsGuard - prevGuard.lastAttemptMs < 120_000) {
+        return { updated: false };
+      }
+      if (prevGuard.attempts >= 2 && nowMsGuard - prevGuard.lastAttemptMs < 12 * 3600_000) {
+        return { updated: false };
+      }
     }
     const exeAsset = (relJson.assets ?? []).find((a) => /pMusic-Setup.*\.exe$/i.test(a.name ?? ''));
     if (!exeAsset?.browser_download_url) {
@@ -1400,7 +1459,30 @@ ipcMain.handle('pmusic:check-and-apply-update', async (_event, runningWebVersion
       return { updated: false };
     }
 
+    writeUpdateGuard({
+      version: latestVer,
+      attempts: prevGuard && prevGuard.version === latestVer ? prevGuard.attempts + 1 : 1,
+      lastAttemptMs: Date.now(),
+    });
     sendProg(100, 'Aplicando actualización y reiniciando…', 'installing');
+    isQuitting = true;
+    try {
+      appTray?.destroy();
+      appTray = null;
+    } catch {}
+    try {
+      loopbackServer?.close();
+    } catch {}
+    try {
+      oauthServer?.close();
+    } catch {}
+    try {
+      globalShortcut.unregisterAll();
+    } catch {}
+    try {
+      discordRpc.dispose();
+    } catch {}
+
     const installDir = dirname(process.execPath);
     const child = spawn(
       installerPath,
@@ -1408,7 +1490,12 @@ ipcMain.handle('pmusic:check-and-apply-update', async (_event, runningWebVersion
       { detached: true, stdio: 'ignore', windowsHide: true }
     );
     child.unref();
-    setTimeout(() => app.quit(), 300);
+    setTimeout(() => {
+      try {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy();
+      } catch {}
+      app.exit(0);
+    }, 180);
     return { updated: true, version: latestVer };
   } catch {
     return { updated: false };
@@ -1536,6 +1623,41 @@ if (process.platform === 'win32') {
 }
 
 void app.whenReady().then(async () => {
+  try {
+    if (app.isPackaged && process.platform === 'win32') {
+      const execDir = dirname(process.execPath);
+      const cleanOldFiles = (dir: string) => {
+        if (!existsSync(dir)) return;
+        for (const name of readdirSync(dir)) {
+          if (name.endsWith('.old')) {
+            try {
+              unlinkSync(join(dir, name));
+            } catch {}
+          }
+        }
+      };
+      cleanOldFiles(execDir);
+      cleanOldFiles(join(execDir, 'resources'));
+      cleanOldFiles(join(execDir, 'resources', 'app', 'dist-electron'));
+      try {
+        const tmp = tmpdir();
+        const now = Date.now();
+        for (const name of readdirSync(tmp)) {
+          if (/^pMusic-Setup-Update-.*\\.exe$/i.test(name)) {
+            try {
+              const p = join(tmp, name);
+              const st = statSync(p);
+              if (now - st.mtimeMs > 600_000) {
+                unlinkSync(p);
+              }
+            } catch {}
+          }
+        }
+      } catch {}
+    }
+  } catch {
+    // ignore cleanup failures
+  }
   void startOAuthCallbackServer();
   try {
     if (process.defaultApp && process.argv.length >= 2 && process.argv[1]) {
