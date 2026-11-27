@@ -46,5 +46,21 @@ export default defineConfig({
     emptyOutDir: true,
     sourcemap: false,
     cssMinify: 'esbuild',
+    rollupOptions: {
+      output: {
+        manualChunks: (id) => {
+          if (id.includes('node_modules/react/') || id.includes('node_modules/react-dom/') || id.includes('node_modules/zustand/')) {
+            return 'vendor-react';
+          }
+          if (id.includes('node_modules/@supabase/')) {
+            return 'vendor-supabase';
+          }
+          if (id.includes('node_modules/lucide-react/') || id.includes('node_modules/framer-motion/')) {
+            return 'vendor-ui';
+          }
+          return undefined;
+        },
+      },
+    },
   },
 });

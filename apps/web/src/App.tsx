@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
   ArrowLeft,
@@ -67,22 +67,47 @@ import { runSplashAutoUpdateCheck } from './utils/app-updater.ts';
 import { SpotlightSearchModal } from './components/SpotlightSearchModal.tsx';
 import { AppToast, TrackContextMenu } from './components/TrackMenu.tsx';
 import { PlaylistOptionsMenu } from './components/PlaylistOptionsMenu.tsx';
-import { PlaylistAppearanceModal } from './components/PlaylistAppearanceModal.tsx';
 import { LiquidHeartIcon } from './components/LiquidHeartIcon.tsx';
 import { generatePlaylistCoverDataUrl } from './utils/playlist-artwork.ts';
 import { ArtistLinks } from './components/ArtistLinks.tsx';
 import { SettingsModal } from './components/SettingsModal.tsx';
 import { MobileHubPage } from './components/MobileHubPage.tsx';
-import { CarModeView } from './components/CarModeView.tsx';
 import { TrackInfoModal } from './components/TrackInfoModal.tsx';
 import { AuthOnboardingModal } from './components/AuthOnboardingModal.tsx';
-import { WrappedStoriesModal } from './components/WrappedStoriesModal.tsx';
 import { AddToPlaylistModal } from './components/AddToPlaylistModal.tsx';
-import { SocialScreen } from './components/SocialScreen.tsx';
-import { PublicJamGuestPage } from './components/PublicJamGuestPage.tsx';
-import { SharedPlaylistLinkModal } from './components/SharedPlaylistLinkModal.tsx';
 import { UserAvatar } from './components/UserAvatar.tsx';
 import { syncNativeSystemBars } from './utils/system-bars.ts';
+
+const PlaylistAppearanceModal = lazy(() =>
+  import('./components/PlaylistAppearanceModal.tsx').then((m) => ({
+    default: m.PlaylistAppearanceModal,
+  }))
+);
+const CarModeView = lazy(() =>
+  import('./components/CarModeView.tsx').then((m) => ({
+    default: m.CarModeView,
+  }))
+);
+const WrappedStoriesModal = lazy(() =>
+  import('./components/WrappedStoriesModal.tsx').then((m) => ({
+    default: m.WrappedStoriesModal,
+  }))
+);
+const SocialScreen = lazy(() =>
+  import('./components/SocialScreen.tsx').then((m) => ({
+    default: m.SocialScreen,
+  }))
+);
+const PublicJamGuestPage = lazy(() =>
+  import('./components/PublicJamGuestPage.tsx').then((m) => ({
+    default: m.PublicJamGuestPage,
+  }))
+);
+const SharedPlaylistLinkModal = lazy(() =>
+  import('./components/SharedPlaylistLinkModal.tsx').then((m) => ({
+    default: m.SharedPlaylistLinkModal,
+  }))
+);
 import {
   clearDraggedTrack,
   readTrackFromDropEvent,
@@ -245,6 +270,9 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     offlineEntries,
     playlists,
     playlistAppearances,
+    playlistAppearanceModal,
+    carModeOpen,
+    wrappedModalOpen,
     nowPlayingOpen,
     eqSheetOpen,
     djPopoverOpen,
@@ -345,6 +373,9 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       offlineEntries: s.offlineEntries,
       playlists: s.playlists,
       playlistAppearances: s.playlistAppearances,
+      playlistAppearanceModal: s.playlistAppearanceModal,
+      carModeOpen: s.carModeOpen,
+      wrappedModalOpen: s.wrappedModalOpen,
       nowPlayingOpen: s.nowPlayingOpen,
       eqSheetOpen: s.eqSheetOpen,
       djPopoverOpen: s.djPopoverOpen,
@@ -1540,7 +1571,11 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
   const isGuestInJam = Boolean(activeJamSession?.active && activeJamRole === 'guest');
 
   if (initialJamCode && appReady && !authState.connected) {
-    return <PublicJamGuestPage code={initialJamCode} />;
+    return (
+      <Suspense fallback={<div className="fixed inset-0 bg-[#050507]" />}>
+        <PublicJamGuestPage code={initialJamCode} />
+      </Suspense>
+    );
   }
 
   return (
@@ -2196,7 +2231,11 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                   {activeTab === 'Explorar' && <ExploreScreen />}
                   {activeTab === 'Buscar' && <SearchScreen />}
                   {activeTab === 'Biblioteca' && <LibraryScreen />}
-                  {activeTab === 'Social' && <SocialScreen />}
+                  {activeTab === 'Social' && (
+                    <Suspense fallback={null}>
+                      <SocialScreen />
+                    </Suspense>
+                  )}
                 </>
               )}
             </div>
@@ -2222,7 +2261,11 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                     {activeTab === 'Explorar' && <ExploreScreen />}
                     {activeTab === 'Buscar' && <SearchScreen />}
                     {activeTab === 'Biblioteca' && <LibraryScreen />}
-                    {activeTab === 'Social' && <SocialScreen />}
+                    {activeTab === 'Social' && (
+                      <Suspense fallback={null}>
+                        <SocialScreen />
+                      </Suspense>
+                    )}
                   </>
                 )}
               </div>
@@ -3994,34 +4037,50 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       <DjPopover />
       <DevicesConnectSheet />
       <JamInviteModal />
-      <CarModeView />
+      {carModeOpen && (
+        <Suspense fallback={null}>
+          <CarModeView />
+        </Suspense>
+      )}
       <ImportPlaylistModal />
       <SettingsModal />
       <MobileHubPage />
       <AuthOnboardingModal />
-      <WrappedStoriesModal />
-      <SharedPlaylistLinkModal
-        shareCode={sharedLinkCode}
-        onClose={() => {
-          setSharedLinkCode(null);
-          if (typeof window !== 'undefined' && window.history?.replaceState) {
-            try {
-              const u = new URL(window.location.href);
-              if (u.searchParams.has('playlist')) {
-                u.searchParams.delete('playlist');
-                window.history.replaceState({}, '', `${u.pathname}${u.search}`);
+      {wrappedModalOpen && (
+        <Suspense fallback={null}>
+          <WrappedStoriesModal />
+        </Suspense>
+      )}
+      {Boolean(sharedLinkCode) && (
+        <Suspense fallback={null}>
+          <SharedPlaylistLinkModal
+            shareCode={sharedLinkCode}
+            onClose={() => {
+              setSharedLinkCode(null);
+              if (typeof window !== 'undefined' && window.history?.replaceState) {
+                try {
+                  const u = new URL(window.location.href);
+                  if (u.searchParams.has('playlist')) {
+                    u.searchParams.delete('playlist');
+                    window.history.replaceState({}, '', `${u.pathname}${u.search}`);
+                  }
+                } catch {
+                  // ignore
+                }
               }
-            } catch {
-              // ignore
-            }
-          }
-        }}
-      />
+            }}
+          />
+        </Suspense>
+      )}
       <TrackInfoModal />
       <AddToPlaylistModal />
       <TrackContextMenu />
       <PlaylistOptionsMenu />
-      <PlaylistAppearanceModal />
+      {Boolean(playlistAppearanceModal) && (
+        <Suspense fallback={null}>
+          <PlaylistAppearanceModal />
+        </Suspense>
+      )}
       <AppToast />
     </div>
   );

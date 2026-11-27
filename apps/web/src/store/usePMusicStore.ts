@@ -27,6 +27,70 @@ import {
   type SyncedEditorialMixesState,
 } from '../utils/editorial-cache.ts';
 import { optimizeArtworkUrl, setDataSaverMode } from '../utils/image-opt.ts';
+import { findPlaylistDuplicates, getTrackDuplicateKey } from '../utils/playlist-tools.ts';
+
+const WIFI_ONLY_STORAGE_KEY = 'pmusic.offline.wifiOnly';
+const AUTO_OFFLINE_PLAYLISTS_KEY = 'pmusic.offline.autoPlaylists';
+
+function readWifiOnlyDownloadsPref(): boolean {
+  try {
+    return (
+      typeof localStorage !== 'undefined' &&
+      localStorage.getItem(WIFI_ONLY_STORAGE_KEY) === '1'
+    );
+  } catch {
+    return false;
+  }
+}
+
+function readOfflineAutoPlaylistIds(): string[] {
+  try {
+    if (typeof localStorage === 'undefined') return [];
+    const raw = localStorage.getItem(AUTO_OFFLINE_PLAYLISTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((id): id is string => typeof id === 'string' && id.length > 0)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeOfflineAutoPlaylistIds(ids: string[]): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(AUTO_OFFLINE_PLAYLISTS_KEY, JSON.stringify(ids));
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function isMeteredOrCellularNetwork(): boolean {
+  try {
+    const win =
+      typeof window !== 'undefined'
+        ? (window as unknown as {
+            PMusicNative?: { isMeteredNetwork?: () => boolean };
+          })
+        : null;
+    if (typeof win?.PMusicNative?.isMeteredNetwork === 'function') {
+      return Boolean(win.PMusicNative.isMeteredNetwork());
+    }
+    const nav =
+      typeof navigator !== 'undefined'
+        ? (navigator as unknown as {
+            connection?: { type?: string; saveData?: boolean };
+          })
+        : null;
+    const conn = nav?.connection;
+    if (!conn) return false;
+    return conn.type === 'cellular' || Boolean(conn.saveData);
+  } catch {
+    return false;
+  }
+}
 import {
   DEFAULT_DJ_MODE_CONFIG,
   DEFAULT_SAFE_CROSSFADE_CONFIG,
@@ -1119,6 +1183,8 @@ export interface PMusicStoreState {
   playHistory: PlayHistoryRecord[];
   offlineDownloads: Record<string, OfflineDownloadStatus>;
   offlineEntries: OfflineAudioEntry[];
+  wifiOnlyDownloads: boolean;
+  offlineAutoPlaylistIds: string[];
 
   // Importer
   importUrlInput: string;
@@ -1150,7 +1216,6 @@ export interface PMusicStoreState {
 
   // Onboarding, Profile, Social & Wrapped
   authOnboardingOpen: boolean;
-  authIntroPending: boolean;
   needsProfileSetup: boolean;
   userProfile: UserProfile | null;
   authCallbackError: string | null;
@@ -1381,6 +1446,7 @@ export interface PMusicStoreState {
   copyPlaylistTracksTo: (sourcePlaylistId: string, targetPlaylistId: string) => Promise<number>;
   addTrackToPlaylist: (playlistId: string, track: Track) => Promise<void>;
   removeTrackFromPlaylist: (playlistId: string, trackId: string) => Promise<void>;
+  removePlaylistDuplicates: (playlistId: string) => Promise<number>;
   reorderPlaylistTrack: (playlistId: string, fromIndex: number, toIndex: number) => Promise<void>;
   likeTrackIfNeeded: (track: Track) => Promise<void>;
   searchTracksForPlaylist: (query: string) => Promise<Track[]>;
@@ -1390,8 +1456,10 @@ export interface PMusicStoreState {
     options?: { seedTrack?: Track; excludeIds?: string[] }
   ) => Promise<Track[]>;
   toggleLike: (track?: Track) => Promise<void>;
-  downloadTrackOffline: (track: Track) => Promise<void>;
+  downloadTrackOffline: (track: Track, options?: { silent?: boolean }) => Promise<void>;
   removeOfflineTrack: (trackId: string) => Promise<void>;
+  removePlaylistOffline: (playlistId: string) => Promise<void>;
+  setWifiOnlyDownloads: (enabled: boolean) => void;
   clearOfflineCache: () => Promise<void>;
 
   // Importer Actions
@@ -1416,7 +1484,6 @@ export interface PMusicStoreState {
   prepareAddSecondaryAccount: () => Promise<void>;
   removeSavedAccount: (userId: string) => Promise<void>;
   setAuthOnboardingOpen: (open: boolean) => void;
-  setAuthIntroPending: (pending: boolean) => void;
   continueAsGuest: () => void;
   saveUserProfile: (input: {
     username: string;
@@ -3607,6 +3674,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   playHistory: [],
   offlineDownloads: {},
   offlineEntries: [],
+  wifiOnlyDownloads: readWifiOnlyDownloadsPref(),
+  offlineAutoPlaylistIds: readOfflineAutoPlaylistIds(),
 
   importUrlInput: '',
   importProgress: null,
@@ -3628,7 +3697,6 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   remoteDeviceSnapshot: null,
 
   authOnboardingOpen: false,
-  authIntroPending: false,
   needsProfileSetup: false,
   userProfile: null,
   authCallbackError: null,
@@ -4438,7 +4506,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         dismissed = false;
       }
       if (!isTestEnv && !dismissed) {
-        set({ authOnboardingOpen: true, authIntroPending: true });
+        set({ authOnboardingOpen: true });
       }
     }
   },
@@ -7497,6 +7565,14 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   downloadPlaylistOffline: async (playlistId, tracks, playlistName) => {
     const st = get();
+    const nextAutoIds = st.offlineAutoPlaylistIds.includes(playlistId)
+      ? st.offlineAutoPlaylistIds
+      : [...st.offlineAutoPlaylistIds, playlistId];
+    if (nextAutoIds !== st.offlineAutoPlaylistIds) {
+      writeOfflineAutoPlaylistIds(nextAutoIds);
+      set({ offlineAutoPlaylistIds: nextAutoIds });
+    }
+
     const pending = tracks.filter(
       (t) => Boolean(t?.id) && st.offlineDownloads[t.id] !== 'downloaded'
     );
@@ -7506,6 +7582,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           ? `«${playlistName}» ya está descargada offline`
           : 'Playlist ya descargada offline'
       );
+      return;
+    }
+
+    if (st.wifiOnlyDownloads && isMeteredOrCellularNetwork()) {
+      st.showToast('Descargas pausadas: modo Solo Wi-Fi activo');
       return;
     }
 
@@ -7600,29 +7681,38 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
   addTrackToPlaylist: async (playlistId, track) => {
     const existing = get().playlists.find((p) => p.id === playlistId);
-    const alreadyIn = Boolean(existing?.tracks.some((t) => t.id === track.id));
     const stamped = existing?.isCollaborative
       ? stampTrackAddedBy(canonicalizeTrackArtists(track), getOwnAdderIdentity())
       : canonicalizeTrackArtists(track);
+    const dupKey = getTrackDuplicateKey(stamped);
+    const alreadyIn = Boolean(
+      existing?.tracks.some(
+        (t) => t.id === stamped.id || (dupKey !== '::' && getTrackDuplicateKey(t) === dupKey)
+      )
+    );
+    if (alreadyIn) {
+      if (existing) {
+        get().showToast(`Ya estaba en «${existing.name}»`);
+      }
+      return;
+    }
     await libraryStore.addTrackToPlaylist(playlistId, stamped);
-    if (!alreadyIn) {
-      await recommendationEngine.recordSignal(stamped, 'add_to_playlist');
-      scheduleLibraryCloudSync();
-      const sb = getSyncSupabaseClient();
-      const st = get();
-      if (sb && existing?.isCollaborative && existing.shareCode && st.authState.connected) {
-        const linked = st.sharedPlaylists.find(
-          (s) => s.shareCode?.toUpperCase() === existing.shareCode?.toUpperCase()
-        );
-        if (linked) {
-          void addTrackToSharedPlaylist(sb, linked, stamped, getOwnAdderIdentity()).then((updated) => {
-            set((prev) => ({
-              sharedPlaylists: prev.sharedPlaylists.map((item) =>
-                item.id === updated.id ? updated : item
-              ),
-            }));
-          }).catch(() => {});
-        }
+    await recommendationEngine.recordSignal(stamped, 'add_to_playlist');
+    scheduleLibraryCloudSync();
+    const sb = getSyncSupabaseClient();
+    const st = get();
+    if (sb && existing?.isCollaborative && existing.shareCode && st.authState.connected) {
+      const linked = st.sharedPlaylists.find(
+        (s) => s.shareCode?.toUpperCase() === existing.shareCode?.toUpperCase()
+      );
+      if (linked) {
+        void addTrackToSharedPlaylist(sb, linked, stamped, getOwnAdderIdentity()).then((updated) => {
+          set((prev) => ({
+            sharedPlaylists: prev.sharedPlaylists.map((item) =>
+              item.id === updated.id ? updated : item
+            ),
+          }));
+        }).catch(() => {});
       }
     }
     set({
@@ -7631,12 +7721,34 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     });
     syncUserLibraryContextToEngine();
     if (existing) {
-      get().showToast(
-        alreadyIn
-          ? `Ya estaba en «${existing.name}»`
-          : `Añadida a «${existing.name}»`
-      );
+      get().showToast(`Añadida a «${existing.name}»`);
     }
+    if (
+      st.offlineAutoPlaylistIds.includes(playlistId) &&
+      !(st.wifiOnlyDownloads && isMeteredOrCellularNetwork())
+    ) {
+      void get().downloadTrackOffline(stamped, { silent: true });
+    }
+  },
+
+  removePlaylistDuplicates: async (playlistId) => {
+    const existing = get().playlists.find((p) => p.id === playlistId);
+    if (!existing) return 0;
+    const { duplicateCount, uniqueTracks } = findPlaylistDuplicates(existing.tracks);
+    if (duplicateCount === 0) {
+      get().showToast('No hay canciones duplicadas en esta playlist');
+      return 0;
+    }
+    await libraryStore.replacePlaylistTracks(playlistId, uniqueTracks);
+    set({ playlists: libraryStore.getPlaylists() });
+    syncUserLibraryContextToEngine();
+    scheduleLibraryCloudSync();
+    get().showToast(
+      duplicateCount === 1
+        ? '1 canción duplicada eliminada'
+        : `${duplicateCount} canciones duplicadas eliminadas`
+    );
+    return duplicateCount;
   },
 
   removeTrackFromPlaylist: async (playlistId, trackId) => {
@@ -7876,7 +7988,15 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     scheduleLibraryCloudSync();
   },
 
-  downloadTrackOffline: async (track) => {
+  downloadTrackOffline: async (track, options) => {
+    const st = get();
+    if (st.offlineDownloads[track.id] === 'downloaded') return;
+    if (st.wifiOnlyDownloads && isMeteredOrCellularNetwork()) {
+      if (!options?.silent) {
+        st.showToast('Descarga pausada: modo Solo Wi-Fi activo');
+      }
+      return;
+    }
     set((prev) => ({
       offlineDownloads: { ...prev.offlineDownloads, [track.id]: 'downloading' },
     }));
@@ -7938,12 +8058,75 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     });
   },
 
+  removePlaylistOffline: async (playlistId) => {
+    const st = get();
+    const remainingAutoIds = st.offlineAutoPlaylistIds.filter((id) => id !== playlistId);
+    writeOfflineAutoPlaylistIds(remainingAutoIds);
+
+    const targetPlaylist =
+      st.playlists.find((p) => p.id === playlistId) ??
+      st.sharedPlaylists.find((p) => p.id === playlistId);
+
+    const protectedIds = new Set<string>();
+    for (const id of remainingAutoIds) {
+      const other =
+        st.playlists.find((p) => p.id === id) ??
+        st.sharedPlaylists.find((p) => p.id === id);
+      if (other) {
+        for (const t of other.tracks) {
+          if (t?.id) protectedIds.add(t.id);
+        }
+      }
+    }
+
+    const removedIds = new Set<string>();
+    if (targetPlaylist) {
+      for (const track of targetPlaylist.tracks) {
+        if (!track?.id || protectedIds.has(track.id)) continue;
+        await defaultPlatformBridge.offlineStorage.deleteAudio(track.id);
+        await deleteOfflineCover(track.id);
+        removedIds.add(track.id);
+      }
+    }
+
+    const entries = await defaultPlatformBridge.offlineStorage.listOfflineIds();
+    set((prev) => {
+      const nextMap = { ...prev.offlineDownloads };
+      for (const trackId of removedIds) {
+        delete nextMap[trackId];
+      }
+      return {
+        offlineAutoPlaylistIds: remainingAutoIds,
+        offlineDownloads: nextMap,
+        offlineEntries: entries,
+      };
+    });
+    st.showToast(
+      targetPlaylist
+        ? `Descarga automática quitada de «${targetPlaylist.name}»`
+        : 'Descarga automática de playlist quitada'
+    );
+  },
+
+  setWifiOnlyDownloads: (enabled) => {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(WIFI_ONLY_STORAGE_KEY, enabled ? '1' : '0');
+      }
+    } catch {
+      // ignore storage errors
+    }
+    set({ wifiOnlyDownloads: enabled });
+  },
+
   clearOfflineCache: async () => {
     await defaultPlatformBridge.offlineStorage.clearAll();
     await clearOfflineCovers();
+    writeOfflineAutoPlaylistIds([]);
     set({
       offlineDownloads: {},
       offlineEntries: [],
+      offlineAutoPlaylistIds: [],
     });
   },
 
@@ -8390,10 +8573,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     void get().refreshHomeRecommendations(false);
   },
 
-  setAuthOnboardingOpen: (open) =>
-    set(open ? { authOnboardingOpen: true } : { authOnboardingOpen: false, authIntroPending: false }),
-
-  setAuthIntroPending: (pending) => set({ authIntroPending: pending }),
+  setAuthOnboardingOpen: (open) => set({ authOnboardingOpen: open }),
 
   prepareAddSecondaryAccount: async () => {
     const st = get();

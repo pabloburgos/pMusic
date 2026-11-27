@@ -791,7 +791,7 @@ describe('@pmusic/web UI', () => {
       (window as any).__pmusicSetCarMode?.(true);
     });
     rerender(<App />);
-    expect(screen.getByTestId('car-mode-view')).toBeDefined();
+    expect(await screen.findByTestId('car-mode-view')).toBeDefined();
     expect(screen.getByTestId('car-voice-search-btn')).toBeDefined();
     expect(screen.getByTestId('car-play-pause-btn')).toBeDefined();
     fireEvent.click(screen.getByRole('tab', { name: 'Playlists' }));

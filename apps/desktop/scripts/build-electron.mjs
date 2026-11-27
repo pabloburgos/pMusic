@@ -173,7 +173,7 @@ import { Client as DiscordRpcClient } from '@xhayper/discord-rpc';
 import type { DiscordPresenceState, DiscordRpcStatus } from '@pmusic/core';
 import { createPMusicApiHandler } from '@pmusic/providers';
 
-const PMUSIC_DESKTOP_VERSION = '0.23.15';
+const PMUSIC_DESKTOP_VERSION = '0.23.16';
 
 function getOtaRootDir(): string {
   return join(app.getPath('userData'), 'ota_web');

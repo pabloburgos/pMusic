@@ -511,6 +511,22 @@ export class LibraryStore {
     });
   }
 
+  public async replacePlaylistTracks(
+    playlistId: string,
+    nextTracks: Track[]
+  ): Promise<PlaylistRecord | null> {
+    const pl = this.playlists.find((p) => p.id === playlistId);
+    if (!pl) return null;
+    const keepCustomCover =
+      Boolean(pl.coverUrl) &&
+      (pl.coverUrl!.startsWith('data:') ||
+        nextTracks.some((t) => t.thumbnailUrl === pl.coverUrl));
+    return this.updatePlaylist(playlistId, {
+      tracks: nextTracks,
+      coverUrl: keepCustomCover ? pl.coverUrl : (nextTracks[0]?.thumbnailUrl ?? ''),
+    });
+  }
+
   public async removeTrackFromPlaylist(
     playlistId: string,
     trackId: string

@@ -22,6 +22,10 @@ import { MobileFluidBackdropCanvas } from '../components/MobileFluidBackdropCanv
 import { DetailViewPanel } from '../components/Screens.tsx';
 import { compareSemver } from '../utils/app-updater.ts';
 import {
+  filterAndSortPlaylistTracks,
+  findPlaylistDuplicates,
+} from '../utils/playlist-tools.ts';
+import {
   animateAmbientPaletteFromCover,
   shouldUseDarkInkOnBackdrop,
 } from '../utils/cover-color.ts';
@@ -1218,23 +1222,138 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
     expect(slideTracks[3]?.id).toBe(pool7[3]!.id);
     expect(new Set(slideTracks.map((t) => t?.id)).size).toBe(7);
 
-    // 5. First-time logged-out 3D AirPod -> pMusic intro leads cleanly into login card on complete/skip
+    // 5. Logged-out onboarding opens directly on login without 3D AirPod intro
     act(() => {
       usePMusicStore.setState({
         authOnboardingOpen: true,
-        authIntroPending: true,
         needsProfileSetup: false,
         reducedMotionPref: false,
       });
     });
     render(<AuthOnboardingModal />);
-    expect(screen.getByTestId('airpod-intro-stage')).toBeTruthy();
-    fireEvent.click(screen.getByTestId('airpod-intro-skip'));
-    expect(usePMusicStore.getState().authIntroPending).toBe(false);
     expect(screen.queryByTestId('airpod-intro-stage')).toBeNull();
     expect(screen.getByText('Continuar con Google')).toBeTruthy();
     act(() => {
-      usePMusicStore.setState({ authOnboardingOpen: false, authIntroPending: false });
+      usePMusicStore.setState({ authOnboardingOpen: false });
     });
+  });
+
+  it('v0.23.16: filters/sorts playlists without mutating order, blocks & cleans duplicates, and enforces optional Wi-Fi-only offline storage controls', async () => {
+    const tA: any = {
+      id: 'pl-a',
+      title: 'Zumba Libre',
+      artists: [{ id: 'ar-z', name: 'Zeta' }],
+      album: { id: 'al-a', name: 'Verano' },
+      durationSec: 210,
+      source: 'ytm',
+    };
+    const tB: any = {
+      id: 'pl-b',
+      title: 'Álgebra Night',
+      artists: [{ id: 'ar-a', name: 'Alpha' }],
+      album: { id: 'al-b', name: 'Noche' },
+      durationSec: 150,
+      source: 'ytm',
+    };
+    const tBDupNormalized: any = {
+      id: 'pl-b-alt',
+      title: '  ALGEBRA   night ',
+      artists: [{ id: 'ar-a2', name: 'alpha' }],
+      durationSec: 151,
+      source: 'ytm',
+    };
+
+    const originalOrder = [tA, tB, tBDupNormalized];
+    const filteredAlgebra = filterAndSortPlaylistTracks(originalOrder, 'algebra', 'custom');
+    expect(filteredAlgebra.map((r) => r.track.id)).toEqual(['pl-b', 'pl-b-alt']);
+    expect(filterAndSortPlaylistTracks([tA, tB], '', 'artist').map((r) => r.track.id)).toEqual([
+      'pl-b',
+      'pl-a',
+    ]);
+    expect(filterAndSortPlaylistTracks([tA, tB], '', 'title').map((r) => r.track.id)).toEqual([
+      'pl-b',
+      'pl-a',
+    ]);
+    expect(filterAndSortPlaylistTracks([tA, tB], '', 'duration').map((r) => r.track.id)).toEqual([
+      'pl-b',
+      'pl-a',
+    ]);
+    expect(filterAndSortPlaylistTracks([tA, tB], '', 'recent').map((r) => r.track.id)).toEqual([
+      'pl-b',
+      'pl-a',
+    ]);
+    // Custom order left intact
+    expect(originalOrder.map((t) => t.id)).toEqual(['pl-a', 'pl-b', 'pl-b-alt']);
+
+    const dupScan = findPlaylistDuplicates(originalOrder);
+    expect(dupScan.duplicateCount).toBe(1);
+    expect(dupScan.uniqueTracks.map((t) => t.id)).toEqual(['pl-a', 'pl-b']);
+
+    // Duplicate blocking on addTrackToPlaylist + cleanup via removePlaylistDuplicates
+    await usePMusicStore.getState().createPlaylist('Mi Lista Pro v16', undefined, [tA, tB]);
+    const createdPl = usePMusicStore
+      .getState()
+      .playlists.find((p) => p.name === 'Mi Lista Pro v16')!;
+    expect(createdPl).toBeTruthy();
+
+    await usePMusicStore.getState().addTrackToPlaylist(createdPl.id, tBDupNormalized);
+    const afterBlocked = usePMusicStore
+      .getState()
+      .playlists.find((p) => p.id === createdPl.id)!;
+    expect(afterBlocked.tracks).toHaveLength(2);
+    expect(usePMusicStore.getState().toastMessage).toContain('Ya estaba en');
+
+    // Inject a duplicate manually via store state + run removePlaylistDuplicates end-to-end
+    const plWithDup = { ...afterBlocked, tracks: [tA, tB, tBDupNormalized] };
+    usePMusicStore.setState((prev) => ({
+      playlists: prev.playlists.map((p) => (p.id === createdPl.id ? plWithDup : p)),
+    }));
+    expect(findPlaylistDuplicates(plWithDup.tracks).duplicateCount).toBe(1);
+    const cleaned = await usePMusicStore.getState().removePlaylistDuplicates(createdPl.id);
+    expect(cleaned).toBe(1);
+    expect(
+      usePMusicStore.getState().playlists.find((p) => p.id === createdPl.id)?.tracks
+    ).toHaveLength(2);
+
+    // Wi-Fi-only defaults to false, and blocks downloadTrackOffline only when enabled on metered network
+    expect(usePMusicStore.getState().wifiOnlyDownloads).toBe(false);
+    const nativeMock = ((window as any).PMusicNative = {
+      isMeteredNetwork: vi.fn(() => true),
+    });
+    usePMusicStore.getState().setWifiOnlyDownloads(true);
+    expect(usePMusicStore.getState().wifiOnlyDownloads).toBe(true);
+    await usePMusicStore.getState().downloadTrackOffline(tA);
+    expect(usePMusicStore.getState().offlineDownloads[tA.id]).toBeUndefined();
+    expect(usePMusicStore.getState().toastMessage).toContain('Solo Wi-Fi');
+    expect(nativeMock.isMeteredNetwork).toHaveBeenCalled();
+
+    // Render SettingsModal Cuenta tab and verify MB storage card + wifi toggle + playlist "Quitar"
+    const spyRemovePlaylistOffline = vi.fn(async () => {});
+    const prevRemove = usePMusicStore.getState().removePlaylistOffline;
+    usePMusicStore.getState().setWifiOnlyDownloads(false);
+    usePMusicStore.setState({
+      settingsOpen: true,
+      settingsInitialCategory: 'cuenta',
+      offlineEntries: [{ trackId: tA.id, sizeBytes: 2_621_440 }],
+      offlineAutoPlaylistIds: [createdPl.id],
+      removePlaylistOffline: spyRemovePlaylistOffline,
+    });
+
+    render(<SettingsModal />);
+    const toggle = screen.getByTestId('settings-wifi-only-toggle');
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+    const storageCard = screen.getByTestId('settings-offline-storage-card');
+    expect(storageCard.textContent).toContain('2.5 MB');
+    expect(storageCard.textContent).toContain('Mi Lista Pro v16');
+    fireEvent.click(screen.getByText('Quitar'));
+    expect(spyRemovePlaylistOffline).toHaveBeenCalledWith(createdPl.id);
+
+    usePMusicStore.setState({
+      settingsOpen: false,
+      offlineEntries: [],
+      offlineAutoPlaylistIds: [],
+      removePlaylistOffline: prevRemove,
+    });
+    delete (window as any).PMusicNative;
   });
 });

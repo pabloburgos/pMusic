@@ -436,8 +436,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="59"
-    android:versionName="0.23.15">
+    android:versionCode="60"
+    android:versionName="0.23.16">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -2073,6 +2073,17 @@ public class MainActivity extends Activity {
                         }
                     }
                 });
+            }
+
+            @android.webkit.JavascriptInterface
+            public boolean isMeteredNetwork() {
+                try {
+                    android.net.ConnectivityManager cm =
+                            (android.net.ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+                    return cm != null && cm.isActiveNetworkMetered();
+                } catch (Throwable ignored) {
+                    return false;
+                }
             }
         }, "PMusicNative");
         webView.setWebViewClient(new WebViewClient() {

@@ -36,6 +36,11 @@ import {
 } from 'lucide-react';
 import { formatDurationSec, type Track, type UserProfile } from '@pmusic/core';
 import {
+  filterAndSortPlaylistTracks,
+  findPlaylistDuplicates,
+  type PlaylistSortMode,
+} from '../utils/playlist-tools.ts';
+import {
   getSyncSupabaseClient,
   usePMusicStore,
   type LibraryCategoryTab,
@@ -262,6 +267,7 @@ export const TrackListRow: React.FC<{
         e.preventDefault();
         openTrackMenu(track, e.clientX, e.clientY, playlistId);
       }}
+      style={{ contentVisibility: 'auto', containIntrinsicSize: '64px' }}
       className={`pm-hover group flex h-16 items-center justify-between gap-3 overflow-hidden rounded-[10px] px-2.5 transition-colors ${
         isCurrent ? 'pm-active-row' : ''
       } ${isUnavailableOffline ? 'opacity-45' : ''} ${dragOver ? 'border-t-2 border-[var(--pm-accent-primary)] pm-active-row' : ''}`}
@@ -648,6 +654,7 @@ export const DetailViewPanel: React.FC = React.memo(() => {
     downloadPlaylistOffline,
     cancelPlaylistDownload,
     addTrackToPlaylist,
+    removePlaylistDuplicates,
     reorderPlaylistTrack,
     searchTracksForPlaylist,
     dismissPlaylistRecommendation,
@@ -696,6 +703,7 @@ export const DetailViewPanel: React.FC = React.memo(() => {
       downloadPlaylistOffline: s.downloadPlaylistOffline,
       cancelPlaylistDownload: s.cancelPlaylistDownload,
       addTrackToPlaylist: s.addTrackToPlaylist,
+      removePlaylistDuplicates: s.removePlaylistDuplicates,
       reorderPlaylistTrack: s.reorderPlaylistTrack,
       searchTracksForPlaylist: s.searchTracksForPlaylist,
       dismissPlaylistRecommendation: s.dismissPlaylistRecommendation,
@@ -717,6 +725,8 @@ export const DetailViewPanel: React.FC = React.memo(() => {
   const [addFinderOverride, setAddFinderOverride] = useState<boolean | null>(null);
   const [heroMoreMenuId, setHeroMoreMenuId] = useState<string | null>(null);
   const [playlistDropActive, setPlaylistDropActive] = useState(false);
+  const [playlistFilterQuery, setPlaylistFilterQuery] = useState('');
+  const [playlistSortMode, setPlaylistSortMode] = useState<PlaylistSortMode>('custom');
   const [addSearchQuery, setAddSearchQuery] = useState('');
   const [addSearchResults, setAddSearchResults] = useState<Track[]>([]);
   const [isSearchingAdd, setIsSearchingAdd] = useState(false);
@@ -811,6 +821,8 @@ export const DetailViewPanel: React.FC = React.memo(() => {
     setAddFinderOverride(null);
     setAddSearchQuery('');
     setAddSearchResults([]);
+    setPlaylistFilterQuery('');
+    setPlaylistSortMode('custom');
     setIsEditingName(false);
     setSessionSkippedIds([]);
     setRecPool([]);
@@ -2471,35 +2483,90 @@ export const DetailViewPanel: React.FC = React.memo(() => {
           ),
         })}
 
-        <div className="space-y-0.5">
-          {sharedPl.tracks.length > 0 ? (
-            sharedPl.tracks.map((t, idx) => (
-              <div key={t.id} className="group flex items-center gap-1">
-                <div className="min-w-0 flex-1">
-                  <TrackListRow
-                    track={t}
-                    index={idx}
-                    queueContext={sharedPl.tracks}
-                  />
-                </div>
-                {(sharedPl.ownerId === authState.userId || t.addedBy?.userId === authState.userId) && (
-                  <button
-                    type="button"
-                    aria-label={`Quitar ${t.title}`}
-                    onClick={() => void removeTrackFromCollaborativePlaylist(sharedPl.id, t.id)}
-                    className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-full pm-text-tertiary hover:bg-rose-500/15 hover:text-rose-400 group-hover:flex"
+        {(() => {
+          const sharedViewRows = filterAndSortPlaylistTracks(
+            sharedPl.tracks,
+            playlistFilterQuery,
+            playlistSortMode
+          );
+          const sharedQueue = sharedViewRows.map((r) => r.track);
+          return (
+            <>
+              {sharedPl.tracks.length > 0 && (
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <div className="relative min-w-[200px] flex-1 sm:max-w-[300px]">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 pm-text-tertiary" />
+                    <input
+                      type="text"
+                      value={playlistFilterQuery}
+                      onChange={(e) => setPlaylistFilterQuery(e.target.value)}
+                      placeholder="Filtrar canciones..."
+                      data-testid="playlist-filter-input"
+                      className="pm-input w-full rounded-full py-1.5 pl-8 pr-7 text-xs"
+                    />
+                    {playlistFilterQuery && (
+                      <button
+                        type="button"
+                        aria-label="Limpiar filtro"
+                        onClick={() => setPlaylistFilterQuery('')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 pm-text-tertiary hover:pm-text-primary"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                  <select
+                    value={playlistSortMode}
+                    onChange={(e) => setPlaylistSortMode(e.target.value as PlaylistSortMode)}
+                    aria-label="Ordenar vista de playlist"
+                    data-testid="playlist-sort-select"
+                    className="pm-input rounded-full px-3 py-1.5 text-xs font-medium"
                   >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                    <option value="custom">Orden personalizado</option>
+                    <option value="recent">Más recientes</option>
+                    <option value="title">Título (A–Z)</option>
+                    <option value="artist">Artista</option>
+                    <option value="duration">Duración</option>
+                  </select>
+                </div>
+              )}
+
+              <div className="space-y-0.5">
+                {sharedPl.tracks.length === 0 ? (
+                  <div className="pm-surface-card rounded-[14px] border-dashed p-8 text-center text-xs pm-text-secondary">
+                    Esta lista colaborativa está vacía. Busca canciones abajo o invita a tus amigos.
+                  </div>
+                ) : sharedViewRows.length === 0 ? (
+                  <div className="pm-surface-card rounded-[14px] p-6 text-center text-xs pm-text-secondary">
+                    Ninguna canción coincide con «{playlistFilterQuery}»
+                  </div>
+                ) : (
+                  sharedViewRows.map(({ track: t, originalIndex }) => (
+                    <div key={`${t.id}-${originalIndex}`} className="group flex items-center gap-1">
+                      <div className="min-w-0 flex-1">
+                        <TrackListRow
+                          track={t}
+                          index={originalIndex}
+                          queueContext={sharedQueue}
+                        />
+                      </div>
+                      {(sharedPl.ownerId === authState.userId || t.addedBy?.userId === authState.userId) && (
+                        <button
+                          type="button"
+                          aria-label={`Quitar ${t.title}`}
+                          onClick={() => void removeTrackFromCollaborativePlaylist(sharedPl.id, t.id)}
+                          className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-full pm-text-tertiary hover:bg-rose-500/15 hover:text-rose-400 group-hover:flex"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  ))
                 )}
               </div>
-            ))
-          ) : (
-            <div className="pm-surface-card rounded-[14px] border-dashed p-8 text-center text-xs pm-text-secondary">
-              Esta lista colaborativa está vacía. Busca canciones abajo o invita a tus amigos.
-            </div>
-          )}
-        </div>
+            </>
+          );
+        })()}
 
         {isAddOpen && (
           <section data-surface="content" className="pm-surface-card space-y-4 rounded-[16px] p-5">
@@ -2849,50 +2916,131 @@ export const DetailViewPanel: React.FC = React.memo(() => {
       })}
 
       {/* Playlist Tracks Dropzone + Reorder */}
-      <div
-        onDragOver={(e) => {
-          const src = getDraggedSource();
-          if (src?.playlistId === localPl.id) return;
-          e.preventDefault();
-          e.dataTransfer.dropEffect = 'copy';
-          setPlaylistDropActive(true);
-        }}
-        onDragLeave={() => setPlaylistDropActive(false)}
-        onDrop={(e) => {
-          setPlaylistDropActive(false);
-          const src = getDraggedSource();
-          if (src?.playlistId === localPl.id) return;
-          const dropped = readTrackFromDropEvent(e);
-          if (dropped) {
-            e.preventDefault();
-            void addTrackToPlaylist(localPl.id, dropped);
-          }
-        }}
-        className={`space-y-0.5 rounded-[14px] transition-colors ${
-          playlistDropActive
-            ? 'pm-active-row p-2 ring-2 ring-[var(--pm-accent-primary)]'
-            : ''
-        }`}
-      >
-        {localPl.tracks.length > 0 ? (
-          localPl.tracks.map((t, idx) => (
-            <TrackListRow
-              key={t.id}
-              track={t}
-              index={idx}
-              queueContext={localPl.tracks}
-              playlistId={localPl.id}
-              onDropReorder={(from, to) =>
-                void reorderPlaylistTrack(localPl.id, from, to)
-              }
-            />
-          ))
-        ) : (
-          <div className="pm-surface-card rounded-[14px] border-dashed p-8 text-center text-xs pm-text-secondary">
-            Esta playlist está vacía. Arrastra canciones aquí o usa el buscador de abajo para añadir temas.
-          </div>
-        )}
-      </div>
+      {(() => {
+        const dupInfo = findPlaylistDuplicates(localPl.tracks);
+        const localViewRows = filterAndSortPlaylistTracks(
+          localPl.tracks,
+          playlistFilterQuery,
+          playlistSortMode
+        );
+        const localQueue = localViewRows.map((r) => r.track);
+        const allowManualReorder =
+          playlistSortMode === 'custom' && !playlistFilterQuery.trim();
+        return (
+          <>
+            {localPl.tracks.length > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="relative min-w-[200px] flex-1 sm:max-w-[300px]">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 pm-text-tertiary" />
+                  <input
+                    type="text"
+                    value={playlistFilterQuery}
+                    onChange={(e) => setPlaylistFilterQuery(e.target.value)}
+                    placeholder="Filtrar canciones..."
+                    data-testid="playlist-filter-input"
+                    className="pm-input w-full rounded-full py-1.5 pl-8 pr-7 text-xs"
+                  />
+                  {playlistFilterQuery && (
+                    <button
+                      type="button"
+                      aria-label="Limpiar filtro"
+                      onClick={() => setPlaylistFilterQuery('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 pm-text-tertiary hover:pm-text-primary"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+                <select
+                  value={playlistSortMode}
+                  onChange={(e) => setPlaylistSortMode(e.target.value as PlaylistSortMode)}
+                  aria-label="Ordenar vista de playlist"
+                  data-testid="playlist-sort-select"
+                  className="pm-input rounded-full px-3 py-1.5 text-xs font-medium"
+                >
+                  <option value="custom">Orden personalizado</option>
+                  <option value="recent">Más recientes</option>
+                  <option value="title">Título (A–Z)</option>
+                  <option value="artist">Artista</option>
+                  <option value="duration">Duración</option>
+                </select>
+              </div>
+            )}
+
+            {dupInfo.duplicateCount > 0 && (
+              <div
+                data-testid="playlist-duplicates-banner"
+                className="flex flex-wrap items-center justify-between gap-2 rounded-[12px] border border-amber-500/35 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-200"
+              >
+                <span>
+                  {dupInfo.duplicateCount === 1
+                    ? 'Hay 1 canción duplicada en esta playlist'
+                    : `Hay ${dupInfo.duplicateCount} canciones duplicadas en esta playlist`}
+                </span>
+                <button
+                  type="button"
+                  data-testid="playlist-clean-duplicates-btn"
+                  onClick={() => void removePlaylistDuplicates(localPl.id)}
+                  className="rounded-full bg-amber-400/20 px-3 py-1 text-[11px] font-bold text-amber-100 hover:bg-amber-400/30"
+                >
+                  Limpiar duplicados
+                </button>
+              </div>
+            )}
+
+            <div
+              onDragOver={(e) => {
+                const src = getDraggedSource();
+                if (src?.playlistId === localPl.id) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+                setPlaylistDropActive(true);
+              }}
+              onDragLeave={() => setPlaylistDropActive(false)}
+              onDrop={(e) => {
+                setPlaylistDropActive(false);
+                const src = getDraggedSource();
+                if (src?.playlistId === localPl.id) return;
+                const dropped = readTrackFromDropEvent(e);
+                if (dropped) {
+                  e.preventDefault();
+                  void addTrackToPlaylist(localPl.id, dropped);
+                }
+              }}
+              className={`space-y-0.5 rounded-[14px] transition-colors ${
+                playlistDropActive
+                  ? 'pm-active-row p-2 ring-2 ring-[var(--pm-accent-primary)]'
+                  : ''
+              }`}
+            >
+              {localPl.tracks.length === 0 ? (
+                <div className="pm-surface-card rounded-[14px] border-dashed p-8 text-center text-xs pm-text-secondary">
+                  Esta playlist está vacía. Arrastra canciones aquí o usa el buscador de abajo para añadir temas.
+                </div>
+              ) : localViewRows.length === 0 ? (
+                <div className="pm-surface-card rounded-[14px] p-6 text-center text-xs pm-text-secondary">
+                  Ninguna canción coincide con «{playlistFilterQuery}»
+                </div>
+              ) : (
+                localViewRows.map(({ track: t, originalIndex }) => (
+                  <TrackListRow
+                    key={`${t.id}-${originalIndex}`}
+                    track={t}
+                    index={originalIndex}
+                    queueContext={localQueue}
+                    playlistId={localPl.id}
+                    onDropReorder={
+                      allowManualReorder
+                        ? (from, to) => void reorderPlaylistTrack(localPl.id, from, to)
+                        : undefined
+                    }
+                  />
+                ))
+              )}
+            </div>
+          </>
+        );
+      })()}
 
       {/* Collapsible Inline Add Songs Section (auto-open on small playlists, clean toggle on full ones) */}
       {isAddFinderOpen && (

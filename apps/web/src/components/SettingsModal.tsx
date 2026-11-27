@@ -131,6 +131,10 @@ const SettingsModalInner: React.FC = () => {
     onlineDevices,
     deviceName,
     offlineEntries,
+    wifiOnlyDownloads,
+    offlineAutoPlaylistIds,
+    playlists,
+    sharedPlaylists,
     setDevicesSheetOpen,
     setDeviceName,
     signInWithGoogle,
@@ -179,6 +183,8 @@ const SettingsModalInner: React.FC = () => {
     signOutSupabase,
     updateUserProfile,
     clearOfflineCache,
+    removePlaylistOffline,
+    setWifiOnlyDownloads,
     exportLibraryJson,
     importLibraryJson,
     showToast,
@@ -1837,23 +1843,85 @@ const SettingsModalInner: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between border-t pm-border pt-3">
-                    <div>
-                      <div className="text-sm font-bold pm-text-primary">
-                        Caché offline ({offlineEntries.length} canciones ·{' '}
-                        {(totalOfflineBytes / 1024).toFixed(0)} KB)
+                  <div
+                    data-testid="settings-offline-storage-card"
+                    className="space-y-3 border-t pm-border pt-3"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-bold pm-text-primary">
+                          Solo descargar por Wi-Fi
+                        </div>
+                        <div className="text-xs pm-text-secondary">
+                          Pausa descargas nuevas al usar datos móviles (desactivado por defecto)
+                        </div>
                       </div>
-                      <div className="text-xs pm-text-secondary">
-                        Pistas descargadas en este dispositivo
-                      </div>
+                      <PMusicSwitch
+                        checked={wifiOnlyDownloads}
+                        onChange={() => setWifiOnlyDownloads(!wifiOnlyDownloads)}
+                        ariaLabel="Solo descargar por Wi-Fi"
+                        testId="settings-wifi-only-toggle"
+                      />
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => void clearOfflineCache()}
-                      className="pm-btn-secondary rounded-full px-4 py-1.5 text-xs font-semibold text-[#F87171]"
-                    >
-                      Vaciar caché
-                    </button>
+
+                    <div className="pm-surface-card space-y-2.5 rounded-[14px] p-3.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <div className="text-sm font-bold pm-text-primary">
+                            Almacenamiento offline (
+                            {totalOfflineBytes >= 1024 * 100
+                              ? `${(totalOfflineBytes / (1024 * 1024)).toFixed(1)} MB`
+                              : `${(totalOfflineBytes / 1024).toFixed(0)} KB`}
+                            )
+                          </div>
+                          <div className="text-xs pm-text-secondary">
+                            {offlineEntries.length}{' '}
+                            {offlineEntries.length === 1 ? 'canción descargada' : 'canciones descargadas'}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void clearOfflineCache()}
+                          className="pm-btn-secondary rounded-full px-4 py-1.5 text-xs font-semibold text-[#F87171]"
+                        >
+                          Vaciar caché
+                        </button>
+                      </div>
+
+                      {offlineAutoPlaylistIds.length > 0 && (
+                        <div className="space-y-1.5 border-t pm-border pt-2.5">
+                          <div className="text-[11px] font-semibold uppercase tracking-wide pm-text-tertiary">
+                            Playlists con descarga automática
+                          </div>
+                          {offlineAutoPlaylistIds.map((plId) => {
+                            const pl =
+                              playlists.find((p) => p.id === plId) ??
+                              sharedPlaylists.find((p) => p.id === plId);
+                            if (!pl) return null;
+                            return (
+                              <div
+                                key={plId}
+                                className="flex items-center justify-between gap-2 rounded-[10px] px-2 py-1.5 text-xs pm-hover"
+                              >
+                                <span className="truncate font-medium pm-text-primary">
+                                  {pl.name}{' '}
+                                  <span className="pm-text-tertiary">
+                                    ({pl.tracks.length})
+                                  </span>
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => void removePlaylistOffline(plId)}
+                                  className="shrink-0 rounded-full border pm-border px-2.5 py-0.5 text-[11px] font-semibold text-[#F87171] hover:bg-rose-500/10"
+                                >
+                                  Quitar
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <div className="hidden border-t pm-border pt-3 md:block">
