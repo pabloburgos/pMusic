@@ -2031,6 +2031,28 @@ const SettingsModalInner: React.FC = () => {
                       ))}
                     </div>
                   </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t pm-border pt-3 text-[11.5px] pm-text-secondary">
+                    <span>Información legal · pMusic</span>
+                    <div className="flex items-center gap-3">
+                      <a
+                        href="https://pmusic-olive.vercel.app/privacy"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-semibold underline decoration-white/25 underline-offset-4 hover:pm-text-primary"
+                      >
+                        Política de privacidad
+                      </a>
+                      <a
+                        href="https://pmusic-olive.vercel.app/terms"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-semibold underline decoration-white/25 underline-offset-4 hover:pm-text-primary"
+                      >
+                        Términos de servicio
+                      </a>
+                    </div>
+                  </div>
                 </section>
               </div>
             )}

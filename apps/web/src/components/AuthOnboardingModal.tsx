@@ -387,6 +387,26 @@ const AuthOnboardingModalInner: React.FC = () => {
               <User className="h-3.5 w-3.5" />
               Invitado
             </button>
+
+            <div className="pm-ag-enter-3 flex items-center justify-center gap-2.5 text-[11px] text-white/35">
+              <a
+                href="https://pmusic-olive.vercel.app/privacy"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="transition hover:text-white/75"
+              >
+                Privacidad
+              </a>
+              <span>·</span>
+              <a
+                href="https://pmusic-olive.vercel.app/terms"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="transition hover:text-white/75"
+              >
+                Términos
+              </a>
+            </div>
           </div>
         ) : (
           <form onSubmit={handleEmailSubmit} className="pm-ag-enter-1 space-y-5">

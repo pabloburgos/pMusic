@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Política de Privacidad — pMusic</title>
+    <meta
+      name="description"
+      content="Política de Privacidad oficial de pMusic para la aplicación web, Windows, Android e integración con Discord Rich Presence."
+    />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: radial-gradient(circle at 20% 0%, rgba(167, 139, 250, 0.16), transparent 46%),
+          radial-gradient(circle at 82% 18%, rgba(52, 211, 153, 0.09), transparent 44%),
+          #050507;
+        color: #f4f4f7;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Inter, sans-serif;
+        line-height: 1.65;
+        padding: 32px 18px 64px;
+      }
+      .shell {
+        max-width: 820px;
+        margin: 0 auto;
+        background: rgba(255, 255, 255, 0.035);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 24px;
+        padding: 32px 28px;
+        backdrop-filter: blur(22px);
+        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+      }
+      .topbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 24px;
+        padding-bottom: 18px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        color: #ffffff;
+        text-decoration: none;
+        font-weight: 800;
+        font-size: 18px;
+        letter-spacing: -0.02em;
+      }
+      .brand img {
+        width: 30px;
+        height: 30px;
+        border-radius: 8px;
+      }
+      .nav {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        padding: 7px 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: rgba(255, 255, 255, 0.05);
+        color: #e4e4ec;
+        text-decoration: none;
+        font-size: 12.5px;
+        font-weight: 600;
+      }
+      .pill:hover {
+        background: rgba(255, 255, 255, 0.11);
+      }
+      h1 {
+        margin: 0 0 6px;
+        font-size: clamp(24px, 4vw, 32px);
+        font-weight: 900;
+        letter-spacing: -0.02em;
+      }
+      .meta {
+        margin: 0 0 26px;
+        color: rgba(255, 255, 255, 0.55);
+        font-size: 13px;
+      }
+      h2 {
+        margin: 26px 0 8px;
+        font-size: 16.5px;
+        font-weight: 800;
+        color: #ffffff;
+      }
+      p,
+      li {
+        color: rgba(255, 255, 255, 0.78);
+        font-size: 14.5px;
+      }
+      ul {
+        padding-left: 20px;
+        margin: 8px 0 14px;
+      }
+      li {
+        margin-bottom: 6px;
+      }
+      a.inline {
+        color: #c4b5fd;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      footer {
+        margin-top: 32px;
+        padding-top: 18px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        font-size: 12.5px;
+        color: rgba(255, 255, 255, 0.5);
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <div class="topbar">
+        <a class="brand" href="/">
+          <img src="/pmusic-icon.png" alt="pMusic" />
+          <span>pMusic</span>
+        </a>
+        <nav class="nav" aria-label="Legal">
+          <a class="pill" href="/terms">Términos de servicio</a>
+          <a class="pill" href="/">Abrir pMusic</a>
+        </nav>
+      </div>
+
+      <h1>Política de Privacidad</h1>
+      <p class="meta">Última actualización: 27 de noviembre de 2026 · Aplicación: pMusic (Web, Windows y Android)</p>
+
+      <p>
+        En <strong>pMusic</strong> respetamos tu privacidad y recopilamos únicamente los datos mínimos necesarios para
+        ofrecer reproducción fluida, sincronización entre dispositivos y funciones sociales opcionales. No vendemos ni
+        cedemos tus datos personales a anunciantes ni a terceros con fines comerciales.
+      </p>
+
+      <h2>1. Datos que podemos almacenar</h2>
+      <ul>
+        <li>
+          <strong>Cuenta y perfil (opcional):</strong> si inicias sesión con Google OAuth o correo electrónico mediante
+          Supabase Auth, guardamos tu identificador de usuario, correo, nombre visible, nombre de usuario
+          (<code>@usuario</code>) y avatar si decides configurarlos. También puedes usar pMusic como invitado sin cuenta.
+        </li>
+        <li>
+          <strong>Biblioteca, historial y personalización:</strong> tus playlists, canciones con «Me gusta», artistas
+          favoritos, preferencias visuales/de audio y eventos de escucha (para <em>Mi Top</em> y <em>pMusic Wrapped</em>)
+          se almacenan localmente en tu dispositivo y, si estás conectado, se sincronizan con tu cuenta en Supabase.
+        </li>
+        <li>
+          <strong>Funciones sociales opcionales:</strong> amistades aceptadas, playlists colaborativas o Blends y
+          sesiones Jam en directo. Cuando activas «Compartir lo que escucho con amigos», mostramos en tiempo real la
+          pista en reproducción exclusivamente a tus amigos aceptados. Puedes desactivar este interruptor en cualquier
+          momento en Social o Ajustes.
+        </li>
+      </ul>
+
+      <h2>2. Integración con Discord Rich Presence (Discord RPC)</h2>
+      <p>
+        En la aplicación de escritorio para Windows, puedes activar de forma opcional <strong>Discord Rich Presence</strong>
+        para mostrar en tu perfil de Discord la canción, el artista, la carátula y el progreso de reproducción actuales.
+      </p>
+      <ul>
+        <li>
+          La comunicación se realiza <strong>localmente mediante IPC</strong> con tu cliente de Discord abierto en el
+          mismo equipo usando el <em>Client ID</em> público de la aplicación.
+        </li>
+        <li>
+          pMusic <strong>no</strong> solicita contraseñas de Discord, no lee tus mensajes, servidores ni listas de
+          contactos, y no almacena tokens privados de tu cuenta de Discord.
+        </li>
+      </ul>
+
+      <h2>3. Almacenamiento offline y proveedores de catálogo</h2>
+      <ul>
+        <li>
+          Las pistas descargadas para escucha sin conexión, carátulas en caché y ajustes locales permanecen guardados
+          únicamente en el almacenamiento interno de tu navegador o dispositivo y pueden borrarse desde
+          <strong>Ajustes → Cuenta → Vaciar caché</strong>.
+        </li>
+        <li>
+          Las búsquedas, metadatos, letras y portadas se consultan a través de servicios públicos y de API de catálogo
+          musical compatibles sin enviar tus credenciales personales.
+        </li>
+      </ul>
+
+      <h2>4. Seguridad, control y eliminación de datos</h2>
+      <p>
+        Todas las tablas en la nube cuentan con políticas de seguridad a nivel de fila (<em>Row Level Security</em>) para
+        que solo tú (o las personas con las que compartas explícitamente una playlist o Jam) podáis acceder a tus datos.
+        Puedes exportar tu biblioteca en JSON, cerrar sesión, borrar el almacenamiento local o solicitar la eliminación de
+        tu cuenta y datos asociados desde el repositorio oficial en
+        <a class="inline" href="https://github.com/pabloburgos/pMusic" target="_blank" rel="noopener noreferrer"
+          >github.com/pabloburgos/pMusic</a
+        >.
+      </p>
+
+      <footer>
+        <span>pMusic · Privacidad primero</span>
+        <span>
+          <a class="inline" href="/terms">Términos de servicio</a> ·
+          <a class="inline" href="/">Volver a pMusic</a>
+        </span>
+      </footer>
+    </main>
+  </body>
+</html>
