@@ -1056,7 +1056,7 @@ ipcMain.handle('pmusic:check-and-apply-update', async (_event, currentWebVersion
         return (r[i] ?? 0) > (l[i] ?? 0);
       });
     };
-    const nativeVer = app.getVersion() || '0.24.6';
+    const nativeVer = app.getVersion() || '0.24.7';
     const webVer = typeof currentWebVersion === 'string' && currentWebVersion.trim() ? currentWebVersion.trim() : '0.0.0';
     const effectiveLocalVer = isGreater(webVer, nativeVer) ? webVer : nativeVer;
     if (!latestVer || !isGreater(latestVer, effectiveLocalVer)) {
@@ -1160,23 +1160,35 @@ void app.whenReady().then(async () => {
   try {
     if (app.isPackaged && process.platform === 'win32') {
       const execDir = dirname(process.execPath);
-      for (const name of readdirSync(execDir)) {
-        if (name.endsWith('.old')) {
-          try {
-            unlinkSync(join(execDir, name));
-          } catch {}
-        }
-      }
-      const resDir = join(execDir, 'resources');
-      if (existsSync(resDir)) {
-        for (const name of readdirSync(resDir)) {
+      const cleanOldFiles = (dir: string) => {
+        if (!existsSync(dir)) return;
+        for (const name of readdirSync(dir)) {
           if (name.endsWith('.old')) {
             try {
-              unlinkSync(join(resDir, name));
+              unlinkSync(join(dir, name));
             } catch {}
           }
         }
-      }
+      };
+      cleanOldFiles(execDir);
+      cleanOldFiles(join(execDir, 'resources'));
+      cleanOldFiles(join(execDir, 'resources', 'app', 'dist-electron'));
+
+      try {
+        const tmp = tmpdir();
+        const now = Date.now();
+        for (const name of readdirSync(tmp)) {
+          if (/^pMusic-Setup-Update-.*\.exe$/i.test(name)) {
+            try {
+              const p = join(tmp, name);
+              const st = statSync(p);
+              if (now - st.mtimeMs > 600_000) {
+                unlinkSync(p);
+              }
+            } catch {}
+          }
+        }
+      } catch {}
     }
   } catch {
     // ignore leftover cleanup errors

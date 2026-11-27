@@ -79,8 +79,8 @@ describe('pMusic v0.24.6 split status bars, 4 Android widgets, desktop updater g
       'utf-8'
     );
 
-    expect(buildApkSrc).toContain('android:versionCode="67"');
-    expect(buildApkSrc).toContain('android:versionName="0.24.6"');
+    expect(buildApkSrc).toMatch(/android:versionCode="(6[7-9]|[7-9]\d)"/);
+    expect(buildApkSrc).toMatch(/android:versionName="0\.24\.\d+"/);
 
     expect(buildApkSrc).toContain('PMusicWidgetProvider.java');
     expect(buildApkSrc).toContain('PMusicCompactWidgetProvider.java');
@@ -113,6 +113,11 @@ describe('pMusic v0.24.6 split status bars, 4 Android widgets, desktop updater g
     expect(desktopMainSrc).toContain('app.exit(0)');
     expect(customInstallerSrc).toContain('RunSilentUpdate');
     expect(customInstallerSrc).toContain('.old');
+    expect(customInstallerSrc).toContain('unpackedMainPath');
+    expect(customInstallerSrc).toContain('dist-electron');
+    expect(customInstallerSrc).toContain('main.cjs');
+    expect(customInstallerSrc).toContain('UseShellExecute = true');
+    expect(customInstallerSrc).toContain('pmusic-silent-update.log');
   });
 
   it('updates Home quick-access playlist artwork when playlistAppearances changes and recovers missing shelf track covers from live library', () => {

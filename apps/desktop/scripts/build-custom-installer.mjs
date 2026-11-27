@@ -531,6 +531,12 @@ namespace PMusicSetup {
     }
 
     public static int RunSilentUpdate(string targetDir, bool relaunch) {
+      int exitCode = 1;
+      int extractedCount = 0;
+      int failedCount = 0;
+      bool hasAppPayload = false;
+      bool exeExists = false;
+      string exePath = "";
       try {
         if (string.IsNullOrEmpty(targetDir)) {
           targetDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "pMusic");
@@ -553,7 +559,10 @@ namespace PMusicSetup {
         } catch {}
 
         using (Stream resStream = Assembly.GetExecutingAssembly().GetManifestResourceStream("pMusic.payload.zip")) {
-          if (resStream == null) return 2;
+          if (resStream == null) {
+            exitCode = 2;
+            return exitCode;
+          }
           using (ZipArchive archive = new ZipArchive(resStream, ZipArchiveMode.Read)) {
             foreach (ZipArchiveEntry entry in archive.Entries) {
               string destPath = Path.GetFullPath(Path.Combine(targetDir, entry.FullName));
@@ -576,25 +585,65 @@ namespace PMusicSetup {
                     System.Threading.Thread.Sleep(250);
                   }
                 }
+                if (extracted) {
+                  extractedCount++;
+                } else {
+                  failedCount++;
+                }
               }
             }
           }
         }
 
-        string exePath = Path.Combine(targetDir, "pmusic.exe");
+        exePath = Path.Combine(targetDir, "pmusic.exe");
         string asarPath = Path.Combine(targetDir, "resources", "app.asar");
-        if (!File.Exists(exePath) || !File.Exists(asarPath)) {
-          return 3;
+        string unpackedMainPath = Path.Combine(targetDir, "resources", "app", "dist-electron", "main.cjs");
+        exeExists = File.Exists(exePath);
+        hasAppPayload = File.Exists(asarPath) || File.Exists(unpackedMainPath);
+
+        if (exeExists) {
+          RegisterProtocol(exePath);
+          RegisterUninstallEntry(targetDir, exePath);
         }
-        RegisterProtocol(exePath);
-        RegisterUninstallEntry(targetDir, exePath);
-        if (relaunch) {
-          Process.Start(new ProcessStartInfo(exePath) { WorkingDirectory = targetDir });
-        }
-        return 0;
+
+        exitCode = (exeExists && hasAppPayload) ? 0 : 3;
       } catch {
-        return 1;
+        exitCode = 1;
+      } finally {
+        try {
+          string logPath = Path.Combine(Path.GetTempPath(), "pmusic-silent-update.log");
+          string line = string.Format(
+            "{0:o} | target={1} | extracted={2} | failed={3} | hasPayload={4} | relaunch={5} | exitCode={6}{7}",
+            DateTime.UtcNow,
+            targetDir ?? "",
+            extractedCount,
+            failedCount,
+            hasAppPayload,
+            relaunch,
+            exitCode,
+            Environment.NewLine
+          );
+          File.AppendAllText(logPath, line);
+        } catch {}
+
+        if (relaunch && File.Exists(exePath)) {
+          try {
+            System.Threading.Thread.Sleep(250);
+            Process.Start(new ProcessStartInfo(exePath) {
+              WorkingDirectory = targetDir,
+              UseShellExecute = true
+            });
+          } catch {
+            try {
+              Process.Start(new ProcessStartInfo(exePath) {
+                WorkingDirectory = targetDir,
+                UseShellExecute = false
+              });
+            } catch {}
+          }
+        }
       }
+      return exitCode;
     }
 
     [STAThread]
