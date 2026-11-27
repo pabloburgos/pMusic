@@ -234,6 +234,9 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
     expect(buildElectronSrc).toContain('GetWindowThreadProcessId');
     expect(buildElectronSrc).toContain("'--app='");
     expect(buildElectronSrc).toContain('DiscordRpcManager');
+    expect(buildElectronSrc).toContain('1574169804590416005');
+    expect(buildElectronSrc).toContain('smallImageKey');
+    expect(buildElectronSrc).toContain('Escuchar en pMusic');
     expect(buildElectronSrc).toContain('pmusic:configure-discord');
     expect(buildElectronSrc).toContain('pmusic:get-discord-status');
     expect(buildElectronSrc).toContain('0x0010');
@@ -285,7 +288,8 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
     });
     render(<SettingsModal />);
     expect(screen.getByTestId('settings-category-discord')).toBeTruthy();
-    expect(screen.getByText(/Cómo activar Discord RPC en Windows/i)).toBeTruthy();
+    expect(screen.getByText(/Discord RPC configurado oficialmente/i)).toBeTruthy();
+    expect(usePMusicStore.getState().discordRpcConfig.clientId).toBe('1574169804590416005');
 
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,

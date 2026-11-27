@@ -21,7 +21,7 @@ import {
   USER_EQ_PRESETS,
   formatDurationSec,
 } from '@pmusic/core';
-import { usePMusicStore } from '../store/usePMusicStore.ts';
+import { DEFAULT_DISCORD_CLIENT_ID, usePMusicStore } from '../store/usePMusicStore.ts';
 import {
   PMUSIC_ACCENT_PRESETS,
   PMUSIC_THEMES,
@@ -1190,33 +1190,65 @@ const SettingsModalInner: React.FC = () => {
                   <div className="text-[11px] font-bold tracking-wider pm-text-tertiary">
                     VISTA PREVIA EN TU PERFIL DE DISCORD
                   </div>
-                  <div className="pm-panel flex items-center gap-3.5 rounded-[14px] p-3.5">
-                    {discordRpcConfig.showArtwork && (
-                      <img
-                        src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
-                        alt={currentTrack.title}
-                        className="h-16 w-16 shrink-0 rounded-[10px] object-cover shadow-md"
-                      />
-                    )}
-                    <div className="min-w-0 flex-1 space-y-1">
-                      <div className="text-[11px] font-bold uppercase tracking-wide text-[#5865F2]">
-                        Escuchando {discordRpcConfig.displayMode === 'artist'
+                  <div className="pm-panel space-y-3 rounded-[14px] p-3.5">
+                    <div className="flex items-center justify-between gap-2 text-[11px] font-bold uppercase tracking-wide text-[#99AAFF]">
+                      <span>
+                        Escuchando{' '}
+                        {discordRpcConfig.displayMode === 'artist'
                           ? currentTrack.artists[0]?.name ?? 'pMusic'
                           : discordRpcConfig.displayMode === 'song'
                             ? currentTrack.title
                             : 'pMusic'}
-                      </div>
-                      <div className="truncate text-sm font-bold pm-text-primary">
-                        {currentTrack.title}
-                      </div>
-                      <div className="truncate text-xs pm-text-secondary">
-                        {currentTrack.artists.map((a) => a.name).join(', ')}
-                      </div>
-                      {discordRpcConfig.showTimestamps && (
-                        <div className="tabular-nums text-[11px] pm-text-tertiary">
-                          {formatDurationSec(positionSec)} / {formatDurationSec(durationSec)}
+                      </span>
+                      <span className="rounded-full bg-[#5865F2]/20 px-2 py-0.5 text-[10px] font-semibold text-[#C7D0FF]">
+                        Rich Presence
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3.5">
+                      {discordRpcConfig.showArtwork && (
+                        <div className="relative h-16 w-16 shrink-0">
+                          <img
+                            src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
+                            alt={currentTrack.title}
+                            className="h-16 w-16 rounded-[10px] object-cover shadow-md"
+                          />
+                          <img
+                            src="/pmusic-icon.png"
+                            alt="pMusic"
+                            className="absolute -bottom-1.5 -right-1.5 h-6 w-6 rounded-full border-2 border-[#111116] bg-[#060608] object-cover shadow"
+                          />
                         </div>
                       )}
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="truncate text-sm font-bold pm-text-primary">
+                          {currentTrack.title}
+                        </div>
+                        <div className="truncate text-xs pm-text-secondary">
+                          {currentTrack.artists.map((a) => a.name).join(', ')}
+                        </div>
+                        {discordRpcConfig.showTimestamps && (
+                          <div className="space-y-1 pt-0.5">
+                            <div className="h-1 w-full overflow-hidden rounded-full bg-white/10">
+                              <div
+                                className="h-full rounded-full bg-[#5865F2]"
+                                style={{
+                                  width: `${Math.min(
+                                    100,
+                                    Math.max(8, Math.round((positionSec / Math.max(1, durationSec)) * 100))
+                                  )}%`,
+                                }}
+                              />
+                            </div>
+                            <div className="flex justify-between tabular-nums text-[10.5px] pm-text-tertiary">
+                              <span>{formatDurationSec(positionSec)}</span>
+                              <span>{formatDurationSec(durationSec)}</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-white/10 bg-white/[0.05] py-1.5 text-center text-[11px] font-semibold pm-text-primary">
+                      Escuchar en pMusic
                     </div>
                   </div>
                 </section>
@@ -1227,46 +1259,34 @@ const SettingsModalInner: React.FC = () => {
                 >
                   <SwitchRow
                     title="Activar Discord Rich Presence"
-                    description="Envía la pista actual a Discord Desktop mediante IPC local"
+                    description="Siempre activo automáticamente con Discord Desktop abierto en Windows"
                     checked={discordRpcEnabled}
                     onToggle={() => setDiscordRpcEnabled(!discordRpcEnabled)}
                   />
 
                   <div className="space-y-3 border-t pm-border pt-3">
-                    <div className="rounded-[12px] border border-[#5865F2]/30 bg-[#5865F2]/[0.08] p-3.5 text-xs space-y-2">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="font-bold text-[#99AAFF]">
-                          Cómo activar Discord RPC en Windows (3 pasos)
-                        </span>
-                        <a
-                          href="https://discord.com/developers/applications"
-                          target="_blank"
-                          rel="noreferrer"
-                          className="rounded-full bg-[#5865F2] px-3 py-1 text-[11px] font-bold text-white hover:opacity-90"
-                        >
-                          Abrir Discord Developers
-                        </a>
+                    <div className="rounded-[12px] border border-emerald-400/25 bg-emerald-500/[0.07] p-3.5 text-xs space-y-1">
+                      <div className="font-bold text-emerald-300">
+                        Discord RPC configurado oficialmente
                       </div>
-                      <ol className="list-decimal pl-4 space-y-1 text-[11.5px] pm-text-secondary">
-                        <li>Abre <strong>Discord Desktop</strong> en Windows (en navegador web no funciona el IPC local).</li>
-                        <li>Entra en <code className="pm-panel rounded px-1 py-0.5">discord.com/developers/applications</code>, pulsa <strong>New Application</strong> (ej. <em>pMusic</em>) y copia su <strong>Application ID</strong>.</li>
-                        <li>Pega ese número abajo y pulsa <strong>Guardar y reconectar</strong>. Si ya tenías una app creada, pMusic intenta reconectar al instante.</li>
-                      </ol>
+                      <p className="text-[11.5px] pm-text-secondary">
+                        pMusic usa su aplicación oficial de Discord (<code className="pm-panel rounded px-1 py-0.5 tabular-nums">{DEFAULT_DISCORD_CLIENT_ID}</code>) de forma automática en Windows: no necesitas configurar nada.
+                      </p>
                     </div>
                     <label
                       htmlFor="discord-client-id"
                       className="block text-xs font-bold pm-text-primary"
                     >
-                      Discord Application Client ID
+                      Discord Application Client ID (opcional / avanzado)
                     </label>
                     <p className="text-[11.5px] pm-text-secondary">
-                      Pega el <em>Application ID</em> numérico para vincular la presencia real en tu perfil de Discord.
+                      Por defecto usa el ID oficial integrado. Solo cámbialo si quieres probar una aplicación propia.
                     </p>
                     <div className="flex flex-col gap-2 sm:flex-row">
                       <input
                         id="discord-client-id"
                         type="text"
-                        placeholder="Ej. 1310364700018151526"
+                        placeholder={DEFAULT_DISCORD_CLIENT_ID}
                         value={clientIdInput}
                         onChange={(e) => setClientIdInput(e.target.value)}
                         className="pm-input tabular-nums flex-1 rounded-full px-4 py-2 text-xs"
@@ -1274,7 +1294,9 @@ const SettingsModalInner: React.FC = () => {
                       <button
                         type="button"
                         onClick={async () => {
-                          await setDiscordRpcConfig({ clientId: clientIdInput.trim() }, true);
+                          const targetId = clientIdInput.trim() || DEFAULT_DISCORD_CLIENT_ID;
+                          setClientIdInput(targetId);
+                          await setDiscordRpcConfig({ clientId: targetId }, true);
                           showToast('Configuración de Discord guardada');
                         }}
                         className="pm-btn-primary inline-flex items-center justify-center gap-1.5 rounded-full px-4 py-2 text-xs font-bold"
@@ -1282,6 +1304,19 @@ const SettingsModalInner: React.FC = () => {
                         <RefreshCw className="h-3.5 w-3.5" />
                         <span>Guardar y reconectar</span>
                       </button>
+                      {clientIdInput.trim() !== DEFAULT_DISCORD_CLIENT_ID && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            setClientIdInput(DEFAULT_DISCORD_CLIENT_ID);
+                            await setDiscordRpcConfig({ clientId: DEFAULT_DISCORD_CLIENT_ID }, true);
+                            showToast('ID oficial de pMusic restaurado');
+                          }}
+                          className="pm-btn-secondary rounded-full px-4 py-2 text-xs font-semibold"
+                        >
+                          Restaurar oficial
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={async () => {

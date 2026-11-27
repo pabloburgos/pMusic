@@ -173,7 +173,7 @@ import { Client as DiscordRpcClient } from '@xhayper/discord-rpc';
 import type { DiscordPresenceState, DiscordRpcStatus } from '@pmusic/core';
 import { createPMusicApiHandler } from '@pmusic/providers';
 
-const PMUSIC_DESKTOP_VERSION = '0.24.0';
+const PMUSIC_DESKTOP_VERSION = '0.24.1';
 
 function getOtaRootDir(): string {
   return join(app.getPath('userData'), 'ota_web');
@@ -324,9 +324,13 @@ public class PMWinClose {
   }
 }
 
+const DEFAULT_DISCORD_CLIENT_ID = '1574169804590416005';
+const PMUSIC_DISCORD_ICON_URL = 'https://pmusic-olive.vercel.app/pmusic-icon.png';
+const PMUSIC_WEB_URL = 'https://pmusic-olive.vercel.app';
+
 class DiscordRpcManager {
   private client: InstanceType<typeof DiscordRpcClient> | null = null;
-  private clientId = '';
+  private clientId = DEFAULT_DISCORD_CLIENT_ID;
   private status: DiscordRpcStatus['status'] = 'disconnected';
   private username: string | undefined;
   private lastError: string | undefined;
@@ -352,11 +356,11 @@ class DiscordRpcManager {
     } catch {
       // Ignore corrupt file
     }
-    this.clientId = (process.env.DISCORD_CLIENT_ID ?? '').trim();
+    this.clientId = (process.env.DISCORD_CLIENT_ID ?? DEFAULT_DISCORD_CLIENT_ID).trim() || DEFAULT_DISCORD_CLIENT_ID;
   }
 
   public saveClientId(clientId: string): void {
-    this.clientId = clientId.trim();
+    this.clientId = (clientId ?? '').trim() || DEFAULT_DISCORD_CLIENT_ID;
     try {
       writeFileSync(
         this.getConfigPath(),
@@ -484,8 +488,12 @@ class DiscordRpcManager {
   public async updateActivity(state: DiscordPresenceState): Promise<void> {
     this.lastState = state;
     this.enabled = state.enabled;
-    if (typeof state.clientId === 'string' && state.clientId.trim() !== this.clientId) {
-      await this.configureAndReconnect(state.clientId);
+    const requestedClientId =
+      typeof state.clientId === 'string'
+        ? state.clientId.trim() || DEFAULT_DISCORD_CLIENT_ID
+        : this.clientId;
+    if (requestedClientId !== this.clientId) {
+      await this.configureAndReconnect(requestedClientId);
     }
 
     if (!state.enabled) {
@@ -497,8 +505,7 @@ class DiscordRpcManager {
     }
 
     if (!this.clientId) {
-      this.status = 'needs_client_id';
-      return;
+      this.clientId = DEFAULT_DISCORD_CLIENT_ID;
     }
 
     if (!this.client?.user) {
@@ -517,14 +524,19 @@ class DiscordRpcManager {
       const artists = state.track.artists.map((a) => a.name).join(', ') || 'Artista';
       const stateTextRaw = state.isPlaying ? artists : 'En pausa · ' + artists;
       const stateText = stateTextRaw.length < 2 ? stateTextRaw + ' ' : stateTextRaw.slice(0, 128);
-      const artUrl =
+      const rawArtUrl =
         state.showArtwork !== false
           ? state.track.thumbnailHighUrl ?? state.track.thumbnailUrl
           : undefined;
+      const hdArtUrl = rawArtUrl
+        ? rawArtUrl.replace(/[/](250x250|500x500)-/, '/1000x1000-')
+        : undefined;
       const validArtUrl =
-        artUrl && (artUrl.startsWith('https://') || artUrl.startsWith('http://'))
-          ? artUrl
+        hdArtUrl && (hdArtUrl.startsWith('https://') || hdArtUrl.startsWith('http://'))
+          ? hdArtUrl
           : undefined;
+      const albumTitle = (state.track.album?.name ?? '').trim();
+      const largeImageText = (albumTitle.length >= 2 ? albumTitle : 'pMusic').slice(0, 128);
 
       const nowSec = Math.floor(Date.now() / 1000);
       const dur = state.durationSec ?? state.track.durationSec ?? 0;
@@ -539,19 +551,22 @@ class DiscordRpcManager {
           : {};
 
       const statusDisplayType =
-        state.displayMode === 'artist' ? 1 : state.displayMode === 'app' ? 0 : 2;
+        state.displayMode === 'artist' ? 1 : state.displayMode === 'song' ? 2 : 0;
 
       await this.client.user.setActivity({
         type: 2,
         statusDisplayType,
         details,
         state: stateText,
+        largeImageKey: validArtUrl || PMUSIC_DISCORD_ICON_URL,
+        largeImageText,
         ...(validArtUrl
           ? {
-              largeImageKey: validArtUrl,
-              largeImageText: state.track.album?.name?.slice(0, 128) || 'pMusic',
+              smallImageKey: PMUSIC_DISCORD_ICON_URL,
+              smallImageText: state.isPlaying ? 'Escuchando en pMusic' : 'En pausa · pMusic',
             }
           : {}),
+        buttons: [{ label: 'Escuchar en pMusic', url: PMUSIC_WEB_URL }],
         instance: false,
         ...timestamps,
       } as any);

@@ -440,6 +440,8 @@ function isMobileHardwareVolumeRuntime(): boolean {
   return false;
 }
 
+export const DEFAULT_DISCORD_CLIENT_ID = '1574169804590416005';
+
 export interface DiscordRpcConfig {
   clientId: string;
   showTimestamps: boolean;
@@ -3439,7 +3441,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         ...prev.discordRpcConfig,
         ...(prefs.discordRpcConfig ?? {}),
         clientId:
-          prefs.discordRpcConfig?.clientId || prev.discordRpcConfig.clientId,
+          prefs.discordRpcConfig?.clientId?.trim() || DEFAULT_DISCORD_CLIENT_ID,
       },
       playbackRate: Number(prefs.playbackRate ?? prev.playbackRate),
       preservesPitch: Boolean(prefs.preservesPitch ?? prev.preservesPitch),
@@ -3590,16 +3592,16 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   showRemainingTime: true,
   discordRpcEnabled: true,
   discordRpcConfig: {
-    clientId: '',
+    clientId: DEFAULT_DISCORD_CLIENT_ID,
     showTimestamps: true,
     showArtwork: true,
     showWhenPaused: true,
-    displayMode: 'song',
+    displayMode: 'app',
   },
   discordRpcStatus: {
     connected: false,
-    status: 'needs_client_id',
-    clientId: '',
+    status: 'disconnected',
+    clientId: DEFAULT_DISCORD_CLIENT_ID,
   },
   playbackRate: 1.0,
   preservesPitch: true,
@@ -9309,13 +9311,17 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   },
 
   setDiscordRpcConfig: async (patch, reconnect = false) => {
-    const nextCfg: DiscordRpcConfig = {
+    const merged: DiscordRpcConfig = {
       ...get().discordRpcConfig,
       ...patch,
     };
+    const nextCfg: DiscordRpcConfig = {
+      ...merged,
+      clientId: merged.clientId.trim() || DEFAULT_DISCORD_CLIENT_ID,
+    };
     set({ discordRpcConfig: nextCfg });
     persistPrefsFromStore();
-    if (reconnect && typeof nextCfg.clientId === 'string') {
+    if (reconnect) {
       const status = await defaultPlatformBridge.configureDiscordRpc?.(
         nextCfg.clientId
       );
@@ -9325,10 +9331,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   },
 
   reconnectDiscordRpc: async () => {
-    const cid = get().discordRpcConfig.clientId.trim();
-    const status = cid
-      ? await defaultPlatformBridge.configureDiscordRpc?.(cid)
-      : await defaultPlatformBridge.reconnectDiscordRpc?.();
+    const cid = get().discordRpcConfig.clientId.trim() || DEFAULT_DISCORD_CLIENT_ID;
+    const status = await defaultPlatformBridge.configureDiscordRpc?.(cid);
     if (status) set({ discordRpcStatus: status });
     syncDiscordPresenceState();
   },

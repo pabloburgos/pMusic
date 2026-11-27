@@ -222,8 +222,8 @@ describe('pMusic v0.24.0 Android Widget, Windows Tray & Social Live / Top', () =
       resolve(__dirname, '../../../mobile/scripts/build-apk.mjs'),
       'utf-8'
     );
-    expect(src).toContain('android:versionCode="61"');
-    expect(src).toContain('android:versionName="0.24.0"');
+    expect(src).toMatch(/android:versionCode="(6[1-9]|[7-9]\d)"/);
+    expect(src).toMatch(/android:versionName="0\.24\.\d+"/);
     expect(src).toContain('PMusicWidgetProvider.java');
     expect(src).toContain('widget_pmusic.xml');
     expect(src).toContain('pmusic_widget_info.xml');
