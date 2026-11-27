@@ -236,6 +236,7 @@ const SpotlightSearchModalInner: React.FC = () => {
                             )}
                             <ArtistLinks
                               artists={t.artists}
+                              disableOnMobile
                               onBeforeNavigate={() => setSpotlightOpen(false)}
                             />
                           </div>
@@ -466,6 +467,7 @@ const SpotlightSearchModalInner: React.FC = () => {
                             )}
                             <ArtistLinks
                               artists={t.artists}
+                              disableOnMobile
                               onBeforeNavigate={() => setSpotlightOpen(false)}
                             />
                           </div>

@@ -473,9 +473,13 @@ let lastMediaSessionSyncWallMs = 0;
 let homeShelvesBuildEpoch = 0;
 let socialRealtimeChannel: any = null;
 let socialSubscribedUserId = '';
+export const JAM_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+
 let jamRealtimeChannel: any = null;
 let jamFallbackPollTimer: ReturnType<typeof setInterval> | null = null;
 let jamHostPushTimer: ReturnType<typeof setTimeout> | null = null;
+let jamIdleSinceMs: number | null = null;
+let jamIdleCheckTimer: ReturnType<typeof setInterval> | null = null;
 const processedJamRequestIds = new Set<string>();
 const decodedAudioAnalyzedIds = new Set<string>();
 const decodedAudioInFlightIds = new Set<string>();
@@ -1146,6 +1150,7 @@ export interface PMusicStoreState {
 
   // Onboarding, Profile, Social & Wrapped
   authOnboardingOpen: boolean;
+  authIntroPending: boolean;
   needsProfileSetup: boolean;
   userProfile: UserProfile | null;
   authCallbackError: string | null;
@@ -1299,7 +1304,8 @@ export interface PMusicStoreState {
     openSheet?: boolean;
   }) => Promise<JamSessionRecord | null>;
   joinJamInApp: (code: string) => Promise<JamSessionRecord | null>;
-  leaveOrEndJam: () => Promise<void>;
+  leaveOrEndJam: (reason?: string) => Promise<void>;
+  checkJamIdleAutoEnd: (nowMs?: number) => Promise<boolean>;
   addTrackToActiveJam: (track: Track, playNext?: boolean) => Promise<void>;
   modifyJamQueueAsGuest: (
     op: 'move' | 'remove' | 'add_next',
@@ -1410,6 +1416,7 @@ export interface PMusicStoreState {
   prepareAddSecondaryAccount: () => Promise<void>;
   removeSavedAccount: (userId: string) => Promise<void>;
   setAuthOnboardingOpen: (open: boolean) => void;
+  setAuthIntroPending: (pending: boolean) => void;
   continueAsGuest: () => void;
   saveUserProfile: (input: {
     username: string;
@@ -1811,6 +1818,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     engineBindingsAttached = true;
 
     audioEngine.onStateChange((engineState) => {
+      syncJamIdleClock(engineState.isPlaying);
       checkLivePlaybackTriggers(engineState);
     });
 
@@ -2544,6 +2552,41 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     };
   }
 
+  function syncJamIdleClock(playing: boolean, nowMs = Date.now()): void {
+    const st = get();
+    if (st.activeJamRole !== 'host' || !st.activeJamSession?.active) {
+      jamIdleSinceMs = null;
+      return;
+    }
+    if (playing) {
+      jamIdleSinceMs = null;
+    } else if (jamIdleSinceMs === null) {
+      jamIdleSinceMs = nowMs;
+    }
+  }
+
+  async function runJamIdleAutoEndCheck(nowMs = Date.now()): Promise<boolean> {
+    const st = get();
+    if (st.activeJamRole !== 'host' || !st.activeJamSession?.active) {
+      jamIdleSinceMs = null;
+      return false;
+    }
+    if (st.isPlaying) {
+      jamIdleSinceMs = null;
+      return false;
+    }
+    if (jamIdleSinceMs === null) {
+      jamIdleSinceMs = nowMs;
+      return false;
+    }
+    if (nowMs - jamIdleSinceMs >= JAM_IDLE_TIMEOUT_MS) {
+      jamIdleSinceMs = null;
+      await st.leaveOrEndJam('Jam finalizada automáticamente tras 5 min sin música');
+      return true;
+    }
+    return false;
+  }
+
   function cleanupJamRealtime(): void {
     if (jamHostPushTimer) {
       clearTimeout(jamHostPushTimer);
@@ -2553,6 +2596,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       clearInterval(jamFallbackPollTimer);
       jamFallbackPollTimer = null;
     }
+    if (jamIdleCheckTimer) {
+      clearInterval(jamIdleCheckTimer);
+      jamIdleCheckTimer = null;
+    }
+    jamIdleSinceMs = null;
     if (jamRealtimeChannel) {
       try {
         void jamRealtimeChannel.unsubscribe?.();
@@ -2831,6 +2879,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       if (typeof document !== 'undefined' && document.hidden) return;
       void refreshJamSnapshot();
     }, 5500);
+
+    jamIdleSinceMs = get().isPlaying ? null : Date.now();
+    jamIdleCheckTimer = setInterval(() => {
+      void runJamIdleAutoEndCheck();
+    }, 5000);
   }
 
   function buildLocalTasteSnapshot(): AccountTasteProfile {
@@ -3575,6 +3628,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   remoteDeviceSnapshot: null,
 
   authOnboardingOpen: false,
+  authIntroPending: false,
   needsProfileSetup: false,
   userProfile: null,
   authCallbackError: null,
@@ -4384,7 +4438,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         dismissed = false;
       }
       if (!isTestEnv && !dismissed) {
-        set({ authOnboardingOpen: true });
+        set({ authOnboardingOpen: true, authIntroPending: true });
       }
     }
   },
@@ -6772,7 +6826,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     return sess;
   },
 
-  leaveOrEndJam: async () => {
+  leaveOrEndJam: async (reason) => {
     const st = get();
     const sb = getSyncSupabaseClient();
     const sess = st.activeJamSession;
@@ -6780,9 +6834,9 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     cleanupJamRealtime();
     if (sb && sess && role === 'host') {
       await updateJamSessionState(sb, sess.code, { active: false }).catch(() => {});
-      st.showToast('Sala Jam finalizada');
+      st.showToast(reason ?? 'Sala Jam finalizada');
     } else if (sess) {
-      st.showToast('Saliste de la Jam');
+      st.showToast(reason ?? 'Saliste de la Jam');
     }
     set({
       activeJamSession: null,
@@ -6792,6 +6846,8 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       jamInviteModalOpen: false,
     });
   },
+
+  checkJamIdleAutoEnd: async (nowMs) => runJamIdleAutoEndCheck(nowMs),
 
   addTrackToActiveJam: async (rawTrack, playNext = false) => {
     const st = get();
@@ -8334,7 +8390,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     void get().refreshHomeRecommendations(false);
   },
 
-  setAuthOnboardingOpen: (open) => set({ authOnboardingOpen: open }),
+  setAuthOnboardingOpen: (open) =>
+    set(open ? { authOnboardingOpen: true } : { authOnboardingOpen: false, authIntroPending: false }),
+
+  setAuthIntroPending: (pending) => set({ authIntroPending: pending }),
 
   prepareAddSecondaryAccount: async () => {
     const st = get();
@@ -8499,10 +8558,19 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
 
     const soundtrack: Track[] = [];
     const seenIds = new Set<string>();
+    const seenKeys = new Set<string>();
+    const pushDistinctTrack = (raw: Track | undefined) => {
+      if (!raw?.id || seenIds.has(raw.id)) return;
+      const key = `${raw.title.trim().toLowerCase()}::${(raw.artists[0]?.name ?? '').trim().toLowerCase()}`;
+      if (seenKeys.has(key)) return;
+      seenIds.add(raw.id);
+      seenKeys.add(key);
+      soundtrack.push(canonicalizeTrackArtists(raw));
+    };
     const allPool = Array.from(catalogPool.values());
 
     // 1. Prioritize top wrapped tracks if present in pool
-    for (const top of summary.topTracks.slice(0, 6)) {
+    for (const top of summary.topTracks.slice(0, 7)) {
       const hit =
         catalogPool.get(top.key) ??
         allPool.find(
@@ -8510,27 +8578,21 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
             t.id === top.key ||
             t.title.trim().toLowerCase() === top.title.trim().toLowerCase()
         );
-      if (hit && !seenIds.has(hit.id)) {
-        seenIds.add(hit.id);
-        soundtrack.push(hit);
-      }
+      pushDistinctTrack(hit);
     }
 
     // 2. Supplement with favorite artists & top affinity tracks matching user taste
     const rankedTasteTracks = recommendationEngine.rerankTracks(allPool, {
       maxPerArtistInWindow: 2,
-      limit: 16,
+      limit: 20,
     });
     for (const t of rankedTasteTracks) {
-      if (!seenIds.has(t.id)) {
-        seenIds.add(t.id);
-        soundtrack.push(t);
-      }
+      pushDistinctTrack(t);
       if (soundtrack.length >= 12) break;
     }
 
-    // 3. If pool still empty, fetch live tracks matching top wrapped artist/first favorite artist
-    if (soundtrack.length === 0) {
+    // 3. Ensure at least 7 distinct songs so every Wrapped story plays a different track
+    if (soundtrack.length < 7) {
       const seedQuery =
         summary.topArtists[0]?.title ??
         st.favoriteArtists[0]?.artistName ??
@@ -8538,14 +8600,16 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         'Cruzzi';
       try {
         const res = await musicProvider.search(seedQuery, 'song');
-        for (const t of res.songs.slice(0, 8)) {
-          if (!seenIds.has(t.id)) {
-            seenIds.add(t.id);
-            soundtrack.push(canonicalizeTrackArtists(t));
-          }
+        for (const t of res.songs.slice(0, 10)) {
+          pushDistinctTrack(t);
+          if (soundtrack.length >= 12) break;
         }
       } catch {
-        soundtrack.push(...canonicalFallbackQueue.slice(0, 6));
+        // fallback handled right below
+      }
+      for (const t of canonicalFallbackQueue) {
+        pushDistinctTrack(t);
+        if (soundtrack.length >= 10) break;
       }
     }
 

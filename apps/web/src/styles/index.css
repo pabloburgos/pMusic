@@ -2388,31 +2388,19 @@ html.pm-solid-modern .pm-spotlight-backdrop {
   filter: drop-shadow(0 2px 10px rgba(192, 132, 252, 0.32));
 }
 
-/* Mobile Top Header across 3 unified surface modes */
+/* Mobile Top Header across 3 unified surface modes — solid top fill prevents scrolled content clashing with status bar */
 .pm-mobile-glass-header {
-  background: linear-gradient(
-    180deg,
-    rgba(11, 11, 15, 0.82) 0%,
-    rgba(11, 11, 15, 0.60) 74%,
-    rgba(11, 11, 15, 0.0) 100%
-  );
-  -webkit-backdrop-filter: blur(26px) saturate(190%);
-  backdrop-filter: blur(26px) saturate(190%);
+  background: var(--pm-bg-canvas);
+  border-bottom: 1px solid var(--pm-border-subtle);
 }
 
 [data-theme="nordic-light"] .pm-mobile-glass-header {
-  background: linear-gradient(
-    180deg,
-    rgba(245, 242, 235, 0.88) 0%,
-    rgba(245, 242, 235, 0.66) 74%,
-    rgba(245, 242, 235, 0.0) 100%
-  );
+  background: var(--pm-bg-canvas);
+  border-bottom: 1px solid var(--pm-border-subtle);
 }
 
 html.pm-surface-frosted .pm-mobile-glass-header {
-  background: color-mix(in srgb, var(--pm-bg-canvas) 74%, transparent);
-  -webkit-backdrop-filter: blur(28px) saturate(130%);
-  backdrop-filter: blur(28px) saturate(130%);
+  background: var(--pm-bg-canvas);
   border-bottom: 1px solid var(--pm-border-subtle);
 }
 
@@ -3486,6 +3474,124 @@ html.pm-np-canvas-open {
   animation: pmWrappedBarGrow 760ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+@keyframes pmWrappedMarquee {
+  0% {
+    transform: translate3d(0%, 0, 0);
+  }
+  100% {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+@keyframes pmWrappedMarqueeRev {
+  0% {
+    transform: translate3d(-50%, 0, 0);
+  }
+  100% {
+    transform: translate3d(0%, 0, 0);
+  }
+}
+
+@keyframes pmWrappedSpinSlow {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pmWrappedPulseRing {
+  0% {
+    transform: scale(0.72);
+    opacity: 0.72;
+  }
+  100% {
+    transform: scale(1.65);
+    opacity: 0;
+  }
+}
+
+@keyframes pmWrappedConfetti {
+  0% {
+    transform: translate3d(0, -14px, 0) rotate(0deg);
+    opacity: 0;
+  }
+  18% {
+    opacity: 0.92;
+  }
+  100% {
+    transform: translate3d(18px, 160px, 0) rotate(260deg);
+    opacity: 0;
+  }
+}
+
+@keyframes pmWrappedRibbon {
+  0%, 100% {
+    transform: translate3d(-4%, -2%, 0) rotate(-3deg) scale(1);
+  }
+  50% {
+    transform: translate3d(4%, 3%, 0) rotate(3deg) scale(1.06);
+  }
+}
+
+@keyframes pmWrappedEqWave {
+  0%, 100% {
+    transform: scaleY(0.26);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes pmWrappedStickerPop {
+  0% {
+    opacity: 0;
+    transform: scale(0.72) rotate(-9deg);
+  }
+  70% {
+    opacity: 1;
+    transform: scale(1.07) rotate(3deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(-3deg);
+  }
+}
+
+.pm-wrapped-marquee {
+  animation: pmWrappedMarquee 16s linear infinite;
+}
+
+.pm-wrapped-marquee-rev {
+  animation: pmWrappedMarqueeRev 19s linear infinite;
+}
+
+.pm-wrapped-spin {
+  animation: pmWrappedSpinSlow 18s linear infinite;
+}
+
+.pm-wrapped-pulse-ring {
+  animation: pmWrappedPulseRing 2.6s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.pm-wrapped-confetti {
+  animation: pmWrappedConfetti 3.8s linear infinite;
+}
+
+.pm-wrapped-ribbon {
+  animation: pmWrappedRibbon 8s ease-in-out infinite;
+}
+
+.pm-wrapped-eq-bar {
+  transform-origin: bottom center;
+  animation: pmWrappedEqWave 0.95s ease-in-out infinite;
+}
+
+.pm-wrapped-sticker {
+  animation: pmWrappedStickerPop 620ms cubic-bezier(0.22, 1, 0.36, 1) 140ms both;
+}
+
 /* ── Liquid-Fill Heart Animation ── */
 @keyframes pmusic-liquid-wave {
   0% {
@@ -3602,6 +3708,15 @@ html.pm-reduced-motion .pm-heart-liquid-pop {
   color: rgba(0, 0, 0, 0.54) !important;
 }
 
+.pm-np-light-surface [data-testid="nowplaying-bottom-nav"] button {
+  color: rgba(0, 0, 0, 0.82) !important;
+}
+
+.pm-np-light-surface [data-testid="nowplaying-bottom-nav"] button:hover {
+  background-color: rgba(0, 0, 0, 0.10) !important;
+  color: #000000 !important;
+}
+
 .pm-np-light-surface [data-testid="nowplaying-bottom-nav"] button[aria-pressed="true"] {
   background-color: #000000 !important;
   color: #ffffff !important;
@@ -3609,6 +3724,11 @@ html.pm-reduced-motion .pm-heart-liquid-pop {
 
 .pm-np-light-surface [data-testid="nowplaying-bottom-nav"] button[aria-pressed="true"] * {
   color: #ffffff !important;
+}
+
+.pm-np-light-surface [data-testid="nowplaying-bottom-nav"] {
+  color: #000000 !important;
+  border-color: rgba(0, 0, 0, 0.14) !important;
 }
 
 .pm-np-light-surface :is(.bg-white\/\[0\.06\], .bg-white\/\[0\.08\], .bg-white\/\[0\.10\], .bg-white\/\[0\.12\], .bg-white\/\[0\.16\], .bg-white\/\[0\.18\], .bg-white\/10, .bg-white\/15, .bg-white\/18, .bg-white\/35):not(.pm-hud-dark *):not([data-testid="nowplaying-progress-fill"]):not(.pm-indicator-dot) {

@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { ListMusic, ListPlus } from 'lucide-react';
+import { triggerHaptic } from '../utils/haptics.ts';
 
 interface SwipeableTrackRowProps {
   onSwipeLeft?: () => void;
@@ -8,8 +9,8 @@ interface SwipeableTrackRowProps {
   children: React.ReactNode;
 }
 
-const SWIPE_TRIGGER_PX = 68;
-const MAX_TRAVEL_PX = 104;
+const SWIPE_TRIGGER_PX = 64;
+const MAX_TRAVEL_PX = 96;
 
 export const SwipeableTrackRow: React.FC<SwipeableTrackRowProps> = ({
   onSwipeLeft,
@@ -25,16 +26,6 @@ export const SwipeableTrackRow: React.FC<SwipeableTrackRowProps> = ({
   const lockedAxisRef = useRef<'x' | 'y' | null>(null);
   const armedSideRef = useRef<'left' | 'right' | null>(null);
   const offsetRef = useRef(0);
-
-  const triggerHaptic = () => {
-    try {
-      if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
-        navigator.vibrate(12);
-      }
-    } catch {
-      // ignore unsupported vibrate API
-    }
-  };
 
   const resetGesture = () => {
     lockedAxisRef.current = null;
@@ -73,13 +64,12 @@ export const SwipeableTrackRow: React.FC<SwipeableTrackRowProps> = ({
 
     if (lockedAxisRef.current !== 'x') return;
 
-    // Rubber-band resist beyond MAX_TRAVEL_PX
     const allowedDx =
       dx > 0 && !onSwipeRight
         ? 0
         : dx < 0 && !onSwipeLeft
           ? 0
-          : Math.sign(dx) * Math.min(MAX_TRAVEL_PX, Math.abs(dx) * 0.9);
+          : Math.sign(dx) * Math.min(MAX_TRAVEL_PX, Math.abs(dx) * 0.88);
 
     const nextSide =
       allowedDx <= -SWIPE_TRIGGER_PX
@@ -88,7 +78,7 @@ export const SwipeableTrackRow: React.FC<SwipeableTrackRowProps> = ({
           ? 'right'
           : null;
     if (nextSide && nextSide !== armedSideRef.current) {
-      triggerHaptic();
+      triggerHaptic('light');
     }
     armedSideRef.current = nextSide;
     offsetRef.current = allowedDx;
@@ -99,19 +89,22 @@ export const SwipeableTrackRow: React.FC<SwipeableTrackRowProps> = ({
     if (lockedAxisRef.current === 'x') {
       const finalOffset = offsetRef.current;
       if (finalOffset <= -SWIPE_TRIGGER_PX && onSwipeLeft) {
+        triggerHaptic('confirm');
         onSwipeLeft();
       } else if (finalOffset >= SWIPE_TRIGGER_PX && onSwipeRight) {
+        triggerHaptic('confirm');
         onSwipeRight();
       }
     }
     resetGesture();
   };
 
-  const revealRight = offsetX < -4; // swiped left -> add to queue
-  const revealLeft = offsetX > 4; // swiped right -> add to playlist
-  const leftArmed = offsetX <= -SWIPE_TRIGGER_PX;
+  const revealLeftRail = offsetX > 4; // swiped right -> add to queue
+  const revealRightRail = offsetX < -4; // swiped left -> add to playlist
   const rightArmed = offsetX >= SWIPE_TRIGGER_PX;
-  const activeReveal = revealRight || revealLeft;
+  const leftArmed = offsetX <= -SWIPE_TRIGGER_PX;
+  const activeReveal = revealLeftRail || revealRightRail;
+  const progress = Math.min(1, Math.abs(offsetX) / SWIPE_TRIGGER_PX);
 
   return (
     <div
@@ -122,36 +115,62 @@ export const SwipeableTrackRow: React.FC<SwipeableTrackRowProps> = ({
       onTouchCancel={resetGesture}
       className="relative overflow-hidden rounded-[10px]"
     >
-      {/* Revealed Action Rails */}
+      {/* Minimalist Icon-Only Action Rails */}
       {activeReveal && (
         <div
           aria-hidden="true"
           className={`pointer-events-none absolute inset-0 flex items-center justify-between rounded-[10px] px-4 transition-colors duration-150 ${
-            revealLeft
+            revealLeftRail
               ? rightArmed
-                ? 'bg-[#7C3AED]/90 text-white'
-                : 'bg-[#7C3AED]/45 text-white/90'
+                ? 'bg-emerald-500/32 text-emerald-100'
+                : 'bg-emerald-500/18 text-emerald-200/85'
               : leftArmed
-                ? 'bg-emerald-600/90 text-white'
-                : 'bg-emerald-600/45 text-white/90'
+                ? 'bg-violet-500/32 text-violet-100'
+                : 'bg-violet-500/18 text-violet-200/85'
           }`}
         >
+          {/* Left rail (revealed when swiping right): Add to Queue */}
           <div
-            className={`flex items-center gap-2 transition-transform duration-150 ${
-              revealLeft ? 'opacity-100' : 'opacity-0'
-            } ${rightArmed ? 'scale-105' : 'scale-95'}`}
+            data-testid="swipe-icon-queue"
+            className={`flex h-9 w-9 items-center justify-center rounded-full transition-all duration-150 ${
+              revealLeftRail ? '' : 'opacity-0'
+            } ${
+              rightArmed
+                ? 'bg-emerald-500 text-[#050507] shadow-[0_0_16px_rgba(16,185,129,0.5)]'
+                : 'bg-white/10 text-white'
+            }`}
+            style={
+              revealLeftRail
+                ? {
+                    opacity: 0.35 + progress * 0.65,
+                    transform: `scale(${(rightArmed ? 1.12 : 0.72 + progress * 0.28).toFixed(3)})`,
+                  }
+                : undefined
+            }
           >
-            <ListMusic className="h-4 w-4 shrink-0" />
-            <span className="text-xs font-bold tracking-tight">A playlist</span>
+            <ListPlus className="h-[18px] w-[18px]" />
           </div>
 
+          {/* Right rail (revealed when swiping left): Add to Playlist */}
           <div
-            className={`flex items-center gap-2 transition-transform duration-150 ${
-              revealRight ? 'opacity-100' : 'opacity-0'
-            } ${leftArmed ? 'scale-105' : 'scale-95'}`}
+            data-testid="swipe-icon-playlist"
+            className={`flex h-9 w-9 items-center justify-center rounded-full transition-all duration-150 ${
+              revealRightRail ? '' : 'opacity-0'
+            } ${
+              leftArmed
+                ? 'bg-violet-500 text-white shadow-[0_0_16px_rgba(139,92,246,0.5)]'
+                : 'bg-white/10 text-white'
+            }`}
+            style={
+              revealRightRail
+                ? {
+                    opacity: 0.35 + progress * 0.65,
+                    transform: `scale(${(leftArmed ? 1.12 : 0.72 + progress * 0.28).toFixed(3)})`,
+                  }
+                : undefined
+            }
           >
-            <span className="text-xs font-bold tracking-tight">A la cola</span>
-            <ListPlus className="h-4 w-4 shrink-0" />
+            <ListMusic className="h-[18px] w-[18px]" />
           </div>
         </div>
       )}

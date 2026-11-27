@@ -436,8 +436,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="58"
-    android:versionName="0.23.14">
+    android:versionCode="59"
+    android:versionName="0.23.15">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -1322,6 +1322,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.speech.RecognizerIntent;
+import android.view.HapticFeedbackConstants;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowInsets;
@@ -1996,6 +1997,79 @@ public class MainActivity extends Activity {
                                         | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
                             }
                             w.getDecorView().setSystemUiVisibility(baseFlags);
+                        }
+                    }
+                });
+            }
+
+            @android.webkit.JavascriptInterface
+            public void triggerHaptic(final String style) {
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (webView == null) return;
+                        try {
+                            int code;
+                            if ("confirm".equals(style)) {
+                                code = Build.VERSION.SDK_INT >= 30
+                                        ? HapticFeedbackConstants.CONFIRM
+                                        : HapticFeedbackConstants.VIRTUAL_KEY;
+                            } else if ("medium".equals(style)) {
+                                code = Build.VERSION.SDK_INT >= 23
+                                        ? HapticFeedbackConstants.CONTEXT_CLICK
+                                        : HapticFeedbackConstants.KEYBOARD_TAP;
+                            } else {
+                                code = Build.VERSION.SDK_INT >= 21
+                                        ? HapticFeedbackConstants.CLOCK_TICK
+                                        : HapticFeedbackConstants.KEYBOARD_TAP;
+                            }
+                            webView.performHapticFeedback(code, HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING);
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                });
+            }
+
+            @android.webkit.JavascriptInterface
+            public void setSystemBarsAppearance(final boolean darkIcons, final String statusBarHex, final String navBarHex) {
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        Window w = getWindow();
+                        if (w == null || Build.VERSION.SDK_INT < 21) return;
+                        try {
+                            int sbColor = (statusBarHex == null || "transparent".equalsIgnoreCase(statusBarHex))
+                                    ? Color.TRANSPARENT
+                                    : Color.parseColor(statusBarHex);
+                            int nbColor = (navBarHex == null || "transparent".equalsIgnoreCase(navBarHex))
+                                    ? Color.TRANSPARENT
+                                    : Color.parseColor(navBarHex);
+                            w.setStatusBarColor(sbColor);
+                            w.setNavigationBarColor(nbColor);
+                        } catch (Throwable ignored) {
+                        }
+                        if (Build.VERSION.SDK_INT >= 30) {
+                            android.view.WindowInsetsController ctrl = w.getInsetsController();
+                            if (ctrl != null) {
+                                int mask = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                                        | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+                                ctrl.setSystemBarsAppearance(darkIcons ? mask : 0, mask);
+                            }
+                        } else if (Build.VERSION.SDK_INT >= 23) {
+                            View decor = w.getDecorView();
+                            int flags = decor.getSystemUiVisibility();
+                            if (darkIcons) {
+                                flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+                                if (Build.VERSION.SDK_INT >= 26) {
+                                    flags |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+                                }
+                            } else {
+                                flags &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+                                if (Build.VERSION.SDK_INT >= 26) {
+                                    flags &= ~View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+                                }
+                            }
+                            decor.setSystemUiVisibility(flags);
                         }
                     }
                 });

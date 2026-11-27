@@ -58,6 +58,7 @@ import { ExoticBackdropCanvas } from './ExoticBackdropCanvas.tsx';
 import { MarqueeText } from './MarqueeText.tsx';
 import { TrackArtwork } from './TrackArtwork.tsx';
 import { NowPlayingQueuePanel } from './NowPlayingQueuePanel.tsx';
+import { syncNativeSystemBars } from '../utils/system-bars.ts';
 import { buildJamQrImageUrl, buildJamShareUrl } from '../services/social-service.ts';
 import { useDelayedBuffering } from '../hooks/useDelayedBuffering.ts';
 import {
@@ -450,6 +451,11 @@ const NowPlayingSheetInner: React.FC = () => {
       unsub();
     };
   }, []);
+
+  useEffect(() => {
+    if (!nowPlayingOpen) return;
+    syncNativeSystemBars({ nowPlayingOpen: true, isLightBackdrop, themeId });
+  }, [nowPlayingOpen, isLightBackdrop, themeId]);
 
   useEffect(() => {
     if (!nowPlayingOpen || nowPlayingTab !== 'Letras') {

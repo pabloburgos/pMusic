@@ -82,6 +82,7 @@ import { SocialScreen } from './components/SocialScreen.tsx';
 import { PublicJamGuestPage } from './components/PublicJamGuestPage.tsx';
 import { SharedPlaylistLinkModal } from './components/SharedPlaylistLinkModal.tsx';
 import { UserAvatar } from './components/UserAvatar.tsx';
+import { syncNativeSystemBars } from './utils/system-bars.ts';
 import {
   clearDraggedTrack,
   readTrackFromDropEvent,
@@ -457,6 +458,12 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       void joinJamInApp(initialJamCode);
     }
   }, [initialJamCode, appReady, authState.connected, joinJamInApp]);
+
+  useEffect(() => {
+    if (!nowPlayingOpen) {
+      syncNativeSystemBars({ nowPlayingOpen: false, isLightBackdrop: false, themeId });
+    }
+  }, [nowPlayingOpen, themeId]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1657,13 +1664,26 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
         </header>
       )}
 
+      {/* Solid Top Status-Bar Shield when browsing app on mobile so scrolled content never collides behind OS clock */}
+      {isMobileViewport && !nowPlayingOpen && (
+        <div
+          data-testid="mobile-status-bar-shield"
+          aria-hidden="true"
+          className="pointer-events-none fixed inset-x-0 top-0 z-[55]"
+          style={{
+            height: 'var(--pm-safe-top, env(safe-area-inset-top, 0px))',
+            backgroundColor: 'var(--pm-bg-canvas)',
+          }}
+        />
+      )}
+
       {/* Pinned Mobile Top Command Bar (sticky across scrolling pages; borderless large profile photo) */}
       {isMobileViewport && (
         <div
           data-testid="mobile-top-header"
           className={`${nowPlayingOpen ? 'pm-behind-nowplaying ' : ''}${
             isFullBleedHeroView
-              ? 'fixed inset-x-0 top-0 z-40 flex items-center justify-between gap-3 bg-gradient-to-b from-black/65 via-black/25 to-transparent px-4 pt-[max(0.8rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3'
+              ? 'fixed inset-x-0 top-[var(--pm-safe-top,env(safe-area-inset-top,0px))] z-40 flex items-center justify-between gap-3 bg-gradient-to-b from-black/65 via-black/25 to-transparent px-4 pt-2.5 pb-3'
               : 'pm-mobile-glass-header sticky top-0 z-40 flex shrink-0 items-center justify-between gap-3 px-4 pt-[max(0.8rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3'
           }`}
         >

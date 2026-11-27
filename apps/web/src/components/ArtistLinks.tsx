@@ -1,6 +1,22 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import type { ArtistRef } from '@pmusic/core';
 import { usePMusicStore } from '../store/usePMusicStore.ts';
+
+function useIsMobileViewport(): boolean {
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 768 : false
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener('resize', check, { passive: true });
+    return () => window.removeEventListener('resize', check);
+  }, []);
+
+  return isMobile;
+}
 
 export interface ArtistLinksProps {
   artists: readonly ArtistRef[];
@@ -9,6 +25,7 @@ export interface ArtistLinksProps {
   onBeforeNavigate?: () => void;
   stopPropagation?: boolean;
   singleLine?: boolean;
+  disableOnMobile?: boolean;
 }
 
 /**
@@ -22,11 +39,23 @@ export const ArtistLinks: React.FC<ArtistLinksProps> = ({
   onBeforeNavigate,
   stopPropagation = true,
   singleLine = true,
+  disableOnMobile = false,
 }) => {
   const openArtistDetail = usePMusicStore((s) => s.openArtistDetail);
   const prefetchArtistDetail = usePMusicStore((s) => s.prefetchArtistDetail);
+  const isMobile = useIsMobileViewport();
 
   const list = artists.length > 0 ? artists : [{ name: 'Artista' }];
+
+  if (disableOnMobile && isMobile) {
+    return (
+      <span
+        className={`pointer-events-none inline-flex max-w-full select-none items-center truncate py-[1px] leading-normal ${className}`}
+      >
+        {list.map((a) => a.name).join(', ')}
+      </span>
+    );
+  }
 
   return (
     <span

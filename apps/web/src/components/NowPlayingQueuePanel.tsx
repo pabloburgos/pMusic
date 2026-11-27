@@ -203,6 +203,7 @@ const QueueTrackRow: React.FC<QueueTrackRowProps> = React.memo(
           <div className="flex items-center gap-1.5 overflow-x-clip py-[1px] text-xs leading-normal text-[#D4D4E0]">
             <ArtistLinks
               artists={track.artists}
+              disableOnMobile
               onBeforeNavigate={onCloseSheet}
               linkClassName="hover:text-white hover:underline"
             />
@@ -336,6 +337,7 @@ const RecommendedQueueRow: React.FC<RecommendedQueueRowProps> = React.memo(
           <div className="overflow-x-clip py-[1px] text-xs leading-normal text-[#D4D4E0]">
             <ArtistLinks
               artists={rec.artists}
+              disableOnMobile
               onBeforeNavigate={onCloseSheet}
               linkClassName="hover:text-white hover:underline"
             />
@@ -836,6 +838,7 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
                     <div className="truncate text-xs leading-normal text-[#D4D4E0]">
                       <ArtistLinks
                         artists={cand.artists}
+                        disableOnMobile
                         onBeforeNavigate={handleCloseSheet}
                         linkClassName="hover:text-white hover:underline"
                       />

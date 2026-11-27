@@ -6,11 +6,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { App } from '../App.tsx';
 import { AddToPlaylistModal } from '../components/AddToPlaylistModal.tsx';
+import { ArtistLinks } from '../components/ArtistLinks.tsx';
+import { AuthOnboardingModal } from '../components/AuthOnboardingModal.tsx';
 import { PMusicLogo } from '../components/PMusicLogo.tsx';
 import { PublicJamGuestPage } from '../components/PublicJamGuestPage.tsx';
 import { SettingsModal } from '../components/SettingsModal.tsx';
 import { SwipeableTrackRow } from '../components/SwipeableTrackRow.tsx';
 import { TrackArtwork } from '../components/TrackArtwork.tsx';
+import { buildDistinctSlideTracks } from '../components/WrappedStoriesModal.tsx';
 import {
   InkBleedCoverTransition,
   prefetchInkCoverImage,
@@ -35,7 +38,7 @@ import {
   toCompactSyncedTrack,
   writePersistedArtistCache,
 } from '../utils/editorial-cache.ts';
-import { usePMusicStore } from '../store/usePMusicStore.ts';
+import { JAM_IDLE_TIMEOUT_MS, usePMusicStore } from '../store/usePMusicStore.ts';
 import type { PlaylistRecord, Track } from '@pmusic/core';
 
 function makeTrack(idx: number): Track {
@@ -1063,7 +1066,7 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
     ]);
     expect(usePMusicStore.getState().userQueueCount).toBe(2);
 
-    // 4. SwipeableTrackRow left swipe -> add to queue, right swipe -> open playlist modal
+    // 4. SwipeableTrackRow: minimalist icon-only swipe right -> queue, swipe left -> playlist
     const onLeft = vi.fn();
     const onRight = vi.fn();
     render(
@@ -1074,19 +1077,24 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
     const swipeWrap = screen.getByTestId('swipeable-track-row');
     fireEvent.touchStart(swipeWrap, { touches: [{ clientX: 200, clientY: 100 }] });
     fireEvent.touchMove(swipeWrap, { touches: [{ clientX: 100, clientY: 102 }] });
+    expect(screen.getByTestId('swipe-icon-playlist')).toBeTruthy();
+    expect(screen.queryByText(/A playlist/i)).toBeNull();
     fireEvent.touchEnd(swipeWrap);
     expect(onLeft).toHaveBeenCalledTimes(1);
 
     fireEvent.touchStart(swipeWrap, { touches: [{ clientX: 50, clientY: 100 }] });
     fireEvent.touchMove(swipeWrap, { touches: [{ clientX: 150, clientY: 102 }] });
+    expect(screen.getByTestId('swipe-icon-queue')).toBeTruthy();
+    expect(screen.queryByText(/A la cola/i)).toBeNull();
     fireEvent.touchEnd(swipeWrap);
     expect(onRight).toHaveBeenCalledTimes(1);
     cleanup();
 
-    // 5. AddToPlaylistModal interactive toggle
+    // 5. AddToPlaylistModal interactive toggle & generous bottom margin on Listo
     usePMusicStore.setState({ addToPlaylistModalTrack: tA });
     render(<AddToPlaylistModal />);
     expect(screen.getByTestId('add-to-playlist-modal')).toBeTruthy();
+    expect(screen.getByTestId('add-to-playlist-footer').className).toContain('pb-[calc(1.85rem+');
     await act(async () => {
       fireEvent.click(screen.getByTestId(`playlist-picker-row-${createdPlaylist.id}`));
     });
@@ -1101,5 +1109,132 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
     expect(exoticSrc).toContain('mix(1.38, 0.74, isPortrait)');
     expect(exoticSrc).toContain('mix(1.0, 0.44, isPortrait)');
     expect(exoticSrc).toContain('__pmusicAppBackgrounded');
+  });
+
+  it('v0.23.15 enforces 5-min Jam auto-end, mobile artist-link lock, solid status-bar & dark-ink bottom nav, distinct Wrapped tracks per story, and 3D AirPod intro before login', async () => {
+    // 1. Host Jam auto-ends after 5 minutes without music (and resets when playing)
+    const origLeaveOrEnd = usePMusicStore.getState().leaveOrEndJam;
+    const leaveSpy = vi.fn(async () => {});
+    const t0 = 1_000_000;
+    act(() => {
+      usePMusicStore.setState({
+        activeJamRole: 'host',
+        activeJamSession: {
+          code: 'IDLE5M',
+          hostUserId: 'host-1',
+          hostName: 'Pablo',
+          currentTrack: makeTrack(1),
+          queue: [makeTrack(1)],
+          isPlaying: false,
+          allowGuestDirectAdd: true,
+          maxRequestsPerGuest: 0,
+          active: true,
+          updatedAt: new Date().toISOString(),
+        },
+        isPlaying: false,
+        leaveOrEndJam: leaveSpy,
+      });
+    });
+    expect(await usePMusicStore.getState().checkJamIdleAutoEnd(t0)).toBe(false);
+    expect(await usePMusicStore.getState().checkJamIdleAutoEnd(t0 + JAM_IDLE_TIMEOUT_MS - 1000)).toBe(false);
+    expect(await usePMusicStore.getState().checkJamIdleAutoEnd(t0 + JAM_IDLE_TIMEOUT_MS)).toBe(true);
+    expect(leaveSpy).toHaveBeenCalledTimes(1);
+    act(() => {
+      usePMusicStore.setState({
+        activeJamRole: null,
+        activeJamSession: null,
+        leaveOrEndJam: origLeaveOrEnd,
+      });
+    });
+
+    // 2. Mobile ArtistLinks disables profile link inside song rows while keeping desktop links
+    const origWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: 390 });
+    window.dispatchEvent(new Event('resize'));
+    render(
+      <ArtistLinks
+        artists={[{ id: '12345', name: 'Cruzzi' }, { id: '67890', name: 'Quevedo' }]}
+        disableOnMobile
+      />
+    );
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(screen.getByText('Cruzzi, Quevedo')).toBeTruthy();
+    cleanup();
+
+    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: 1280 });
+    window.dispatchEvent(new Event('resize'));
+    render(
+      <ArtistLinks
+        artists={[{ id: '12345', name: 'Cruzzi' }]}
+        disableOnMobile
+      />
+    );
+    expect(screen.getByRole('link', { name: /Ir al artista Cruzzi/i })).toBeTruthy();
+    cleanup();
+    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: origWidth });
+    window.dispatchEvent(new Event('resize'));
+
+    // 3. Solid mobile status-bar shield, Android native haptics/system bars bridge, and black NowPlaying nav on white covers
+    const buildApkSrc = readFileSync(
+      resolve(__dirname, '../../../mobile/scripts/build-apk.mjs'),
+      'utf-8'
+    );
+    expect(buildApkSrc).toContain('public void triggerHaptic(');
+    expect(buildApkSrc).toContain('public void setSystemBarsAppearance(');
+    expect(buildApkSrc.includes('requestAudioFocus')).toBe(false);
+    expect(buildApkSrc.includes('abandonAudioFocus')).toBe(false);
+
+    const cssSrc = readFileSync(resolve(__dirname, '../styles/index.css'), 'utf-8');
+    expect(cssSrc).toContain('.pm-np-light-surface [data-testid="nowplaying-bottom-nav"] button');
+    expect(cssSrc).toContain('.pm-wrapped-marquee');
+
+    const appSrc = readFileSync(resolve(__dirname, '../App.tsx'), 'utf-8');
+    expect(appSrc).toContain('data-testid="mobile-status-bar-shield"');
+
+    // 4. Wrapped assigns 7 genuinely distinct tracks across all 7 stories
+    const pool7 = Array.from({ length: 8 }, (_, idx) => ({
+      ...makeTrack(200 + idx),
+      title: `Wrapped Hit ${idx}`,
+      artists: [{ id: `wa-${idx}`, name: idx === 5 ? 'Cruzzi' : `Artist W${idx}` }],
+    }));
+    const slideTracks = buildDistinctSlideTracks(pool7, {
+      year: 2026,
+      totalMinutes: 1200,
+      totalHours: 20,
+      totalPlays: 340,
+      uniqueTracks: 45,
+      uniqueArtists: 18,
+      uniqueGenres: 2,
+      longestStreakDays: 12,
+      peakHour: 22,
+      topMonth: { name: 'Noviembre', minutes: 410 },
+      mostLoopedTrack: null,
+      listeningPersona: { title: 'Nocturno', subtitle: 'Descubriendo sonidos' },
+      topArtists: [{ key: 'Cruzzi', title: 'Cruzzi', subtitle: 'Artista', plays: 90, minutes: 310 }],
+      topTracks: [{ key: pool7[3]!.id, title: pool7[3]!.title, subtitle: 'Artist W3', plays: 40, minutes: 120 }],
+      topGenres: [{ genre: 'Urbano', plays: 180, percent: 80, minutes: 960 }],
+    });
+    expect(slideTracks).toHaveLength(7);
+    expect(slideTracks[3]?.id).toBe(pool7[3]!.id);
+    expect(new Set(slideTracks.map((t) => t?.id)).size).toBe(7);
+
+    // 5. First-time logged-out 3D AirPod -> pMusic intro leads cleanly into login card on complete/skip
+    act(() => {
+      usePMusicStore.setState({
+        authOnboardingOpen: true,
+        authIntroPending: true,
+        needsProfileSetup: false,
+        reducedMotionPref: false,
+      });
+    });
+    render(<AuthOnboardingModal />);
+    expect(screen.getByTestId('airpod-intro-stage')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('airpod-intro-skip'));
+    expect(usePMusicStore.getState().authIntroPending).toBe(false);
+    expect(screen.queryByTestId('airpod-intro-stage')).toBeNull();
+    expect(screen.getByText('Continuar con Google')).toBeTruthy();
+    act(() => {
+      usePMusicStore.setState({ authOnboardingOpen: false, authIntroPending: false });
+    });
   });
 });

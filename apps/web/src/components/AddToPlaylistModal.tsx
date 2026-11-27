@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Check, ListMusic, Plus, Search, X } from 'lucide-react';
 import { usePMusicStore } from '../store/usePMusicStore.ts';
 import { TrackArtwork } from './TrackArtwork.tsx';
+import { triggerHaptic } from '../utils/haptics.ts';
 
 export const AddToPlaylistModal: React.FC = () => {
   const track = usePMusicStore((s) => s.addToPlaylistModalTrack);
@@ -32,6 +33,7 @@ export const AddToPlaylistModal: React.FC = () => {
   if (!track) return null;
 
   const handleTogglePlaylist = async (playlistId: string, alreadyIn: boolean) => {
+    triggerHaptic('light');
     if (alreadyIn) {
       await removeTrackFromPlaylist(playlistId, track.id);
     } else {
@@ -43,6 +45,7 @@ export const AddToPlaylistModal: React.FC = () => {
     e.preventDefault();
     const clean = newName.trim();
     if (!clean) return;
+    triggerHaptic('confirm');
     const created = await createPlaylist(clean);
     await addTrackToPlaylist(created.id, track);
     setNewName('');
@@ -62,7 +65,7 @@ export const AddToPlaylistModal: React.FC = () => {
         aria-modal="true"
         aria-label={`Añadir ${track.title} a playlist`}
         data-testid="add-to-playlist-modal"
-        className="pm-glass-regular pm-modal-pop relative z-10 flex max-h-[84dvh] w-full max-w-md flex-col overflow-hidden rounded-t-[26px] border border-white/15 shadow-2xl sm:rounded-[24px]"
+        className="pm-glass-regular pm-modal-pop relative z-10 flex max-h-[82dvh] w-full max-w-md flex-col overflow-hidden rounded-t-[26px] border border-white/15 shadow-2xl sm:rounded-[24px]"
       >
         {/* Drag indicator bar on mobile */}
         <div className="flex justify-center pt-2.5 sm:hidden">
@@ -228,7 +231,10 @@ export const AddToPlaylistModal: React.FC = () => {
         </div>
 
         {/* Done Button */}
-        <div className="border-t pm-border px-5 py-3">
+        <div
+          data-testid="add-to-playlist-footer"
+          className="border-t pm-border px-5 pt-3.5 pb-[calc(1.85rem+var(--pm-safe-bottom,env(safe-area-inset-bottom)))] sm:pb-5"
+        >
           <button
             type="button"
             onClick={() => setTrack(null)}

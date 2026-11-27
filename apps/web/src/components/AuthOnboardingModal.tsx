@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Check, Loader2, Mail, User, X } from 'lucide-react';
+import { Check, Loader2, Mail, Play, User, X } from 'lucide-react';
 import { usePMusicStore } from '../store/usePMusicStore.ts';
 import { PMusicLogo } from './PMusicLogo.tsx';
+import { AirPodLogoIntro } from './AirPodLogoIntro.tsx';
+import { triggerHaptic } from '../utils/haptics.ts';
 
 function GoogleLogo() {
   return (
@@ -36,6 +38,8 @@ AuthOnboardingModal.displayName = 'AuthOnboardingModal';
 const AuthOnboardingModalInner: React.FC = () => {
   const {
     authOnboardingOpen,
+    authIntroPending,
+    reducedMotionPref,
     needsProfileSetup,
     authState: syncAuth,
     userProfile,
@@ -47,6 +51,7 @@ const AuthOnboardingModalInner: React.FC = () => {
     saveUserProfile,
     checkUsernameAvailable,
     setAuthOnboardingOpen,
+    setAuthIntroPending,
   } = usePMusicStore();
 
   const [step, setStep] = useState<'choice' | 'email' | 'google_waiting'>('choice');
@@ -111,6 +116,9 @@ const AuthOnboardingModalInner: React.FC = () => {
   }, [authOnboardingOpen, needsProfileSetup, setAuthOnboardingOpen]);
 
   if (!authOnboardingOpen && !needsProfileSetup) return null;
+
+  const show3dAirPodIntro =
+    authIntroPending && !reducedMotionPref && !needsProfileSetup && step === 'choice';
 
   const handleGoogle = async () => {
     setBusy(true);
@@ -191,8 +199,12 @@ const AuthOnboardingModalInner: React.FC = () => {
         }}
       />
 
+      {show3dAirPodIntro && (
+        <AirPodLogoIntro onComplete={() => setAuthIntroPending(false)} />
+      )}
+
       {/* Clean Close button positioned safely below 48px Windows titlebar */}
-      {!needsProfileSetup && (
+      {!needsProfileSetup && !show3dAirPodIntro && (
         <button
           type="button"
           onClick={() => setAuthOnboardingOpen(false)}
@@ -203,7 +215,7 @@ const AuthOnboardingModalInner: React.FC = () => {
         </button>
       )}
 
-      <div className="relative z-10 w-full max-w-[360px]">
+      <div className={`relative z-10 w-full max-w-[360px] ${show3dAirPodIntro ? 'pointer-events-none opacity-0' : 'opacity-100'}`}>
         {needsProfileSetup ? (
           <form onSubmit={handleProfileSubmit} className="pm-ag-enter-1 space-y-6">
             <div className="flex flex-col items-center gap-3">
@@ -387,6 +399,20 @@ const AuthOnboardingModalInner: React.FC = () => {
               <User className="h-3.5 w-3.5" />
               Invitado
             </button>
+
+            {!reducedMotionPref && (
+              <button
+                type="button"
+                onClick={() => {
+                  triggerHaptic('light');
+                  setAuthIntroPending(true);
+                }}
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-medium text-white/30 transition hover:text-white/75"
+              >
+                <Play className="h-2.5 w-2.5 fill-current" />
+                Ver intro 3D
+              </button>
+            )}
           </div>
         ) : (
           <form onSubmit={handleEmailSubmit} className="pm-ag-enter-1 space-y-5">

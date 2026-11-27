@@ -217,8 +217,8 @@ export const TrackListRow: React.FC<{
 
   return (
     <SwipeableTrackRow
-      onSwipeLeft={() => addToQueue(track)}
-      onSwipeRight={() => setAddToPlaylistModalTrack(track)}
+      onSwipeRight={() => addToQueue(track)}
+      onSwipeLeft={() => setAddToPlaylistModalTrack(track)}
     >
       <div
       role="row"
@@ -266,7 +266,14 @@ export const TrackListRow: React.FC<{
         isCurrent ? 'pm-active-row' : ''
       } ${isUnavailableOffline ? 'opacity-45' : ''} ${dragOver ? 'border-t-2 border-[var(--pm-accent-primary)] pm-active-row' : ''}`}
     >
-      <div className="flex min-w-0 flex-1 items-center gap-3">
+      <div
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-3"
+        onClick={(e) => {
+          const el = e.target as HTMLElement | null;
+          if (el?.closest('button, a, [role="link"]')) return;
+          handleRowPlay();
+        }}
+      >
         <span
           aria-hidden="true"
           className="hidden cursor-grab pm-text-tertiary opacity-0 transition-opacity group-hover:opacity-100 md:inline-flex"
@@ -340,6 +347,7 @@ export const TrackListRow: React.FC<{
           <div className="mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden text-[12.5px] leading-[1.2] pm-text-secondary">
             <ArtistLinks
               artists={track.artists}
+              disableOnMobile
               className="min-w-0 shrink-0 max-w-[75%] !py-0 !leading-[1.2]"
               linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
             />
@@ -2967,6 +2975,7 @@ export const DetailViewPanel: React.FC = React.memo(() => {
                   <div className="truncate text-xs pm-text-tertiary">
                     <ArtistLinks
                       artists={t.artists}
+                      disableOnMobile
                       linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
                     />
                   </div>
@@ -3410,6 +3419,7 @@ export const HomeScreen: React.FC = React.memo(() => {
                     >
                       <ArtistLinks
                         artists={t.artists}
+                        disableOnMobile
                         className="!flex-nowrap whitespace-nowrap"
                         linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
                       />
