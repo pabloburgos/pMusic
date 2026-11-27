@@ -1490,6 +1490,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
   const isFullBleedHeroView = Boolean(
     activeDetailView &&
       (activeDetailView.kind === 'artist' ||
+        activeDetailView.kind === 'album' ||
         activeDetailView.kind === 'playlist' ||
         (activeDetailView.kind === 'local_playlist' &&
           (playlistAppearances[activeDetailView.playlistId]?.bannerEnabled ??
@@ -1710,7 +1711,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       )}
 
       {/* Solid Top Status-Bar Shield when browsing app on mobile so scrolled content never collides behind OS clock */}
-      {isMobileViewport && !nowPlayingOpen && (
+      {isMobileViewport && !nowPlayingOpen && !isFullBleedHeroView && (
         <div
           data-testid="mobile-status-bar-shield"
           aria-hidden="true"
@@ -1728,7 +1729,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
           data-testid="mobile-top-header"
           className={`${nowPlayingOpen ? 'pm-behind-nowplaying ' : ''}${
             isFullBleedHeroView
-              ? 'fixed inset-x-0 top-[var(--pm-safe-top,env(safe-area-inset-top,0px))] z-40 flex items-center justify-between gap-3 bg-gradient-to-b from-black/65 via-black/25 to-transparent px-4 pt-2.5 pb-3'
+              ? 'fixed inset-x-0 top-0 z-40 flex items-center justify-between gap-3 bg-gradient-to-b from-black/35 via-black/15 to-transparent px-4 pt-[calc(var(--pm-safe-top,env(safe-area-inset-top,0px))+0.6rem)] pb-3'
               : 'pm-mobile-glass-header sticky top-0 z-40 flex shrink-0 items-center justify-between gap-3 px-4 pt-[max(0.8rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3'
           }`}
         >

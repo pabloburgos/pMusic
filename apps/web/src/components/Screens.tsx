@@ -130,10 +130,14 @@ export const PlaylistSortControl: React.FC<{
   mode: PlaylistSortMode;
   onChange: (next: PlaylistSortMode) => void;
 }> = ({ mode, onChange }) => {
+  const showToast = usePMusicStore((s) => s.showToast);
   const [menuOpen, setMenuOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const activeOpt =
-    PLAYLIST_SORT_OPTIONS.find((opt) => opt.id === mode) ?? PLAYLIST_SORT_OPTIONS[0]!;
+  const activeIdx = Math.max(
+    0,
+    PLAYLIST_SORT_OPTIONS.findIndex((opt) => opt.id === mode)
+  );
+  const activeOpt = PLAYLIST_SORT_OPTIONS[activeIdx] ?? PLAYLIST_SORT_OPTIONS[0]!;
   const ActiveIcon = activeOpt.icon;
 
   useEffect(() => {
@@ -154,8 +158,14 @@ export const PlaylistSortControl: React.FC<{
     };
   }, [menuOpen]);
 
+  const handleMobileCycle = () => {
+    const nextOpt = PLAYLIST_SORT_OPTIONS[(activeIdx + 1) % PLAYLIST_SORT_OPTIONS.length]!;
+    onChange(nextOpt.id);
+    showToast(`Orden: ${nextOpt.label}`);
+  };
+
   return (
-    <div ref={containerRef} className="relative w-full sm:w-auto">
+    <div ref={containerRef} className="relative shrink-0">
       {/* Desktop custom dark glass dropdown */}
       <div className="hidden sm:block">
         <button
@@ -219,38 +229,21 @@ export const PlaylistSortControl: React.FC<{
         )}
       </div>
 
-      {/* Mobile interactive one-tap icon switcher */}
-      <div
-        role="radiogroup"
-        aria-label="Ordenar vista de playlist"
-        data-testid="playlist-sort-mobile-switcher"
-        className="flex w-full items-center justify-between gap-1 rounded-full border border-white/12 bg-white/[0.06] p-1 sm:hidden"
+      {/* Mobile compact single circular icon button with bottom toast confirmation */}
+      <button
+        type="button"
+        data-testid="playlist-sort-mobile-btn"
+        aria-label={`Ordenar vista de playlist: ${activeOpt.label}`}
+        title={activeOpt.label}
+        onClick={handleMobileCycle}
+        className={`pm-pressable inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition-colors sm:hidden ${
+          mode !== 'custom'
+            ? 'border-white/30 bg-white text-black shadow-sm'
+            : 'border-white/12 bg-white/[0.06] text-white/90 hover:bg-white/[0.12]'
+        }`}
       >
-        {PLAYLIST_SORT_OPTIONS.map((opt) => {
-          const Icon = opt.icon;
-          const active = opt.id === mode;
-          return (
-            <button
-              key={opt.id}
-              type="button"
-              role="radio"
-              aria-checked={active}
-              aria-label={opt.label}
-              title={opt.label}
-              data-testid={`playlist-sort-mobile-${opt.id}`}
-              onClick={() => onChange(opt.id)}
-              className={`pm-pressable inline-flex h-8 items-center justify-center gap-1.5 rounded-full text-[11px] font-bold transition-all ${
-                active
-                  ? 'flex-[1.6] bg-white px-3 text-black shadow-sm'
-                  : 'flex-1 text-white/75 hover:bg-white/[0.08] hover:text-white'
-              }`}
-            >
-              <Icon className="h-3.5 w-3.5 shrink-0" />
-              {active && <span className="truncate">{opt.shortLabel}</span>}
-            </button>
-          );
-        })}
-      </div>
+        <ActiveIcon className="h-4 w-4 shrink-0" />
+      </button>
     </div>
   );
 };
@@ -2850,8 +2843,8 @@ export const DetailViewPanel: React.FC = React.memo(() => {
           return (
             <>
               {sharedPl.tracks.length > 0 && (
-                <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="relative w-full flex-1 sm:max-w-[300px]">
+                <div className="mb-2 flex items-center gap-2 sm:justify-between">
+                  <div className="relative min-w-0 flex-1 sm:max-w-[300px]">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 pm-text-tertiary" />
                     <input
                       type="text"
@@ -3274,8 +3267,8 @@ export const DetailViewPanel: React.FC = React.memo(() => {
         return (
           <>
             {localPl.tracks.length > 0 && (
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <div className="relative w-full flex-1 sm:max-w-[300px]">
+              <div className="flex items-center gap-2 sm:justify-between">
+                <div className="relative min-w-0 flex-1 sm:max-w-[300px]">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 pm-text-tertiary" />
                   <input
                     type="text"

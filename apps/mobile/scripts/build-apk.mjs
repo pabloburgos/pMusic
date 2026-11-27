@@ -786,8 +786,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="64"
-    android:versionName="0.24.3">
+    android:versionCode="65"
+    android:versionName="0.24.4">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -1776,7 +1776,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 public class MainActivity extends Activity {
-    private static final String NATIVE_APP_VERSION = "0.24.3";
+    private static final String NATIVE_APP_VERSION = "0.24.4";
     private volatile File activeOtaDir = null;
 
     private static int compareSemverNative(String a, String b) {
@@ -5229,7 +5229,7 @@ public class PMusicReleaseCheckJobService extends JobService {
             conn.setConnectTimeout(3500);
             conn.setReadTimeout(4500);
             conn.setInstanceFollowRedirects(true);
-            conn.setRequestProperty("User-Agent", "pMusic-Android/0.24.3");
+            conn.setRequestProperty("User-Agent", "pMusic-Android/0.24.4");
             if (conn.getResponseCode() < 200 || conn.getResponseCode() >= 300) return null;
             InputStream in = conn.getInputStream();
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
@@ -5253,7 +5253,7 @@ public class PMusicReleaseCheckJobService extends JobService {
             conn.setConnectTimeout(timeoutMs);
             conn.setReadTimeout(timeoutMs);
             conn.setInstanceFollowRedirects(true);
-            conn.setRequestProperty("User-Agent", "pMusic-Android/0.24.3");
+            conn.setRequestProperty("User-Agent", "pMusic-Android/0.24.4");
             if (conn.getResponseCode() < 200 || conn.getResponseCode() >= 300) return null;
             InputStream in = conn.getInputStream();
             ByteArrayOutputStream bos = new ByteArrayOutputStream();

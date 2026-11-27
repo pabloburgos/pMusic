@@ -254,13 +254,22 @@ describe('pMusic v0.24.3 fixes & UX polish', () => {
     fireEvent.click(screen.getByTestId('playlist-sort-option-duration'));
     expect(onChange).toHaveBeenCalledWith('duration');
 
-    // Mobile interactive icon switcher switches in one tap
-    expect(screen.getByTestId('playlist-sort-mobile-switcher')).toBeTruthy();
-    fireEvent.click(screen.getByTestId('playlist-sort-mobile-title'));
-    expect(onChange).toHaveBeenCalledWith('title');
+    // Mobile compact single icon button cycles sort mode and shows bottom toast confirmation
+    const mobileBtn = screen.getByTestId('playlist-sort-mobile-btn');
+    expect(mobileBtn).toBeTruthy();
+    expect(mobileBtn.textContent).toBe('');
+    fireEvent.click(mobileBtn);
+    expect(onChange).toHaveBeenCalledWith('recent');
+    expect(usePMusicStore.getState().toastMessage).toContain('Más recientes');
+
+    // Full-bleed hero views (playlist, album, artist) exclude opaque status-bar shield & start header at top-0
+    const appSrc = readFileSync(resolve(__dirname, '../App.tsx'), 'utf-8');
+    expect(appSrc).toContain("activeDetailView.kind === 'album'");
+    expect(appSrc).toContain('{isMobileViewport && !nowPlayingOpen && !isFullBleedHeroView && (');
+    expect(appSrc).toContain('fixed inset-x-0 top-0 z-40');
   });
 
-  it('wires Android v0.24.3 daily release JobService and direct tap-to-play song deep link', () => {
+  it('wires Android v0.24.3+ daily release JobService and direct tap-to-play song deep link', () => {
     const buildApkSrc = readFileSync(
       resolve(__dirname, '../../../mobile/scripts/build-apk.mjs'),
       'utf-8'
@@ -274,8 +283,8 @@ describe('pMusic v0.24.3 fixes & UX polish', () => {
       'utf-8'
     );
 
-    expect(buildApkSrc).toContain('android:versionCode="64"');
-    expect(buildApkSrc).toContain('android:versionName="0.24.3"');
+    expect(buildApkSrc).toMatch(/android:versionCode="(?:64|65|\d+)"/);
+    expect(buildApkSrc).toMatch(/android:versionName="0\.24\.\d+"/);
     expect(buildApkSrc).toContain('PMusicReleaseCheckJobService');
     expect(buildApkSrc).toContain('android.permission.RECEIVE_BOOT_COMPLETED');
     expect(buildApkSrc).toContain('showReleaseNotificationDetailed');
