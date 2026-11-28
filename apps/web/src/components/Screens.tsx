@@ -4749,33 +4749,32 @@ export const SearchScreen: React.FC = React.memo(() => {
 
   return (
     <div className="pm-page-enter space-y-5 sm:space-y-6">
-      <div className="flex items-end justify-between gap-3">
+      <div className="flex items-center justify-between gap-2.5">
         <div className="min-w-0">
-          <h1 className="text-[28px] font-black tracking-tight pm-text-primary sm:text-[32px]">
+          <h1 className="text-[28px] font-black tracking-tight pm-text-primary sm:text-[30px]">
             Buscar
           </h1>
-          <p className="text-[12.5px] pm-text-tertiary sm:text-[13px]">
+          <p className="hidden text-[13px] pm-text-tertiary sm:block">
             Canciones, artistas, álbumes y descubrimiento para tu vibra
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            aria-label="Actualizar recomendaciones"
-            onClick={() => void refreshExploreDiscovery(true)}
-            className="pm-btn-secondary pm-pressable inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold"
-          >
-            {isLoadingExplore ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Sparkles className="h-3.5 w-3.5 text-purple-300" />
-            )}
-            <span className="hidden sm:inline">Descubrir</span>
-          </button>
+          {!hasSearchText && (
+            <button
+              type="button"
+              aria-label="Actualizar recomendaciones"
+              onClick={() => void refreshExploreDiscovery(true)}
+              className="pm-btn-secondary pm-compact-btn pm-pressable flex h-9 w-9 items-center justify-center rounded-full"
+            >
+              <RefreshCw
+                className={`h-4 w-4 ${isLoadingExplore ? 'animate-spin' : ''}`}
+              />
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setSpotlightOpen(true)}
-            className="pm-btn-secondary hidden items-center gap-2 rounded-full px-3.5 py-1.5 text-xs font-medium md:inline-flex"
+            className="pm-btn-secondary pm-compact-btn hidden h-9 items-center gap-2 rounded-full px-3.5 text-xs font-medium md:inline-flex"
           >
             <Search className="h-3.5 w-3.5" />
             <span>Búsqueda rápida</span>
@@ -4786,15 +4785,15 @@ export const SearchScreen: React.FC = React.memo(() => {
         </div>
       </div>
 
-      {/* Liquid Glass Interactive Search Field */}
+      {/* Authentic pMusic Liquid Glass Search Pill */}
       {spotlightOpen ? (
         <button
           type="button"
           onClick={() => setSpotlightOpen(true)}
-          className="pm-glass-search flex w-full items-center gap-3 rounded-full px-4 py-3 text-left text-[14px] pm-text-tertiary"
+          className="pm-glass-search flex h-11 w-full items-center gap-3 rounded-full px-4 text-left text-[14px] pm-text-tertiary"
         >
           <Search className="h-4 w-4 shrink-0 pm-text-secondary" />
-          <span>{searchQuery || '¿Qué te apetece escuchar hoy?'}</span>
+          <span className="truncate">{searchQuery || '¿Qué te apetece escuchar hoy?'}</span>
         </button>
       ) : (
         <form
@@ -4803,9 +4802,9 @@ export const SearchScreen: React.FC = React.memo(() => {
             e.preventDefault();
             void submitSearch();
           }}
-          className="pm-glass-search flex items-center gap-2.5 rounded-[18px] px-4 py-2.5 ring-1 ring-white/10 transition-all focus-within:ring-2 focus-within:ring-[var(--pm-accent-primary)]/50 sm:rounded-full sm:py-3"
+          className="pm-glass-search flex h-11 items-center gap-2.5 rounded-full px-4 ring-1 ring-white/10 transition-all focus-within:ring-2 focus-within:ring-white/30"
         >
-          <Search className="h-4.5 w-4.5 shrink-0 pm-text-secondary" />
+          <Search className="h-4 w-4 shrink-0 pm-text-secondary" />
           <input
             type="search"
             role="searchbox"
@@ -4813,7 +4812,7 @@ export const SearchScreen: React.FC = React.memo(() => {
             placeholder="¿Qué te apetece escuchar hoy?"
             value={searchQuery}
             onChange={(e) => void setSearchQuery(e.target.value)}
-            className="pm-input-frameless min-w-0 flex-1 bg-transparent text-[14.5px] font-medium pm-text-primary placeholder:pm-text-tertiary focus:outline-none"
+            className="pm-text-btn pm-input-frameless min-w-0 flex-1 bg-transparent py-1 text-[14px] font-medium pm-text-primary placeholder:pm-text-tertiary focus:outline-none"
           />
           {isSearching && (
             <Loader2 className="h-4 w-4 shrink-0 animate-spin pm-text-secondary" />
@@ -4823,35 +4822,35 @@ export const SearchScreen: React.FC = React.memo(() => {
               type="button"
               aria-label="Limpiar búsqueda"
               onClick={() => void setSearchQuery('', true)}
-              className="pm-btn-secondary pm-pressable inline-flex h-7 shrink-0 items-center gap-1 rounded-full px-2.5 text-[11px] font-bold"
+              className="pm-compact-btn pm-pressable flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/10 text-white/80 hover:bg-white/20 hover:text-white"
             >
               <X className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Limpiar</span>
             </button>
           )}
         </form>
       )}
 
-      {/* Instant Autocomplete & Recent Query Pills */}
-      {(autocompleteSuggestions.length > 0 || recentSearches.length > 0) && (
+      {/* Clean Autocomplete Chips & (when idle) Recent Query Chips */}
+      {(autocompleteSuggestions.length > 0 || (!hasSearchText && recentSearches.length > 0)) && (
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-          <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5 pm-no-scrollbar sm:flex-wrap sm:overflow-visible sm:pb-0">
-            {autocompleteSuggestions.slice(0, 6).map((sug) => (
-              <button
-                key={sug.text}
-                type="button"
-                onClick={() => void submitSearch(sug.text)}
-                className="pm-btn-secondary pm-pressable inline-flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold"
-              >
-                <Search className="h-3 w-3 opacity-60" />
-                <span>{sug.text}</span>
-              </button>
-            ))}
-          </div>
+          {autocompleteSuggestions.length > 0 && (
+            <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5 pm-no-scrollbar sm:flex-wrap sm:overflow-visible sm:pb-0">
+              {autocompleteSuggestions.slice(0, 6).map((sug) => (
+                <button
+                  key={sug.text}
+                  type="button"
+                  onClick={() => void submitSearch(sug.text)}
+                  className="pm-btn-secondary pm-compact-btn pm-pressable inline-flex h-8 shrink-0 items-center rounded-full px-3 text-xs font-medium"
+                >
+                  {sug.text}
+                </button>
+              ))}
+            </div>
+          )}
 
-          {recentSearches.length > 0 && (
-            <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-0.5 pm-no-scrollbar sm:flex-wrap sm:overflow-visible sm:pb-0">
-              <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wider pm-text-tertiary">
+          {!hasSearchText && recentSearches.length > 0 && (
+            <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5 pm-no-scrollbar sm:flex-wrap sm:overflow-visible sm:pb-0">
+              <span className="shrink-0 text-[11px] font-semibold pm-text-tertiary">
                 Recientes:
               </span>
               {recentSearches.slice(0, 3).map((rec) => (
@@ -4859,7 +4858,7 @@ export const SearchScreen: React.FC = React.memo(() => {
                   key={rec}
                   type="button"
                   onClick={() => void submitSearch(rec)}
-                  className="pm-elevated pm-pressable shrink-0 rounded-full border pm-border px-3 py-1 text-xs font-medium pm-text-secondary hover:text-[var(--pm-text-primary)]"
+                  className="pm-elevated pm-compact-btn pm-pressable inline-flex h-8 shrink-0 items-center rounded-full border pm-border px-3 text-xs font-medium pm-text-secondary hover:text-[var(--pm-text-primary)]"
                 >
                   {rec}
                 </button>
@@ -4867,7 +4866,7 @@ export const SearchScreen: React.FC = React.memo(() => {
               <button
                 type="button"
                 onClick={() => clearRecentSearches()}
-                className="shrink-0 text-xs font-medium pm-text-secondary hover:text-[var(--pm-text-primary)] hover:underline"
+                className="pm-compact-btn shrink-0 px-1.5 text-xs font-medium pm-text-tertiary hover:text-[var(--pm-text-primary)] hover:underline"
               >
                 Borrar
               </button>
@@ -4876,7 +4875,7 @@ export const SearchScreen: React.FC = React.memo(() => {
         </div>
       )}
 
-      {/* Personal Recent Searches + pMusic Interactive Discovery Hub when query is empty */}
+      {/* Personal Recent Searches + Monochrome pMusic OLED Discovery Hub when query is empty */}
       {!hasSearchText && !spotlightOpen && (
         <div className="space-y-6">
           {(recentSearchItems.length > 0 || recentSearches.length > 0) && (
@@ -4891,7 +4890,7 @@ export const SearchScreen: React.FC = React.memo(() => {
                     clearRecentSearchItems();
                     clearRecentSearches();
                   }}
-                  className="text-xs font-semibold pm-text-secondary hover:text-[var(--pm-text-primary)] hover:underline"
+                  className="pm-compact-btn text-xs font-medium pm-text-secondary hover:text-[var(--pm-text-primary)] hover:underline"
                 >
                   Borrar todo
                 </button>
@@ -4902,7 +4901,7 @@ export const SearchScreen: React.FC = React.memo(() => {
                     item.kind === 'artist' ? (
                       <div
                         key={`search-rec-${item.id}`}
-                        className="pm-surface-card pm-hover pm-pressable flex items-center gap-2.5 rounded-[14px] p-2.5"
+                        className="pm-surface-card pm-hover flex items-center gap-2.5 rounded-[12px] p-2.5"
                       >
                         <button
                           type="button"
@@ -4917,17 +4916,17 @@ export const SearchScreen: React.FC = React.memo(() => {
                               thumbnailUrl: item.thumbnailUrl,
                             });
                           }}
-                          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                          className="pm-text-btn flex min-w-0 flex-1 items-center gap-3 text-left"
                         >
                           <img
                             src={optimizeArtworkUrl(item.thumbnailUrl, 'avatar')}
                             alt={item.name}
                             loading="lazy"
                             decoding="async"
-                            className="h-11 w-11 shrink-0 rounded-full object-cover object-[50%_20%]"
+                            className="h-10 w-10 shrink-0 rounded-full object-cover object-[50%_20%]"
                           />
                           <div className="min-w-0 flex-1">
-                            <div className="truncate text-[13.5px] font-bold pm-text-primary">
+                            <div className="truncate text-[13.5px] font-semibold pm-text-primary">
                               {item.name}
                             </div>
                             <div className="truncate text-[11px] pm-text-tertiary">Artista</div>
@@ -4937,7 +4936,7 @@ export const SearchScreen: React.FC = React.memo(() => {
                           type="button"
                           aria-label={`Quitar ${item.name} de recientes`}
                           onClick={() => removeRecentSearchItem(item.id)}
-                          className="pm-text-tertiary hover:pm-text-primary flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+                          className="pm-compact-btn pm-text-tertiary hover:pm-text-primary flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
                         >
                           <X className="h-3.5 w-3.5" />
                         </button>
@@ -4945,7 +4944,7 @@ export const SearchScreen: React.FC = React.memo(() => {
                     ) : (
                       <div
                         key={`search-rec-${item.id}`}
-                        className="pm-surface-card pm-hover pm-pressable group flex items-center gap-2.5 rounded-[14px] p-2.5"
+                        className="pm-surface-card pm-hover group flex items-center gap-2.5 rounded-[12px] p-2.5"
                       >
                         <button
                           type="button"
@@ -4954,7 +4953,7 @@ export const SearchScreen: React.FC = React.memo(() => {
                             addRecentSearchTrack(item.track);
                             void playTrack(item.track, [item.track]);
                           }}
-                          className="relative h-11 w-11 shrink-0 overflow-hidden rounded-[9px]"
+                          className="pm-compact-btn relative h-10 w-10 shrink-0 overflow-hidden rounded-[8px]"
                         >
                           <TrackArtwork
                             trackId={item.track.id}
@@ -4976,9 +4975,9 @@ export const SearchScreen: React.FC = React.memo(() => {
                             addRecentSearchTrack(item.track);
                             void playTrack(item.track, [item.track]);
                           }}
-                          className="min-w-0 flex-1 text-left"
+                          className="pm-text-btn min-w-0 flex-1 text-left"
                         >
-                          <div className="truncate text-[13.5px] font-bold pm-text-primary hover:underline">
+                          <div className="truncate text-[13.5px] font-semibold pm-text-primary hover:underline">
                             {item.track.title}
                           </div>
                           <div className="truncate text-[11px] pm-text-tertiary">
@@ -4989,7 +4988,7 @@ export const SearchScreen: React.FC = React.memo(() => {
                           type="button"
                           aria-label={`Quitar ${item.track.title} de recientes`}
                           onClick={() => removeRecentSearchItem(item.id)}
-                          className="pm-text-tertiary hover:pm-text-primary flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+                          className="pm-compact-btn pm-text-tertiary hover:pm-text-primary flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
                         >
                           <X className="h-3.5 w-3.5" />
                         </button>
@@ -5001,90 +5000,71 @@ export const SearchScreen: React.FC = React.memo(() => {
             </section>
           )}
 
-          {/* pMusic Vibe Discovery Spotlight Hero */}
+          {/* Subtle Obsidian pMusic Spotlight */}
           {discoverySpotlightTrack && (
             <section
               data-surface="content"
               data-testid="search-vibe-spotlight"
-              className="pm-surface-card relative overflow-hidden rounded-[20px] border border-white/10 p-4 sm:p-5"
+              className="flex items-center gap-3.5 rounded-[16px] border border-white/[0.08] bg-white/[0.04] p-3.5"
             >
-              <div
-                aria-hidden="true"
-                className="pointer-events-none absolute -right-12 -top-12 h-44 w-44 rounded-full bg-[var(--pm-accent-primary)]/20 blur-3xl"
-              />
-              <div className="relative z-10 flex items-center gap-3.5 sm:gap-5">
-                <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-[14px] shadow-xl sm:h-20 sm:w-20">
-                  <TrackArtwork
-                    trackId={discoverySpotlightTrack.id}
-                    src={
-                      discoverySpotlightTrack.thumbnailHighUrl ??
-                      discoverySpotlightTrack.thumbnailUrl
-                    }
-                    title={discoverySpotlightTrack.title}
-                    artistName={discoverySpotlightTrack.artists[0]?.name}
-                    artistId={discoverySpotlightTrack.artists[0]?.id}
-                    alt={discoverySpotlightTrack.title}
-                    variant="card"
-                    imgClassName="h-full w-full object-cover"
-                  />
-                </div>
-                <div className="min-w-0 flex-1 space-y-1">
-                  <div className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.08] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white/85">
-                    <Sparkles className="h-3 w-3 text-purple-300" />
-                    <span>Selección pMusic · Para tu vibra</span>
-                  </div>
-                  <h2 className="truncate text-[17px] font-black tracking-tight pm-text-primary sm:text-xl">
-                    {discoverySpotlightTrack.title}
-                  </h2>
-                  <p className="truncate text-xs font-medium pm-text-secondary">
-                    {discoverySpotlightTrack.artists.map((a) => a.name).join(', ')}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  aria-label={`Reproducir ${discoverySpotlightTrack.title}`}
-                  onClick={() =>
-                    void playTrack(discoverySpotlightTrack, mergedRecommendedTracks)
+              <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-[10px] shadow-md sm:h-16 sm:w-16">
+                <TrackArtwork
+                  trackId={discoverySpotlightTrack.id}
+                  src={
+                    discoverySpotlightTrack.thumbnailHighUrl ??
+                    discoverySpotlightTrack.thumbnailUrl
                   }
-                  className="pm-btn-primary pm-pressable inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full shadow-lg"
-                >
-                  <Play className="h-4 w-4 translate-x-[1px] fill-current" />
-                </button>
+                  title={discoverySpotlightTrack.title}
+                  artistName={discoverySpotlightTrack.artists[0]?.name}
+                  artistId={discoverySpotlightTrack.artists[0]?.id}
+                  alt={discoverySpotlightTrack.title}
+                  variant="card"
+                  imgClassName="h-full w-full object-cover"
+                />
               </div>
+              <div className="min-w-0 flex-1 space-y-0.5">
+                <span className="block text-[10px] font-bold uppercase tracking-[0.14em] pm-text-tertiary">
+                  Para tu vibra
+                </span>
+                <h2 className="truncate text-[16px] font-extrabold tracking-tight pm-text-primary sm:text-[18px]">
+                  {discoverySpotlightTrack.title}
+                </h2>
+                <p className="truncate text-xs pm-text-secondary">
+                  {discoverySpotlightTrack.artists.map((a) => a.name).join(', ')}
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label={`Reproducir ${discoverySpotlightTrack.title}`}
+                onClick={() =>
+                  void playTrack(discoverySpotlightTrack, mergedRecommendedTracks)
+                }
+                className="pm-btn-primary pm-compact-btn pm-pressable flex h-11 w-11 shrink-0 items-center justify-center rounded-full shadow-lg"
+              >
+                <Play className="h-4.5 w-4.5 translate-x-[1px] fill-current" />
+              </button>
             </section>
           )}
 
-          {/* Interactive pMusic Genre & Mood Grid */}
+          {/* Minimalist pMusic Obsidian Genre Pills */}
           <section data-testid="search-genre-grid" className="space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-[18px] font-bold tracking-tight pm-text-primary">
-                Explora por estilo y vibra
-              </h2>
-            </div>
+            <h2 className="text-[18px] font-bold tracking-tight pm-text-primary">
+              Explora por estilo
+            </h2>
             <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 sm:gap-3">
               {GENRE_CARDS.map((g) => (
                 <button
                   key={g.query}
                   type="button"
                   onClick={() => void submitSearch(g.query)}
-                  className="pm-surface-card pm-card-lift pm-pressable group relative flex h-[84px] flex-col justify-between overflow-hidden rounded-[16px] border border-white/10 p-3.5 text-left transition-transform sm:h-[92px]"
-                  style={{
-                    background: `radial-gradient(115% 110% at 100% 0%, ${g.accent}42 0%, ${g.accent}14 48%, rgba(16,16,24,0.65) 100%)`,
-                  }}
+                  className="pm-hover pm-pressable flex h-[52px] items-center gap-3 rounded-[14px] border border-white/[0.08] bg-white/[0.035] px-3.5 text-left transition-colors"
                 >
                   <span
                     aria-hidden="true"
-                    className="pointer-events-none absolute -bottom-2 -right-2 flex h-12 w-12 rotate-12 items-center justify-center rounded-[12px] border border-white/15 shadow-lg transition-transform duration-300 group-hover:scale-110 group-hover:rotate-6"
-                    style={{ backgroundColor: `${g.accent}35` }}
-                  >
-                    <Music2 className="h-5 w-5 text-white/90" />
-                  </span>
-                  <span
-                    aria-hidden="true"
-                    className="h-1.5 w-6 rounded-full"
+                    className="h-5 w-1 shrink-0 rounded-full"
                     style={{ backgroundColor: g.accent }}
                   />
-                  <span className="relative z-10 pr-8 text-[14.5px] font-extrabold leading-tight tracking-tight text-white drop-shadow-sm">
+                  <span className="truncate text-[13.5px] font-bold pm-text-primary">
                     {g.label}
                   </span>
                 </button>
@@ -5121,12 +5101,9 @@ export const SearchScreen: React.FC = React.memo(() => {
 
           {mergedRecommendedTracks.length > 0 && (
             <section data-testid="search-recommended-for-you" className="space-y-2.5">
-              <div className="flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-purple-300" />
-                <h2 className="text-[18px] font-bold tracking-tight pm-text-primary">
-                  Recomendado para ti
-                </h2>
-              </div>
+              <h2 className="text-[18px] font-bold tracking-tight pm-text-primary">
+                Recomendado para ti
+              </h2>
               <div className="grid grid-cols-1 gap-x-6 md:grid-cols-2">
                 {mergedRecommendedTracks.slice(0, 8).map((track, idx) => (
                   <TrackListRow
@@ -5147,7 +5124,7 @@ export const SearchScreen: React.FC = React.memo(() => {
         <div
           role="tablist"
           aria-label="Filtros de búsqueda"
-          className="flex flex-nowrap gap-1.5 overflow-x-auto pb-1 pm-no-scrollbar sm:flex-wrap sm:overflow-visible sm:pb-0"
+          className="flex flex-nowrap gap-1.5 overflow-x-auto pb-0.5 pm-no-scrollbar sm:flex-wrap sm:overflow-visible sm:pb-0"
         >
           {scopes.map((scope) => {
             const active = searchScope === scope;
@@ -5159,15 +5136,13 @@ export const SearchScreen: React.FC = React.memo(() => {
                 role="tab"
                 aria-selected={active}
                 onClick={() => setSearchScope(scope)}
-                className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold transition-colors sm:px-4 ${
+                className={`pm-compact-btn inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-xs font-bold transition-colors ${
                   active ? 'pm-btn-primary' : 'pm-btn-secondary'
                 }`}
               >
                 <span>{scope}</span>
                 {count > 0 && scope !== 'Todo' && (
-                  <span className={`tabular-nums text-[10px] ${active ? 'opacity-80' : 'opacity-65'}`}>
-                    {count}
-                  </span>
+                  <span className="tabular-nums text-[10px] opacity-65">{count}</span>
                 )}
               </button>
             );
@@ -5190,127 +5165,140 @@ export const SearchScreen: React.FC = React.memo(() => {
         </div>
       )}
 
-      {/* Spotify Desktop 2-Column Top Result + Top 4 Songs */}
+      {/* Compact Horizontal pMusic "Mejor resultado" + Top 4 Songs */}
       {searchScope === 'Todo' && bestResult ? (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
           <section className="space-y-2.5 lg:col-span-5">
             <h2 className="text-[18px] font-bold pm-text-primary">
               Mejor resultado
             </h2>
-            <div
-              data-testid="best-result-card"
-              data-surface="content"
-              className="pm-surface-card group relative flex flex-col justify-between gap-4 overflow-hidden rounded-[18px] border border-white/10 p-5"
-            >
-              {bestResult.kind === 'artist' && (
-                <>
-                  <div className="flex items-center gap-4">
-                    <img
-                      src={optimizeArtworkUrl(bestResult.item.thumbnailUrl, 'avatar')}
-                      alt={bestResult.item.name}
-                      className="h-24 w-24 shrink-0 rounded-full object-cover object-[50%_20%] shadow-xl"
+            {bestResult.kind === 'artist' ? (
+              <div
+                data-testid="best-result-card"
+                data-surface="content"
+                role="button"
+                tabIndex={0}
+                onClick={() => {
+                  addRecentSearchArtist({
+                    id: bestResult.item.id,
+                    name: bestResult.item.name,
+                    thumbnailUrl: bestResult.item.thumbnailUrl,
+                  });
+                  void openArtistDetail(bestResult.item.id, {
+                    name: bestResult.item.name,
+                    thumbnailUrl: bestResult.item.thumbnailUrl,
+                  });
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    void openArtistDetail(bestResult.item.id, {
+                      name: bestResult.item.name,
+                      thumbnailUrl: bestResult.item.thumbnailUrl,
+                    });
+                  }
+                }}
+                className="pm-text-btn pm-hover group flex cursor-pointer items-center gap-3.5 rounded-[16px] border border-white/[0.08] bg-white/[0.04] p-3.5 sm:p-4"
+              >
+                <img
+                  src={optimizeArtworkUrl(bestResult.item.thumbnailUrl, 'avatar')}
+                  alt={bestResult.item.name}
+                  className="h-16 w-16 shrink-0 rounded-full object-cover object-[50%_20%] shadow-xl sm:h-20 sm:w-20"
+                />
+                <div className="min-w-0 flex-1">
+                  <span className="block text-[10px] font-bold uppercase tracking-[0.12em] pm-text-tertiary">
+                    Artista
+                  </span>
+                  <h3 className="mt-0.5 truncate text-[18px] font-extrabold leading-tight pm-text-primary sm:text-[21px]">
+                    {bestResult.item.name}
+                  </h3>
+                  <p className="mt-0.5 truncate text-xs pm-text-secondary">
+                    {bestResult.item.subscribersText ?? 'Perfil de artista'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  aria-label={`Reproducir ${bestResult.item.name}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const song =
+                      searchResults.songs.find((s) =>
+                        s.artists.some((a) => a.name === bestResult.item.name)
+                      ) ?? searchResults.songs[0];
+                    if (song) void playTrack(song, searchResults.songs);
+                  }}
+                  className="pm-btn-primary pm-compact-btn pm-pressable flex h-11 w-11 shrink-0 items-center justify-center rounded-full shadow-lg"
+                >
+                  <Play className="h-4.5 w-4.5 translate-x-[1px] fill-current" />
+                </button>
+              </div>
+            ) : (
+              bestResult.kind === 'song' && (
+                <div
+                  data-testid="best-result-card"
+                  data-surface="content"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => {
+                    addRecentSearchTrack(bestResult.item);
+                    void playTrack(bestResult.item, [bestResult.item]);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      addRecentSearchTrack(bestResult.item);
+                      void playTrack(bestResult.item, [bestResult.item]);
+                    }
+                  }}
+                  className="pm-text-btn pm-hover group flex cursor-pointer items-center gap-3.5 rounded-[16px] border border-white/[0.08] bg-white/[0.04] p-3.5 sm:p-4"
+                >
+                  <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-[12px] shadow-xl sm:h-20 sm:w-20">
+                    <TrackArtwork
+                      trackId={bestResult.item.id}
+                      src={
+                        bestResult.item.thumbnailHighUrl ??
+                        bestResult.item.thumbnailUrl
+                      }
+                      title={bestResult.item.title}
+                      artistName={bestResult.item.artists[0]?.name}
+                      artistId={bestResult.item.artists[0]?.id}
+                      alt={bestResult.item.title}
+                      variant="card"
+                      imgClassName="h-full w-full object-cover"
                     />
-                    <div className="min-w-0">
-                      <span className="pm-elevated inline-block rounded-md border pm-border px-2.5 py-0.5 text-[11px] font-semibold pm-text-secondary">
-                        ARTISTA
-                      </span>
-                      <h3 className="mt-1.5 truncate text-2xl font-bold pm-text-primary">
-                        {bestResult.item.name}
-                      </h3>
-                      <p className="text-xs pm-text-tertiary">
-                        {bestResult.item.subscribersText ?? 'Artista'}
-                      </p>
-                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      aria-label={`Reproducir ${bestResult.item.name}`}
-                      onClick={() => {
-                        const song =
-                          searchResults.songs.find((s) =>
-                            s.artists.some(
-                              (a) => a.name === bestResult.item.name
-                            )
-                          ) ?? searchResults.songs[0];
-                        if (song) void playTrack(song, [song]);
-                      }}
-                      className="pm-btn-primary pm-pressable inline-flex items-center gap-1.5 rounded-full px-5 py-2 text-xs font-bold"
+                  <div className="min-w-0 flex-1">
+                    <span className="block text-[10px] font-bold uppercase tracking-[0.12em] pm-text-tertiary">
+                      Canción
+                    </span>
+                    <h3 className="mt-0.5 truncate text-[18px] font-extrabold leading-tight pm-text-primary sm:text-[21px]">
+                      {bestResult.item.title}
+                    </h3>
+                    <div
+                      className="mt-0.5 truncate text-xs pm-text-secondary"
+                      onClick={(e) => e.stopPropagation()}
                     >
-                      <Play className="h-4 w-4 fill-current" />
-                      <span>Reproducir</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        addRecentSearchArtist({
-                          id: bestResult.item.id,
-                          name: bestResult.item.name,
-                          thumbnailUrl: bestResult.item.thumbnailUrl,
-                        });
-                        void openArtistDetail(bestResult.item.id, {
-                          name: bestResult.item.name,
-                          thumbnailUrl: bestResult.item.thumbnailUrl,
-                        });
-                      }}
-                      className="pm-btn-secondary pm-pressable rounded-full px-4 py-2 text-xs font-semibold"
-                    >
-                      Ver perfil
-                    </button>
-                  </div>
-                </>
-              )}
-
-              {bestResult.kind === 'song' && (
-                <>
-                  <div className="flex items-center gap-4">
-                    <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-[12px] shadow-xl">
-                      <TrackArtwork
-                        trackId={bestResult.item.id}
-                        src={
-                          bestResult.item.thumbnailHighUrl ??
-                          bestResult.item.thumbnailUrl
-                        }
-                        title={bestResult.item.title}
-                        artistName={bestResult.item.artists[0]?.name}
-                        artistId={bestResult.item.artists[0]?.id}
-                        alt={bestResult.item.title}
-                        variant="card"
-                        imgClassName="h-full w-full object-cover"
+                      <ArtistLinks
+                        artists={bestResult.item.artists}
+                        linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
                       />
                     </div>
-                    <div className="min-w-0">
-                      <span className="pm-elevated inline-block rounded-md border pm-border px-2.5 py-0.5 text-[11px] font-semibold pm-text-secondary">
-                        CANCIÓN
-                      </span>
-                      <h3 className="mt-1.5 truncate text-2xl font-bold pm-text-primary">
-                        {bestResult.item.title}
-                      </h3>
-                      <div className="truncate text-xs pm-text-secondary">
-                        <ArtistLinks
-                          artists={bestResult.item.artists}
-                          linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
-                        />
-                      </div>
-                    </div>
                   </div>
-                  <div>
-                    <button
-                      type="button"
-                      aria-label={`Reproducir ${bestResult.item.title}`}
-                      onClick={() => {
-                        addRecentSearchTrack(bestResult.item);
-                        void playTrack(bestResult.item, [bestResult.item]);
-                      }}
-                      className="pm-btn-primary pm-pressable inline-flex items-center gap-1.5 rounded-full px-5 py-2 text-xs font-bold"
-                    >
-                      <Play className="h-4 w-4 fill-current" />
-                      <span>Reproducir</span>
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
+                  <button
+                    type="button"
+                    aria-label={`Reproducir ${bestResult.item.title}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      addRecentSearchTrack(bestResult.item);
+                      void playTrack(bestResult.item, [bestResult.item]);
+                    }}
+                    className="pm-btn-primary pm-compact-btn pm-pressable flex h-11 w-11 shrink-0 items-center justify-center rounded-full shadow-lg"
+                  >
+                    <Play className="h-4.5 w-4.5 translate-x-[1px] fill-current" />
+                  </button>
+                </div>
+              )
+            )}
           </section>
 
           <section className="space-y-2 lg:col-span-7">
@@ -5337,21 +5325,21 @@ export const SearchScreen: React.FC = React.memo(() => {
             <div
               data-testid="best-result-card"
               data-surface="content"
-              className="pm-surface-card flex flex-wrap items-center justify-between gap-4 rounded-[18px] p-5"
+              className="flex items-center justify-between gap-3.5 rounded-[16px] border border-white/[0.08] bg-white/[0.04] p-3.5 sm:p-4"
             >
               {bestResult.kind === 'artist' ? (
                 <>
-                  <div className="flex items-center gap-4">
+                  <div className="flex min-w-0 items-center gap-3.5">
                     <img
                       src={optimizeArtworkUrl(bestResult.item.thumbnailUrl, 'avatar')}
                       alt={bestResult.item.name}
-                      className="h-20 w-20 rounded-full object-cover object-[50%_20%]"
+                      className="h-16 w-16 shrink-0 rounded-full object-cover object-[50%_20%] sm:h-20 sm:w-20"
                     />
-                    <div>
-                      <span className="pm-elevated inline-block rounded-md border pm-border px-2.5 py-0.5 text-[11px] font-semibold pm-text-secondary">
-                        ARTISTA
+                    <div className="min-w-0">
+                      <span className="block text-[10px] font-bold uppercase tracking-[0.12em] pm-text-tertiary">
+                        Artista
                       </span>
-                      <h3 className="mt-1 text-xl font-bold pm-text-primary">
+                      <h3 className="mt-0.5 truncate text-[18px] font-extrabold pm-text-primary sm:text-[21px]">
                         {bestResult.item.name}
                       </h3>
                     </div>
@@ -5364,7 +5352,7 @@ export const SearchScreen: React.FC = React.memo(() => {
                         thumbnailUrl: bestResult.item.thumbnailUrl,
                       })
                     }
-                    className="pm-btn-primary pm-pressable rounded-full px-5 py-2 text-xs font-bold"
+                    className="pm-btn-primary pm-compact-btn pm-pressable shrink-0 rounded-full px-4 py-2 text-xs font-bold"
                   >
                     Ver perfil
                   </button>
@@ -5372,8 +5360,8 @@ export const SearchScreen: React.FC = React.memo(() => {
               ) : (
                 bestResult.kind === 'song' && (
                   <>
-                    <div className="flex items-center gap-4">
-                      <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-[10px]">
+                    <div className="flex min-w-0 items-center gap-3.5">
+                      <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-[12px] sm:h-20 sm:w-20">
                         <TrackArtwork
                           trackId={bestResult.item.id}
                           src={bestResult.item.thumbnailHighUrl ?? bestResult.item.thumbnailUrl}
@@ -5385,11 +5373,11 @@ export const SearchScreen: React.FC = React.memo(() => {
                           imgClassName="h-full w-full object-cover"
                         />
                       </div>
-                      <div>
-                        <span className="pm-elevated inline-block rounded-md border pm-border px-2.5 py-0.5 text-[11px] font-semibold pm-text-secondary">
-                          CANCIÓN
+                      <div className="min-w-0">
+                        <span className="block text-[10px] font-bold uppercase tracking-[0.12em] pm-text-tertiary">
+                          Canción
                         </span>
-                        <h3 className="mt-1 text-xl font-bold pm-text-primary">
+                        <h3 className="mt-0.5 truncate text-[18px] font-extrabold pm-text-primary sm:text-[21px]">
                           {bestResult.item.title}
                         </h3>
                         <div className="truncate text-xs pm-text-secondary">
@@ -5402,12 +5390,13 @@ export const SearchScreen: React.FC = React.memo(() => {
                     </div>
                     <button
                       type="button"
+                      aria-label={`Reproducir ${bestResult.item.title}`}
                       onClick={() =>
                         void playTrack(bestResult.item, [bestResult.item])
                       }
-                      className="pm-btn-primary pm-pressable rounded-full px-5 py-2 text-xs font-bold"
+                      className="pm-btn-primary pm-compact-btn pm-pressable flex h-11 w-11 shrink-0 items-center justify-center rounded-full shadow-lg"
                     >
-                      Reproducir
+                      <Play className="h-4.5 w-4.5 translate-x-[1px] fill-current" />
                     </button>
                   </>
                 )
@@ -5764,7 +5753,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
             type="button"
             aria-label="Buscar en biblioteca"
             onClick={() => setShowMobileFilter((v) => !v)}
-            className={`pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full sm:hidden ${
+            className={`pm-compact-btn pm-pressable flex h-9 w-9 items-center justify-center rounded-full sm:hidden ${
               showMobileFilter || libraryFilterQuery ? 'pm-btn-primary' : 'pm-btn-secondary'
             }`}
           >
@@ -5774,7 +5763,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
             type="button"
             aria-label="Nueva playlist"
             onClick={() => setShowCreateBar((v) => !v)}
-            className={`pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full sm:hidden ${
+            className={`pm-compact-btn pm-pressable flex h-9 w-9 items-center justify-center rounded-full sm:hidden ${
               showCreateBar ? 'pm-btn-primary' : 'pm-btn-secondary'
             }`}
           >
@@ -5788,18 +5777,18 @@ export const LibraryScreen: React.FC = React.memo(() => {
               setActiveTab('Social');
               setSocialSubTab('top');
             }}
-            className="pm-btn-secondary pm-pressable inline-flex h-9 items-center gap-1.5 rounded-full px-2.5 text-xs font-bold sm:h-auto sm:px-4 sm:py-2"
+            className="pm-btn-secondary pm-compact-btn pm-pressable inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-xs font-bold sm:px-4"
           >
-            <Sparkles className="h-3.5 w-3.5" />
+            <Sparkles className="h-3.5 w-3.5 shrink-0" />
             <span className="hidden min-[380px]:inline">Mi Top</span>
           </button>
           <button
             type="button"
             aria-label="Importar playlist"
             onClick={() => setImportModalOpen(true)}
-            className="pm-btn-primary pm-pressable inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-xs font-bold sm:h-auto sm:px-5 sm:py-2"
+            className="pm-btn-primary pm-compact-btn pm-pressable inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-xs font-bold sm:px-5"
           >
-            <ListMusic className="h-4 w-4" />
+            <ListMusic className="h-4 w-4 shrink-0" />
             <span className="sm:hidden">Importar</span>
             <span className="hidden sm:inline">Importar playlist</span>
           </button>
@@ -5824,17 +5813,13 @@ export const LibraryScreen: React.FC = React.memo(() => {
                   role="tab"
                   aria-selected={active}
                   onClick={() => setLibraryCategory(cat)}
-                  className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold transition-colors sm:px-4 ${
+                  className={`pm-compact-btn inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-xs font-bold transition-colors sm:px-4 ${
                     active ? 'pm-btn-primary' : 'pm-btn-secondary'
                   }`}
                 >
                   <span>{cat}</span>
                   {badgeCount > 0 && (
-                    <span
-                      className={`tabular-nums rounded-full px-1.5 py-0.2 text-[10px] ${
-                        active ? 'bg-black/20' : 'bg-emerald-500/20 text-emerald-400'
-                      }`}
-                    >
+                    <span className="tabular-nums text-[10px] opacity-65">
                       {badgeCount}
                     </span>
                   )}
@@ -5844,7 +5829,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
           </div>
 
           <div
-            className={`pm-input w-full items-center gap-2 rounded-full px-3.5 py-1.5 sm:flex sm:w-56 ${
+            className={`pm-input h-9 w-full items-center gap-2 rounded-full px-3.5 sm:flex sm:w-56 ${
               showMobileFilter || libraryFilterQuery ? 'flex' : 'hidden'
             }`}
           >
@@ -5862,7 +5847,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
                 type="button"
                 aria-label="Limpiar filtro"
                 onClick={() => setLibraryFilterQuery('')}
-                className="pm-compact-btn pm-text-tertiary hover:text-[var(--pm-text-primary)]"
+                className="pm-compact-btn flex h-6 w-6 shrink-0 items-center justify-center rounded-full pm-text-tertiary hover:text-[var(--pm-text-primary)]"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -5880,7 +5865,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
             data-testid="library-sort-btn"
             aria-label={`Ordenar por ${sortLabel}`}
             onClick={cycleSortBy}
-            className="pm-hover pm-pressable inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold pm-text-secondary hover:text-[var(--pm-text-primary)]"
+            className="pm-hover pm-compact-btn pm-pressable inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs font-semibold pm-text-secondary hover:text-[var(--pm-text-primary)]"
           >
             <ArrowUpDown className="h-3.5 w-3.5" />
             <span>{sortLabel}</span>
@@ -5891,7 +5876,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
             data-testid="library-view-toggle"
             aria-label={viewMode === 'list' ? 'Cambiar a vista en cuadrícula' : 'Cambiar a vista en lista'}
             onClick={toggleViewMode}
-            className="pm-hover pm-pressable inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold pm-text-secondary hover:text-[var(--pm-text-primary)]"
+            className="pm-hover pm-compact-btn pm-pressable inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs font-semibold pm-text-secondary hover:text-[var(--pm-text-primary)]"
           >
             {viewMode === 'list' ? (
               <LayoutGrid className="h-3.5 w-3.5" />
@@ -5917,7 +5902,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
             placeholder="Nueva playlist (ej. Sesión Canarias)..."
             value={newPlaylistName}
             onChange={(e) => setNewPlaylistName(e.target.value)}
-            className="pm-input min-w-0 flex-1 rounded-full px-4 py-2 text-xs"
+            className="pm-input pm-text-btn min-w-0 flex-1 rounded-full px-4 py-2 text-xs"
           />
           <button
             type="button"
@@ -5928,7 +5913,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
               setShowCreateBar(false);
               showToast(`Playlist «${created.name}» creada`);
             }}
-            className="pm-btn-primary pm-pressable inline-flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-xs font-bold"
+            className="pm-btn-primary pm-compact-btn pm-pressable inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full px-4 text-xs font-bold"
           >
             <Plus className="h-4 w-4" />
             <span>Crear playlist</span>
@@ -5936,11 +5921,11 @@ export const LibraryScreen: React.FC = React.memo(() => {
         </div>
       )}
 
-      {/* Pinned Spotify / Tidal Quick Smart Tiles in Todo */}
+      {/* Pinned pMusic Glass Quick Smart Tiles in Todo */}
       {libraryCategory === 'Todo' &&
         !filterNorm &&
         (likedTracks.length > 0 || offlineEntries.length > 0) && (
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-2.5">
             {likedTracks.length > 0 && (
               <div
                 data-surface="content"
@@ -5953,14 +5938,14 @@ export const LibraryScreen: React.FC = React.memo(() => {
                     setLibraryCategory('Me gusta');
                   }
                 }}
-                className="pm-surface-card pm-hover pm-pressable flex cursor-pointer items-center justify-between gap-3 rounded-[16px] p-2.5 sm:p-3"
+                className="pm-quick-tile pm-card-lift pm-pressable flex cursor-pointer items-center justify-between gap-3 rounded-[12px] p-2.5 pr-3"
               >
                 <div className="flex min-w-0 items-center gap-3">
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[11px] bg-gradient-to-br from-rose-500/85 to-purple-600/85 text-white shadow-md">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[10px] bg-rose-500/15 text-rose-400">
                     <Heart className="h-5 w-5 fill-current" />
                   </div>
                   <div className="min-w-0">
-                    <div className="truncate text-[14.5px] font-bold pm-text-primary">
+                    <div className="truncate text-[14px] font-bold pm-text-primary">
                       Canciones que te gustan
                     </div>
                     <div className="tabular-nums truncate text-xs pm-text-tertiary">
@@ -5976,9 +5961,9 @@ export const LibraryScreen: React.FC = React.memo(() => {
                     const list = likedTracks.map((l) => l.track);
                     if (list.length > 0) void playCollection(list, { isPlaylist: true });
                   }}
-                  className="pm-btn-primary pm-pressable inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full shadow-md"
+                  className="pm-btn-primary pm-compact-btn pm-pressable flex h-8 w-8 shrink-0 items-center justify-center rounded-full shadow-md"
                 >
-                  <Play className="h-4 w-4 translate-x-[1px] fill-current" />
+                  <Play className="h-3.5 w-3.5 translate-x-[1px] fill-current" />
                 </button>
               </div>
             )}
@@ -5995,11 +5980,11 @@ export const LibraryScreen: React.FC = React.memo(() => {
                     setLibraryCategory('Descargas');
                   }
                 }}
-                className="pm-surface-card pm-hover pm-pressable flex cursor-pointer items-center justify-between gap-3 rounded-[16px] p-2.5 sm:p-3"
+                className="pm-quick-tile pm-card-lift pm-pressable flex cursor-pointer items-center justify-between gap-3 rounded-[12px] p-2.5 pr-3"
               >
                 <div className="flex min-w-0 items-center gap-3">
                   {playableOfflineTracks.length > 0 ? (
-                    <div className="grid h-12 w-12 shrink-0 grid-cols-2 grid-rows-2 gap-[1px] overflow-hidden rounded-[11px] bg-emerald-500/20 shadow-md">
+                    <div className="grid h-11 w-11 shrink-0 grid-cols-2 grid-rows-2 gap-[1px] overflow-hidden rounded-[10px] bg-white/[0.06]">
                       {Array.from({ length: 4 }).map((_, idx) => {
                         const tileTrack =
                           playableOfflineTracks[idx] ?? playableOfflineTracks[0]!;
@@ -6019,15 +6004,15 @@ export const LibraryScreen: React.FC = React.memo(() => {
                       })}
                     </div>
                   ) : (
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[11px] bg-emerald-500/20 text-emerald-400 shadow-md">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[10px] bg-emerald-500/15 text-emerald-400">
                       <Download className="h-5 w-5" />
                     </div>
                   )}
                   <div className="min-w-0">
-                    <div className="truncate text-[14.5px] font-bold pm-text-primary">
+                    <div className="truncate text-[14px] font-bold pm-text-primary">
                       Descargas offline
                     </div>
-                    <div className="tabular-nums truncate text-xs text-emerald-400">
+                    <div className="tabular-nums truncate text-xs pm-text-tertiary">
                       {offlineEntries.length}{' '}
                       {offlineEntries.length === 1 ? 'descargada' : 'descargadas'}
                       {totalOfflineSizeLabel ? ` · ${totalOfflineSizeLabel}` : ''}
@@ -6042,9 +6027,9 @@ export const LibraryScreen: React.FC = React.memo(() => {
                       e.stopPropagation();
                       void playCollection(playableOfflineTracks, { isPlaylist: true });
                     }}
-                    className="pm-btn-primary pm-pressable inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full shadow-md"
+                    className="pm-btn-primary pm-compact-btn pm-pressable flex h-8 w-8 shrink-0 items-center justify-center rounded-full shadow-md"
                   >
-                    <Play className="h-4 w-4 translate-x-[1px] fill-current" />
+                    <Play className="h-3.5 w-3.5 translate-x-[1px] fill-current" />
                   </button>
                 )}
               </div>
@@ -6184,7 +6169,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
                           type="button"
                           aria-label={`Reproducir ${sp.name}`}
                           onClick={() => void playCollection(sp.tracks, { isPlaylist: true })}
-                          className="pm-btn-secondary pm-pressable inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full sm:h-9 sm:w-9"
+                          className="pm-btn-secondary pm-compact-btn pm-pressable flex h-8 w-8 shrink-0 items-center justify-center rounded-full sm:h-9 sm:w-9"
                         >
                           <Play className="h-3.5 w-3.5 translate-x-[1px] fill-current" />
                         </button>
@@ -6196,7 +6181,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
                           const r = e.currentTarget.getBoundingClientRect();
                           openPlaylistContextMenu('shared', sp.id, r.right - 260, r.bottom + 8);
                         }}
-                        className="pm-hover pm-pressable inline-flex h-8 w-8 items-center justify-center rounded-full pm-text-tertiary hover:text-[var(--pm-text-primary)] sm:h-9 sm:w-9"
+                        className="pm-hover pm-compact-btn pm-pressable flex h-8 w-8 items-center justify-center rounded-full pm-text-tertiary hover:text-[var(--pm-text-primary)] sm:h-9 sm:w-9"
                       >
                         <MoreHorizontal className="h-4 w-4" />
                       </button>
@@ -6372,7 +6357,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
                               void playCollection(pl.tracks, { isPlaylist: true });
                             }
                           }}
-                          className="pm-btn-secondary pm-pressable inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full sm:h-9 sm:w-9"
+                          className="pm-btn-secondary pm-compact-btn pm-pressable flex h-8 w-8 shrink-0 items-center justify-center rounded-full sm:h-9 sm:w-9"
                         >
                           <Play className="h-3.5 w-3.5 translate-x-[1px] fill-current" />
                         </button>
@@ -6384,7 +6369,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
                           const r = e.currentTarget.getBoundingClientRect();
                           openPlaylistContextMenu('local', pl.id, r.right - 260, r.bottom + 8);
                         }}
-                        className="pm-hover pm-pressable inline-flex h-8 w-8 items-center justify-center rounded-full pm-text-tertiary hover:text-[var(--pm-text-primary)] sm:h-9 sm:w-9"
+                        className="pm-hover pm-compact-btn pm-pressable flex h-8 w-8 items-center justify-center rounded-full pm-text-tertiary hover:text-[var(--pm-text-primary)] sm:h-9 sm:w-9"
                       >
                         <MoreHorizontal className="h-4 w-4" />
                       </button>
@@ -6517,7 +6502,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
                   type="button"
                   aria-label="Reproducir canciones descargadas"
                   onClick={() => void playCollection(playableOfflineTracks, { isPlaylist: true })}
-                  className="pm-btn-primary pm-pressable inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold"
+                  className="pm-btn-primary pm-compact-btn pm-pressable inline-flex h-8 items-center gap-1.5 rounded-full px-3.5 text-xs font-bold"
                 >
                   <Play className="h-3.5 w-3.5 translate-x-[1px] fill-current" />
                   <span>Reproducir</span>
@@ -6529,7 +6514,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
                     const shuffled = [...playableOfflineTracks].sort(() => Math.random() - 0.5);
                     if (shuffled.length > 0) void playCollection(shuffled, { isPlaylist: true });
                   }}
-                  className="pm-btn-secondary pm-pressable inline-flex h-8 w-8 items-center justify-center rounded-full sm:w-auto sm:gap-1.5 sm:px-3"
+                  className="pm-btn-secondary pm-compact-btn pm-pressable flex h-8 w-8 items-center justify-center rounded-full sm:w-auto sm:gap-1.5 sm:px-3"
                 >
                   <Shuffle className="h-3.5 w-3.5" />
                   <span className="hidden sm:inline text-xs font-semibold">Aleatorio</span>
@@ -6539,7 +6524,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
           </div>
 
           {visibleOfflineItems.length > 0 ? (
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               {visibleOfflineItems.map(({ entry, track, displayTitle, displayArtist }) => {
                 const sizeLabel =
                   entry.sizeBytes > 1024 * 1024
@@ -6550,14 +6535,14 @@ export const LibraryScreen: React.FC = React.memo(() => {
                     key={entry.trackId}
                     data-surface="content"
                     data-testid={`offline-track-row-${entry.trackId}`}
-                    className="pm-surface-card pm-hover group flex items-center justify-between gap-3 rounded-[14px] p-2.5 sm:px-3"
+                    className="pm-hover sm:pm-surface-card group flex items-center justify-between gap-2.5 rounded-[12px] px-2 py-2 sm:px-3"
                   >
                     <button
                       type="button"
                       onClick={() => {
                         if (track) void playTrack(track, playableOfflineTracks);
                       }}
-                      className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                      className="pm-text-btn flex min-w-0 flex-1 items-center gap-3 text-left"
                     >
                       <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-[9px] shadow-sm">
                         <TrackArtwork
@@ -6589,7 +6574,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
                       type="button"
                       aria-label={`Borrar ${displayTitle} de descargas`}
                       onClick={() => void removeOfflineTrack(entry.trackId)}
-                      className="pm-btn-secondary pm-pressable inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-xs font-semibold text-rose-400 hover:bg-rose-500/15 sm:px-3.5"
+                      className="pm-btn-secondary pm-compact-btn pm-pressable flex h-8 w-8 shrink-0 items-center justify-center gap-1.5 rounded-full text-xs font-semibold text-rose-400 hover:bg-rose-500/15 sm:w-auto sm:px-3.5"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                       <span className="hidden sm:inline">Borrar</span>
@@ -6602,7 +6587,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
                 <button
                   type="button"
                   onClick={() => setLibraryCategory('Descargas')}
-                  className="pm-btn-secondary pm-pressable w-full rounded-full py-2 text-xs font-bold"
+                  className="pm-btn-secondary pm-compact-btn pm-pressable h-9 w-full rounded-full text-xs font-bold"
                 >
                   Ver todas las descargas ({resolvedOfflineItems.length})
                 </button>

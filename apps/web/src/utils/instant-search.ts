@@ -385,6 +385,31 @@ export function buildInstantLocalSearchBundle(
   };
 }
 
+export function preferExactArtistTopResult(
+  query: string,
+  bundle: Pick<SearchResultBundle, 'artists' | 'songs' | 'topResult'>,
+  candidate?: SearchResultBundle['topResult']
+): SearchResultBundle['topResult'] {
+  const norm = (s?: string) =>
+    (s ?? '')
+      .trim()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  const qNorm = norm(query);
+  if (qNorm.length >= 2) {
+    const exactArtist = (bundle.artists ?? []).find((a) => norm(a?.name) === qNorm);
+    const exactSong = (bundle.songs ?? []).find((s) => norm(s?.title) === qNorm);
+    if (exactArtist && !exactSong) {
+      return { kind: 'artist', item: exactArtist };
+    }
+  }
+  return candidate ?? bundle.topResult;
+}
+
 export function mergeSearchBundles(
   local: SearchResultBundle,
   remote: SearchResultBundle
@@ -423,9 +448,17 @@ export function mergeSearchBundles(
     albums.push(al);
   }
 
+  const mergedQuery = remote.query || local.query;
+  const preliminaryTop = remote.topResult ?? local.topResult;
+  const resolvedTop = preferExactArtistTopResult(
+    mergedQuery,
+    { artists, songs, topResult: preliminaryTop },
+    preliminaryTop
+  );
+
   return {
-    query: remote.query || local.query,
-    topResult: remote.topResult ?? local.topResult,
+    query: mergedQuery,
+    topResult: resolvedTop,
     songs,
     videos: remote.videos?.length ? remote.videos : songs.slice(0, 4),
     artists,

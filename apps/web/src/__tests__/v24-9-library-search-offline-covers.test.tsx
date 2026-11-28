@@ -8,6 +8,7 @@ import { LibraryScreen, SearchScreen } from '../components/Screens.tsx';
 import { TrackArtwork } from '../components/TrackArtwork.tsx';
 import { deleteOfflineCover, saveOfflineCover } from '../utils/offline-covers.ts';
 import { resolvePlaylistCoverInfo } from '../utils/playlist-artwork.ts';
+import { preferExactArtistTopResult } from '../utils/instant-search.ts';
 import { usePMusicStore } from '../store/usePMusicStore.ts';
 
 const origInnerWidth = window.innerWidth;
@@ -196,5 +197,54 @@ describe('pMusic v0.24.9 interactive Library & Search, offline covers & unified 
     render(<SearchScreen />);
     expect(screen.getByTestId('search-genre-grid')).toBeTruthy();
     expect(screen.getByRole('searchbox', { name: /Buscar canciones, artistas o álbumes/i })).toBeTruthy();
+
+    // Active search hides redundant RECIENTES: chip bar, centers compact clear button, and prefers exact artist topResult
+    act(() => {
+      usePMusicStore.setState({
+        searchQuery: 'la pantera',
+        recentSearches: ['Cruzzi', 'La Pantera'],
+      });
+    });
+    expect(screen.queryByText(/^Recientes:$/i)).toBeNull();
+    const clearBtn = screen.getByRole('button', { name: /Limpiar búsqueda/i });
+    expect(clearBtn.className).toContain('pm-compact-btn');
+    expect(clearBtn.className).toContain('justify-center');
+
+    const exactPicked = preferExactArtistTopResult('la pantera', {
+      artists: [
+        {
+          id: 'ar_pantera',
+          name: 'La Pantera',
+          thumbnailUrl: 'https://example.com/pantera.jpg',
+        },
+      ],
+      songs: [
+        {
+          id: 'tr_cayo',
+          title: 'Cayó La Noche',
+          artists: [{ id: 'ar_pantera', name: 'La Pantera' }],
+          album: { id: 'al_1', name: 'Single' },
+          durationSec: 210,
+          thumbnailUrl: 'https://example.com/cayo.jpg',
+          source: 'ytmusic',
+        },
+      ],
+      topResult: {
+        kind: 'song',
+        item: {
+          id: 'tr_cayo',
+          title: 'Cayó La Noche',
+          artists: [{ id: 'ar_pantera', name: 'La Pantera' }],
+          album: { id: 'al_1', name: 'Single' },
+          durationSec: 210,
+          thumbnailUrl: 'https://example.com/cayo.jpg',
+          source: 'ytmusic',
+        },
+      },
+    });
+    expect(exactPicked?.kind).toBe('artist');
+    if (exactPicked?.kind === 'artist') {
+      expect(exactPicked.item.name).toBe('La Pantera');
+    }
   });
 });

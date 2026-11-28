@@ -32,6 +32,7 @@ import {
   buildInstantLocalSearchBundle,
   buildPersonalSearchSignals,
   mergeSearchBundles,
+  preferExactArtistTopResult,
 } from '../utils/instant-search.ts';
 import {
   checkArtistNewReleases,
@@ -917,12 +918,26 @@ export function diversifyAndShuffleTracks(
     buckets.set(k, fisherYatesShuffle(list));
   }
 
+  let totalRemaining = deduped.length;
   const result: Track[] = [];
   let prevAlbumKey: string | null = null;
   while (buckets.size > 0) {
     const allKeys = Array.from(buckets.keys());
     const eligible = allKeys.filter((k) => k !== prevAlbumKey);
-    const poolKeys = eligible.length > 0 ? eligible : allKeys;
+    const basePoolKeys = eligible.length > 0 ? eligible : allKeys;
+
+    // Prevent exhausting smaller buckets early and stranding >=2 tracks of one album at the tail.
+    const remainingAfterPick = totalRemaining - 1;
+    const maxOtherAfterPick = Math.ceil(remainingAfterPick / 2);
+    const safeKeys = basePoolKeys.filter((candidateKey) => {
+      for (const [otherKey, otherList] of buckets.entries()) {
+        if (otherKey !== candidateKey && otherList.length > maxOtherAfterPick) {
+          return false;
+        }
+      }
+      return true;
+    });
+    const poolKeys = safeKeys.length > 0 ? safeKeys : basePoolKeys;
 
     let totalWeight = 0;
     for (const k of poolKeys) totalWeight += buckets.get(k)!.length;
@@ -939,6 +954,7 @@ export function diversifyAndShuffleTracks(
     const bucket = buckets.get(chosenKey)!;
     const nextTrack = bucket.pop()!;
     result.push(nextTrack);
+    totalRemaining -= 1;
     prevAlbumKey = chosenKey;
     if (bucket.length === 0) {
       buckets.delete(chosenKey);
@@ -6944,7 +6960,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         searchQuery: query,
         autocompleteSuggestions: rankedSugs.length > 0 ? rankedSugs : cached.suggestions,
         searchResults: rerankedCached,
-        bestResult: rerankedCached.topResult ?? cached.best,
+        bestResult: preferExactArtistTopResult(
+          query,
+          rerankedCached,
+          rerankedCached.topResult ?? cached.best
+        ),
         isSearching: false,
       });
       return;
@@ -7009,9 +7029,12 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       ...(hasInstantHits
         ? {
             searchResults: instantLocal,
-            bestResult:
+            bestResult: preferExactArtistTopResult(
+              query,
+              instantLocal,
               instantLocal.topResult ??
-              recommendationEngine.selectBestResult(query, instantLocal, personalSignals),
+                recommendationEngine.selectBestResult(query, instantLocal, personalSignals)
+            ),
           }
         : {}),
       isSearching: true,
@@ -7047,9 +7070,12 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       const mergedRaw = mergeSearchBundles(instantLocal, rawBundle);
       const ranked = recommendationEngine.rankAutocomplete(query, remoteSuggestions, latestSignals);
       const bundle = recommendationEngine.rerankSearchBundle(query, mergedRaw, latestSignals);
-      const best =
+      const best = preferExactArtistTopResult(
+        query,
+        bundle,
         bundle.topResult ??
-        recommendationEngine.selectBestResult(query, bundle, latestSignals);
+          recommendationEngine.selectBestResult(query, bundle, latestSignals)
+      );
 
       clientSearchCache.set(cacheKey, {
         at: Date.now(),
