@@ -51,6 +51,72 @@ export interface FriendRecord {
   isIncoming: boolean;
 }
 
+export interface PublicTopTrackItem {
+  track: Track;
+  plays: number;
+  minutes?: number;
+}
+
+export interface PublicTopArtistItem {
+  artistId?: string;
+  artistName: string;
+  thumbnailUrl?: string;
+  plays: number;
+  minutes?: number;
+}
+
+export interface PublicPlaylistSummary {
+  id: string;
+  name: string;
+  description?: string;
+  coverUrl?: string | null;
+  trackCount: number;
+  tracks: Track[];
+  shareCode?: string | null;
+  kind?: 'local' | 'collab' | 'blend';
+}
+
+export interface FriendPublicProfile extends UserProfile {
+  bio?: string;
+  topTracks: PublicTopTrackItem[];
+  topArtists: PublicTopArtistItem[];
+  publicPlaylists: PublicPlaylistSummary[];
+  publicProfileEnabled: boolean;
+  tasteUpdatedAt?: string | null;
+}
+
+export type DirectMessageType = 'text' | 'image' | 'playlist' | 'jam' | 'track';
+
+export interface DirectMessagePayload {
+  imageDataUrl?: string;
+  imageWidth?: number;
+  imageHeight?: number;
+  playlistId?: string;
+  playlistName?: string;
+  playlistCoverUrl?: string | null;
+  trackCount?: number;
+  shareCode?: string | null;
+  playlistKind?: 'local' | 'collab' | 'blend';
+  tracks?: Track[];
+  jamCode?: string;
+  jamHostName?: string;
+  jamTrackTitle?: string;
+  jamTrackArtist?: string;
+  jamTrackCover?: string;
+  track?: Track;
+}
+
+export interface DirectMessageRecord {
+  id: string;
+  senderId: string;
+  recipientId: string;
+  messageType: DirectMessageType;
+  body: string;
+  payload: DirectMessagePayload | null;
+  readAt: string | null;
+  createdAt: string;
+}
+
 export interface FriendListeningActivity {
   userId: string;
   username?: string;
@@ -262,6 +328,135 @@ export async function ensureOwnProfileExists(
   } catch {
     return null;
   }
+}
+
+function isMissingSchemaColumnOrTable(err: { message?: string; code?: string } | null | undefined): boolean {
+  const msg = (err?.message ?? '').toLowerCase();
+  return (
+    err?.code === '42703' ||
+    err?.code === 'PGRST204' ||
+    err?.code === 'PGRST205' ||
+    err?.code === '42P01' ||
+    msg.includes('column') ||
+    msg.includes('could not find') ||
+    msg.includes('does not exist')
+  );
+}
+
+export async function syncOwnPublicProfileSnapshot(
+  client: SupabaseClient,
+  userId: string,
+  snapshot: {
+    bio?: string;
+    topTracks: PublicTopTrackItem[];
+    topArtists: PublicTopArtistItem[];
+    publicPlaylists: PublicPlaylistSummary[];
+    publicProfileEnabled: boolean;
+  }
+): Promise<void> {
+  const compactTracks = snapshot.topTracks.slice(0, 10).map((item) => ({
+    plays: item.plays,
+    minutes: item.minutes ?? 0,
+    track: {
+      id: item.track.id,
+      title: item.track.title,
+      artists: item.track.artists.slice(0, 4).map((a) => ({ id: a.id, name: a.name })),
+      album: item.track.album ? { id: item.track.album.id, name: item.track.album.name } : undefined,
+      durationSec: item.track.durationSec || 180,
+      thumbnailUrl: item.track.thumbnailUrl,
+      thumbnailHighUrl: item.track.thumbnailHighUrl,
+      isExplicit: Boolean(item.track.isExplicit),
+      source: item.track.source ?? 'youtube',
+    },
+  }));
+  const compactPlaylists = snapshot.publicPlaylists.slice(0, 16).map((pl) => ({
+    id: pl.id,
+    name: pl.name.slice(0, 120),
+    description: (pl.description ?? '').slice(0, 200),
+    coverUrl: pl.coverUrl ?? null,
+    trackCount: pl.trackCount,
+    shareCode: pl.shareCode ?? null,
+    kind: pl.kind ?? 'local',
+    tracks: pl.tracks.slice(0, 20).map((t) => ({
+      id: t.id,
+      title: t.title,
+      artists: t.artists.slice(0, 4).map((a) => ({ id: a.id, name: a.name })),
+      album: t.album ? { id: t.album.id, name: t.album.name } : undefined,
+      durationSec: t.durationSec || 180,
+      thumbnailUrl: t.thumbnailUrl,
+      thumbnailHighUrl: t.thumbnailHighUrl,
+      source: t.source ?? 'youtube',
+    })),
+  }));
+
+  try {
+    const { error } = await client
+      .from('profiles')
+      .update({
+        ...(snapshot.bio !== undefined ? { bio: snapshot.bio.slice(0, 240) } : {}),
+        top_tracks: snapshot.publicProfileEnabled ? compactTracks : [],
+        top_artists: snapshot.publicProfileEnabled ? snapshot.topArtists.slice(0, 10) : [],
+        public_playlists: snapshot.publicProfileEnabled ? compactPlaylists : [],
+        public_profile_enabled: snapshot.publicProfileEnabled,
+        taste_updated_at: new Date().toISOString(),
+      })
+      .eq('user_id', userId);
+    if (error && !isMissingSchemaColumnOrTable(error)) {
+      // ignore transient network errors
+    }
+  } catch {
+    // non-fatal background profile sync
+  }
+}
+
+export async function fetchFriendPublicProfile(
+  client: SupabaseClient,
+  targetUserId: string
+): Promise<FriendPublicProfile | null> {
+  const { data, error } = await client
+    .from('profiles')
+    .select(
+      'user_id,username,display_name,avatar_url,bio,top_tracks,top_artists,public_playlists,public_profile_enabled,taste_updated_at'
+    )
+    .eq('user_id', targetUserId)
+    .maybeSingle();
+
+  if (error && isMissingSchemaColumnOrTable(error)) {
+    const { data: base } = await client
+      .from('profiles')
+      .select('user_id,username,display_name,avatar_url')
+      .eq('user_id', targetUserId)
+      .maybeSingle();
+    if (!base) return null;
+    return {
+      userId: String(base.user_id),
+      username: String(base.username),
+      displayName: String(base.display_name),
+      avatarUrl: (base.avatar_url as string | null) ?? null,
+      bio: '',
+      topTracks: [],
+      topArtists: [],
+      publicPlaylists: [],
+      publicProfileEnabled: true,
+      tasteUpdatedAt: null,
+    };
+  }
+
+  if (error || !data) return null;
+  return {
+    userId: String(data.user_id),
+    username: String(data.username),
+    displayName: String(data.display_name),
+    avatarUrl: (data.avatar_url as string | null) ?? null,
+    bio: typeof data.bio === 'string' ? data.bio : '',
+    topTracks: Array.isArray(data.top_tracks) ? (data.top_tracks as PublicTopTrackItem[]) : [],
+    topArtists: Array.isArray(data.top_artists) ? (data.top_artists as PublicTopArtistItem[]) : [],
+    publicPlaylists: Array.isArray(data.public_playlists)
+      ? (data.public_playlists as PublicPlaylistSummary[])
+      : [],
+    publicProfileEnabled: data.public_profile_enabled !== false,
+    tasteUpdatedAt: (data.taste_updated_at as string | null) ?? null,
+  };
 }
 
 // -----------------------------------------------------------------------------
@@ -667,17 +862,350 @@ export async function deleteOrLeaveSharedPlaylist(
   return 'left';
 }
 
+function isJunkBlendTrack(t: Track): boolean {
+  const hay = `${t.title} ${t.album?.name ?? ''}`.toLowerCase();
+  return /\b(?:karaoke|tribute|cover version|8d audio|sped up|slowed(?:\s*\+\s*reverb)?|instrumental version)\b/i.test(
+    hay
+  );
+}
+
+function getBlendTrackKey(t: Track): string {
+  const cleanTitle = t.title
+    .toLowerCase()
+    .replace(/\s*\([^)]*\)/g, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+  const cleanArtist = (t.artists[0]?.name ?? '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+  return `${cleanTitle}::${cleanArtist}`;
+}
+
+export function buildCurated100Blend(input: {
+  myTracks: Track[];
+  myArtists?: string[];
+  friendTracks?: Track[];
+  friendArtists?: string[];
+  extraPool?: Track[];
+  friendLabel: string;
+  myProfile?: UserProfile | null;
+  friendProfile?: UserProfile | null;
+  targetCount?: number;
+}): { score: number; tracks: Track[] } {
+  const targetCount = Math.max(10, Math.min(100, input.targetCount ?? 100));
+  const myStamp = input.myProfile
+    ? {
+        userId: input.myProfile.userId,
+        username: input.myProfile.username,
+        displayName: input.myProfile.displayName,
+        avatarUrl: input.myProfile.avatarUrl ?? null,
+      }
+    : null;
+  const friendStamp = input.friendProfile
+    ? {
+        userId: input.friendProfile.userId,
+        username: input.friendProfile.username,
+        displayName: input.friendProfile.displayName,
+        avatarUrl: input.friendProfile.avatarUrl ?? null,
+      }
+    : null;
+
+  const myArtistSet = new Set(
+    [
+      ...(input.myArtists ?? []),
+      ...input.myTracks.flatMap((t) => t.artists.map((a) => a.name)),
+    ]
+      .map((n) => n.trim().toLowerCase())
+      .filter(Boolean)
+  );
+  const friendArtistSet = new Set(
+    [
+      ...(input.friendArtists ?? []),
+      ...(input.friendTracks ?? []).flatMap((t) => t.artists.map((a) => a.name)),
+    ]
+      .map((n) => n.trim().toLowerCase())
+      .filter(Boolean)
+  );
+
+  const sharedArtists = new Set<string>();
+  for (const a of myArtistSet) {
+    if (friendArtistSet.has(a)) sharedArtists.add(a);
+  }
+  const myTrackKeys = new Set(input.myTracks.map(getBlendTrackKey));
+  const friendTrackKeys = new Set((input.friendTracks ?? []).map(getBlendTrackKey));
+
+  // Real compatibility score weighted by shared artists/tracks + deterministic variance
+  let hash = 0;
+  for (let i = 0; i < input.friendLabel.length; i++) {
+    hash = (hash * 31 + input.friendLabel.charCodeAt(i)) % 1000;
+  }
+  const unionArtistsCount = Math.max(1, new Set([...myArtistSet, ...friendArtistSet]).size);
+  const artistOverlapRatio = sharedArtists.size / Math.min(12, unionArtistsCount);
+  const score =
+    friendArtistSet.size > 0
+      ? Math.max(62, Math.min(99, Math.round(68 + artistOverlapRatio * 26 + (hash % 7))))
+      : 74 + (hash % 24);
+
+  const cleanAndDedup = (list: Track[], stamp?: TrackAdderIdentity | null): Track[] => {
+    const out: Track[] = [];
+    const seen = new Set<string>();
+    for (const raw of list) {
+      if (!raw?.id || !raw.title || isJunkBlendTrack(raw)) continue;
+      const key = getBlendTrackKey(raw);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(stamp ? stampTrackAddedBy(raw, stamp) : raw);
+    }
+    return out;
+  };
+
+  const myClean = cleanAndDedup(input.myTracks, myStamp);
+  const friendClean = cleanAndDedup(input.friendTracks ?? [], friendStamp);
+  const extraClean = cleanAndDedup(input.extraPool ?? []);
+
+  // Layer 1: Mutual tracks & tracks matching both taste profiles (highest affinity)
+  const layerMutual: Track[] = [];
+  for (const t of [...friendClean, ...myClean]) {
+    const k = getBlendTrackKey(t);
+    const hasSharedArtist = t.artists.some((a) => sharedArtists.has(a.name.trim().toLowerCase()));
+    if ((myTrackKeys.has(k) && friendTrackKeys.has(k)) || hasSharedArtist) {
+      layerMutual.push(t);
+    }
+  }
+
+  // Layer 2: Interleaved personal favorites from both friends
+  const layerInterleaved: Track[] = [];
+  const maxLen = Math.max(myClean.length, friendClean.length);
+  for (let i = 0; i < maxLen; i++) {
+    if (i < friendClean.length) layerInterleaved.push(friendClean[i]!);
+    if (i < myClean.length) layerInterleaved.push(myClean[i]!);
+  }
+
+  // Layer 3: Score extraPool by artist affinity across both friends + interleave artists
+  const scoredExtra = extraClean
+    .map((t, idx) => {
+      const aNames = t.artists.map((a) => a.name.trim().toLowerCase());
+      const inMy = aNames.some((n) => myArtistSet.has(n)) ? 1 : 0;
+      const inFriend = aNames.some((n) => friendArtistSet.has(n)) ? 1 : 0;
+      const both = inMy && inFriend ? 4 : inMy || inFriend ? 2 : 0;
+      const stamped =
+        inFriend && !inMy && friendStamp
+          ? stampTrackAddedBy(t, friendStamp)
+          : inMy && !inFriend && myStamp
+            ? stampTrackAddedBy(t, myStamp)
+            : t;
+      return { track: stamped, weight: both, idx };
+    })
+    .sort((a, b) => b.weight - a.weight || a.idx - b.idx)
+    .map((x) => x.track);
+
+  const orderedPool = [...layerMutual, ...layerInterleaved, ...scoredExtra];
+  const seenKeys = new Set<string>();
+  const deferred: Track[] = [];
+  const result: Track[] = [];
+  const artistCounts = new Map<string, number>();
+
+  const pushIfUnique = (track: Track, enforceSpacing: boolean): boolean => {
+    const key = getBlendTrackKey(track);
+    if (seenKeys.has(key)) return false;
+    const primaryArtist = (track.artists[0]?.name ?? 'unknown').trim().toLowerCase();
+    const recent1 = result[result.length - 1]?.artists[0]?.name.trim().toLowerCase();
+    const recent2 = result[result.length - 2]?.artists[0]?.name.trim().toLowerCase();
+    if (enforceSpacing) {
+      const count = artistCounts.get(primaryArtist) ?? 0;
+      if ((primaryArtist && recent1 === primaryArtist && recent2 === primaryArtist) || count >= 6) {
+        deferred.push(track);
+        return false;
+      }
+    }
+    seenKeys.add(key);
+    result.push(track);
+    artistCounts.set(primaryArtist, (artistCounts.get(primaryArtist) ?? 0) + 1);
+    return true;
+  };
+
+  for (const t of orderedPool) {
+    if (result.length >= targetCount) break;
+    pushIfUnique(t, true);
+  }
+  for (const t of deferred) {
+    if (result.length >= targetCount) break;
+    pushIfUnique(t, false);
+  }
+
+  return { score, tracks: result.slice(0, targetCount) };
+}
+
 export function computeBlendScoreAndTracks(
   myTracks: Track[],
   friendLabel: string
 ): { score: number; tracks: Track[] } {
-  const unique = Array.from(new Map(myTracks.map((t) => [t.id, t])).values()).slice(0, 24);
-  let hash = 0;
-  for (let i = 0; i < friendLabel.length; i++) {
-    hash = (hash * 31 + friendLabel.charCodeAt(i)) % 1000;
+  return buildCurated100Blend({
+    myTracks,
+    friendLabel,
+    targetCount: Math.min(24, Math.max(10, myTracks.length)),
+  });
+}
+
+// -----------------------------------------------------------------------------
+// Direct Messages (1-to-1 Chat: text, compressed images, playlists, Jam invites)
+// -----------------------------------------------------------------------------
+function mapDirectMessageRow(row: any): DirectMessageRecord {
+  return {
+    id: String(row.id),
+    senderId: String(row.sender_id),
+    recipientId: String(row.recipient_id),
+    messageType: (row.message_type as DirectMessageType) ?? 'text',
+    body: String(row.body ?? ''),
+    payload: (row.payload as DirectMessagePayload | null) ?? null,
+    readAt: (row.read_at as string | null) ?? null,
+    createdAt: String(row.created_at ?? new Date().toISOString()),
+  };
+}
+
+export async function listDirectMessagesWithFriend(
+  client: SupabaseClient,
+  myUserId: string,
+  friendUserId: string,
+  limit = 120
+): Promise<DirectMessageRecord[]> {
+  const { data, error } = await client
+    .from('direct_messages')
+    .select('id,sender_id,recipient_id,message_type,body,payload,read_at,created_at')
+    .or(
+      `and(sender_id.eq.${myUserId},recipient_id.eq.${friendUserId}),and(sender_id.eq.${friendUserId},recipient_id.eq.${myUserId})`
+    )
+    .order('created_at', { ascending: true })
+    .limit(limit);
+  if (error || !Array.isArray(data)) return [];
+  return data.map(mapDirectMessageRow);
+}
+
+export async function listAllRecentDirectMessages(
+  client: SupabaseClient,
+  myUserId: string,
+  limit = 200
+): Promise<DirectMessageRecord[]> {
+  const { data, error } = await client
+    .from('direct_messages')
+    .select('id,sender_id,recipient_id,message_type,body,payload,read_at,created_at')
+    .or(`sender_id.eq.${myUserId},recipient_id.eq.${myUserId}`)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error || !Array.isArray(data)) return [];
+  return data.map(mapDirectMessageRow).reverse();
+}
+
+export async function sendDirectMessage(
+  client: SupabaseClient,
+  input: {
+    senderId: string;
+    recipientId: string;
+    messageType: DirectMessageType;
+    body?: string;
+    payload?: DirectMessagePayload | null;
   }
-  const score = 74 + (hash % 24); // 74% - 97%
-  return { score, tracks: unique };
+): Promise<DirectMessageRecord> {
+  const { data, error } = await client
+    .from('direct_messages')
+    .insert({
+      sender_id: input.senderId,
+      recipient_id: input.recipientId,
+      message_type: input.messageType,
+      body: (input.body ?? '').trim().slice(0, 2000),
+      payload: input.payload ?? null,
+    })
+    .select('id,sender_id,recipient_id,message_type,body,payload,read_at,created_at')
+    .single();
+  if (error || !data) {
+    throw new Error(formatSocialError(error, 'No se pudo enviar el mensaje'));
+  }
+  return mapDirectMessageRow(data);
+}
+
+export async function markDirectMessagesRead(
+  client: SupabaseClient,
+  myUserId: string,
+  friendUserId: string
+): Promise<void> {
+  await client
+    .from('direct_messages')
+    .update({ read_at: new Date().toISOString() })
+    .eq('sender_id', friendUserId)
+    .eq('recipient_id', myUserId)
+    .is('read_at', null);
+}
+
+export function subscribeDirectMessages(
+  client: SupabaseClient,
+  myUserId: string,
+  onMessage: (msg: DirectMessageRecord, eventType: 'INSERT' | 'UPDATE') => void
+): () => void {
+  const ch = client
+    .channel(`pmusic-dm-rt:${myUserId}:${Date.now()}`)
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'direct_messages' },
+      (payload: any) => {
+        const row = payload?.new;
+        if (!row) return;
+        if (row.sender_id !== myUserId && row.recipient_id !== myUserId) return;
+        onMessage(mapDirectMessageRow(row), 'INSERT');
+      }
+    )
+    .on(
+      'postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'direct_messages' },
+      (payload: any) => {
+        const row = payload?.new;
+        if (!row) return;
+        if (row.sender_id !== myUserId && row.recipient_id !== myUserId) return;
+        onMessage(mapDirectMessageRow(row), 'UPDATE');
+      }
+    )
+    .subscribe();
+
+  return () => {
+    try {
+      void ch.unsubscribe?.();
+      client.removeChannel?.(ch);
+    } catch {
+      // ignore
+    }
+  };
+}
+
+export async function compressChatImageToDataUrl(
+  file: File,
+  maxDim = 960
+): Promise<{ dataUrl: string; width: number; height: number }> {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('No se pudo cargar la imagen'));
+      el.src = objectUrl;
+    });
+    const ratio = Math.min(1, maxDim / Math.max(1, img.width, img.height));
+    const width = Math.max(1, Math.round(img.width * ratio));
+    const height = Math.max(1, Math.round(img.height * ratio));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas no disponible');
+    ctx.drawImage(img, 0, 0, width, height);
+    const webp = canvas.toDataURL('image/webp', 0.8);
+    const dataUrl =
+      webp.startsWith('data:image/webp') && webp.length < 240_000
+        ? webp
+        : canvas.toDataURL('image/jpeg', 0.78);
+    return { dataUrl, width, height };
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 // -----------------------------------------------------------------------------

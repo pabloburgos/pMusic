@@ -3105,94 +3105,6 @@ html.pm-solid-modern .pm-mobile-glass-header {
   animation: pmQueueDuckUnder 440ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-/* Accessibility Media Query 2: Reduced Motion */
-@media (prefers-reduced-motion: reduce) {
-  .pm-ambient-mesh,
-  .pm-fluid-cover-a,
-  .pm-fluid-cover-b,
-  .pm-orb-1,
-  .pm-orb-2,
-  .pm-orb-3,
-  .pm-orb-sheen,
-  .pm-kinetic-enter,
-  .pm-focus-stage-line,
-  .pm-poster-enter,
-  .pm-wordflow-word-active,
-  .pm-neon-active,
-  .pm-caret-blink,
-  .pm-view-transition,
-  .pm-sheet-spring-in,
-  .pm-buffer-shimmer,
-  .pm-skeleton-shimmer,
-  .pm-backdrop-in-next,
-  .pm-backdrop-in-prev,
-  .pm-backdrop-out-next,
-  .pm-backdrop-out-prev,
-  .pm-eq-bar-1,
-  .pm-eq-bar-2,
-  .pm-eq-bar-3,
-  .pm-lyric-dot,
-  .pm-cover-swap,
-  .pm-cover-next,
-  .pm-cover-prev,
-  .pm-cover-slide-next,
-  .pm-cover-slide-prev,
-  .pm-nudge-next,
-  .pm-nudge-prev,
-  .pm-play-morph,
-  .pm-play-flip-epic,
-  .pm-play-ring-burst,
-  .pm-skip-next-epic,
-  .pm-skip-prev-epic,
-  .pm-skip-next-hyper,
-  .pm-skip-prev-hyper,
-  .pm-skip-trail-next,
-  .pm-skip-trail-prev,
-  .pm-shuffle-flip-epic,
-  .pm-shuffle-chaos-epic,
-  .pm-shuffle-spark,
-  .pm-play-loading-ring,
-  .pm-repeat-spin-epic,
-  .pm-queue-moved,
-  .pm-sheet-enter,
-  .pm-page-enter,
-  .pm-tab-enter,
-  .pm-modal-pop,
-  .pm-menu-pop,
-  .pm-toast-enter,
-  .pm-heart-pop,
-  .pm-heart-burst-epic,
-  .pm-sparkle-dot,
-  .pm-cf-carousel-stage,
-  .pm-cf-sheen,
-  .pm-lyrics-swap-in,
-  .pm-water-eddy-a,
-  .pm-water-eddy-b,
-  .pm-cube-prism,
-  .pm-cube-shade-out,
-  .pm-cube-light-in,
-  .pm-dock-heart-out,
-  .pm-dock-heart-in,
-  .pm-dock-color-collapse,
-  .pm-dock-water-recede-sheen,
-  .pm-dock-water-recede-crest,
-  .pm-skip-chevron-out,
-  .pm-skip-chevron-in,
-  .pm-skip-bumper-next,
-  .pm-skip-back-chevron-out,
-  .pm-skip-back-chevron-in,
-  .pm-skip-bumper-prev,
-  .pm-shuffle-lane-a,
-  .pm-shuffle-lane-b,
-  .pm-shuffle-stroke-a,
-  .pm-shuffle-stroke-b {
-    animation: none !important;
-  }
-  .pm-lyric-line-inactive {
-    filter: none !important;
-  }
-}
-
 html.pm-reduced-motion .pm-ambient-mesh,
 html.pm-reduced-motion .pm-fluid-cover-a,
 html.pm-reduced-motion .pm-fluid-cover-b,
@@ -3200,11 +3112,6 @@ html.pm-reduced-motion .pm-orb-1,
 html.pm-reduced-motion .pm-orb-2,
 html.pm-reduced-motion .pm-orb-3,
 html.pm-reduced-motion .pm-orb-sheen,
-html.pm-reduced-motion .pm-kinetic-enter,
-html.pm-reduced-motion .pm-focus-stage-line,
-html.pm-reduced-motion .pm-poster-enter,
-html.pm-reduced-motion .pm-wordflow-word-active,
-html.pm-reduced-motion .pm-neon-active,
 html.pm-reduced-motion .pm-caret-blink,
 html.pm-reduced-motion .pm-view-transition,
 html.pm-reduced-motion .pm-sheet-spring-in,
@@ -3217,7 +3124,6 @@ html.pm-reduced-motion .pm-backdrop-out-prev,
 html.pm-reduced-motion .pm-eq-bar-1,
 html.pm-reduced-motion .pm-eq-bar-2,
 html.pm-reduced-motion .pm-eq-bar-3,
-html.pm-reduced-motion .pm-lyric-dot,
 html.pm-reduced-motion .pm-cover-swap,
 html.pm-reduced-motion .pm-cover-next,
 html.pm-reduced-motion .pm-cover-prev,
@@ -3225,6 +3131,7 @@ html.pm-reduced-motion .pm-cover-slide-next,
 html.pm-reduced-motion .pm-cover-slide-prev,
 html.pm-reduced-motion .pm-nudge-next,
 html.pm-reduced-motion .pm-nudge-prev,
+html.pm-reduced-motion .pm-track-meta-in,
 html.pm-reduced-motion .pm-play-morph,
 html.pm-reduced-motion .pm-play-flip-epic,
 html.pm-reduced-motion .pm-play-ring-burst,
@@ -3251,7 +3158,6 @@ html.pm-reduced-motion .pm-heart-burst-epic,
 html.pm-reduced-motion .pm-sparkle-dot,
 html.pm-reduced-motion .pm-cf-carousel-stage,
 html.pm-reduced-motion .pm-cf-sheen,
-html.pm-reduced-motion .pm-lyrics-swap-in,
 html.pm-reduced-motion .pm-water-eddy-a,
 html.pm-reduced-motion .pm-water-eddy-b,
 html.pm-reduced-motion .pm-cube-prism,
@@ -3275,6 +3181,11 @@ html.pm-reduced-motion .pm-shuffle-stroke-b,
 html.pm-reduced-motion .pm-marquee-track.pm-marquee-animating {
   animation: none !important;
   transform: none !important;
+}
+
+html.pm-reduced-motion [data-testid="ambient-progress-fill"],
+html.pm-reduced-motion .pm-track-meta-in {
+  transition: none !important;
 }
 
 /* ── YouTube Music Style Ping-Pong Horizontal Marquee ── */
@@ -3303,13 +3214,6 @@ html.pm-reduced-motion .pm-marquee-track.pm-marquee-animating {
 .pm-marquee-container:hover .pm-marquee-track.pm-marquee-animating,
 .group:hover .pm-marquee-track.pm-marquee-animating {
   animation-play-state: paused;
-}
-html.pm-reduced-motion .pm-sing-word {
-  transform: none !important;
-  transition: none !important;
-}
-html.pm-reduced-motion .pm-lyric-line-inactive {
-  filter: none !important;
 }
 
 /* Accessibility Media Query 3: Increased Contrast / Forced Colors */
@@ -3653,16 +3557,6 @@ html.pm-reduced-motion .pm-liquid-rise {
 html.pm-reduced-motion .pm-liquid-wave-path.pm-liquid-wave-active,
 html.pm-reduced-motion .pm-heart-liquid-pop {
   animation: none !important;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .pm-liquid-rise {
-    transition: none !important;
-  }
-  .pm-liquid-wave-path.pm-liquid-wave-active,
-  .pm-heart-liquid-pop {
-    animation: none !important;
-  }
 }
 
 /* ── Adaptive Pure Black Ink Surface for White / Very Bright Cover Backdrops ── */

@@ -1145,7 +1145,7 @@ const NowPlayingSheetInner: React.FC = () => {
         0,
         offsetWithinContainer - container.clientHeight * 0.42 + activeRect.height * 0.5
       );
-      if (reducedMotionPref || typeof requestAnimationFrame !== 'function') {
+      if (typeof requestAnimationFrame !== 'function') {
         container.scrollTop = targetTop;
         return;
       }
@@ -1298,16 +1298,18 @@ const NowPlayingSheetInner: React.FC = () => {
           }
         }}
         className={`${
-          cfActive || isPostCrossfadeSameTrack
+          reducedMotionPref || cfActive || isPostCrossfadeSameTrack
             ? ''
             : lastTrackDirection === 'prev'
               ? 'pm-cover-slide-prev'
               : 'pm-cover-slide-next'
-        } relative aspect-square overflow-hidden rounded-[16px] bg-[#111115] shadow-[0_26px_64px_rgba(0,0,0,0.58)] transition-transform duration-300 ease-out ${
+        } relative aspect-square overflow-hidden rounded-[16px] bg-[#111115] shadow-[0_26px_64px_rgba(0,0,0,0.58)] ${
+          reducedMotionPref ? '' : 'transition-transform duration-300 ease-out '
+        }${
           compact
             ? 'w-[min(64vw,290px,34dvh)] xl:w-[min(68vw,346px,38dvh)]'
             : 'w-[min(74vw,300px,33dvh)] md:w-[min(70vw,310px,35dvh)] xl:w-[min(74vw,380px,42dvh)]'
-        } ${isPlaying ? 'scale-100' : 'scale-[0.96]'}`}
+        } ${isPlaying || reducedMotionPref ? 'scale-100' : 'scale-[0.96]'}`}
       >
         <TrackArtwork
           trackId={currentTrack.id}
@@ -1341,7 +1343,7 @@ const NowPlayingSheetInner: React.FC = () => {
       {/* Minimalist Title, Full Multi-Artist Line & Borderless Actions (Permanent Stage Key: Zero Cut at t=0) */}
       <div
         key="np-meta-stage"
-        className={`${cfActive || isPostCrossfadeSameTrack ? '' : 'pm-track-meta-in'} flex w-full flex-col gap-0`}
+        className={`${reducedMotionPref || cfActive || isPostCrossfadeSameTrack ? '' : 'pm-track-meta-in'} flex w-full flex-col gap-0`}
       >
         {cfActive && outgoingTransitionTrack && incomingTransitionTrack && !reducedMotionPref ? (
           <>
@@ -4347,13 +4349,17 @@ const JamInviteModalInner: React.FC = () => {
     setJamInviteModalOpen,
     activeJamSession,
     activeJamRole,
+    friends,
     jamAllowGuestPlaybackControls,
     setJamAllowGuestPlaybackControls,
+    sendJamInviteToFriendChat,
     updateJamSettings,
     leaveOrEndJam,
     showToast,
   } = usePMusicStore();
   const [copiedLink, setCopiedLink] = useState(false);
+  const [sentFriendIds, setSentFriendIds] = useState<Record<string, boolean>>({});
+  const acceptedFriends = friends.filter((f) => f.status === 'accepted');
 
   if (!jamInviteModalOpen || !activeJamSession) return null;
   const shareUrl = buildJamShareUrl(activeJamSession.code);
@@ -4554,6 +4560,38 @@ const JamInviteModalInner: React.FC = () => {
                   </button>
                 ))}
               </div>
+            </div>
+          </div>
+        )}
+
+        {acceptedFriends.length > 0 && (
+          <div className="space-y-2 rounded-2xl border border-white/10 bg-white/[0.03] px-3.5 py-2.5 text-left">
+            <div className="text-[10.5px] font-bold uppercase tracking-wider text-white/60">
+              Enviar invitación por chat
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {acceptedFriends.slice(0, 6).map((f) => {
+                const fid = f.otherProfile.userId;
+                const sent = Boolean(sentFriendIds[fid]);
+                return (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={async () => {
+                      await sendJamInviteToFriendChat(fid);
+                      setSentFriendIds((prev) => ({ ...prev, [fid]: true }));
+                    }}
+                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+                      sent
+                        ? 'bg-emerald-500/20 text-emerald-300'
+                        : 'bg-white/10 text-white/85 hover:bg-white/20'
+                    }`}
+                  >
+                    <span>@{f.otherProfile.username}</span>
+                    {sent && <Check className="h-3 w-3" />}
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}

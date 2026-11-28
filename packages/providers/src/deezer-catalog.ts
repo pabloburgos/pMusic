@@ -2108,42 +2108,69 @@ export class DeezerCatalog {
           const targetName = (await lookupNamePromise).trim();
           if (!targetName) return [];
           const searchQ = targetName === 'Cruzzi' ? 'Cruz Cafuné' : targetName;
+          const isCompilationOrJunkAppearance = (
+            albumTitle: string,
+            trackTitle: string,
+            collectionType?: string
+          ): boolean => {
+            if (collectionType && collectionType.toLowerCase() === 'compilation') return true;
+            const hay = `${albumTitle} ${trackTitle}`.toLowerCase();
+            return /\b(?:various artists|varios artistas|hits\s*20\d{2}|éxitos\s*20\d{2}|exitos\s*20\d{2}|top\s*(?:50|100|hits)|summer\s*hits|best\s*of|lo\s*mejor\s*de|karaoke|tribute|sped\s*up|slowed(?:\s*\+\s*reverb)?|8d\s*audio|dj\s*mix|megamix|soundtrack\s*collection)\b/i.test(
+              hay
+            );
+          };
+
           const searchController = new AbortController();
-          const timer = setTimeout(() => searchController.abort(), 1600);
+          const timer = setTimeout(() => searchController.abort(), 2400);
           const onOuterAbort = () => searchController.abort();
           signal?.addEventListener('abort', onOuterAbort, { once: true });
 
           const itunesController = new AbortController();
-          const itunesTimer = setTimeout(() => itunesController.abort(), 1200);
+          const itunesTimer = setTimeout(() => itunesController.abort(), 2400);
           const onOuterItunes = () => itunesController.abort();
           signal?.addEventListener('abort', onOuterItunes, { once: true });
 
           interface ItunesSongHit {
+            trackId: string;
             trackName: string;
             artistName: string;
+            collectionName: string;
+            collectionType?: string;
+            artworkUrl: string;
+            durationSec: number;
             releaseDate: string;
           }
           const fetchItunesSongs = async (): Promise<ItunesSongHit[]> => {
             try {
               const itRes = await this.fetchFn(
-                `https://itunes.apple.com/search?term=${encodeURIComponent(searchQ)}&entity=song&country=ES&limit=35`,
+                `https://itunes.apple.com/search?term=${encodeURIComponent(searchQ)}&entity=song&country=ES&limit=80`,
                 { signal: itunesController.signal }
               );
               if (!itRes.ok) return [];
               const itJson = (await itRes.json()) as { results?: Array<Record<string, any>> };
               const maxAllowedIso = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
               return (Array.isArray(itJson?.results) ? itJson.results : [])
-                .map((row) => ({
-                  trackName: String(row?.trackName ?? '').trim(),
-                  artistName: String(row?.artistName ?? '').trim(),
-                  releaseDate: String(row?.releaseDate ?? '').trim().slice(0, 10),
-                }))
+                .map((row): ItunesSongHit => {
+                  const art100 = String(row?.artworkUrl100 ?? row?.artworkUrl60 ?? '').trim();
+                  const artHigh = art100 ? art100.replace(/\/\d+x\d+bb\./, '/600x600bb.') : '';
+                  return {
+                    trackId: String(row?.trackId ?? '').trim(),
+                    trackName: String(row?.trackName ?? '').trim(),
+                    artistName: String(row?.artistName ?? '').trim(),
+                    collectionName: String(row?.collectionName ?? '').trim(),
+                    collectionType: typeof row?.collectionType === 'string' ? row.collectionType : undefined,
+                    artworkUrl: artHigh || art100,
+                    durationSec: Math.max(30, Math.round(Number(row?.trackTimeMillis ?? 180_000) / 1000)),
+                    releaseDate: String(row?.releaseDate ?? '').trim().slice(0, 10),
+                  };
+                })
                 .filter(
                   (row) =>
                     row.trackName.length > 0 &&
                     row.artistName.length > 0 &&
                     /^\d{4}-\d{2}-\d{2}$/.test(row.releaseDate) &&
-                    row.releaseDate <= maxAllowedIso
+                    row.releaseDate <= maxAllowedIso &&
+                    !isCompilationOrJunkAppearance(row.collectionName, row.trackName, row.collectionType)
                 );
             } catch {
               return [];
@@ -2156,14 +2183,30 @@ export class DeezerCatalog {
           let rawHits: Json[] = [];
           let itunesHits: ItunesSongHit[] = [];
           try {
-            const [dzRes, itRes] = await Promise.all([
+            const [dzGeneralRes, dzArtistRes, itRes] = await Promise.all([
               this.get(
                 `/search/track?q=${encodeURIComponent(searchQ)}&limit=40`,
                 searchController.signal
               ).catch(() => null),
+              this.get(
+                `/search/track?q=${encodeURIComponent(`artist:"${searchQ}"`)}&limit=40`,
+                searchController.signal
+              ).catch(() => null),
               fetchItunesSongs(),
             ]);
-            rawHits = Array.isArray(dzRes?.data) ? (dzRes.data as Json[]) : [];
+            const mergedRaw = [
+              ...(Array.isArray(dzGeneralRes?.data) ? (dzGeneralRes.data as Json[]) : []),
+              ...(Array.isArray(dzArtistRes?.data) ? (dzArtistRes.data as Json[]) : []),
+            ];
+            const seenDzIds = new Set<string>();
+            rawHits = mergedRaw.filter((item) => {
+              const idStr = String(item?.id ?? '');
+              if (!idStr || seenDzIds.has(idStr)) return false;
+              seenDzIds.add(idStr);
+              const alTitle = String(item?.album?.title ?? '');
+              const trTitle = String(item?.title ?? '');
+              return !isCompilationOrJunkAppearance(alTitle, trTitle);
+            });
             itunesHits = itRes;
           } finally {
             clearTimeout(timer);
@@ -2192,12 +2235,10 @@ export class DeezerCatalog {
                 .replace(/\s*\[[^\]]*\]/g, '')
             );
 
-          // Resolve recent iTunes collabs (< 90 days) missing from Deezer's top-40 popularity hits
+          // Resolve ALL authentic non-compilation iTunes collabs sorted newest-first (no arbitrary 90-day cutoff)
           const existingTitleSet = new Set(rawHits.map((t) => stripTitleExtras(String(t?.title ?? ''))));
-          const ninetyDaysAgoIso = new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10);
-          const missingRecentItunes = itunesHits
+          const authenticItunesCollabs = itunesHits
             .filter((it) => {
-              if (it.releaseDate < ninetyDaysAgoIso) return false;
               const normItArtists = normalizeSearchStr(it.artistName);
               const titlePlusArtist = `${normItArtists} ${normalizeSearchStr(it.trackName)}`;
               const involvesTarget =
@@ -2210,12 +2251,20 @@ export class DeezerCatalog {
                 !matchesTargetArtist(firstArtist) ||
                 /\((?:feat\.?|ft\.?|with|con)\b/i.test(it.trackName) ||
                 /[,&]/.test(it.artistName);
-              if (!isCollabOrGuest) return false;
+              return isCollabOrGuest;
+            })
+            .sort((a, b) => b.releaseDate.localeCompare(a.releaseDate));
+
+          const recentItunesTitleSet = new Set(
+            authenticItunesCollabs.slice(0, 12).map((it) => stripTitleExtras(it.trackName)).filter(Boolean)
+          );
+
+          const missingRecentItunes = authenticItunesCollabs
+            .filter((it) => {
               const stripped = stripTitleExtras(it.trackName);
               return Boolean(stripped) && !existingTitleSet.has(stripped);
             })
-            .sort((a, b) => b.releaseDate.localeCompare(a.releaseDate))
-            .slice(0, 3);
+            .slice(0, 8);
 
           if (missingRecentItunes.length > 0) {
             const extraRes = await Promise.allSettled(
@@ -2225,7 +2274,7 @@ export class DeezerCatalog {
                   .trim();
                 const firstArtist = it.artistName.split(/\s*(?:,|&|\bx\b)\s*/i)[0]?.trim() ?? '';
                 const subCtrl = new AbortController();
-                const subTimer = setTimeout(() => subCtrl.abort(), 900);
+                const subTimer = setTimeout(() => subCtrl.abort(), 1100);
                 const onOuterSub = () => subCtrl.abort();
                 signal?.addEventListener('abort', onOuterSub, { once: true });
                 try {
@@ -2246,7 +2295,13 @@ export class DeezerCatalog {
             for (const er of extraRes) {
               if (er.status !== 'fulfilled') continue;
               for (const item of er.value) {
-                if (item?.id && !seenRawIds.has(String(item.id))) {
+                const alTitle = String(item?.album?.title ?? '');
+                const trTitle = String(item?.title ?? '');
+                if (
+                  item?.id &&
+                  !seenRawIds.has(String(item.id)) &&
+                  !isCompilationOrJunkAppearance(alTitle, trTitle)
+                ) {
                   seenRawIds.add(String(item.id));
                   rawHits.push(item);
                 }
@@ -2254,33 +2309,8 @@ export class DeezerCatalog {
             }
           }
 
-          if (rawHits.length === 0) return [];
-
-          const candidates = rawHits
-            .filter((t) => {
-              if (!t?.id) return false;
-              const mainId = String(t?.artist?.id ?? '');
-              const titleStr = String(t?.title ?? '');
-              return (
-                !sourceIdSet.has(mainId) ||
-                /\((?:feat\.?|ft\.?|with|con)\b/i.test(titleStr)
-              );
-            })
-            .sort((x, y) => Number(y?.id ?? 0) - Number(x?.id ?? 0))
-            .slice(0, 8);
-
-          if (candidates.length === 0) return [];
-
-          const enriched = await this.enrichTracks(
-            candidates,
-            candidates.map((t) => this.mapTrack(t)),
-            8,
-            signal,
-            900
-          );
-
           const itunesDateByTitle = new Map<string, string>();
-          for (const it of itunesHits) {
+          for (const it of authenticItunesCollabs) {
             const key = stripTitleExtras(it.trackName);
             if (!key) continue;
             const prev = itunesDateByTitle.get(key);
@@ -2289,9 +2319,50 @@ export class DeezerCatalog {
             }
           }
 
+          const candidates = rawHits
+            .filter((t) => {
+              if (!t?.id) return false;
+              const mainId = String(t?.artist?.id ?? '');
+              const titleStr = String(t?.title ?? '');
+              const alTitle = String(t?.album?.title ?? '');
+              if (isCompilationOrJunkAppearance(alTitle, titleStr)) return false;
+              return (
+                !sourceIdSet.has(mainId) ||
+                /\((?:feat\.?|ft\.?|with|con)\b/i.test(titleStr)
+              );
+            })
+            .sort((x, y) => {
+              const tx = stripTitleExtras(String(x?.title ?? ''));
+              const ty = stripTitleExtras(String(y?.title ?? ''));
+              const itX = itunesDateByTitle.get(tx) ?? '';
+              const itY = itunesDateByTitle.get(ty) ?? '';
+              if (itX || itY) {
+                if (itX && !itY) return -1;
+                if (itY && !itX) return 1;
+                const dCmp = itY.localeCompare(itX);
+                if (dCmp !== 0) return dCmp;
+              }
+              const matchX = recentItunesTitleSet.has(tx) ? 1 : 0;
+              const matchY = recentItunesTitleSet.has(ty) ? 1 : 0;
+              if (matchX !== matchY) return matchY - matchX;
+              return Number(y?.id ?? 0) - Number(x?.id ?? 0);
+            })
+            .slice(0, 12);
+
+          const enriched = candidates.length
+            ? await this.enrichTracks(
+                candidates,
+                candidates.map((t) => this.mapTrack(t)),
+                10,
+                signal,
+                1100
+              )
+            : [];
+
           const seenKey = new Set<string>();
           const kept: Track[] = [];
           for (const tr of enriched) {
+            if (isCompilationOrJunkAppearance(tr.album?.name ?? '', tr.title)) continue;
             const involvesArtist = tr.artists.some(
               (ar) => (ar.id && sourceIdSet.has(ar.id)) || matchesTargetArtist(ar.name)
             );
@@ -2300,7 +2371,7 @@ export class DeezerCatalog {
               tr.artists.length > 1 ||
               !matchesTargetArtist(tr.artists[0]?.name ?? '');
             if (!isGuestOrCollab) continue;
-            const dedupKey = `${normalizeSearchStr(tr.title)}::${normalizeSearchStr(tr.artists[0]?.name ?? '')}`;
+            const dedupKey = `${stripTitleExtras(tr.title)}::${normalizeSearchStr(tr.artists[0]?.name ?? '')}`;
             if (seenKey.has(dedupKey)) continue;
             seenKey.add(dedupKey);
 
@@ -2316,7 +2387,37 @@ export class DeezerCatalog {
             kept.push(upgradedTrack);
           }
 
+          // Synthesize fallback tracks for newest verified iTunes collaborations missing from Deezer
+          const keptStrippedTitles = new Set(kept.map((t) => stripTitleExtras(t.title)));
+          for (const it of authenticItunesCollabs.slice(0, 5)) {
+            const stripped = stripTitleExtras(it.trackName);
+            if (!stripped || keptStrippedTitles.has(stripped)) continue;
+            keptStrippedTitles.add(stripped);
+            const parsedArtists = it.artistName
+              .split(/\s*(?:,|&|\bfeat\.?\b|\bft\.?\b)\s*/i)
+              .map((n) => n.trim())
+              .filter(Boolean)
+              .map((name) => ({ name }));
+            kept.push({
+              id: it.trackId ? `it_${it.trackId}` : `it_${Date.parse(it.releaseDate)}_${kept.length}`,
+              title: it.trackName,
+              artists: parsedArtists.length ? parsedArtists : [{ name: it.artistName }],
+              album: it.collectionName
+                ? { id: it.trackId ? `it_alb_${it.trackId}` : 'it_alb_0', name: it.collectionName }
+                : undefined,
+              durationSec: it.durationSec || 180,
+              thumbnailUrl: it.artworkUrl,
+              thumbnailHighUrl: it.artworkUrl,
+              source: 'youtube',
+              releaseDate: it.releaseDate,
+              releaseYear: Number(it.releaseDate.slice(0, 4)),
+            });
+          }
+
           kept.sort((x, y) => {
+            const xExact = Boolean(x.releaseDate && /^\d{4}-\d{2}-\d{2}/.test(x.releaseDate));
+            const yExact = Boolean(y.releaseDate && /^\d{4}-\d{2}-\d{2}/.test(y.releaseDate));
+            if (xExact !== yExact) return xExact ? -1 : 1;
             const dx = x.releaseDate ?? `${x.releaseYear ?? 0}-01-01`;
             const dy = y.releaseDate ?? `${y.releaseYear ?? 0}-01-01`;
             const cmp = dy.localeCompare(dx);
@@ -2333,7 +2434,7 @@ export class DeezerCatalog {
 
       const appearancesPromise = Promise.race([
         rawAppearancesPromise,
-        new Promise<Track[]>((resolve) => setTimeout(() => resolve([]), 2200)),
+        new Promise<Track[]>((resolve) => setTimeout(() => resolve([]), 3800)),
       ]);
 
       const [a, topSongs, mergedRawReleases, related, ytmVisuals, appearances] =

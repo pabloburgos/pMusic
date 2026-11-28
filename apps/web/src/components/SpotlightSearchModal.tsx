@@ -13,6 +13,7 @@ import { formatDurationSec } from '@pmusic/core';
 import { useShallow } from 'zustand/react/shallow';
 import { usePMusicStore } from '../store/usePMusicStore.ts';
 import { buildSearchHomeRecommendations } from '../utils/instant-search.ts';
+import { useRotatingSearchPlaceholder } from '../utils/search-placeholders.ts';
 import { ArtistLinks } from './ArtistLinks.tsx';
 
 export const SpotlightSearchModal: React.FC = React.memo(() => {
@@ -114,6 +115,8 @@ const SpotlightSearchModalInner: React.FC = () => {
   const trimmedQuery = searchQuery.trim();
   const hasQuery = trimmedQuery.length > 0;
 
+  const sbSearchPlaceholder = useRotatingSearchPlaceholder({ paused: Boolean(searchQuery) });
+
   return (
     <div
       role="dialog"
@@ -148,7 +151,7 @@ const SpotlightSearchModalInner: React.FC = () => {
             type="search"
             role="searchbox"
             aria-label="Buscar canciones, artistas o álbumes"
-            placeholder="Buscar"
+            placeholder={sbSearchPlaceholder}
             value={searchQuery}
             onChange={(e) => void setSearchQuery(e.target.value)}
             className="pm-input-frameless flex-1 bg-transparent text-[14px] font-medium pm-text-primary placeholder:text-[var(--pm-text-tertiary)] focus:outline-none"

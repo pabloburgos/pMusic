@@ -256,9 +256,23 @@ create table if not exists public.profiles (
   username text not null unique check (username ~ '^[a-z0-9._]{3,24}$'),
   display_name text not null check (char_length(trim(display_name)) between 1 and 60),
   avatar_url text,
+  bio text not null default '',
+  top_tracks jsonb not null default '[]'::jsonb,
+  top_artists jsonb not null default '[]'::jsonb,
+  public_playlists jsonb not null default '[]'::jsonb,
+  public_profile_enabled boolean not null default true,
+  taste_updated_at timestamptz,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
+
+alter table public.profiles
+  add column if not exists bio text not null default '',
+  add column if not exists top_tracks jsonb not null default '[]'::jsonb,
+  add column if not exists top_artists jsonb not null default '[]'::jsonb,
+  add column if not exists public_playlists jsonb not null default '[]'::jsonb,
+  add column if not exists public_profile_enabled boolean not null default true,
+  add column if not exists taste_updated_at timestamptz;
 
 create index if not exists idx_profiles_username_lower
   on public.profiles (lower(username));
@@ -530,7 +544,61 @@ create policy "favorite_artists_owner_all"
   with check ((select auth.uid()) = user_id);
 
 -- -----------------------------------------------------------------------------
--- 13. Publicación en Supabase Realtime (Idempotente)
+-- 13. public.direct_messages (Chat directo 1 a 1: texto, imágenes, playlists, Jams)
+-- -----------------------------------------------------------------------------
+create table if not exists public.direct_messages (
+  id uuid primary key default gen_random_uuid(),
+  sender_id uuid not null references auth.users(id) on delete cascade,
+  recipient_id uuid not null references auth.users(id) on delete cascade,
+  message_type text not null default 'text' check (message_type in ('text', 'image', 'playlist', 'jam', 'track')),
+  body text not null default '' check (char_length(body) <= 2000),
+  payload jsonb,
+  read_at timestamptz,
+  created_at timestamptz not null default timezone('utc', now()),
+  check (sender_id <> recipient_id)
+);
+
+create index if not exists idx_direct_messages_pair_created
+  on public.direct_messages (least(sender_id, recipient_id), greatest(sender_id, recipient_id), created_at asc);
+
+create index if not exists idx_direct_messages_recipient_unread
+  on public.direct_messages (recipient_id, created_at desc)
+  where read_at is null;
+
+alter table public.direct_messages replica identity full;
+alter table public.direct_messages enable row level security;
+
+drop policy if exists "direct_messages_participants_select" on public.direct_messages;
+create policy "direct_messages_participants_select"
+  on public.direct_messages
+  for select
+  to authenticated
+  using ((select auth.uid()) = sender_id or (select auth.uid()) = recipient_id);
+
+drop policy if exists "direct_messages_sender_insert" on public.direct_messages;
+create policy "direct_messages_sender_insert"
+  on public.direct_messages
+  for insert
+  to authenticated
+  with check ((select auth.uid()) = sender_id and sender_id <> recipient_id);
+
+drop policy if exists "direct_messages_recipient_update" on public.direct_messages;
+create policy "direct_messages_recipient_update"
+  on public.direct_messages
+  for update
+  to authenticated
+  using ((select auth.uid()) = recipient_id or (select auth.uid()) = sender_id)
+  with check ((select auth.uid()) = recipient_id or (select auth.uid()) = sender_id);
+
+drop policy if exists "direct_messages_sender_delete" on public.direct_messages;
+create policy "direct_messages_sender_delete"
+  on public.direct_messages
+  for delete
+  to authenticated
+  using ((select auth.uid()) = sender_id);
+
+-- -----------------------------------------------------------------------------
+-- 14. Publicación en Supabase Realtime (Idempotente)
 -- -----------------------------------------------------------------------------
 do $$
 declare
@@ -549,7 +617,8 @@ begin
       'jam_sessions',
       'jam_requests',
       'user_preferences',
-      'favorite_artists'
+      'favorite_artists',
+      'direct_messages'
     ]
     loop
       if not exists (
@@ -567,7 +636,7 @@ end;
 $$;
 
 -- -----------------------------------------------------------------------------
--- 14. Permisos explícitos para roles anon, authenticated y service_role (Idempotente)
+-- 15. Permisos explícitos para roles anon, authenticated y service_role (Idempotente)
 -- -----------------------------------------------------------------------------
 grant usage on schema public to anon, authenticated, service_role;
 grant select on table public.jam_sessions to anon;
@@ -586,5 +655,6 @@ grant all on table
   public.jam_sessions,
   public.jam_requests,
   public.user_preferences,
-  public.favorite_artists
+  public.favorite_artists,
+  public.direct_messages
   to authenticated, service_role;

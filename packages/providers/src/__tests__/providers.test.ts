@@ -2174,4 +2174,110 @@ describe('@pmusic/providers', () => {
     expect(csvParsed[0]?.artists).toEqual(['Bad Bunny', 'Feid']);
     expect(csvParsed[1]?.artists).toEqual(['La Pantera', 'Quevedo']);
   });
+
+  it('picks genuine newer 2026/2025 collaborations over older 2024 tracks and skips compilation albums in artist appearances', async () => {
+    const mockFetch = (async (input: RequestInfo | URL) => {
+      const u = String(input);
+      if (u.includes('itunes.apple.com/search')) {
+        return new Response(
+          JSON.stringify({
+            results: [
+              {
+                trackId: 9001,
+                trackName: 'Hits Vol 1 (Compilation)',
+                artistName: 'Varios Artistas, Quevedo',
+                collectionName: 'Éxitos 2026 Top 50',
+                collectionType: 'Compilation',
+                artworkUrl100: 'https://example.com/comp/100x100bb.jpg',
+                trackTimeMillis: 190000,
+                releaseDate: '2026-11-25T08:00:00Z',
+              },
+              {
+                trackId: 9002,
+                trackName: 'NUEVO FEAT (feat. Quevedo)',
+                artistName: 'Lucho RK, Quevedo',
+                collectionName: 'NUEVO FEAT - Single',
+                collectionType: 'Album',
+                artworkUrl100: 'https://example.com/new/100x100bb.jpg',
+                trackTimeMillis: 185000,
+                releaseDate: '2026-04-10T08:00:00Z',
+              },
+              {
+                trackId: 9003,
+                trackName: 'Viejo Tema 2024',
+                artistName: 'Otro Artista, Quevedo',
+                collectionName: 'Viejo Tema 2024',
+                collectionType: 'Album',
+                artworkUrl100: 'https://example.com/old/100x100bb.jpg',
+                trackTimeMillis: 170000,
+                releaseDate: '2024-05-01T08:00:00Z',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (u.includes('api.deezer.com/artist/100/top')) {
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      }
+      if (u.includes('api.deezer.com/artist/100/albums')) {
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      }
+      if (u.includes('api.deezer.com/artist/100/related')) {
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      }
+      if (u.includes('api.deezer.com/artist/100')) {
+        return new Response(
+          JSON.stringify({ id: 100, name: 'Quevedo', picture_medium: '', picture_xl: '' }),
+          { status: 200 }
+        );
+      }
+      if (u.includes('api.deezer.com/search/track')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 5001,
+                title: 'Viejo Tema 2024',
+                duration: 170,
+                release_date: '2024-05-01',
+                artist: { id: 202, name: 'Otro Artista' },
+                contributors: [
+                  { id: 202, name: 'Otro Artista' },
+                  { id: 100, name: 'Quevedo' },
+                ],
+                album: { id: 300, title: 'Viejo Tema 2024', release_date: '2024-05-01' },
+              },
+            ],
+          }),
+          { status: 200 }
+        );
+      }
+      if (u.includes('api.deezer.com/track/5001')) {
+        return new Response(
+          JSON.stringify({
+            id: 5001,
+            title: 'Viejo Tema 2024',
+            duration: 170,
+            release_date: '2024-05-01',
+            artist: { id: 202, name: 'Otro Artista' },
+            contributors: [
+              { id: 202, name: 'Otro Artista' },
+              { id: 100, name: 'Quevedo' },
+            ],
+            album: { id: 300, title: 'Viejo Tema 2024', release_date: '2024-05-01' },
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }) as typeof fetch;
+
+    const catalog = new DeezerCatalog(mockFetch);
+    const detail = await catalog.artist('dz_art:100', undefined, 'Quevedo');
+    expect(detail.appearances?.length).toBeGreaterThan(0);
+    expect(detail.appearances![0]?.title).toContain('NUEVO FEAT');
+    expect(detail.appearances![0]?.releaseDate).toBe('2026-04-10');
+    expect(detail.appearances!.some((t) => /Compilation/i.test(t.title))).toBe(false);
+  });
 });

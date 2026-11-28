@@ -12,6 +12,7 @@ import {
   Link2,
   ListMusic,
   Loader2,
+  MessageCircle,
   Music2,
   Play,
   Plus,
@@ -19,6 +20,7 @@ import {
   Radio,
   Search,
   Sparkles,
+  User,
   UserPlus,
   Users,
   X,
@@ -39,6 +41,7 @@ import {
 import { openExternalUrl } from '../platform/web-bridge.ts';
 import { PMusicSwitch } from './PMusicSwitch.tsx';
 import { TelegramIcon, WhatsAppIcon } from './SocialBrandIcons.tsx';
+import { FriendChatPanel } from './FriendChatPanel.tsx';
 import { TrackArtwork } from './TrackArtwork.tsx';
 import { UserAvatar } from './UserAvatar.tsx';
 
@@ -50,18 +53,25 @@ export const SocialScreen: React.FC = React.memo(() => {
     friends,
     sharedPlaylists,
     shareListeningActivity,
+    publicProfileEnabled,
     favoriteArtists,
     friendActivities,
+    unreadDmCounts,
+    blendGeneratingForUserId,
     personalTopStats,
     activeJamSession,
     activeJamRole,
     activeJamRequests,
     setSocialSubTab,
     setShareListeningActivity,
+    setPublicProfileEnabled,
     loadPersonalTopStats,
     playFriendActivityTrack,
     playFromVoiceQuery,
     openArtistDetail,
+    openFriendProfile,
+    openChatWithFriend,
+    sendJamInviteToFriendChat,
     hydrateSocialAndSubscribe,
     startJam,
     joinJamInApp,
@@ -91,8 +101,11 @@ export const SocialScreen: React.FC = React.memo(() => {
       friends: s.friends,
       sharedPlaylists: s.sharedPlaylists,
       shareListeningActivity: s.shareListeningActivity,
+      publicProfileEnabled: s.publicProfileEnabled,
       favoriteArtists: s.favoriteArtists,
       friendActivities: s.friendActivities,
+      unreadDmCounts: s.unreadDmCounts,
+      blendGeneratingForUserId: s.blendGeneratingForUserId,
       personalTopStats: s.personalTopStats,
       activeJamSession: s.activeJamSession,
       activeJamRole: s.activeJamRole,
@@ -100,10 +113,14 @@ export const SocialScreen: React.FC = React.memo(() => {
       jamAllowGuestPlaybackControls: s.jamAllowGuestPlaybackControls,
       setSocialSubTab: s.setSocialSubTab,
       setShareListeningActivity: s.setShareListeningActivity,
+      setPublicProfileEnabled: s.setPublicProfileEnabled,
       loadPersonalTopStats: s.loadPersonalTopStats,
       playFriendActivityTrack: s.playFriendActivityTrack,
       playFromVoiceQuery: s.playFromVoiceQuery,
       openArtistDetail: s.openArtistDetail,
+      openFriendProfile: s.openFriendProfile,
+      openChatWithFriend: s.openChatWithFriend,
+      sendJamInviteToFriendChat: s.sendJamInviteToFriendChat,
       hydrateSocialAndSubscribe: s.hydrateSocialAndSubscribe,
       startJam: s.startJam,
       joinJamInApp: s.joinJamInApp,
@@ -231,6 +248,7 @@ export const SocialScreen: React.FC = React.memo(() => {
   const acceptedFriends = friends.filter((f) => f.status === 'accepted');
   const pendingIncoming = friends.filter((f) => f.status === 'pending' && f.isIncoming);
   const pendingOutgoing = friends.filter((f) => f.status === 'pending' && !f.isIncoming);
+  const totalUnreadDms = Object.values(unreadDmCounts).reduce((a, b) => a + b, 0);
 
   return (
     <div className="pm-page-enter space-y-6">
@@ -261,10 +279,12 @@ export const SocialScreen: React.FC = React.memo(() => {
             {
               id: 'jam' as const,
               label: activeJamSession?.active ? `Jam · ${activeJamSession.code}` : 'Jam & QR',
+              badge: 0,
             },
-            { id: 'amigos' as const, label: `Amigos (${acceptedFriends.length})` },
-            { id: 'compartidas' as const, label: `Listas (${sharedPlaylists.length})` },
-            { id: 'top' as const, label: 'Mi Top' },
+            { id: 'amigos' as const, label: `Amigos (${acceptedFriends.length})`, badge: 0 },
+            { id: 'mensajes' as const, label: 'Mensajes', badge: totalUnreadDms },
+            { id: 'compartidas' as const, label: `Listas (${sharedPlaylists.length})`, badge: 0 },
+            { id: 'top' as const, label: 'Mi Top', badge: 0 },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -272,13 +292,18 @@ export const SocialScreen: React.FC = React.memo(() => {
               role="tab"
               aria-selected={socialSubTab === tab.id}
               onClick={() => setSocialSubTab(tab.id)}
-              className={`pm-compact-btn pm-pressable h-8 shrink-0 whitespace-nowrap rounded-full px-3.5 text-xs font-bold transition sm:px-4 ${
+              className={`pm-compact-btn pm-pressable inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 text-xs font-bold transition sm:px-4 ${
                 socialSubTab === tab.id
                   ? 'pm-btn-primary shadow-sm'
                   : 'bg-white/[0.05] pm-text-secondary hover:text-white sm:bg-transparent'
               }`}
             >
-              {tab.label}
+              <span>{tab.label}</span>
+              {tab.badge > 0 && (
+                <span className="tabular-nums inline-flex min-w-[16px] items-center justify-center rounded-full bg-white px-1 text-[10px] font-black leading-[16px] text-[#070709]">
+                  {tab.badge > 9 ? '9+' : tab.badge}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -555,29 +580,53 @@ export const SocialScreen: React.FC = React.memo(() => {
         </div>
       )}
 
-      {/* 2. AMIGOS (@usuario) EN TIEMPO REAL */}
+      {/* 2. AMIGOS (@usuario), PERFIL SOCIAL Y BLEND */}
       {socialSubTab === 'amigos' && (
         <div className="space-y-4">
-          <div className="pm-surface-card flex items-center justify-between gap-3 rounded-2xl p-4">
-            <div className="flex min-w-0 items-center gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-400">
-                <Headphones className="h-4 w-4" />
-              </div>
-              <div className="min-w-0">
-                <div className="text-xs font-bold pm-text-primary">
-                  Compartir lo que escucho con amigos
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="pm-surface-card flex items-center justify-between gap-3 rounded-2xl p-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-400">
+                  <Headphones className="h-4 w-4" />
                 </div>
-                <div className="truncate text-[11px] pm-text-secondary">
-                  Muestra en vivo qué canción suena en tu sesión solo a tus amigos aceptados
+                <div className="min-w-0">
+                  <div className="text-xs font-bold pm-text-primary">
+                    Compartir lo que escucho con amigos
+                  </div>
+                  <div className="truncate text-[11px] pm-text-secondary">
+                    Muestra en vivo qué canción suena solo a amigos aceptados
+                  </div>
                 </div>
               </div>
+              <PMusicSwitch
+                checked={shareListeningActivity}
+                onChange={() => setShareListeningActivity(!shareListeningActivity)}
+                ariaLabel="Compartir lo que escucho con amigos"
+                testId="social-share-listening-toggle"
+              />
             </div>
-            <PMusicSwitch
-              checked={shareListeningActivity}
-              onChange={() => setShareListeningActivity(!shareListeningActivity)}
-              ariaLabel="Compartir lo que escucho con amigos"
-              testId="social-share-listening-toggle"
-            />
+
+            <div className="pm-surface-card flex items-center justify-between gap-3 rounded-2xl p-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/10 text-white/85">
+                  <User className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs font-bold pm-text-primary">
+                    Perfil público (Top 10 y playlists)
+                  </div>
+                  <div className="truncate text-[11px] pm-text-secondary">
+                    Permite que tus amigos vean tu Top 10, playlists y creen Blend de 100 temas
+                  </div>
+                </div>
+              </div>
+              <PMusicSwitch
+                checked={publicProfileEnabled}
+                onChange={() => setPublicProfileEnabled(!publicProfileEnabled)}
+                ariaLabel="Perfil público (Top 10 y playlists)"
+                testId="social-public-profile-toggle"
+              />
+            </div>
           </div>
 
           {(() => {
@@ -617,9 +666,13 @@ export const SocialScreen: React.FC = React.memo(() => {
                             />
                           </div>
                           <div className="min-w-0">
-                            <div className="truncate text-[11px] font-bold text-emerald-300">
+                            <button
+                              type="button"
+                              onClick={() => void openFriendProfile(act.userId)}
+                              className="block max-w-full truncate text-left text-[11px] font-bold text-emerald-300 hover:underline"
+                            >
                               {friendName}
-                            </div>
+                            </button>
                             <div className="truncate text-xs font-bold pm-text-primary">
                               {act.trackTitle}
                             </div>
@@ -673,13 +726,17 @@ export const SocialScreen: React.FC = React.memo(() => {
                 const alreadyFriend = friends.some((f) => f.otherProfile.userId === u.userId);
                 return (
                   <div key={u.userId} className="flex items-center justify-between gap-3 py-1">
-                    <div className="flex items-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => void openFriendProfile(u.userId)}
+                      className="flex min-w-0 items-center gap-2.5 text-left"
+                    >
                       <UserAvatar src={u.avatarUrl} name={u.displayName} size="md" showRing />
-                      <div>
-                        <div className="text-xs font-bold pm-text-primary">{u.displayName}</div>
-                        <div className="text-[11px] pm-text-secondary">@{u.username}</div>
+                      <div className="min-w-0">
+                        <div className="truncate text-xs font-bold pm-text-primary hover:underline">{u.displayName}</div>
+                        <div className="truncate text-[11px] pm-text-secondary">@{u.username}</div>
                       </div>
-                    </div>
+                    </button>
                     <button
                       type="button"
                       disabled={alreadyFriend}
@@ -782,41 +839,90 @@ export const SocialScreen: React.FC = React.memo(() => {
                 instante.
               </p>
             ) : (
-              acceptedFriends.map((f) => (
-                <div
-                  key={f.id}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border pm-border bg-white/[0.02] p-3"
-                >
-                  <div className="flex items-center gap-3">
-                    <UserAvatar
-                      src={f.otherProfile.avatarUrl}
-                      name={f.otherProfile.displayName}
-                      size="md"
-                      showRing
-                    />
-                    <div>
-                      <div className="text-sm font-bold pm-text-primary">
-                        {f.otherProfile.displayName}
+              acceptedFriends.map((f) => {
+                const isGeneratingBlend = blendGeneratingForUserId === f.otherProfile.userId;
+                const unreadCount = unreadDmCounts[f.otherProfile.userId] ?? 0;
+                return (
+                  <div
+                    key={f.id}
+                    className="flex flex-wrap items-center justify-between gap-2.5 rounded-2xl border pm-border bg-white/[0.02] p-3"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => void openFriendProfile(f.otherProfile.userId)}
+                      className="flex min-w-0 items-center gap-3 text-left"
+                    >
+                      <UserAvatar
+                        src={f.otherProfile.avatarUrl}
+                        name={f.otherProfile.displayName}
+                        size="md"
+                        showRing
+                      />
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-bold pm-text-primary hover:underline">
+                          {f.otherProfile.displayName}
+                        </div>
+                        <div className="truncate text-xs pm-text-secondary">
+                          @{f.otherProfile.username} · Ver perfil Top 10
+                        </div>
                       </div>
-                      <div className="text-xs pm-text-secondary">@{f.otherProfile.username}</div>
+                    </button>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => void openFriendProfile(f.otherProfile.userId)}
+                        className="pm-btn-secondary inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-semibold"
+                      >
+                        <User className="h-3.5 w-3.5" /> Perfil
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void openChatWithFriend(f.otherProfile.userId)}
+                        className="pm-btn-secondary inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-semibold"
+                      >
+                        <MessageCircle className="h-3.5 w-3.5" />
+                        <span>Chat</span>
+                        {unreadCount > 0 && (
+                          <span className="tabular-nums inline-flex min-w-[16px] items-center justify-center rounded-full bg-white px-1 text-[10px] font-black text-[#070709]">
+                            {unreadCount}
+                          </span>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void sendJamInviteToFriendChat(f.otherProfile.userId)}
+                        className="pm-btn-secondary inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-semibold"
+                        title="Enviar invitación a Jam por chat"
+                      >
+                        <Radio className="h-3.5 w-3.5 text-emerald-400" /> Jam
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isGeneratingBlend}
+                        onClick={async () => {
+                          const created = await createBlendWithFriend(f);
+                          if (created) openSharedPlaylistDetail(created.id);
+                        }}
+                        className="pm-btn-primary inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold disabled:opacity-60"
+                      >
+                        {isGeneratingBlend ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Sparkles className="h-3.5 w-3.5" />
+                        )}
+                        <span>{isGeneratingBlend ? 'Creando…' : 'Crear Blend'}</span>
+                      </button>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      const created = await createBlendWithFriend(f);
-                      if (created) openSharedPlaylistDetail(created.id);
-                    }}
-                    className="pm-btn-primary inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold"
-                  >
-                    <Sparkles className="h-3.5 w-3.5" /> Crear Blend
-                  </button>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
       )}
+
+      {/* 2B. MENSAJES DIRECTOS CON AMIGOS */}
+      {socialSubTab === 'mensajes' && <FriendChatPanel />}
 
       {/* 3. PLAYLISTS COMPARTIDAS Y BLENDS */}
       {socialSubTab === 'compartidas' && (

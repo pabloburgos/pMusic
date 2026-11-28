@@ -75,11 +75,13 @@ import {
 } from '../utils/track-dnd.ts';
 import { ArtistLinks } from './ArtistLinks.tsx';
 import { PlaylistCoverArt } from './PlaylistCoverArt.tsx';
+import { FriendProfileView } from './FriendProfileView.tsx';
 import { TrackArtwork } from './TrackArtwork.tsx';
 import { SwipeableTrackRow } from './SwipeableTrackRow.tsx';
 import { RoundedPauseIcon, RoundedPlayIcon } from './TransportIcons.tsx';
 import { getLowResPreviewUrl, optimizeArtworkUrl } from '../utils/image-opt.ts';
 import { buildSearchHomeRecommendations } from '../utils/instant-search.ts';
+import { useRotatingSearchPlaceholder } from '../utils/search-placeholders.ts';
 import { syncNativeSystemBars } from '../utils/system-bars.ts';
 
 const SPANISH_SHORT_MONTHS = [
@@ -1204,17 +1206,48 @@ export const DetailViewPanel: React.FC = React.memo(() => {
     fetchPlaylistRecommendations,
   ]);
 
-  const activeArtistLatestAppearanceCandidate = (() => {
+function isCompilationOrJunkAppearanceTrack(t: Track): boolean {
+  const hay = `${t.album?.name ?? ''} ${t.title}`.toLowerCase();
+  return /\b(?:various artists|varios artistas|hits\s*20\d{2}|éxitos\s*20\d{2}|exitos\s*20\d{2}|top\s*(?:50|100|hits)|summer\s*hits|best\s*of|lo\s*mejor\s*de|karaoke|tribute|sped\s*up|slowed(?:\s*\+\s*reverb)?|8d\s*audio|dj\s*mix|megamix)\b/i.test(
+    hay
+  );
+}
+
+function buildSortedAppearancePool(
+  artistName: string,
+  appearances: Track[],
+  topSongs: Track[],
+  resolvedDates: Record<string, string>
+): Track[] {
+  const artistKeyNorm = artistName.trim().toLowerCase();
+  const isRealAppearanceTrack = (t: Track): boolean =>
+    !isCompilationOrJunkAppearanceTrack(t) &&
+    (t.artists.length > 1 || (t.artists[0]?.name ?? '').trim().toLowerCase() !== artistKeyNorm);
+  return Array.from(
+    new Map<string, Track>([...appearances, ...topSongs].map((t) => [t.id, t])).values()
+  )
+    .filter(isRealAppearanceTrack)
+    .sort((a, b) => {
+      const ra = a.releaseDate || resolvedDates[a.id] || '';
+      const rb = b.releaseDate || resolvedDates[b.id] || '';
+      const aExact = Boolean(ra && /^\d{4}-\d{2}-\d{2}/.test(ra));
+      const bExact = Boolean(rb && /^\d{4}-\d{2}-\d{2}/.test(rb));
+      if (aExact !== bExact) return aExact ? -1 : 1;
+      const da = ra || `${a.releaseYear ?? 0}-01-01`;
+      const db = rb || `${b.releaseYear ?? 0}-01-01`;
+      const cmp = db.localeCompare(da);
+      if (cmp !== 0) return cmp;
+      const na = Number.parseInt(a.id.replace(/\D/g, ''), 10) || 0;
+      const nb = Number.parseInt(b.id.replace(/\D/g, ''), 10) || 0;
+      return nb - na;
+    });
+}
+
+const activeArtistLatestAppearanceCandidate = (() => {
     if (activeDetailView?.kind !== 'artist') return null;
     const { artist, appearances = [], topSongs = [] } = activeDetailView.data;
-    const artistKeyNorm = artist.name.trim().toLowerCase();
-    const pool = Array.from(
-      new Map<string, Track>([...appearances, ...topSongs].map((t) => [t.id, t])).values()
-    ).filter(
-      (t) =>
-        t.artists.length > 1 || (t.artists[0]?.name ?? '').trim().toLowerCase() !== artistKeyNorm
-    );
-    return pool[0] ?? null;
+    const pool = buildSortedAppearancePool(artist.name, appearances, topSongs, resolvedAppearanceDates);
+    return pool.find((t) => !t.releaseDate && !resolvedAppearanceDates[t.id] && t.id.startsWith('dz_')) ?? pool[0] ?? null;
   })();
 
   useEffect(() => {
@@ -1317,9 +1350,6 @@ export const DetailViewPanel: React.FC = React.memo(() => {
       return db.localeCompare(da);
     });
     const latestRelease = allReleases[0] ?? null;
-    const artistKeyNorm = artist.name.trim().toLowerCase();
-    const isRealAppearanceTrack = (t: Track): boolean =>
-      t.artists.length > 1 || (t.artists[0]?.name ?? '').trim().toLowerCase() !== artistKeyNorm;
     const isFromLatestRelease = (t: Track): boolean => {
       if (!latestRelease) return false;
       const tTitle = t.title.trim().toLowerCase();
@@ -1327,19 +1357,12 @@ export const DetailViewPanel: React.FC = React.memo(() => {
       const relTitle = latestRelease.title.trim().toLowerCase();
       return tTitle === relTitle || (Boolean(tAlbum) && tAlbum === relTitle);
     };
-    const mergedAppearancePool = Array.from(
-      new Map<string, Track>([...appearances, ...topSongs].map((t) => [t.id, t])).values()
-    )
-      .filter(isRealAppearanceTrack)
-      .sort((a, b) => {
-        const da = a.releaseDate ?? `${a.releaseYear ?? 0}-01-01`;
-        const db = b.releaseDate ?? `${b.releaseYear ?? 0}-01-01`;
-        const cmp = db.localeCompare(da);
-        if (cmp !== 0) return cmp;
-        const na = Number.parseInt(a.id.replace(/\D/g, ''), 10) || 0;
-        const nb = Number.parseInt(b.id.replace(/\D/g, ''), 10) || 0;
-        return nb - na;
-      });
+    const mergedAppearancePool = buildSortedAppearancePool(
+      artist.name,
+      appearances,
+      topSongs,
+      resolvedAppearanceDates
+    );
     const latestAppearance: Track | null =
       mergedAppearancePool.find((t) => !isFromLatestRelease(t)) ??
       mergedAppearancePool[0] ??
@@ -2464,6 +2487,10 @@ export const DetailViewPanel: React.FC = React.memo(() => {
         </div>
       </div>
     );
+  }
+
+  if (activeDetailView.kind === 'friend_profile') {
+    return <FriendProfileView userId={activeDetailView.userId} />;
   }
 
   const renderInviteCollaboratorsModal = (opts: {
@@ -4291,14 +4318,14 @@ export const HomeScreen: React.FC = React.memo(() => {
 HomeScreen.displayName = 'HomeScreen';
 
 const GENRE_CARDS = [
-  { label: 'Latino', query: 'Género: Latino', accent: '#EF4444' },
-  { label: 'Reggaetón', query: 'Género: Reggaetón', accent: '#F59E0B' },
-  { label: 'Rap & Hip-Hop', query: 'Género: Rap & Hip-Hop', accent: '#C084FC' },
-  { label: 'Pop', query: 'Género: Pop', accent: '#3B82F6' },
-  { label: 'Electrónica', query: 'Género: Electrónica', accent: '#06B6D4' },
-  { label: 'R&B', query: 'Género: R&B', accent: '#EC4899' },
-  { label: 'Dance', query: 'Género: Dance', accent: '#10B981' },
-  { label: 'Rock', query: 'Género: Rock', accent: '#F97316' },
+  { label: 'Latino', query: 'Género: Latino' },
+  { label: 'Reggaetón', query: 'Género: Reggaetón' },
+  { label: 'Rap & Hip-Hop', query: 'Género: Rap & Hip-Hop' },
+  { label: 'Pop', query: 'Género: Pop' },
+  { label: 'Electrónica', query: 'Género: Electrónica' },
+  { label: 'R&B', query: 'Género: R&B' },
+  { label: 'Dance', query: 'Género: Dance' },
+  { label: 'Rock', query: 'Género: Rock' },
 ] as const;
 
 export const ExploreScreen: React.FC = React.memo(() => {
@@ -4389,27 +4416,23 @@ export const ExploreScreen: React.FC = React.memo(() => {
         <button
           type="button"
           onClick={() => void refreshExploreDiscovery(true)}
-          className="pm-btn-secondary pm-pressable inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold"
+          className="pm-btn-secondary pm-pressable inline-flex items-center gap-1.5 rounded-full border border-white/[0.1] bg-white/[0.04] px-3.5 py-1.5 text-xs font-semibold text-white/90 hover:bg-white/[0.08]"
         >
           {isLoadingExplore ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-white/80" />
           ) : (
-            <Sparkles className="h-3.5 w-3.5 text-purple-300" />
+            <RefreshCw className="h-3.5 w-3.5 text-white/75" />
           )}
           <span>Actualizar recomendaciones</span>
         </button>
       </div>
 
-      {/* Featured Discovery Spotlight Hero */}
+      {/* Featured Discovery Spotlight Hero (Minimalist pMusic OLED) */}
       {heroDiscoveryTrack && (
         <section
           data-surface="content"
-          className="pm-surface-card relative overflow-hidden rounded-[22px] border border-white/10 p-4 sm:p-6"
+          className="pm-surface-card relative overflow-hidden rounded-[20px] border border-white/[0.08] bg-white/[0.03] p-4 sm:p-6"
         >
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute -right-14 -top-14 h-52 w-52 rounded-full bg-[var(--pm-accent-primary)]/20 blur-3xl"
-          />
           <div className="relative z-10 flex items-center gap-4 sm:gap-5">
             <TrackArtwork
               trackId={heroDiscoveryTrack.id}
@@ -4422,8 +4445,7 @@ export const ExploreScreen: React.FC = React.memo(() => {
               imgClassName="h-20 w-20 shrink-0 rounded-[14px] object-cover shadow-xl sm:h-24 sm:w-24 sm:rounded-[16px]"
             />
             <div className="min-w-0 flex-1 space-y-1">
-              <div className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.08] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white/80">
-                <Sparkles className="h-3 w-3 text-purple-300" />
+              <div className="inline-flex items-center rounded-full border border-white/[0.08] bg-white/[0.06] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white/75">
                 <span>Selección pMusic · Para tu vibra</span>
               </div>
               <h2 className="truncate text-lg font-black tracking-tight pm-text-primary sm:text-2xl">
@@ -4450,7 +4472,7 @@ export const ExploreScreen: React.FC = React.memo(() => {
         </section>
       )}
 
-      {/* Genres Grid */}
+      {/* Genres Grid (Minimalist pMusic Monochrome) */}
       <section className="space-y-3">
         <h2 className="text-[19px] font-bold tracking-tight pm-text-primary sm:text-[20px]">
           Explorar géneros
@@ -4464,25 +4486,12 @@ export const ExploreScreen: React.FC = React.memo(() => {
                 setActiveTab('Buscar');
                 void submitSearch(g.query);
               }}
-              className="pm-surface-card pm-card-lift group relative flex items-center justify-between gap-2.5 overflow-hidden rounded-[14px] px-4 py-3.5 text-left"
-              style={{
-                background: `radial-gradient(120% 100% at 100% 0%, ${g.accent}24 0%, transparent 62%)`,
-              }}
+              className="pm-surface-card pm-card-lift group flex items-center justify-between gap-2.5 rounded-[14px] border border-white/[0.08] bg-white/[0.03] px-4 py-3.5 text-left transition-colors hover:border-white/[0.18] hover:bg-white/[0.07]"
             >
-              <div className="flex min-w-0 items-center gap-2.5">
-                <span
-                  aria-hidden="true"
-                  className="h-5 w-1.5 shrink-0 rounded-full transition-transform group-hover:scale-y-125"
-                  style={{ backgroundColor: g.accent }}
-                />
-                <span className="truncate text-[13.5px] font-bold pm-text-primary">
-                  {g.label}
-                </span>
-              </div>
-              <Music2
-                className="h-4 w-4 shrink-0 opacity-45 transition-opacity group-hover:opacity-90"
-                style={{ color: g.accent }}
-              />
+              <span className="truncate text-[13.5px] font-bold pm-text-primary">
+                {g.label}
+              </span>
+              <ChevronRight className="h-4 w-4 shrink-0 text-white/35 transition-all group-hover:translate-x-0.5 group-hover:text-white/85" />
             </button>
           ))}
         </div>
@@ -4728,6 +4737,7 @@ export const SearchScreen: React.FC = React.memo(() => {
 
   const discoverySpotlightTrack = exploreSimilarTracks[0] ?? mergedRecommendedTracks[0] ?? null;
   const hasSearchText = Boolean(searchQuery.trim());
+  const rotatingSearchPlaceholder = useRotatingSearchPlaceholder({ paused: hasSearchText });
 
   const scopes: readonly SearchScopeTab[] = [
     'Todo',
@@ -4797,7 +4807,7 @@ export const SearchScreen: React.FC = React.memo(() => {
           className="pm-glass-search flex h-11 w-full items-center gap-3 rounded-full px-4 text-left text-[14px] pm-text-tertiary"
         >
           <Search className="h-4 w-4 shrink-0 pm-text-secondary" />
-          <span className="truncate">{searchQuery || '¿Qué te apetece escuchar hoy?'}</span>
+          <span className="truncate">{searchQuery || rotatingSearchPlaceholder}</span>
         </button>
       ) : (
         <form
@@ -4813,7 +4823,7 @@ export const SearchScreen: React.FC = React.memo(() => {
             type="search"
             role="searchbox"
             aria-label="Buscar canciones, artistas o álbumes"
-            placeholder="¿Qué te apetece escuchar hoy?"
+            placeholder={rotatingSearchPlaceholder}
             value={searchQuery}
             onChange={(e) => void setSearchQuery(e.target.value)}
             className="pm-text-btn pm-input-frameless min-w-0 flex-1 bg-transparent py-1 text-[14px] font-medium pm-text-primary placeholder:pm-text-tertiary focus:outline-none"
@@ -5061,16 +5071,12 @@ export const SearchScreen: React.FC = React.memo(() => {
                   key={g.query}
                   type="button"
                   onClick={() => void submitSearch(g.query)}
-                  className="pm-hover pm-pressable flex h-[52px] items-center gap-3 rounded-[14px] border border-white/[0.08] bg-white/[0.035] px-3.5 text-left transition-colors"
+                  className="pm-hover pm-pressable group flex h-[52px] items-center justify-between gap-2.5 rounded-[14px] border border-white/[0.08] bg-white/[0.03] px-4 text-left transition-colors hover:border-white/[0.18] hover:bg-white/[0.07]"
                 >
-                  <span
-                    aria-hidden="true"
-                    className="h-5 w-1 shrink-0 rounded-full"
-                    style={{ backgroundColor: g.accent }}
-                  />
                   <span className="truncate text-[13.5px] font-bold pm-text-primary">
                     {g.label}
                   </span>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-white/35 transition-all group-hover:translate-x-0.5 group-hover:text-white/85" />
                 </button>
               ))}
             </div>

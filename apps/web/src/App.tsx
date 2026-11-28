@@ -79,6 +79,7 @@ import { CreatePlaylistModal } from './components/CreatePlaylistModal.tsx';
 import { UserAvatar } from './components/UserAvatar.tsx';
 import { ReleaseNotificationsModal } from './components/ReleaseNotificationsModal.tsx';
 import { VolumeHoverPopover } from './components/VolumeHoverPopover.tsx';
+import { useRotatingSearchPlaceholder } from './utils/search-placeholders.ts';
 import { syncNativeSystemBars } from './utils/system-bars.ts';
 
 const PlaylistAppearanceModal = lazy(() =>
@@ -302,6 +303,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     userProfile,
     sharedPlaylists,
     friendActivities,
+    unreadDmCounts,
     activeJamSession,
     activeJamRole,
     globalActiveJams,
@@ -410,6 +412,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       userProfile: s.userProfile,
       sharedPlaylists: s.sharedPlaylists,
       friendActivities: s.friendActivities,
+      unreadDmCounts: s.unreadDmCounts,
       activeJamSession: s.activeJamSession,
       activeJamRole: s.activeJamRole,
       globalActiveJams: s.globalActiveJams,
@@ -468,8 +471,9 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
   const [isMobileViewport, setIsMobileViewport] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth < 768 : false
   );
+  const topSearchPlaceholder = useRotatingSearchPlaceholder({ paused: spotlightOpen });
   const [sidebarDropTargetId, setSidebarDropTargetId] = useState<string | null>(null);
-  const [dockHoverPct, setDockHoverPct] = useState<number | null>(null);
+  const [dockHoverVisible, setDockHoverVisible] = useState<boolean>(false);
   const [heartBurst, setHeartBurst] = useState(false);
   const [dockHeartBurstKey, setDockHeartBurstKey] = useState(0);
   const [dockHeartPhase, setDockHeartPhase] = useState<'idle' | 'fading-in'>('idle');
@@ -591,6 +595,12 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
   const classicDurRef = useRef<HTMLSpanElement | null>(null);
   const islandMenuRef = useRef<HTMLDivElement | null>(null);
   const scrubDraggingRef = useRef(false);
+  const dockHoverVisibleRef = useRef(false);
+  const dockHoverHairlineRef = useRef<HTMLDivElement | null>(null);
+  const dockHoverPillRef = useRef<HTMLSpanElement | null>(null);
+  const dockHoverPillTextRef = useRef<HTMLSpanElement | null>(null);
+  const dockHoverLastTextRef = useRef('');
+  const dockHoverLastPctRef = useRef<number | null>(null);
   const manualSeekAtMsRef = useRef<number>(0);
   const dockDurationSecRef = useRef<number>(durationSec);
   dockDurationSecRef.current = durationSec;
@@ -1570,7 +1580,9 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
           ? `playlist:${activeDetailView.data.playlist.id}`
           : activeDetailView.kind === 'shared_playlist'
             ? `shared:${activeDetailView.sharedId}`
-            : `local:${activeDetailView.playlistId}`
+            : activeDetailView.kind === 'friend_profile'
+              ? `friend:${activeDetailView.userId}`
+              : `local:${activeDetailView.playlistId}`
     : `tab:${activeTab}`;
 
   useEffect(() => {
@@ -1596,8 +1608,55 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     }
   }, [isMobileViewport, activeTab, setActiveTab]);
 
-  const dockHoverSec =
-    dockHoverPct !== null ? (dockHoverPct / 100) * activeDockDurSec : null;
+  const clearDockHover = () => {
+    dockHoverLastPctRef.current = null;
+    if (dockHoverVisibleRef.current) {
+      dockHoverVisibleRef.current = false;
+      setDockHoverVisible(false);
+    }
+  };
+
+  const updateDockHoverPosition = (clientX: number) => {
+    if (!Number.isFinite(clientX)) return;
+    const el = dockBarRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const width = Math.max(1, rect.width);
+    const xPx = Math.max(0, Math.min(width, clientX - rect.left));
+    const pct = (xPx / width) * 100;
+    dockHoverLastPctRef.current = pct;
+    const pillX = Math.max(28, Math.min(width - 28, xPx));
+    if (dockHoverHairlineRef.current) {
+      dockHoverHairlineRef.current.style.transform = `translate3d(${xPx.toFixed(1)}px, 0, 0)`;
+    }
+    if (dockHoverPillRef.current) {
+      dockHoverPillRef.current.style.transform = `translate3d(${pillX.toFixed(1)}px, 0, 0) translateX(-50%)`;
+    }
+    const sec = (pct / 100) * activeDockDurSec;
+    const label = formatDurationSec(sec);
+    if (dockHoverPillTextRef.current && dockHoverLastTextRef.current !== label) {
+      dockHoverLastTextRef.current = label;
+      dockHoverPillTextRef.current.textContent = label;
+    }
+    if (!dockHoverVisibleRef.current) {
+      dockHoverVisibleRef.current = true;
+      setDockHoverVisible(true);
+    }
+  };
+
+  const handleDockPointerHoverMove = (clientX: number, target: HTMLElement | null) => {
+    if (playerBarStyle === 'classic-center') return;
+    if (scrubDraggingRef.current) {
+      seekFromClientX(clientX);
+      updateDockHoverPosition(clientX);
+      return;
+    }
+    if (target?.closest('button, input, a, [role="link"], .pm-dock-interactive')) {
+      clearDockHover();
+      return;
+    }
+    updateDockHoverPosition(clientX);
+  };
 
   const seekFromClientX = (clientX: number) => {
     const el = dockBarRef.current;
@@ -1698,12 +1757,13 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
             <button
               type="button"
               data-testid="top-center-search-btn"
+              aria-label="Buscar canciones, artistas o álbumes"
               onClick={() => setSpotlightOpen(true)}
               className="pm-no-drag pm-input pm-text-tertiary pointer-events-auto flex w-full min-w-[130px] max-w-[380px] items-center justify-between gap-2 rounded-full px-3 py-1.5 text-xs transition-colors hover:border-[var(--pm-border-strong)] hover:text-[var(--pm-text-primary)]"
             >
               <span className="flex min-w-0 items-center gap-2">
                 <Search className="h-3.5 w-3.5 shrink-0 pm-text-secondary" />
-                <span className="truncate">Buscar canciones, artistas o álbumes…</span>
+                <span className="truncate">{topSearchPlaceholder}</span>
               </span>
               <kbd className="pm-elevated hidden shrink-0 rounded border pm-border px-1.5 py-0.5 text-[11px] font-semibold pm-text-secondary lg:inline-block">
                 Ctrl K
@@ -1969,6 +2029,20 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                           {!sidebarCollapsed && Object.keys(friendActivities).length}
                         </span>
                       )}
+                      {item.id === 'Social' &&
+                        Object.values(unreadDmCounts).reduce((a, b) => a + b, 0) > 0 && (
+                          <span
+                            data-testid="social-unread-dms-dot"
+                            className={
+                              sidebarCollapsed
+                                ? 'absolute left-1.5 top-1.5 inline-flex h-2 w-2 rounded-full bg-white ring-2 ring-[#070709]'
+                                : 'tabular-nums inline-flex min-w-[16px] items-center justify-center rounded-full bg-white px-1 text-[10px] font-black leading-[16px] text-[#070709]'
+                            }
+                          >
+                            {!sidebarCollapsed &&
+                              Object.values(unreadDmCounts).reduce((a, b) => a + b, 0)}
+                          </span>
+                        )}
                     </button>
                   );
                 })}
@@ -2920,39 +2994,28 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
             scrubDraggingRef.current = true;
             e.currentTarget.setPointerCapture?.(e.pointerId);
             seekFromClientX(e.clientX);
+            updateDockHoverPosition(e.clientX);
           }}
           onPointerMove={(e) => {
-            if (playerBarStyle === 'classic-center') return;
-            const rect = e.currentTarget.getBoundingClientRect();
-            const pct = Math.max(
-              0,
-              Math.min(100, ((e.clientX - rect.left) / Math.max(1, rect.width)) * 100)
-            );
-            if (scrubDraggingRef.current) {
-              seekFromClientX(e.clientX);
-              setDockHoverPct(pct);
-              return;
-            }
-            const target = e.target as HTMLElement | null;
-            if (
-              target?.closest(
-                'button, input, a, [role="link"], .pm-dock-interactive'
-              )
-            ) {
-              if (dockHoverPct !== null) setDockHoverPct(null);
-              return;
-            }
-            setDockHoverPct(pct);
+            handleDockPointerHoverMove(e.clientX, e.target as HTMLElement | null);
+          }}
+          onMouseMove={(e) => {
+            handleDockPointerHoverMove(e.clientX, e.target as HTMLElement | null);
           }}
           onPointerUp={() => {
             scrubDraggingRef.current = false;
           }}
           onPointerCancel={() => {
             scrubDraggingRef.current = false;
+            clearDockHover();
+          }}
+          onPointerLeave={() => {
+            scrubDraggingRef.current = false;
+            clearDockHover();
           }}
           onMouseLeave={() => {
             scrubDraggingRef.current = false;
-            setDockHoverPct(null);
+            clearDockHover();
           }}
           className={`pm-glass-regular fixed z-40 grid select-none items-center gap-2 lg:gap-4 overflow-visible ${nowPlayingOpen ? 'pm-behind-nowplaying ' : ''}${
             playerBarStyle === 'floating-island'
@@ -3042,39 +3105,41 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
               </div>
             )}
 
-            {/* Stealth Hover White Scrub Hairline + Cue Overlay */}
-            {playerBarStyle !== 'classic-center' && (
-              <>
-                {dockHoverPct !== null && (
-                  <div
-                    aria-hidden="true"
-                    data-testid="dock-hover-hairline"
-                    className="pointer-events-none absolute inset-y-0 z-10 w-[1px] -translate-x-1/2 bg-white/35"
-                    style={{ left: `${dockHoverPct}%` }}
-                  />
-                )}
-                {cueStartPct !== null && cueWidthPct > 0 && (
-                  <div
-                    aria-hidden="true"
-                    className="pointer-events-none absolute top-0 z-0 h-[2.5px] rounded-full bg-purple-500/85"
-                    style={{
-                      left: `${cueStartPct}%`,
-                      width: `${cueWidthPct}%`,
-                    }}
-                  />
-                )}
-                {dockHoverPct !== null && dockHoverSec !== null && (
-                  <span
-                    aria-hidden="true"
-                    style={{ left: `clamp(28px, ${dockHoverPct}%, calc(100% - 28px))` }}
-                    className="tabular-nums pm-btn-primary pointer-events-none absolute top-1.5 z-20 -translate-x-1/2 rounded-full px-2 py-0.5 text-[11px] font-semibold shadow-sm"
-                  >
-                    {formatDurationSec(dockHoverSec)}
-                  </span>
-                )}
-              </>
+            {/* DJ Cue Overlay */}
+            {playerBarStyle !== 'classic-center' && cueStartPct !== null && cueWidthPct > 0 && (
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute top-0 z-0 h-[2.5px] rounded-full bg-purple-500/85"
+                style={{
+                  left: `${cueStartPct}%`,
+                  width: `${cueWidthPct}%`,
+                }}
+              />
             )}
           </div>
+
+          {/* Dedicated Composited Hover Scrub Hairline + Time Pill (outside backdrop fill layer) */}
+          {playerBarStyle !== 'classic-center' && (
+            <div
+              aria-hidden="true"
+              className={`pointer-events-none absolute inset-0 z-30 overflow-hidden rounded-[inherit] transition-opacity duration-100 ${
+                dockHoverVisible ? 'opacity-100' : 'invisible opacity-0'
+              }`}
+            >
+              <div
+                ref={dockHoverHairlineRef}
+                data-testid="dock-hover-hairline"
+                className="pointer-events-none absolute bottom-0 left-0 top-0 z-10 w-[1px] bg-white/40 will-change-transform"
+              />
+              <span
+                ref={dockHoverPillRef}
+                data-testid="dock-hover-time"
+                className="tabular-nums pm-btn-primary pointer-events-none absolute left-0 top-1.5 z-20 rounded-full px-2 py-0.5 text-[11px] font-semibold shadow-sm will-change-transform"
+              >
+                <span ref={dockHoverPillTextRef}>0:00</span>
+              </span>
+            </div>
+          )}
 
           {playerBarStyle !== 'classic-center' && (
             <input
@@ -4146,6 +4211,13 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                         className="absolute -right-1 -top-0.5 h-2 w-2 rounded-full bg-emerald-400 ring-2 ring-black/60"
                       />
                     )}
+                    {item.id === 'Social' &&
+                      Object.values(unreadDmCounts).reduce((a, b) => a + b, 0) > 0 && (
+                        <span
+                          data-testid="mobile-social-unread-dms-dot"
+                          className="absolute -left-1 -top-0.5 h-2 w-2 rounded-full bg-white ring-2 ring-black/60"
+                        />
+                      )}
                   </span>
                   <span className="mt-0.5 text-[11px]">{item.label}</span>
                 </button>

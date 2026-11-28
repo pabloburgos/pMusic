@@ -197,12 +197,14 @@ import { RecommendationEngine } from '@pmusic/recommendations';
 import { LibraryStore, SyncEngine, type SavedAccountSlot } from '@pmusic/sync';
 import {
   addTrackToSharedPlaylist,
+  buildCurated100Blend,
   computeBlendScoreAndTracks,
   createJamSession,
   createSharedPlaylist,
   deleteOrLeaveSharedPlaylist,
   ensureOwnProfileExists,
   fetchActiveHostJamSession,
+  fetchFriendPublicProfile,
   fetchJamRequests,
   fetchPublicJamRequests,
   fetchPublicJamSession,
@@ -211,23 +213,33 @@ import {
   inviteMemberToSharedPlaylist,
   isJamQueueOpRequest,
   joinSharedPlaylistByCode,
+  listAllRecentDirectMessages,
+  listDirectMessagesWithFriend,
   listFriendships,
   listSharedPlaylists,
   listActiveGlobalJamSessions,
+  markDirectMessagesRead,
   publishOrUpdateSharedPlaylistLink,
   removeTrackFromSharedPlaylist,
   respondFriendRequest,
   searchPublicCatalog,
+  sendDirectMessage,
   sendFriendRequest,
   stampTrackAddedBy,
   submitPublicJamPlaybackOp,
   submitPublicJamQueueOp,
   submitPublicJamRequest,
+  subscribeDirectMessages,
   subscribeGlobalActiveJams,
+  syncOwnPublicProfileSnapshot,
   extractJamSyncMeta,
   updateJamRequestStatus,
   updateJamSessionState,
+  type DirectMessagePayload,
+  type DirectMessageRecord,
+  type DirectMessageType,
   type FriendListeningActivity,
+  type FriendPublicProfile,
   type FriendRecord,
   type JamQueueOpPayload,
   type JamRequestRecord,
@@ -259,7 +271,7 @@ import {
 } from '../utils/themes.ts';
 
 export type MainNavTab = 'Inicio' | 'Explorar' | 'Buscar' | 'Biblioteca' | 'Social';
-export type SocialSubTab = 'jam' | 'amigos' | 'compartidas' | 'top';
+export type SocialSubTab = 'jam' | 'amigos' | 'mensajes' | 'compartidas' | 'top';
 export type NowPlayingSubTab = 'Portada' | 'Letras' | 'Cola';
 export type SearchScopeTab = 'Todo' | 'Canciones' | 'Artistas' | 'Álbumes' | 'Playlists';
 export type LibraryCategoryTab =
@@ -337,6 +349,7 @@ export type ActiveDetailView =
   | { kind: 'playlist'; data: PlaylistDetail }
   | { kind: 'local_playlist'; playlistId: string }
   | { kind: 'shared_playlist'; sharedId: string }
+  | { kind: 'friend_profile'; userId: string }
   | null;
 
 const DETAIL_CLIENT_CACHE_TTL_MS = 15 * 60_000;
@@ -1314,7 +1327,13 @@ export interface PMusicStoreState {
   sharedPlaylists: SharedPlaylistRecord[];
   socialSubTab: SocialSubTab;
   shareListeningActivity: boolean;
+  publicProfileEnabled: boolean;
   friendActivities: Record<string, FriendListeningActivity>;
+  friendProfilesCache: Record<string, FriendPublicProfile>;
+  blendGeneratingForUserId: string | null;
+  activeChatFriendId: string | null;
+  directMessagesByFriend: Record<string, DirectMessageRecord[]>;
+  unreadDmCounts: Record<string, number>;
   personalTopStats: Record<TopStatsWindow, PeriodTopStats | null>;
   minimizeToTrayOnClose: boolean;
   desktopTrackNotifications: boolean;
@@ -1514,6 +1533,20 @@ export interface PMusicStoreState {
     initialTracks?: Track[]
   ) => Promise<SharedPlaylistRecord | null>;
   createBlendWithFriend: (friend: FriendRecord) => Promise<SharedPlaylistRecord | null>;
+  setPublicProfileEnabled: (enabled: boolean) => void;
+  openFriendProfile: (userId: string) => Promise<void>;
+  syncOwnPublicSocialProfile: () => Promise<void>;
+  openChatWithFriend: (friendUserId: string) => Promise<void>;
+  loadDirectMessagesWithFriend: (friendUserId: string) => Promise<void>;
+  sendFriendChatMessage: (
+    friendUserId: string,
+    input: {
+      messageType: DirectMessageType;
+      body?: string;
+      payload?: DirectMessagePayload | null;
+    }
+  ) => Promise<DirectMessageRecord | null>;
+  sendJamInviteToFriendChat: (friendUserId: string) => Promise<DirectMessageRecord | null>;
   addTrackToCollaborativePlaylist: (sharedId: string, track: Track) => Promise<void>;
   removeTrackFromCollaborativePlaylist: (sharedId: string, trackId: string) => Promise<void>;
   joinSharedPlaylistLink: (shareCode: string) => Promise<SharedPlaylistRecord | null>;
@@ -2870,12 +2903,23 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       }
       friendPresenceChannel = null;
     }
+    if (dmRealtimeUnsub) {
+      try {
+        dmRealtimeUnsub();
+      } catch {
+        // ignore
+      }
+      dmRealtimeUnsub = null;
+    }
     friendPresenceReady = false;
     friendPresenceUserId = '';
     socialSubscribedUserId = '';
+    dmSubscribedUserId = '';
     set({ friendActivities: {} });
   }
 
+  let dmRealtimeUnsub: (() => void) | null = null;
+  let dmSubscribedUserId = '';
   let lastHostJamPushAtMs = 0;
   let globalJamsUnsub: (() => void) | null = null;
   let knownGlobalJamCodes = new Set<string>();
@@ -3508,6 +3552,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       userEq: st.userEq,
       djMode: st.djMode,
       favoriteArtists: st.favoriteArtists,
+      publicProfileEnabled: st.publicProfileEnabled,
       dismissedPlaylistRecs: st.dismissedPlaylistRecs,
       playlistAppearances: st.playlistAppearances,
       playlistPlayCounts: st.playlistPlayCounts,
@@ -3686,12 +3731,14 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         prefs.playlistPlayCounts && typeof prefs.playlistPlayCounts === 'object'
           ? (prefs.playlistPlayCounts as Record<string, PlaylistPlayStat>)
           : prev.playlistPlayCounts,
-      ...(Array.isArray(prefs.favoriteArtists)
-        ? {
-            favoriteArtists: (prefs.favoriteArtists as FavoriteArtistRecord[]).filter(
+      favoriteArtists:
+        Array.isArray(prefs.favoriteArtists)
+          ? (prefs.favoriteArtists as FavoriteArtistRecord[]).filter(
               (a) => Boolean(a?.artistId && a?.artistName)
-            ),
-          }
+            )
+          : prev.favoriteArtists,
+      ...(typeof prefs.publicProfileEnabled === 'boolean'
+        ? { publicProfileEnabled: prefs.publicProfileEnabled }
         : {}),
     }));
     if (Array.isArray(prefs.favoriteArtists)) {
@@ -4130,7 +4177,13 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   sharedPlaylists: [],
   socialSubTab: 'jam',
   shareListeningActivity: readShareListeningPref(),
+  publicProfileEnabled: true,
   friendActivities: {},
+  friendProfilesCache: {},
+  blendGeneratingForUserId: null,
+  activeChatFriendId: null,
+  directMessagesByFriend: {},
+  unreadDmCounts: {},
   personalTopStats: { '7d': null, '30d': null, year: null },
   minimizeToTrayOnClose: true,
   desktopTrackNotifications: false,
@@ -7469,15 +7522,31 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
           void writeCachedProfile(myUserId, ensured);
         }
       }
-      const [fList, spList, hostJam] = await Promise.all([
+      const [fList, spList, hostJam, recentDms] = await Promise.all([
         listFriendships(sb, myUserId),
         listSharedPlaylists(sb, myUserId),
         fetchActiveHostJamSession(sb, myUserId),
+        listAllRecentDirectMessages(sb, myUserId).catch(() => [] as DirectMessageRecord[]),
       ]);
+      const nextDmMap: Record<string, DirectMessageRecord[]> = {};
+      const nextUnreadMap: Record<string, number> = {};
+      for (const msg of recentDms) {
+        const otherId = msg.senderId === myUserId ? msg.recipientId : msg.senderId;
+        const list = nextDmMap[otherId] ?? [];
+        list.push(msg);
+        nextDmMap[otherId] = list;
+        if (msg.recipientId === myUserId && !msg.readAt) {
+          nextUnreadMap[otherId] = (nextUnreadMap[otherId] ?? 0) + 1;
+        }
+      }
       set({
         friends: fList,
         sharedPlaylists: spList,
+        ...(recentDms.length > 0 || Object.keys(get().directMessagesByFriend).length === 0
+          ? { directMessagesByFriend: nextDmMap, unreadDmCounts: nextUnreadMap }
+          : {}),
       });
+      void get().syncOwnPublicSocialProfile();
       void writeCachedSharedPlaylists(myUserId, spList);
       await syncSharedPlaylistsToLocalPlaylists(spList);
       syncUserLibraryContextToEngine();
@@ -7527,6 +7596,60 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
             }
           )
           .subscribe();
+      }
+
+      if (dmSubscribedUserId !== myUserId) {
+        dmSubscribedUserId = myUserId;
+        dmRealtimeUnsub?.();
+        dmRealtimeUnsub = subscribeDirectMessages(sb, myUserId, (msg, eventType) => {
+          const cur = get();
+          const otherId = msg.senderId === myUserId ? msg.recipientId : msg.senderId;
+          const prevList = cur.directMessagesByFriend[otherId] ?? [];
+          const existingIdx = prevList.findIndex((m) => m.id === msg.id);
+          const nextList =
+            existingIdx >= 0
+              ? prevList.map((m, idx) => (idx === existingIdx ? msg : m))
+              : [...prevList, msg];
+          const isViewingThisChat =
+            cur.activeTab === 'Social' &&
+            cur.socialSubTab === 'mensajes' &&
+            cur.activeChatFriendId === otherId;
+          const nextUnread = { ...cur.unreadDmCounts };
+          if (msg.recipientId === myUserId) {
+            if (isViewingThisChat && !msg.readAt) {
+              void markDirectMessagesRead(sb, myUserId, otherId).catch(() => {});
+              nextUnread[otherId] = 0;
+            } else {
+              nextUnread[otherId] = nextList.filter(
+                (m) => m.recipientId === myUserId && !m.readAt
+              ).length;
+              if (eventType === 'INSERT' && existingIdx < 0) {
+                const sender = cur.friends.find((f) => f.otherProfile.userId === msg.senderId);
+                const senderLabel = sender
+                  ? sender.otherProfile.displayName || `@${sender.otherProfile.username}`
+                  : 'Nuevo mensaje';
+                const preview =
+                  msg.messageType === 'image'
+                    ? 'te envió una imagen'
+                    : msg.messageType === 'playlist'
+                      ? 'compartió una playlist contigo'
+                      : msg.messageType === 'jam'
+                        ? 'te invitó a una Jam'
+                        : msg.messageType === 'track'
+                          ? 'compartió una canción'
+                          : msg.body;
+                cur.showToast(`${senderLabel}: ${preview}`);
+              }
+            }
+          }
+          set((prev) => ({
+            directMessagesByFriend: {
+              ...prev.directMessagesByFriend,
+              [otherId]: nextList,
+            },
+            unreadDmCounts: nextUnread,
+          }));
+        });
       }
 
       if (friendPresenceUserId !== myUserId) {
@@ -8106,23 +8229,312 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     const st = get();
     const sb = getSyncSupabaseClient();
     if (!sb || !st.authState.userId) return null;
-    const baseTracks = [...st.likedTracks.map((l) => l.track), ...st.queue];
-    const { score, tracks } = computeBlendScoreAndTracks(baseTracks, friend.otherProfile.username);
-    const created = await createSharedPlaylist(sb, {
-      ownerId: st.authState.userId,
-      name: `Blend · ${st.userProfile?.displayName || 'Tú'} + ${friend.otherProfile.displayName}`,
-      description: `Mezcla automática con @${friend.otherProfile.username} (${score}% de compatibilidad)`,
-      kind: 'blend',
-      memberIds: [friend.otherProfile.userId],
-      tracks,
-      compatibilityScore: score,
-      ownerProfile: st.userProfile,
+    const friendUserId = friend.otherProfile.userId;
+    set({ blendGeneratingForUserId: friendUserId });
+    st.showToast(`Creando Blend de 100 canciones con @${friend.otherProfile.username}…`);
+    try {
+      const friendProfile =
+        st.friendProfilesCache[friendUserId] ??
+        (await fetchFriendPublicProfile(sb, friendUserId).catch(() => null));
+      if (friendProfile) {
+        set((prev) => ({
+          friendProfilesCache: { ...prev.friendProfilesCache, [friendUserId]: friendProfile },
+        }));
+      }
+
+      const myTracks = [
+        ...st.likedTracks.map((l) => l.track),
+        ...st.playHistory.slice(0, 80).map((h) => h.track),
+        ...st.playlists.flatMap((p) => p.tracks.slice(0, 30)),
+        ...st.queue,
+      ];
+      const myTopArtistsStats = st.personalTopStats['30d']?.topArtists ?? [];
+      const myArtists = Array.from(
+        new Set([
+          ...myTopArtistsStats.map((a) => a.title),
+          ...st.favoriteArtists.map((f) => f.artistName),
+          ...st.seedArtists.map((s) => s.displayName),
+          ...myTracks.flatMap((t) => t.artists.slice(0, 2).map((a) => a.name)),
+        ])
+      ).slice(0, 12);
+
+      const friendTopTracks = (friendProfile?.topTracks ?? []).map((x) => x.track).filter(Boolean);
+      const friendPlaylistTracks = (friendProfile?.publicPlaylists ?? []).flatMap((p) =>
+        (p.tracks ?? []).filter(Boolean)
+      );
+      const sharedWithFriendTracks = st.sharedPlaylists
+        .filter((sp) => sp.ownerId === friendUserId || sp.memberIds.includes(friendUserId))
+        .flatMap((sp) => sp.tracks);
+      const friendTracks = [
+        ...friendTopTracks,
+        ...friendPlaylistTracks,
+        ...sharedWithFriendTracks,
+      ];
+      const friendArtists = Array.from(
+        new Set([
+          ...(friendProfile?.topArtists ?? []).map((a) => a.artistName),
+          ...friendTracks.flatMap((t) => t.artists.slice(0, 2).map((a) => a.name)),
+          ...(st.friendActivities[friendUserId]?.trackArtist
+            ? [st.friendActivities[friendUserId]!.trackArtist]
+            : []),
+        ])
+      ).slice(0, 12);
+
+      const seedArtists = Array.from(
+        new Set([...friendArtists.slice(0, 6), ...myArtists.slice(0, 6)])
+      );
+      const artistDetailsRes = await Promise.allSettled(
+        seedArtists.map((name) => musicProvider.getArtist(name))
+      );
+
+      const extraPool: Track[] = [...st.exploreSimilarTracks];
+      const relatedSeeds: string[] = [];
+      for (const res of artistDetailsRes) {
+        if (res.status !== 'fulfilled' || !res.value) continue;
+        extraPool.push(...res.value.topSongs, ...(res.value.appearances ?? []));
+        for (const rel of res.value.relatedArtists.slice(0, 3)) {
+          if (rel.name && !seedArtists.includes(rel.name)) {
+            relatedSeeds.push(rel.name);
+          }
+        }
+      }
+
+      const uniqueRelated = Array.from(new Set(relatedSeeds)).slice(0, 10);
+      if (extraPool.length + myTracks.length + friendTracks.length < 130 && uniqueRelated.length > 0) {
+        const relRes = await Promise.allSettled(
+          uniqueRelated.map((name) => musicProvider.getArtist(name))
+        );
+        for (const res of relRes) {
+          if (res.status !== 'fulfilled' || !res.value) continue;
+          extraPool.push(...res.value.topSongs.slice(0, 10));
+        }
+      }
+
+      if (extraPool.length + myTracks.length + friendTracks.length < 120) {
+        const qList = [...friendArtists.slice(0, 2), ...myArtists.slice(0, 2)].filter(Boolean);
+        const searchRes = await Promise.allSettled(
+          qList.map((q) => musicProvider.search(q, 'song'))
+        );
+        for (const sr of searchRes) {
+          if (sr.status === 'fulfilled') extraPool.push(...sr.value.songs);
+        }
+      }
+
+      const { score, tracks } = buildCurated100Blend({
+        myTracks,
+        myArtists,
+        friendTracks,
+        friendArtists,
+        extraPool,
+        friendLabel: friend.otherProfile.username,
+        myProfile: st.userProfile,
+        friendProfile: friendProfile ?? friend.otherProfile,
+        targetCount: 100,
+      });
+
+      const created = await createSharedPlaylist(sb, {
+        ownerId: st.authState.userId,
+        name: `Blend · ${st.userProfile?.displayName || 'Tú'} + ${friend.otherProfile.displayName}`,
+        description: `Blend de ${tracks.length} canciones con @${friend.otherProfile.username} (${score}% de compatibilidad)`,
+        kind: 'blend',
+        memberIds: [friendUserId],
+        tracks,
+        compatibilityScore: score,
+        ownerProfile: st.userProfile,
+      });
+      set((prev) => ({
+        sharedPlaylists: [created, ...prev.sharedPlaylists.filter((s) => s.id !== created.id)],
+      }));
+      st.showToast(`Blend de ${created.tracks.length} canciones creado (${score}% match)`);
+      return created;
+    } finally {
+      set({ blendGeneratingForUserId: null });
+    }
+  },
+
+  setPublicProfileEnabled: (enabled) => {
+    set({ publicProfileEnabled: enabled });
+    persistPrefsFromStore(true);
+    void get().syncOwnPublicSocialProfile();
+  },
+
+  openFriendProfile: async (userId) => {
+    const cleanId = userId.trim();
+    if (!cleanId) return;
+    set({
+      activeDetailView: { kind: 'friend_profile', userId: cleanId },
     });
-    set((prev) => ({
-      sharedPlaylists: [created, ...prev.sharedPlaylists.filter((s) => s.id !== created.id)],
+    const sb = getSyncSupabaseClient();
+    if (!sb) return;
+    const loaded = await fetchFriendPublicProfile(sb, cleanId).catch(() => null);
+    if (loaded) {
+      set((prev) => ({
+        friendProfilesCache: { ...prev.friendProfilesCache, [cleanId]: loaded },
+      }));
+    }
+  },
+
+  syncOwnPublicSocialProfile: async () => {
+    const st = get();
+    const sb = getSyncSupabaseClient();
+    if (!sb || !st.authState.connected || !st.authState.userId) return;
+    const events = loadLocalWrappedEvents();
+    const stats = st.personalTopStats['30d'] ?? computePeriodTopStats(events, '30d');
+    const localTracks = [
+      ...st.likedTracks.map((l) => l.track),
+      ...st.playHistory.map((h) => h.track),
+      ...st.playlists.flatMap((p) => p.tracks),
+    ];
+    const trackByKey = new Map<string, Track>();
+    for (const tr of localTracks) {
+      if (!tr?.id) continue;
+      trackByKey.set(tr.id, tr);
+      trackByKey.set(tr.title.trim().toLowerCase(), tr);
+    }
+
+    const topTracks = (stats.topTracks ?? [])
+      .slice(0, 10)
+      .map((item) => {
+        const matched = trackByKey.get(item.key) ?? trackByKey.get(item.title.trim().toLowerCase());
+        const fallbackTrack: Track = matched ?? {
+          id: item.key,
+          title: item.title,
+          artists: [{ name: item.subtitle || 'Artista' }],
+          durationSec: 180,
+          thumbnailUrl: item.thumbnailUrl ?? '',
+          thumbnailHighUrl: item.thumbnailUrl,
+          source: 'youtube',
+        };
+        return { track: fallbackTrack, plays: item.plays, minutes: item.minutes };
+      });
+    if (topTracks.length === 0) {
+      for (const tr of st.likedTracks.slice(0, 10).map((l) => l.track)) {
+        topTracks.push({ track: tr, plays: 1, minutes: Math.round((tr.durationSec || 180) / 60) });
+      }
+    }
+
+    const topArtists = (stats.topArtists ?? []).slice(0, 10).map((a) => ({
+      artistName: a.title,
+      thumbnailUrl: a.thumbnailUrl,
+      plays: a.plays,
+      minutes: a.minutes,
     }));
-    st.showToast(`Blend creado (${score}% de match)`);
+
+    const sharedByCode = new Map<string, SharedPlaylistRecord>();
+    for (const sp of st.sharedPlaylists) {
+      if (sp.shareCode) sharedByCode.set(sp.shareCode.toUpperCase(), sp);
+    }
+    const publicPlaylists = st.playlists
+      .filter((pl) => pl.tracks.length > 0 && !pl.id.startsWith('descubre_daily_'))
+      .slice(0, 12)
+      .map((pl) => {
+        const matchedShared = pl.shareCode ? sharedByCode.get(pl.shareCode.toUpperCase()) : undefined;
+        const app = st.playlistAppearances[pl.id];
+        return {
+          id: matchedShared?.id ?? pl.id,
+          name: pl.name,
+          description: pl.description,
+          coverUrl:
+            app?.coverUrl ||
+            pl.coverUrl ||
+            pl.tracks[0]?.thumbnailHighUrl ||
+            pl.tracks[0]?.thumbnailUrl ||
+            null,
+          trackCount: pl.tracks.length,
+          tracks: pl.tracks.slice(0, 20),
+          shareCode: matchedShared?.shareCode ?? pl.shareCode ?? null,
+          kind: matchedShared?.kind ?? ('local' as const),
+        };
+      });
+
+    await syncOwnPublicProfileSnapshot(sb, st.authState.userId, {
+      topTracks,
+      topArtists,
+      publicPlaylists,
+      publicProfileEnabled: st.publicProfileEnabled,
+    });
+  },
+
+  openChatWithFriend: async (friendUserId) => {
+    const cleanId = friendUserId.trim();
+    if (!cleanId) return;
+    set({
+      activeDetailView: null,
+      activeTab: 'Social',
+      socialSubTab: 'mensajes',
+      activeChatFriendId: cleanId,
+      unreadDmCounts: { ...get().unreadDmCounts, [cleanId]: 0 },
+    });
+    await get().loadDirectMessagesWithFriend(cleanId);
+  },
+
+  loadDirectMessagesWithFriend: async (friendUserId) => {
+    const st = get();
+    const sb = getSyncSupabaseClient();
+    const myUserId = st.authState.userId;
+    if (!sb || !myUserId || !friendUserId) return;
+    const msgs = await listDirectMessagesWithFriend(sb, myUserId, friendUserId).catch(() => []);
+    set((prev) => ({
+      directMessagesByFriend: { ...prev.directMessagesByFriend, [friendUserId]: msgs },
+      unreadDmCounts: { ...prev.unreadDmCounts, [friendUserId]: 0 },
+    }));
+    if (msgs.some((m) => m.recipientId === myUserId && !m.readAt)) {
+      void markDirectMessagesRead(sb, myUserId, friendUserId).catch(() => {});
+    }
+  },
+
+  sendFriendChatMessage: async (friendUserId, input) => {
+    const st = get();
+    const sb = getSyncSupabaseClient();
+    const myUserId = st.authState.userId;
+    if (!sb || !myUserId || !friendUserId) {
+      st.showToast('Inicia sesión para enviar mensajes');
+      return null;
+    }
+    const created = await sendDirectMessage(sb, {
+      senderId: myUserId,
+      recipientId: friendUserId,
+      messageType: input.messageType,
+      body: input.body,
+      payload: input.payload ?? null,
+    });
+    set((prev) => {
+      const existing = prev.directMessagesByFriend[friendUserId] ?? [];
+      if (existing.some((m) => m.id === created.id)) return prev;
+      return {
+        directMessagesByFriend: {
+          ...prev.directMessagesByFriend,
+          [friendUserId]: [...existing, created],
+        },
+      };
+    });
     return created;
+  },
+
+  sendJamInviteToFriendChat: async (friendUserId) => {
+    const st = get();
+    let sess = st.activeJamSession;
+    if (!sess || !sess.active) {
+      sess = await st.startJam({ openSheet: false });
+    }
+    if (!sess) return null;
+    const hostName = sess.hostName || st.userProfile?.displayName || 'Anfitrión';
+    const curTrack = sess.currentTrack ?? st.currentTrack;
+    const sent = await get().sendFriendChatMessage(friendUserId, {
+      messageType: 'jam',
+      body: `Únete a la Jam de ${hostName} (${sess.code})`,
+      payload: {
+        jamCode: sess.code,
+        jamHostName: hostName,
+        jamTrackTitle: curTrack?.title,
+        jamTrackArtist: curTrack?.artists?.map((a) => a.name).join(', '),
+        jamTrackCover: curTrack?.thumbnailHighUrl ?? curTrack?.thumbnailUrl,
+      },
+    });
+    if (sent) {
+      get().showToast(`Invitación a Jam (${sess.code}) enviada por chat`);
+    }
+    return sent;
   },
 
   addTrackToCollaborativePlaylist: async (sharedId, track) => {
@@ -10156,12 +10568,6 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   setSurfaceStyle: (style) => {
     applySurfaceStyleClasses(style);
     const simple = style === 'simple';
-    if (typeof document !== 'undefined') {
-      document.documentElement.classList.toggle(
-        'pm-reduced-motion',
-        simple || get().reducedMotionPref
-      );
-    }
     set({
       surfaceStyle: style,
       liquidGlassMode: style === 'liquid-glass',
@@ -10189,7 +10595,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     if (typeof document !== 'undefined') {
       document.documentElement.classList.toggle(
         'pm-reduced-motion',
-        enabled || get().graphicSaverMode
+        Boolean(enabled)
       );
     }
     set({ reducedMotionPref: enabled });
