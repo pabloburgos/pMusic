@@ -13,7 +13,6 @@ import {
   Share2,
   Shuffle,
   SlidersHorizontal,
-  Sparkles,
   Trash2,
   X,
 } from 'lucide-react';
@@ -921,7 +920,10 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
 
       {/* Quick Inline Search to Add Songs Directly to Queue or Active Jam */}
       <div className="space-y-2">
-        <div className="flex items-center gap-2 rounded-full bg-white/[0.09] px-3.5 py-2.5 focus-within:bg-white/[0.14] md:border md:border-white/15 md:bg-white/[0.08] md:py-2 md:focus-within:border-white/40 md:focus-within:bg-white/[0.12]">
+        <div
+          data-testid="queue-search-pill"
+          className="flex items-center gap-2 rounded-full bg-white/[0.09] px-3.5 py-2.5 focus-within:bg-white/[0.14] md:border md:border-white/15 md:bg-white/[0.08] md:py-2 md:focus-within:border-white/40 md:focus-within:bg-white/[0.12]"
+        >
           <Search className="h-3.5 w-3.5 shrink-0 text-[#D4D4E0]" />
           <input
             type="text"
@@ -1083,7 +1085,7 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
       {djMode.enabled && activeTransitionPlan && (
         <div className="space-y-1 border-b border-white/[0.08] pb-2 text-[11px] text-[#E5E5EA]">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="font-semibold text-[#E9D5FF]">
+            <span className="font-semibold text-white/85">
               {activeTransitionPlan.choreography?.summary ??
                 `AutoMix ${activeTransitionPlan.transitionBars} compases (${activeTransitionPlan.transitionDurationSec}s) · ${Math.round(activeTransitionPlan.compatibilityScore * 100)}% fit`}
             </span>
@@ -1179,7 +1181,7 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
 
             <div className="flex shrink-0 items-center gap-1">
               {djMode.enabled && (
-                <span className="tabular-nums hidden rounded-full bg-white/[0.10] px-2 py-0.5 text-[11px] font-semibold text-[#E9D5FF] sm:inline">
+                <span className="tabular-nums hidden rounded-full bg-white/[0.10] px-2 py-0.5 text-[11px] font-semibold text-white/85 sm:inline">
                   {activeAna?.bpm ?? 120} BPM
                 </span>
               )}
@@ -1302,8 +1304,7 @@ export const NowPlayingQueuePanel: React.FC = React.memo(() => {
         >
           <div className="flex items-center justify-between px-1">
             <div className="flex items-center gap-1.5">
-              <Sparkles className="h-3.5 w-3.5 text-[#E9D5FF]" />
-              <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#E9D5FF]">
+              <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-white/80">
                 Cola infinita · Recomendadas para ti
               </span>
             </div>

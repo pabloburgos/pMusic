@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   ArrowLeft,
+  BarChart3,
   Check,
   ChevronRight,
   Database,
@@ -13,7 +14,6 @@ import {
   Radio,
   Sliders,
   Smartphone,
-  Sparkles,
   Timer,
   Trash2,
   UserPlus,
@@ -355,7 +355,7 @@ const MobileHubPageInner: React.FC = () => {
               >
                 <div className="flex min-w-0 items-center gap-3">
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[11px] bg-white/10 text-white/90">
-                    <Sparkles className="h-4.5 w-4.5" />
+                    <BarChart3 className="h-4.5 w-4.5" />
                   </span>
                   <div className="min-w-0">
                     <div className="text-sm font-bold pm-text-primary">Mi Top y estadísticas</div>

@@ -17,7 +17,6 @@ import {
   Search,
   Sliders,
   SlidersHorizontal,
-  Sparkles,
   Speaker,
   Trash2,
   X,
@@ -466,7 +465,7 @@ export const PublicJamGuestPage: React.FC<{ code: string }> = ({ code }) => {
             </div>
             <div>
               <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/25 bg-emerald-500/12 px-3 py-1 text-[11px] font-semibold uppercase tracking-widest text-emerald-300">
-                <Sparkles className="h-3 w-3" /> Jam de {session.hostName}
+                <Radio className="h-3 w-3 text-emerald-400" /> Jam de {session.hostName}
               </span>
               <h1 className="mt-3 text-xl font-bold">Cambiar tu apodo</h1>
             </div>

@@ -30,7 +30,6 @@ import {
   Search,
   Settings,
   Sliders,
-  Sparkles,
   Timer,
   Users,
   Volume2,
@@ -252,8 +251,9 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     appReady,
     homeFeedReady,
     activeTab,
-    sidebarCollapsed,
+    sidebarCollapsed: storedSidebarCollapsed,
     rightPanelOpen,
+    socialSubTab,
     activeDetailView,
     currentTrack,
     queue,
@@ -363,6 +363,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       activeTab: s.activeTab,
       sidebarCollapsed: s.sidebarCollapsed,
       rightPanelOpen: s.rightPanelOpen,
+      socialSubTab: s.socialSubTab,
       activeDetailView: s.activeDetailView,
       currentTrack: s.currentTrack,
       queue: s.queue,
@@ -468,9 +469,19 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
   );
   const initialDockPosSec = usePMusicStore.getState().positionSec;
 
-  const [isMobileViewport, setIsMobileViewport] = useState<boolean>(() =>
-    typeof window !== 'undefined' ? window.innerWidth < 768 : false
+  const isElectronDesktop = isElectronDesktopRuntime();
+  const [viewportSize, setViewportSize] = useState<{ width: number; height: number }>(() =>
+    typeof window !== 'undefined'
+      ? { width: window.innerWidth, height: window.innerHeight }
+      : { width: 1280, height: 800 }
   );
+  const isMobileViewport = !isElectronDesktop && viewportSize.width < 768;
+  const isShortViewport = !isMobileViewport && viewportSize.height <= 740;
+  const autoCollapseLeftSidebar = !isMobileViewport && viewportSize.width < 1260;
+  const [manualSidebarExpandedBelow1260, setManualSidebarExpandedBelow1260] = useState(false);
+  const sidebarCollapsed =
+    storedSidebarCollapsed || (autoCollapseLeftSidebar && !manualSidebarExpandedBelow1260);
+  const wasBelow1260Ref = useRef(autoCollapseLeftSidebar);
   const topSearchPlaceholder = useRotatingSearchPlaceholder({ paused: spotlightOpen });
   const [sidebarDropTargetId, setSidebarDropTargetId] = useState<string | null>(null);
   const [dockHoverVisible, setDockHoverVisible] = useState<boolean>(false);
@@ -557,7 +568,6 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
   const [dockColorWave, setDockColorWave] = useState<{ key: string; prevColor: string } | null>(
     null
   );
-  const isElectronDesktop = isElectronDesktopRuntime();
   const showBuffering = useDelayedBuffering(isBuffering, 500);
   const joinableGlobalJamCount = globalActiveJams.filter(
     (j) => j.active && j.code !== activeJamSession?.code && j.hostUserId !== authState.userId
@@ -1333,12 +1343,19 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const handleResize = () => {
-      setIsMobileViewport(window.innerWidth < 768);
+      const nextW = window.innerWidth;
+      const nextH = window.innerHeight;
+      setViewportSize({ width: nextW, height: nextH });
+      const nowBelow1260 = (isElectronDesktop || nextW >= 768) && nextW < 1260;
+      if (nowBelow1260 !== wasBelow1260Ref.current) {
+        wasBelow1260Ref.current = nowBelow1260;
+        setManualSidebarExpandedBelow1260(false);
+      }
     };
     handleResize();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, []);
+  }, [isElectronDesktop]);
 
   // Global keyboard shortcuts (strictly guarded when typing in text inputs or Wrapped modal is open)
   useEffect(() => {
@@ -1548,6 +1565,8 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       (activeDetailView.kind === 'artist' ||
         activeDetailView.kind === 'album' ||
         activeDetailView.kind === 'playlist' ||
+        activeDetailView.kind === 'friend_profile' ||
+        activeDetailView.kind === 'friend_playlist' ||
         (activeDetailView.kind === 'local_playlist' &&
           (playlistAppearances[activeDetailView.playlistId]?.bannerEnabled ??
             playlists.find((p) => p.id === activeDetailView.playlistId)?.bannerEnabled ??
@@ -1582,8 +1601,13 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
             ? `shared:${activeDetailView.sharedId}`
             : activeDetailView.kind === 'friend_profile'
               ? `friend:${activeDetailView.userId}`
-              : `local:${activeDetailView.playlistId}`
+              : activeDetailView.kind === 'friend_playlist'
+                ? `friend-pl:${activeDetailView.playlist.id}`
+                : `local:${activeDetailView.playlistId}`
     : `tab:${activeTab}`;
+
+  const isDesktopChatView =
+    !isMobileViewport && !activeDetailView && activeTab === 'Social' && socialSubTab === 'mensajes';
 
   useEffect(() => {
     if (isMobileViewport) {
@@ -1961,7 +1985,15 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                   type="button"
                   title={sidebarCollapsed ? 'Expandir barra lateral' : 'Colapsar barra lateral'}
                   aria-label={sidebarCollapsed ? 'Expandir barra lateral' : 'Colapsar barra lateral'}
-                  onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                  onClick={() => {
+                    if (autoCollapseLeftSidebar) {
+                      const nextExpanded = sidebarCollapsed;
+                      setManualSidebarExpandedBelow1260(nextExpanded);
+                      setSidebarCollapsed(!nextExpanded);
+                    } else {
+                      setSidebarCollapsed(!storedSidebarCollapsed);
+                    }
+                  }}
                   className="pm-hover inline-flex h-7 w-7 items-center justify-center rounded-lg pm-text-tertiary hover:text-[var(--pm-text-primary)]"
                 >
                   {sidebarCollapsed ? (
@@ -2475,11 +2507,22 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
             <main
               ref={mainScrollRef}
               data-surface="content"
-              className={`pm-canvas pm-no-scrollbar h-full w-full overflow-y-auto overflow-x-hidden px-7 ${
-                isFullBleedHeroView ? 'pt-0' : 'pt-5'
-              } ${playerBarStyle === 'floating-island' ? 'pb-28' : 'pb-8'}`}
+              className={
+                isDesktopChatView
+                  ? 'pm-canvas flex h-full w-full flex-col overflow-hidden px-4 md:px-5 xl:px-7 pt-4 pb-3'
+                  : `pm-canvas pm-no-scrollbar h-full w-full overflow-y-auto overflow-x-hidden px-4 md:px-5 xl:px-7 ${
+                      isFullBleedHeroView ? 'pt-0' : 'pt-5'
+                    } ${playerBarStyle === 'floating-island' ? 'pb-28' : 'pb-8'}`
+              }
             >
-              <div key={viewTransitionKey} className="pm-view-transition">
+              <div
+                key={viewTransitionKey}
+                className={
+                  isDesktopChatView
+                    ? 'pm-view-transition flex h-full min-h-0 flex-col'
+                    : 'pm-view-transition'
+                }
+              >
                 {activeDetailView ? (
                   <DetailViewPanel />
                 ) : (
@@ -2497,26 +2540,29 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                 )}
               </div>
             </main>
-            <OverlayScrollbar
-              scrollRef={mainScrollRef}
-              insetClassName={
-                playerBarStyle === 'floating-island'
-                  ? 'top-4 bottom-24 right-1.5'
-                  : 'top-4 bottom-4 right-1.5'
-              }
-            />
+            {!isDesktopChatView && (
+              <OverlayScrollbar
+                scrollRef={mainScrollRef}
+                insetClassName={
+                  playerBarStyle === 'floating-island'
+                    ? 'top-4 bottom-24 right-1.5'
+                    : 'top-4 bottom-4 right-1.5'
+                }
+              />
+            )}
           </div>
         )}
 
-        {/* Desktop Collapsible Right "En Reproducción" Panel (>= 1280px) */}
+        {/* Desktop Collapsible Right "En Reproducción" Panel (>= 920px, shrinks last after left sidebar & center canvas) */}
         {!isMobileViewport && rightPanelOpen && (
           <aside
+            data-testid="desktop-right-panel"
             aria-label="En reproducción y siguiente"
-            className={`pm-glass-surface hidden h-full w-[304px] shrink-0 flex-col gap-5 overflow-y-auto rounded-[20px] p-4 pm-no-scrollbar xl:flex ${
+            className={`pm-glass-surface hidden h-full w-[248px] shrink-0 flex-col gap-4 overflow-y-auto rounded-[20px] p-3.5 pm-no-scrollbar min-[920px]:flex lg:w-[272px] lg:p-4 xl:w-[304px] ${
               playerBarStyle === 'floating-island' ? 'pb-24' : ''
             }`}
           >
-            <div className="flex items-center justify-between">
+            <div className="flex shrink-0 items-center justify-between">
               <span className="text-xs font-bold tracking-wide pm-text-secondary">
                 EN REPRODUCCIÓN
               </span>
@@ -2540,102 +2586,57 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
               </div>
             </div>
 
-            {/* Song card with subtle localized cover halo ONLY for the active track artwork */}
-            <div data-surface="content" className="space-y-3">
+            {isShortViewport ? (
               <div
-                draggable
-                onDragStart={(e) => setDraggedTrack(e, currentTrack)}
-                onDragEnd={() => clearDraggedTrack()}
-                className="pm-elevated relative cursor-grab overflow-hidden rounded-[14px] p-1 active:cursor-grabbing"
+                data-testid="right-panel-compact-nowplaying"
+                className="flex shrink-0 items-center justify-between gap-2.5 rounded-[12px] border pm-border bg-white/[0.03] p-2"
               >
-                <div
-                  aria-hidden="true"
-                  className="pointer-events-none absolute -inset-4 opacity-45 blur-xl"
-                  style={{
-                    background:
-                      'radial-gradient(circle at 50% 45%, var(--pm-ambient-1), transparent 70%)',
-                  }}
-                />
                 <button
                   type="button"
                   aria-label="Abrir vista de canción"
                   onClick={() => setNowPlayingOpen(true)}
-                  className="relative block aspect-square w-full overflow-hidden rounded-[12px] shadow-2xl"
+                  className="relative h-11 w-11 shrink-0 overflow-hidden rounded-[9px]"
                 >
                   <TrackArtwork
                     trackId={currentTrack.id}
-                    src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
+                    src={currentTrack.thumbnailUrl}
                     title={currentTrack.title}
                     artistName={currentTrack.artists[0]?.name}
                     artistId={currentTrack.artists[0]?.id}
                     alt={currentTrack.title}
-                    variant="card"
+                    variant="mini"
                     loading="eager"
-                    draggable={false}
-                    imgClassName="pointer-events-none h-full w-full select-none object-cover"
+                    imgClassName="h-full w-full object-cover"
                   />
                 </button>
-              </div>
-
-              <div className="flex items-start justify-between gap-2">
-                <div
-                  draggable
-                  onDragStart={(e) => setDraggedTrack(e, currentTrack)}
-                  onDragEnd={() => clearDraggedTrack()}
-                  className="min-w-0 flex-1 cursor-grab active:cursor-grabbing"
-                >
-                  <MarqueeText
-                    disabled={!marqueeTextEnabled || reducedMotionPref || crossfadePairActive}
-                    testId="right-title-marquee"
-                    className="w-full"
+                <div className="min-w-0 flex-1">
+                  <button
+                    type="button"
+                    onClick={() => setNowPlayingOpen(true)}
+                    className="block max-w-full truncate text-left text-[13px] font-bold pm-text-primary hover:underline"
                   >
-                    <button
-                      type="button"
-                      onClick={() => setNowPlayingOpen(true)}
-                      className="block text-left text-[17px] font-bold pm-text-primary hover:underline"
-                    >
-                      {currentTrack.title}
-                    </button>
-                  </MarqueeText>
-                  <MarqueeText
-                    disabled={!marqueeTextEnabled || reducedMotionPref || crossfadePairActive}
-                    testId="right-artist-marquee"
-                    className="mt-0.5 w-full text-[13px] pm-text-secondary"
-                  >
+                    {currentTrack.title}
+                  </button>
+                  <div className="truncate text-[11.5px] pm-text-secondary">
                     <ArtistLinks
                       artists={currentTrack.artists}
                       className="inline-flex whitespace-nowrap !py-0"
                       linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
                     />
-                  </MarqueeText>
+                  </div>
                 </div>
-
-                <div className="flex items-center gap-0.5">
+                <div className="flex shrink-0 items-center gap-0.5">
                   <button
                     type="button"
                     aria-label={isLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
                     onClick={() => void toggleLike(currentTrack)}
-                    className={`rounded-full p-2 ${
+                    className={`rounded-full p-1.5 ${
                       isLiked
                         ? 'text-rose-500'
                         : 'pm-text-tertiary hover:text-[var(--pm-text-primary)]'
                     }`}
                   >
-                    <LiquidHeartIcon liked={isLiked} className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Descargar canción offline"
-                    onClick={() => void downloadTrackOffline(currentTrack)}
-                    className="rounded-full p-2 pm-text-tertiary hover:text-[var(--pm-text-primary)]"
-                  >
-                    {dlStatus === 'downloading' ? (
-                      <Loader2 className="h-4 w-4 animate-spin pm-text-primary" />
-                    ) : dlStatus === 'downloaded' ? (
-                      <Check className="h-4 w-4 text-emerald-500" />
-                    ) : (
-                      <Download className="h-4 w-4" />
-                    )}
+                    <LiquidHeartIcon liked={isLiked} className="h-3.5 w-3.5" />
                   </button>
                   <button
                     type="button"
@@ -2644,32 +2645,146 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                       const r = e.currentTarget.getBoundingClientRect();
                       openTrackMenu(currentTrack, r.left - 220, r.bottom + 6);
                     }}
-                    className="rounded-full p-2 pm-text-tertiary hover:text-[var(--pm-text-primary)]"
+                    className="rounded-full p-1.5 pm-text-tertiary hover:text-[var(--pm-text-primary)]"
                   >
-                    <MoreHorizontal className="h-4 w-4" />
+                    <MoreHorizontal className="h-3.5 w-3.5" />
                   </button>
                 </div>
               </div>
+            ) : (
+              <>
+                {/* Song card with subtle localized cover halo ONLY for the active track artwork */}
+                <div data-surface="content" className="shrink-0 space-y-3">
+                  <div
+                    draggable
+                    onDragStart={(e) => setDraggedTrack(e, currentTrack)}
+                    onDragEnd={() => clearDraggedTrack()}
+                    className="pm-elevated relative cursor-grab overflow-hidden rounded-[14px] p-1 active:cursor-grabbing"
+                  >
+                    <div
+                      aria-hidden="true"
+                      className="pointer-events-none absolute -inset-4 opacity-45 blur-xl"
+                      style={{
+                        background:
+                          'radial-gradient(circle at 50% 45%, var(--pm-ambient-1), transparent 70%)',
+                      }}
+                    />
+                    <button
+                      type="button"
+                      aria-label="Abrir vista de canción"
+                      onClick={() => setNowPlayingOpen(true)}
+                      className="relative block aspect-square w-full overflow-hidden rounded-[12px] shadow-2xl"
+                    >
+                      <TrackArtwork
+                        trackId={currentTrack.id}
+                        src={currentTrack.thumbnailHighUrl ?? currentTrack.thumbnailUrl}
+                        title={currentTrack.title}
+                        artistName={currentTrack.artists[0]?.name}
+                        artistId={currentTrack.artists[0]?.id}
+                        alt={currentTrack.title}
+                        variant="card"
+                        loading="eager"
+                        draggable={false}
+                        imgClassName="pointer-events-none h-full w-full select-none object-cover"
+                      />
+                    </button>
+                  </div>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setNowPlayingOpen(true);
-                  setNowPlayingTab('Letras');
-                }}
-                className="pm-btn-secondary pm-pressable flex w-full items-center justify-center gap-2 rounded-[10px] py-2 text-xs font-semibold"
-              >
-                <Mic2 className="h-3.5 w-3.5" />
-                <span>Ver letras sincronizadas</span>
-              </button>
-            </div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div
+                      draggable
+                      onDragStart={(e) => setDraggedTrack(e, currentTrack)}
+                      onDragEnd={() => clearDraggedTrack()}
+                      className="min-w-0 flex-1 cursor-grab active:cursor-grabbing"
+                    >
+                      <MarqueeText
+                        disabled={!marqueeTextEnabled || reducedMotionPref || crossfadePairActive}
+                        testId="right-title-marquee"
+                        className="w-full"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setNowPlayingOpen(true)}
+                          className="block text-left text-[17px] font-bold pm-text-primary hover:underline"
+                        >
+                          {currentTrack.title}
+                        </button>
+                      </MarqueeText>
+                      <MarqueeText
+                        disabled={!marqueeTextEnabled || reducedMotionPref || crossfadePairActive}
+                        testId="right-artist-marquee"
+                        className="mt-0.5 w-full text-[13px] pm-text-secondary"
+                      >
+                        <ArtistLinks
+                          artists={currentTrack.artists}
+                          className="inline-flex whitespace-nowrap !py-0"
+                          linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
+                        />
+                      </MarqueeText>
+                    </div>
+
+                    <div className="flex items-center gap-0.5">
+                      <button
+                        type="button"
+                        aria-label={isLiked ? 'Quitar de Me gusta' : 'Añadir a Me gusta'}
+                        onClick={() => void toggleLike(currentTrack)}
+                        className={`rounded-full p-2 ${
+                          isLiked
+                            ? 'text-rose-500'
+                            : 'pm-text-tertiary hover:text-[var(--pm-text-primary)]'
+                        }`}
+                      >
+                        <LiquidHeartIcon liked={isLiked} className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Descargar canción offline"
+                        onClick={() => void downloadTrackOffline(currentTrack)}
+                        className="rounded-full p-2 pm-text-tertiary hover:text-[var(--pm-text-primary)]"
+                      >
+                        {dlStatus === 'downloading' ? (
+                          <Loader2 className="h-4 w-4 animate-spin pm-text-primary" />
+                        ) : dlStatus === 'downloaded' ? (
+                          <Check className="h-4 w-4 text-emerald-500" />
+                        ) : (
+                          <Download className="h-4 w-4" />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Más opciones para ${currentTrack.title}`}
+                        onClick={(e) => {
+                          const r = e.currentTarget.getBoundingClientRect();
+                          openTrackMenu(currentTrack, r.left - 220, r.bottom + 6);
+                        }}
+                        className="rounded-full p-2 pm-text-tertiary hover:text-[var(--pm-text-primary)]"
+                      >
+                        <MoreHorizontal className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNowPlayingOpen(true);
+                      setNowPlayingTab('Letras');
+                    }}
+                    className="pm-btn-secondary pm-pressable flex w-full items-center justify-center gap-2 rounded-[10px] py-2 text-xs font-semibold"
+                  >
+                    <Mic2 className="h-3.5 w-3.5" />
+                    <span>Ver letras sincronizadas</span>
+                  </button>
+                </div>
+              </>
+            )}
 
             {/* DJ Live Transition Preview Card */}
             {djMode.enabled && activeTransitionPlan && (
-              <div className="pm-surface-card rounded-[12px] border border-purple-500/35 p-3 text-xs">
-                <div className="flex items-center justify-between font-bold text-purple-500">
+              <div className="pm-surface-card rounded-[12px] border border-white/15 p-3 text-xs">
+                <div className="flex items-center justify-between font-bold pm-text-primary">
                   <span className="flex items-center gap-1.5">
-                    <Sparkles className="h-3.5 w-3.5" />
+                    <Radio className="h-3.5 w-3.5 text-emerald-400" />
                     <span>
                       {isTransitioning
                         ? 'Mezclando en vivo…'
@@ -3932,7 +4047,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                   rightPanelOpen ? 'Ocultar panel de cola' : 'Mostrar panel de cola'
                 }
                 onClick={() => setRightPanelOpen(!rightPanelOpen)}
-                className="pm-pressable hidden h-8 w-8 items-center justify-center rounded-full pm-text-secondary transition-colors hover:bg-white/[0.10] hover:text-[var(--pm-text-primary)] xl:inline-flex"
+                className="pm-pressable hidden h-8 w-8 items-center justify-center rounded-full pm-text-secondary transition-colors hover:bg-white/[0.10] hover:text-[var(--pm-text-primary)] min-[920px]:inline-flex"
               >
                 {rightPanelOpen ? (
                   <PanelRightClose className="h-3.5 w-3.5" />

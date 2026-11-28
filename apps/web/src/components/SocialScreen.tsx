@@ -19,7 +19,6 @@ import {
   QrCode,
   Radio,
   Search,
-  Sparkles,
   User,
   UserPlus,
   Users,
@@ -250,9 +249,17 @@ export const SocialScreen: React.FC = React.memo(() => {
   const pendingOutgoing = friends.filter((f) => f.status === 'pending' && !f.isIncoming);
   const totalUnreadDms = Object.values(unreadDmCounts).reduce((a, b) => a + b, 0);
 
+  const isChatView = socialSubTab === 'mensajes';
+
   return (
-    <div className="pm-page-enter space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <div
+      className={
+        isChatView
+          ? 'pm-page-enter flex h-full min-h-0 flex-col gap-4'
+          : 'pm-page-enter space-y-6'
+      }
+    >
+      <div className="flex shrink-0 flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3.5">
           <UserAvatar
             src={userProfile?.avatarUrl ?? authState.avatarUrl}
@@ -908,7 +915,7 @@ export const SocialScreen: React.FC = React.memo(() => {
                         {isGeneratingBlend ? (
                           <Loader2 className="h-3.5 w-3.5 animate-spin" />
                         ) : (
-                          <Sparkles className="h-3.5 w-3.5" />
+                          <Disc3 className="h-3.5 w-3.5" />
                         )}
                         <span>{isGeneratingBlend ? 'Creando…' : 'Crear Blend'}</span>
                       </button>
@@ -922,7 +929,11 @@ export const SocialScreen: React.FC = React.memo(() => {
       )}
 
       {/* 2B. MENSAJES DIRECTOS CON AMIGOS */}
-      {socialSubTab === 'mensajes' && <FriendChatPanel />}
+      {socialSubTab === 'mensajes' && (
+        <div className="min-h-0 flex-1">
+          <FriendChatPanel />
+        </div>
+      )}
 
       {/* 3. PLAYLISTS COMPARTIDAS Y BLENDS */}
       {socialSubTab === 'compartidas' && (
@@ -984,7 +995,7 @@ export const SocialScreen: React.FC = React.memo(() => {
                       />
                     ) : (
                       <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-white/10">
-                        <Sparkles className="h-6 w-6 pm-text-primary" />
+                        <ListMusic className="h-6 w-6 pm-text-primary" />
                       </div>
                     )}
                     <div className="min-w-0 flex-1">

@@ -10,7 +10,6 @@ import {
   Mic2,
   PenTool,
   Sliders,
-  Sparkles,
   Users,
   X,
 } from 'lucide-react';
@@ -508,7 +507,7 @@ export const TrackInfoModal: React.FC = () => {
           <div className="pm-surface-card space-y-3 rounded-[16px] p-4">
             <div className="flex items-center justify-between text-xs font-bold pm-text-primary">
               <span className="flex items-center gap-1.5">
-                <Sparkles className="h-3.5 w-3.5 text-[#C084FC]" />
+                <Disc3 className="h-3.5 w-3.5 text-white/75" />
                 <span>ADN Acústico 3-Stems</span>
               </span>
               <span className="text-[11px] font-medium pm-text-tertiary">

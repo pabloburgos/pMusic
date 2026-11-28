@@ -254,13 +254,13 @@ export const FriendChatPanel: React.FC = React.memo(() => {
   return (
     <div
       data-testid="friend-chat-panel"
-      className="grid grid-cols-1 gap-3 md:grid-cols-[260px_minmax(0,1fr)]"
+      className="grid h-[calc(100dvh-235px)] min-h-[380px] grid-cols-1 gap-3 md:h-full md:min-h-0 md:grid-cols-[260px_minmax(0,1fr)]"
     >
       {/* Conversations List */}
       <aside
         className={`${
           mobileListMode ? 'flex' : 'hidden md:flex'
-        } max-h-[560px] flex-col gap-1.5 overflow-y-auto rounded-[20px] border border-white/[0.08] bg-white/[0.02] p-2.5 pm-no-scrollbar`}
+        } h-full min-h-0 flex-col gap-1.5 overflow-y-auto rounded-[20px] border border-white/[0.08] bg-white/[0.02] p-2.5 pm-no-scrollbar`}
       >
         <div className="px-2 py-1 text-[10.5px] font-bold uppercase tracking-wider pm-text-tertiary">
           Conversaciones ({sortedFriends.length})
@@ -322,7 +322,7 @@ export const FriendChatPanel: React.FC = React.memo(() => {
         <section
           className={`${
             !mobileListMode ? 'flex' : 'hidden md:flex'
-          } h-[520px] sm:h-[560px] flex-col overflow-hidden rounded-[20px] border border-white/[0.08] bg-white/[0.02]`}
+          } h-full min-h-0 flex-col overflow-hidden rounded-[20px] border border-white/[0.08] bg-white/[0.02]`}
         >
           {/* Chat Header */}
           <div className="flex items-center justify-between gap-2 border-b border-white/[0.08] bg-white/[0.02] px-3.5 py-3">

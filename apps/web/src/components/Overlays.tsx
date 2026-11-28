@@ -32,7 +32,6 @@ import {
   Sliders,
   SlidersHorizontal,
   Smartphone,
-  Sparkles,
   Type,
   Users,
   Volume2,
@@ -3099,7 +3098,7 @@ const AudioStudioSheetInner: React.FC = () => {
         className={
           isMobileViewport
             ? 'pm-canvas pm-page-enter fixed inset-0 z-[95] flex flex-col overflow-y-auto px-4 pb-[max(2.25rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] pm-no-scrollbar'
-            : `pm-glass-frosted-neutral pm-hud-dark pm-popover-enter fixed inset-x-0 bottom-0 z-[65] max-h-[82dvh] overflow-y-auto rounded-t-[28px] px-5 pt-3 pb-[max(1.5rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] pm-no-scrollbar sm:inset-x-auto sm:mx-0 sm:w-[376px] sm:rounded-[24px] sm:p-4 ${
+            : `pm-glass-frosted-neutral pm-hud-dark pm-popover-enter fixed inset-x-0 bottom-0 z-[65] max-h-[82dvh] overflow-y-auto rounded-t-[28px] px-5 pt-3 pb-[max(1.5rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] pm-no-scrollbar sm:inset-x-auto sm:mx-0 sm:w-[376px] sm:max-h-[calc(100dvh-160px)] sm:rounded-[24px] sm:p-4 ${
                 nowPlayingOpen
                   ? 'sm:right-6 sm:bottom-[74px]'
                   : playerBarStyle === 'floating-island'
@@ -3412,8 +3411,8 @@ const AudioStudioSheetInner: React.FC = () => {
                     <span className="tabular-nums text-[11px] font-semibold">
                       {val > 0 ? `+${val}` : val}
                     </span>
-                    <div className="relative flex h-28 w-7 items-center justify-center">
-                      <div className="pointer-events-none relative h-24 w-1.5 overflow-hidden rounded-full bg-white/18">
+                    <div className="relative flex h-20 w-7 items-center justify-center [@media(min-height:760px)]:h-28">
+                      <div className="pointer-events-none relative h-16 w-1.5 overflow-hidden rounded-full bg-white/18 [@media(min-height:760px)]:h-24">
                         <div
                           className="absolute inset-x-0 bottom-0 rounded-full bg-white/75"
                           style={{ height: `${pct}%` }}
@@ -3933,7 +3932,7 @@ const DevicesConnectSheetInner: React.FC = () => {
         className={
           isMobileViewport
             ? 'pm-canvas pm-page-enter fixed inset-0 z-[95] flex flex-col overflow-y-auto px-4 pb-[max(2.25rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] pm-no-scrollbar'
-            : `pm-glass-frosted-neutral pm-hud-dark pm-popover-enter fixed inset-x-0 bottom-0 z-[65] max-h-[82dvh] overflow-y-auto rounded-t-[28px] px-5 pt-3 pb-[max(1.5rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] pm-no-scrollbar sm:inset-x-auto sm:mx-0 sm:w-[376px] sm:rounded-[24px] sm:p-4 ${
+            : `pm-glass-frosted-neutral pm-hud-dark pm-popover-enter fixed inset-x-0 bottom-0 z-[65] max-h-[82dvh] overflow-y-auto rounded-t-[28px] px-5 pt-3 pb-[max(1.5rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] pm-no-scrollbar sm:inset-x-auto sm:mx-0 sm:w-[376px] sm:max-h-[calc(100dvh-160px)] sm:rounded-[24px] sm:p-4 ${
                 nowPlayingOpen
                   ? 'sm:right-6 sm:bottom-[74px]'
                   : playerBarStyle === 'floating-island'

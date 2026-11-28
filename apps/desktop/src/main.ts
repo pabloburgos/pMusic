@@ -632,7 +632,7 @@ async function createMainWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
     width: 1380,
     height: 860,
-    minWidth: 420,
+    minWidth: 840,
     minHeight: 640,
     backgroundColor: '#000000',
     title: 'pMusic',
@@ -1056,7 +1056,7 @@ ipcMain.handle('pmusic:check-and-apply-update', async (_event, currentWebVersion
         return (r[i] ?? 0) > (l[i] ?? 0);
       });
     };
-    const nativeVer = app.getVersion() || '0.24.14';
+    const nativeVer = app.getVersion() || '0.24.15';
     const webVer = typeof currentWebVersion === 'string' && currentWebVersion.trim() ? currentWebVersion.trim() : '0.0.0';
     const effectiveLocalVer = isGreater(webVer, nativeVer) ? webVer : nativeVer;
     if (!latestVer || !isGreater(latestVer, effectiveLocalVer)) {

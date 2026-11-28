@@ -2,11 +2,11 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
+  Disc3,
   Download,
   Flame,
   Headphones,
   Music2,
-  Sparkles,
   Volume2,
   VolumeX,
   X,
@@ -689,7 +689,7 @@ const WrappedStoriesModalInner: React.FC = () => {
           <div className="mt-3 flex items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
               <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white/15 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-white backdrop-blur-md">
-                <Sparkles className="h-3 w-3" style={{ color: theme.accentHex }} />
+                <Flame className="h-3 w-3" style={{ color: theme.accentHex }} />
                 Wrapped {summary.year}
               </span>
               {activeSlideTrack?.title && (
@@ -746,7 +746,7 @@ const WrappedStoriesModalInner: React.FC = () => {
                   className="pm-wrapped-pulse-ring absolute -inset-3 rounded-[32px] border border-lime-200/40"
                 />
                 <div className="pm-wrapped-pop relative flex h-24 w-24 items-center justify-center rounded-[28px] border border-white/30 bg-white/12 shadow-2xl backdrop-blur-xl">
-                  <Sparkles className="h-11 w-11 text-[#d9f99d]" />
+                  <Disc3 className="h-11 w-11 text-[#d9f99d]" />
                 </div>
               </div>
               <div className="space-y-2.5">

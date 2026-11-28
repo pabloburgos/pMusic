@@ -1,9 +1,9 @@
 {
-  "version": "0.24.14",
+  "version": "0.24.15",
   "minNativeVersion": "0.24.6",
   "bundleUrl": "https://raw.githubusercontent.com/pabloburgos/pMusic/main/ota/pMusic-web-bundle.zip",
-  "apkUrl": "https://github.com/pabloburgos/pMusic/releases/download/v0.24.14/pMusic-Android.apk",
-  "exeUrl": "https://github.com/pabloburgos/pMusic/releases/download/v0.24.14/pMusic-Setup-0.24.14.exe",
-  "sizeBytes": 1890409,
-  "publishedAt": "2026-11-28T14:49:33.382Z"
+  "apkUrl": "https://github.com/pabloburgos/pMusic/releases/download/v0.24.15/pMusic-Android.apk",
+  "exeUrl": "https://github.com/pabloburgos/pMusic/releases/download/v0.24.15/pMusic-Setup-0.24.15.exe",
+  "sizeBytes": 1892804,
+  "publishedAt": "2026-11-28T16:07:27.596Z"
 }

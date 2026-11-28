@@ -244,6 +244,7 @@ import {
   type JamQueueOpPayload,
   type JamRequestRecord,
   type JamSessionRecord,
+  type PublicPlaylistSummary,
   type SharedPlaylistRecord,
   type TrackAdderIdentity,
 } from '../services/social-service.ts';
@@ -350,6 +351,12 @@ export type ActiveDetailView =
   | { kind: 'local_playlist'; playlistId: string }
   | { kind: 'shared_playlist'; sharedId: string }
   | { kind: 'friend_profile'; userId: string }
+  | {
+      kind: 'friend_playlist';
+      playlist: PublicPlaylistSummary;
+      ownerUsername: string;
+      ownerDisplayName: string;
+    }
   | null;
 
 const DETAIL_CLIENT_CACHE_TTL_MS = 15 * 60_000;
@@ -1395,6 +1402,11 @@ export interface PMusicStoreState {
   fetchTrackCredits: (track: Track) => Promise<TrackCredits | null>;
   openLocalPlaylistDetail: (playlistId: string) => void;
   openSharedPlaylistDetail: (sharedId: string) => void;
+  openFriendPlaylistDetail: (
+    playlist: PublicPlaylistSummary,
+    ownerUsername: string,
+    ownerDisplayName: string
+  ) => void;
   closeDetailView: () => void;
   showToast: (message: string) => void;
   openTrackMenu: (track: Track, x: number, y: number, playlistId?: string) => void;
@@ -5625,6 +5637,23 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       nowPlayingOpen: false,
     }));
   },
+  openFriendPlaylistDetail: (playlist, ownerUsername, ownerDisplayName) => {
+    const prev = get().activeDetailView;
+    set((s) => ({
+      detailViewHistory:
+        prev && !(prev.kind === 'friend_playlist' && prev.playlist.id === playlist.id)
+          ? [...s.detailViewHistory, prev].slice(-12)
+          : s.detailViewHistory,
+      activeDetailView: {
+        kind: 'friend_playlist',
+        playlist,
+        ownerUsername,
+        ownerDisplayName,
+      },
+      spotlightOpen: false,
+      nowPlayingOpen: false,
+    }));
+  },
   closeDetailView: () =>
     set((s) => {
       if (s.detailViewHistory.length > 0) {
@@ -8361,9 +8390,16 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   openFriendProfile: async (userId) => {
     const cleanId = userId.trim();
     if (!cleanId) return;
-    set({
+    const prev = get().activeDetailView;
+    set((s) => ({
+      detailViewHistory:
+        prev && !(prev.kind === 'friend_profile' && prev.userId === cleanId)
+          ? [...s.detailViewHistory, prev].slice(-12)
+          : s.detailViewHistory,
       activeDetailView: { kind: 'friend_profile', userId: cleanId },
-    });
+      spotlightOpen: false,
+      nowPlayingOpen: false,
+    }));
     const sb = getSyncSupabaseClient();
     if (!sb) return;
     const loaded = await fetchFriendPublicProfile(sb, cleanId).catch(() => null);

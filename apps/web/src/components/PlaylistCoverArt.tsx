@@ -26,7 +26,7 @@ export const PlaylistCoverArt: React.FC<PlaylistCoverArtProps> = React.memo(
       return (
         <div
           data-testid="playlist-mosaic-cover"
-          className={`grid h-full w-full grid-cols-2 grid-rows-2 gap-[1px] overflow-hidden bg-black/50 ${className}`}
+          className={`grid aspect-square h-full w-full grid-cols-2 grid-rows-2 gap-[1px] overflow-hidden bg-black/50 ${className}`}
         >
           {tiles.slice(0, 4).map((tileUrl, idx) => (
             <div key={`${tileUrl}-${idx}`} className="relative h-full w-full overflow-hidden bg-[#141418]">
@@ -35,7 +35,7 @@ export const PlaylistCoverArt: React.FC<PlaylistCoverArtProps> = React.memo(
                 alt=""
                 loading="lazy"
                 decoding="async"
-                className="h-full w-full object-cover"
+                className="h-full w-full object-cover object-center"
               />
             </div>
           ))}
@@ -45,23 +45,27 @@ export const PlaylistCoverArt: React.FC<PlaylistCoverArtProps> = React.memo(
 
     if (coverInfo.url) {
       return (
-        <TrackArtwork
-          trackId={coverInfo.fallbackTrackId}
-          src={coverInfo.url}
-          title={title}
-          artistName={artistName}
-          alt={title}
-          variant={variant}
-          className={className}
-          imgClassName="h-full w-full object-cover"
-        />
+        <div
+          data-testid="playlist-square-cover"
+          className={`relative aspect-square overflow-hidden bg-[#141418] ${className}`}
+        >
+          <TrackArtwork
+            trackId={coverInfo.fallbackTrackId}
+            src={coverInfo.url}
+            title={title}
+            artistName={artistName}
+            alt={title}
+            variant={variant}
+            imgClassName="h-full w-full object-cover object-center"
+          />
+        </div>
       );
     }
 
     return (
       <div
         data-testid="playlist-empty-cover"
-        className={`flex h-full w-full items-center justify-center bg-[#141418] text-white/35 ring-1 ring-inset ring-white/[0.06] ${className}`}
+        className={`flex aspect-square h-full w-full items-center justify-center overflow-hidden bg-[#141418] text-white/35 ring-1 ring-inset ring-white/[0.06] ${className}`}
       >
         <Music2 className={iconClassName} />
       </div>

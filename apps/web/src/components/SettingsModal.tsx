@@ -257,12 +257,16 @@ const SettingsModalInner: React.FC = () => {
             ? 'apariencia'
             : settingsInitialCategory
         );
-      } else if (isMobileViewport && activeCategory === 'discord') {
-        setActiveCategory('apariencia');
       }
       void refreshDiscordRpcStatus();
     }
-  }, [settingsOpen, settingsInitialCategory, isMobileViewport, activeCategory, refreshDiscordRpcStatus]);
+  }, [settingsOpen, settingsInitialCategory, isMobileViewport, refreshDiscordRpcStatus]);
+
+  useEffect(() => {
+    if (isMobileViewport && activeCategory === 'discord') {
+      setActiveCategory('apariencia');
+    }
+  }, [isMobileViewport, activeCategory]);
 
   if (!settingsOpen) return null;
 

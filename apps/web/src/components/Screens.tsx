@@ -3,6 +3,7 @@ import { useShallow } from 'zustand/react/shallow';
 import {
   ArrowDownAZ,
   ArrowUpDown,
+  BarChart3,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -33,7 +34,6 @@ import {
   Search,
   Share2,
   Shuffle,
-  Sparkles,
   Timer,
   Trash2,
   User,
@@ -538,22 +538,25 @@ export const TrackListRow: React.FC<{
             <ArtistLinks
               artists={track.artists}
               disableOnMobile
-              className="min-w-0 shrink-0 max-w-[75%] !py-0 !leading-[1.2]"
+              className="min-w-0 shrink-0 max-w-[70%] !py-0 !leading-[1.2]"
               linkClassName="hover:underline hover:text-[var(--pm-text-primary)]"
             />
-            {track.album && (
-              <span className="hidden min-w-0 flex-1 truncate leading-[1.2] pm-text-tertiary lg:inline">
-                · {track.album.name}
-              </span>
-            )}
             {track.addedBy?.displayName && (
-              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white/[0.08] px-1.5 py-0.5 text-[10.5px] font-semibold pm-text-secondary">
+              <span
+                data-testid="track-added-by-pill"
+                className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white/[0.08] px-1.5 py-0.5 text-[10.5px] font-semibold pm-text-secondary"
+              >
                 <UserAvatar
                   src={track.addedBy.avatarUrl}
                   name={track.addedBy.displayName}
                   size="xs"
                 />
                 <span className="max-w-[95px] truncate">{track.addedBy.displayName}</span>
+              </span>
+            )}
+            {track.album && (
+              <span className="hidden min-w-0 flex-1 truncate leading-[1.2] pm-text-tertiary lg:inline">
+                · {track.album.name}
               </span>
             )}
           </div>
@@ -859,6 +862,7 @@ export const DetailViewPanel: React.FC = React.memo(() => {
     openPlaylistAppearanceModal,
     downloadPlaylistOffline,
     cancelPlaylistDownload,
+    createPlaylist,
     addTrackToPlaylist,
     removePlaylistDuplicates,
     reorderPlaylistTrack,
@@ -910,6 +914,7 @@ export const DetailViewPanel: React.FC = React.memo(() => {
       openPlaylistAppearanceModal: s.openPlaylistAppearanceModal,
       downloadPlaylistOffline: s.downloadPlaylistOffline,
       cancelPlaylistDownload: s.cancelPlaylistDownload,
+      createPlaylist: s.createPlaylist,
       addTrackToPlaylist: s.addTrackToPlaylist,
       removePlaylistDuplicates: s.removePlaylistDuplicates,
       reorderPlaylistTrack: s.reorderPlaylistTrack,
@@ -2491,6 +2496,201 @@ const activeArtistLatestAppearanceCandidate = (() => {
 
   if (activeDetailView.kind === 'friend_profile') {
     return <FriendProfileView userId={activeDetailView.userId} />;
+  }
+
+  if (activeDetailView.kind === 'friend_playlist') {
+    const { playlist: fp, ownerUsername, ownerDisplayName } = activeDetailView;
+    const fpTracks = fp.tracks ?? [];
+    const fpCoverInfo = resolvePlaylistCoverInfo({
+      id: fp.id,
+      name: fp.name,
+      coverUrl: fp.coverUrl,
+      tracks: fpTracks,
+    });
+    const fpBackdropUrl =
+      fpCoverInfo.url || fpCoverInfo.collageUrls?.[0] || fpTracks[0]?.thumbnailUrl || '';
+    const fpDurationText = formatPlaylistDuration(
+      fpTracks.reduce((acc, t) => acc + (t.durationSec || 0), 0)
+    );
+    const isPlayingThisFp =
+      isPlaying && Boolean(currentTrack) && fpTracks.some((t) => t.id === currentTrack?.id);
+    const cleanFpQuery = playlistFilterQuery.trim().toLowerCase();
+    const visibleFpTracks = cleanFpQuery
+      ? fpTracks.filter(
+          (t) =>
+            t.title.toLowerCase().includes(cleanFpQuery) ||
+            t.artists.some((a) => a.name.toLowerCase().includes(cleanFpQuery)) ||
+            (t.album?.name ?? '').toLowerCase().includes(cleanFpQuery)
+        )
+      : fpTracks;
+    const kindTag =
+      fp.kind === 'blend'
+        ? 'BLEND PÚBLICA'
+        : fp.kind === 'collab'
+          ? 'COLABORATIVA PÚBLICA'
+          : 'PLAYLIST PÚBLICA';
+
+    return (
+      <div data-testid="friend-playlist-detail" className="pm-page-enter space-y-6 pb-8">
+        <section
+          data-surface="content"
+          data-testid="friend-playlist-hero-banner"
+          className="relative -mx-4 flex min-h-[270px] flex-col justify-end overflow-hidden bg-[var(--pm-bg-canvas)] px-4 pt-[calc(5rem+var(--pm-safe-top,env(safe-area-inset-top)))] pb-5 sm:-mx-7 sm:min-h-[340px] sm:px-7 sm:pt-10 sm:pb-7"
+        >
+          {fpBackdropUrl && (
+            <img
+              src={fpBackdropUrl}
+              alt=""
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover object-center blur-2xl brightness-75 saturate-125"
+            />
+          )}
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0"
+            style={{
+              background:
+                'linear-gradient(180deg, transparent 0%, color-mix(in srgb, var(--pm-bg-canvas) 44%, transparent) 56%, color-mix(in srgb, var(--pm-bg-canvas) 88%, transparent) 84%, var(--pm-bg-canvas) 100%)',
+            }}
+          />
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0"
+            style={{
+              background:
+                'linear-gradient(90deg, color-mix(in srgb, var(--pm-bg-canvas) 55%, transparent) 0%, transparent 60%)',
+            }}
+          />
+
+          <div className="relative z-10 flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+            <div className="flex min-w-0 flex-1 flex-row items-center gap-3.5 sm:items-end sm:gap-6">
+              <PlaylistCoverArt
+                coverInfo={fpCoverInfo}
+                title={fp.name}
+                className="h-[104px] w-[104px] shrink-0 rounded-[14px] shadow-[0_22px_50px_rgba(0,0,0,0.62)] ring-1 ring-white/15 sm:h-40 sm:w-40 sm:rounded-[16px]"
+              />
+              <div className="min-w-0 flex-1 space-y-1 sm:space-y-1.5">
+                <div className="inline-flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-[0.14em] text-white/70">
+                  <ListMusic className="h-3 w-3" />
+                  <span>{kindTag} · @{ownerUsername}</span>
+                </div>
+                <h1 className="line-clamp-2 text-[26px] font-black leading-[1.06] tracking-tight text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.6)] sm:text-4xl md:text-5xl">
+                  {fp.name}
+                </h1>
+                {fp.description && (
+                  <p className="line-clamp-2 text-xs font-medium text-white/75 sm:text-sm">
+                    {fp.description}
+                  </p>
+                )}
+                <div className="tabular-nums flex flex-wrap items-center gap-x-2.5 gap-y-0.5 pt-0.5 text-[12px] font-medium text-white/70 sm:text-[13px]">
+                  <span>De {ownerDisplayName}</span>
+                  <span aria-hidden="true" className="opacity-35">•</span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <Music2 className="h-3.5 w-3.5 opacity-70" />
+                    <span>
+                      {fp.trackCount || fpTracks.length}{' '}
+                      {(fp.trackCount || fpTracks.length) === 1 ? 'pista' : 'pistas'}
+                    </span>
+                  </span>
+                  {fpDurationText && (
+                    <>
+                      <span aria-hidden="true" className="opacity-35">•</span>
+                      <span className="inline-flex items-center gap-1.5">
+                        <Clock className="h-3.5 w-3.5 opacity-70" />
+                        <span>{fpDurationText}</span>
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2.5 md:shrink-0">
+              {fpTracks.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    aria-label="Reproducir en aleatorio"
+                    title="Reproducir en aleatorio"
+                    onClick={() => void playCollection(fpTracks, { isPlaylist: true, forceShuffle: true })}
+                    className="pm-pressable inline-flex h-11 w-11 items-center justify-center rounded-full border border-white/[0.14] bg-white/[0.08] text-white hover:bg-white/[0.16]"
+                  >
+                    <Shuffle className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="friend-playlist-save-btn"
+                    onClick={async () => {
+                      const created = await createPlaylist(
+                        fp.name,
+                        fp.description || `Guardada de @${ownerUsername}`,
+                        fpTracks
+                      );
+                      showToast(`«${created.name}» guardada en tu biblioteca`);
+                      openLocalPlaylistDetail(created.id);
+                    }}
+                    className="pm-btn-secondary pm-pressable inline-flex h-11 items-center gap-1.5 rounded-full border border-white/[0.14] bg-white/[0.08] px-4 text-xs font-semibold text-white hover:bg-white/[0.15]"
+                  >
+                    <Plus className="h-4 w-4" />
+                    <span>Guardar en biblioteca</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={isPlayingThisFp ? 'Pausar' : 'Reproducir'}
+                    onClick={() => {
+                      if (isPlayingThisFp) {
+                        void togglePlayPause();
+                      } else {
+                        void playCollection(fpTracks, { isPlaylist: true });
+                      }
+                    }}
+                    className="pm-pressable ml-auto flex h-[64px] w-[64px] items-center justify-center overflow-visible border-0 bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.65)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none sm:ml-0 sm:h-[76px] sm:w-[76px]"
+                  >
+                    {isPlayingThisFp ? (
+                      <RoundedPauseIcon className="h-[58px] w-[58px] sm:h-[70px] sm:w-[70px]" />
+                    ) : (
+                      <RoundedPlayIcon className="h-[58px] w-[58px] translate-x-[2px] sm:h-[70px] sm:w-[70px]" />
+                    )}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {fpTracks.length > 0 && (
+          <div className="relative max-w-sm">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/45" />
+            <input
+              type="search"
+              value={playlistFilterQuery}
+              onChange={(e) => setPlaylistFilterQuery(e.target.value)}
+              placeholder="Buscar en esta playlist…"
+              className="w-full rounded-full border border-white/[0.08] bg-white/[0.04] py-2 pl-9 pr-4 text-xs text-white placeholder:text-white/40 focus:border-white/25 focus:outline-none"
+            />
+          </div>
+        )}
+
+        {visibleFpTracks.length === 0 ? (
+          <div className="pm-surface-card rounded-2xl border border-white/[0.07] bg-white/[0.02] p-8 text-center text-xs pm-text-secondary">
+            {fpTracks.length === 0
+              ? `Esta playlist pública de @${ownerUsername} está vacía por ahora.`
+              : `No hay canciones que coincidan con «${playlistFilterQuery}».`}
+          </div>
+        ) : (
+          <div className="space-y-0.5">
+            {visibleFpTracks.map((t, idx) => (
+              <TrackListRow
+                key={`${t.id}-${idx}`}
+                track={t}
+                index={idx}
+                queueContext={fpTracks}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    );
   }
 
   const renderInviteCollaboratorsModal = (opts: {
@@ -5787,7 +5987,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
             }}
             className="pm-btn-secondary pm-compact-btn pm-pressable inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-xs font-bold sm:px-4"
           >
-            <Sparkles className="h-3.5 w-3.5 shrink-0" />
+            <BarChart3 className="h-3.5 w-3.5 shrink-0" />
             <span className="hidden min-[380px]:inline">Mi Top</span>
           </button>
           <button

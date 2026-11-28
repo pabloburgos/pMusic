@@ -1,11 +1,11 @@
 import React, { useEffect, useRef } from 'react';
 import {
+  Compass,
   Disc3,
   Loader2,
   MoreVertical,
   Play,
   Search,
-  Sparkles,
   User,
   X,
 } from 'lucide-react';
@@ -370,7 +370,7 @@ const SpotlightSearchModalInner: React.FC = () => {
                   className="mt-2 border-t pm-border pt-2.5"
                 >
                   <div className="flex items-center gap-1.5 px-3 pb-2 text-xs font-medium pm-text-tertiary">
-                    <Sparkles className="h-3.5 w-3.5 text-white/75" />
+                    <Compass className="h-3.5 w-3.5 text-white/75" />
                     <span>Recomendado para ti</span>
                   </div>
 

@@ -3633,8 +3633,22 @@ html.pm-reduced-motion .pm-heart-liquid-pop {
   border-color: rgba(0, 0, 0, 0.14) !important;
 }
 
-.pm-np-light-surface :is(.bg-white\/\[0\.06\], .bg-white\/\[0\.08\], .bg-white\/\[0\.10\], .bg-white\/\[0\.12\], .bg-white\/\[0\.16\], .bg-white\/\[0\.18\], .bg-white\/10, .bg-white\/15, .bg-white\/18, .bg-white\/35):not(.pm-hud-dark *):not([data-testid="nowplaying-progress-fill"]):not(.pm-indicator-dot) {
+.pm-np-light-surface :is(.bg-white\/\[0\.06\], .bg-white\/\[0\.08\], .bg-white\/\[0\.09\], .bg-white\/\[0\.10\], .bg-white\/\[0\.12\], .bg-white\/\[0\.15\], .bg-white\/\[0\.16\], .bg-white\/\[0\.18\], .bg-white\/10, .bg-white\/15, .bg-white\/18, .bg-white\/35):not(.pm-hud-dark *):not([data-testid="nowplaying-progress-fill"]):not(.pm-indicator-dot) {
   background-color: rgba(0, 0, 0, 0.12) !important;
+}
+
+.pm-np-light-surface [data-testid="queue-search-pill"] {
+  background-color: rgba(0, 0, 0, 0.10) !important;
+  border-color: rgba(0, 0, 0, 0.24) !important;
+}
+
+.pm-np-light-surface input:not(.pm-hud-dark *) {
+  color: #000000 !important;
+  caret-color: #000000 !important;
+}
+
+.pm-np-light-surface input:not(.pm-hud-dark *)::placeholder {
+  color: rgba(0, 0, 0, 0.62) !important;
 }
 
 .pm-np-light-surface [data-testid="nowplaying-progress-fill"],
@@ -3771,11 +3785,11 @@ html.pm-reduced-motion .pm-heart-liquid-pop {
 @keyframes pmVolumePop {
   0% {
     opacity: 0;
-    transform: translate(-50%, 6px) scale(0.94);
+    transform: translate3d(0, 6px, 0) scale(0.94);
   }
   100% {
     opacity: 1;
-    transform: translate(-50%, 0) scale(1);
+    transform: translate3d(0, 0, 0) scale(1);
   }
 }
 

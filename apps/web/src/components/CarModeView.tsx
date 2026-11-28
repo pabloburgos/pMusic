@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Car,
+  Compass,
   Heart,
   ListMusic,
   Mic,
@@ -8,7 +9,6 @@ import {
   Play,
   SkipBack,
   SkipForward,
-  Sparkles,
   X,
 } from 'lucide-react';
 import { formatDurationSec, type Track } from '@pmusic/core';
@@ -285,7 +285,7 @@ const CarModeViewInner: React.FC = () => {
         <div className="mb-3 grid grid-cols-3 gap-2" role="tablist" aria-label="Listas rápidas de coche">
           {(
             [
-              { id: 'para-ti', label: 'Para ti', icon: <Sparkles className="h-4 w-4" /> },
+              { id: 'para-ti', label: 'Para ti', icon: <Compass className="h-4 w-4" /> },
               { id: 'playlists', label: 'Playlists', icon: <ListMusic className="h-4 w-4" /> },
               { id: 'me-gusta', label: 'Me gusta', icon: <Heart className="h-4 w-4" /> },
             ] as const

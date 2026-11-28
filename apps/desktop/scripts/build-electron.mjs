@@ -1537,7 +1537,7 @@ async function createMainWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
     width: 1380,
     height: 860,
-    minWidth: 420,
+    minWidth: 840,
     minHeight: 640,
     backgroundColor: '#000000',
     title: 'pMusic',

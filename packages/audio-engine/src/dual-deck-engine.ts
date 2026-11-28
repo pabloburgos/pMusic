@@ -542,7 +542,7 @@ export class DualDeckAudioEngine implements IAudioEngine {
               // ignore
             }
           }
-          void audio.play().catch(() => {});
+          void audio.play()?.catch?.(() => {});
         }
         const isDocHidden =
           (typeof document !== 'undefined' && document.hidden) ||
