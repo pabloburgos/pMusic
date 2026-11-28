@@ -1,13 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Image as ImageIcon, RotateCcw, Sparkles, Upload, X } from 'lucide-react';
+import { Image as ImageIcon, RotateCcw, Shuffle, Upload, X } from 'lucide-react';
 import { usePMusicStore } from '../store/usePMusicStore.ts';
 import { PMusicSwitch } from './PMusicSwitch.tsx';
+import { PlaylistCoverArt } from './PlaylistCoverArt.tsx';
 import {
   compressImageFileToDataUrl,
   formatPlaylistDuration,
-  generatePlaylistBannerDataUrl,
-  generatePlaylistCoverDataUrl,
+  pickRandomCollageCovers,
+  resolvePlaylistCoverInfo,
 } from '../utils/playlist-artwork.ts';
 
 export const PlaylistAppearanceModal: React.FC = React.memo(() => {
@@ -66,17 +67,21 @@ const PlaylistAppearanceModalInner: React.FC = () => {
 
   const kind = playlistAppearanceModal.kind;
   const trackThumb = activeTracks[0]?.thumbnailHighUrl ?? activeTracks[0]?.thumbnailUrl ?? '';
-  const currentCover =
-    savedApp?.coverUrl ??
-    localPl?.coverUrl ??
-    sharedPl?.coverUrl ??
-    trackThumb ??
-    generatePlaylistCoverDataUrl(activeName, activeSeed);
+  const coverInfo = resolvePlaylistCoverInfo(
+    {
+      id: activeId,
+      name: activeName,
+      coverUrl: localPl?.coverUrl ?? sharedPl?.coverUrl,
+      collageUrls: localPl?.collageUrls,
+      coverStyleSeed: activeSeed,
+      tracks: activeTracks,
+    },
+    savedApp
+  );
   const currentBanner =
     savedApp?.bannerUrl ??
     localPl?.bannerUrl ??
-    trackThumb ??
-    generatePlaylistBannerDataUrl(activeName, activeSeed);
+    (coverInfo.url || trackThumb);
   const totalDurLabel = formatPlaylistDuration(
     activeTracks.reduce((acc, t) => acc + (t.durationSec || 0), 0)
   );
@@ -143,13 +148,13 @@ const PlaylistAppearanceModalInner: React.FC = () => {
 
         {/* Live Mini Hero Preview */}
         <div className="relative overflow-hidden rounded-[18px] border border-white/12 bg-[#0b0b10]">
-          {bannerEnabled && (
+          {bannerEnabled && currentBanner && (
             <>
               <img
                 src={currentBanner}
                 alt=""
                 aria-hidden="true"
-                className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-70"
+                className="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover opacity-60 blur-2xl"
               />
               <div
                 aria-hidden="true"
@@ -162,11 +167,15 @@ const PlaylistAppearanceModalInner: React.FC = () => {
             </>
           )}
           <div className="relative z-10 flex items-end gap-3.5 p-4 pt-9">
-            <img
-              src={currentCover}
-              alt={activeName}
-              className="h-16 w-16 shrink-0 rounded-[12px] object-cover shadow-lg ring-1 ring-white/15"
-            />
+            <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-[12px] shadow-lg ring-1 ring-white/15">
+              <PlaylistCoverArt
+                coverInfo={coverInfo}
+                title={activeName}
+                artistName={activeTracks[0]?.artists[0]?.name}
+                variant="card"
+                iconClassName="h-6 w-6"
+              />
+            </div>
             <div className="min-w-0 flex-1">
               <div className="text-[10px] font-bold uppercase tracking-wider text-white/75">
                 {activeTracks.length} pistas{totalDurLabel ? ` · ${totalDurLabel}` : ''}
@@ -224,7 +233,7 @@ const PlaylistAppearanceModalInner: React.FC = () => {
         <div className="space-y-2 rounded-[16px] border border-white/10 bg-white/[0.04] p-3.5">
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-1.5 text-xs font-bold text-white">
-              <ImageIcon className="h-3.5 w-3.5 text-purple-300" />
+              <ImageIcon className="h-3.5 w-3.5 text-white/75" />
               Portada cuadrada
             </span>
           </div>
@@ -237,30 +246,31 @@ const PlaylistAppearanceModalInner: React.FC = () => {
               <Upload className="h-3.5 w-3.5" />
               <span>Subir imagen</span>
             </button>
-            <button
-              type="button"
-              data-testid="generate-playlist-cover-btn"
-              onClick={async () => {
-                const nextSeed = activeSeed + 1;
-                const url = generatePlaylistCoverDataUrl(activeName, nextSeed);
-                setCoverUrlInput('');
-                await updatePlaylistAppearance(kind, activeId, {
-                  coverUrl: url,
-                  coverStyleSeed: nextSeed,
-                });
-                showToast('Portada pMusic generada');
-              }}
-              className="inline-flex items-center gap-1.5 rounded-full bg-purple-500/25 px-3 py-1.5 text-[11.5px] font-semibold text-purple-200 hover:bg-purple-500/35"
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-              <span>Generar portada pMusic</span>
-            </button>
+            {activeTracks.some((t) => Boolean(t.thumbnailHighUrl ?? t.thumbnailUrl)) && (
+              <button
+                type="button"
+                data-testid="shuffle-playlist-mosaic-btn"
+                onClick={async () => {
+                  const nextTiles = pickRandomCollageCovers(activeTracks, 4);
+                  setCoverUrlInput('');
+                  await updatePlaylistAppearance(kind, activeId, {
+                    coverUrl: '',
+                    collageUrls: nextTiles,
+                  });
+                  showToast('Mosaico de 4 portadas mezclado');
+                }}
+                className="inline-flex items-center gap-1.5 rounded-full bg-white/12 px-3 py-1.5 text-[11.5px] font-semibold text-white hover:bg-white/20"
+              >
+                <Shuffle className="h-3.5 w-3.5" />
+                <span>Mezclar 4 portadas</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={async () => {
                 setCoverUrlInput('');
                 await updatePlaylistAppearance(kind, activeId, { coverUrl: '' });
-                showToast('Portada automática restaurada');
+                showToast('Mosaico restaurado');
               }}
               className="inline-flex items-center gap-1.5 rounded-full bg-white/8 px-3 py-1.5 text-[11.5px] font-semibold text-white/75 hover:bg-white/15"
             >
@@ -302,7 +312,7 @@ const PlaylistAppearanceModalInner: React.FC = () => {
         <div className="space-y-2 rounded-[16px] border border-white/10 bg-white/[0.04] p-3.5">
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-1.5 text-xs font-bold text-white">
-              <ImageIcon className="h-3.5 w-3.5 text-sky-300" />
+              <ImageIcon className="h-3.5 w-3.5 text-white/75" />
               Banner panorámico
             </span>
           </div>
@@ -314,25 +324,6 @@ const PlaylistAppearanceModalInner: React.FC = () => {
             >
               <Upload className="h-3.5 w-3.5" />
               <span>Subir banner</span>
-            </button>
-            <button
-              type="button"
-              data-testid="generate-playlist-banner-btn"
-              onClick={async () => {
-                const nextSeed = activeSeed + 1;
-                const url = generatePlaylistBannerDataUrl(activeName, nextSeed);
-                setBannerUrlInput('');
-                await updatePlaylistAppearance(kind, activeId, {
-                  bannerUrl: url,
-                  bannerEnabled: true,
-                  coverStyleSeed: nextSeed,
-                });
-                showToast('Banner pMusic generado');
-              }}
-              className="inline-flex items-center gap-1.5 rounded-full bg-sky-500/25 px-3 py-1.5 text-[11.5px] font-semibold text-sky-200 hover:bg-sky-500/35"
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-              <span>Generar banner pMusic</span>
             </button>
             <button
               type="button"

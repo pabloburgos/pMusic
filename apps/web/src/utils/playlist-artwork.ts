@@ -8,14 +8,14 @@ function hashSeed(input: string): number {
 }
 
 const ARTWORK_PALETTES: readonly [string, string, string, string][] = [
-  ['#6D28D9', '#2563EB', '#EC4899', '#0B0B14'],
-  ['#0F766E', '#06B6D4', '#3B82F6', '#07131A'],
-  ['#BE123C', '#F97316', '#A855F7', '#160912'],
-  ['#047857', '#10B981', '#14B8A6', '#061511'],
-  ['#4338CA', '#7C3AED', '#38BDF8', '#0A0B1C'],
-  ['#B45309', '#EF4444', '#F59E0B', '#170E08'],
-  ['#1D4ED8', '#8B5CF6', '#06B6D4', '#080D1B'],
-  ['#9D174D', '#EC4899', '#6366F1', '#150816'],
+  ['#18181D', '#27272F', '#3F3F46', '#09090B'],
+  ['#14151A', '#22242B', '#52525B', '#08090B'],
+  ['#19191E', '#2A2A32', '#64748B', '#0A0A0D'],
+  ['#121616', '#1F2929', '#475569', '#080B0B'],
+  ['#17171B', '#26262C', '#52525B', '#070709'],
+  ['#1A1817', '#292524', '#57534E', '#09090B'],
+  ['#14161B', '#202632', '#475569', '#08090C'],
+  ['#161618', '#232328', '#3F3F46', '#060608'],
 ];
 
 function escapeXml(raw: string): string {
@@ -34,39 +34,179 @@ function pickPalette(name: string, seed = 0): [string, string, string, string] {
 
 export interface ResolvedPlaylistCover {
   url: string;
+  collageUrls?: string[];
   hasCustomCover: boolean;
   fallbackTrackId?: string;
 }
 
+type ArtworkTrackLike = {
+  id?: string;
+  thumbnailHighUrl?: string;
+  thumbnailUrl?: string;
+  album?: { id?: string; name?: string };
+};
+
+function normalizeCollageTileCount(uniqueThumbs: string[], count = 4): string[] {
+  const clean = uniqueThumbs.map((u) => u.trim()).filter(Boolean);
+  if (clean.length === 0) return [];
+  if (clean.length === 1) return [clean[0]!];
+  const out = clean.slice(0, count);
+  while (out.length < count) {
+    out.push(clean[out.length % clean.length]!);
+  }
+  return out;
+}
+
+function collectUniqueTrackCovers(tracks: readonly ArtworkTrackLike[]): string[] {
+  const out: string[] = [];
+  const seenUrls = new Set<string>();
+  const seenAlbums = new Set<string>();
+  const fallbackPool: string[] = [];
+
+  for (const t of tracks) {
+    const thumb = (t?.thumbnailHighUrl ?? t?.thumbnailUrl ?? '').trim();
+    if (!thumb || seenUrls.has(thumb)) continue;
+    seenUrls.add(thumb);
+    const albKey = (t.album?.id || t.album?.name || '').trim().toLowerCase();
+    if (albKey && seenAlbums.has(albKey)) {
+      fallbackPool.push(thumb);
+      continue;
+    }
+    if (albKey) seenAlbums.add(albKey);
+    out.push(thumb);
+  }
+  return out.length > 0 ? out : fallbackPool;
+}
+
 /**
- * Resolves the canonical display cover for any playlist, preferring explicit
- * appearance overrides (`coverUrl` in `playlistAppearances`) over `pl.coverUrl`
- * and falling back cleanly to track #0 or a deterministic pMusic cover.
+ * Picks up to `count` (4) unique track covers at random (Fisher-Yates) to freeze as a Spotify-style 2x2 playlist collage.
+ */
+export function pickRandomCollageCovers(
+  tracks: readonly ArtworkTrackLike[],
+  count = 4
+): string[] {
+  const unique = collectUniqueTrackCovers(tracks);
+  if (unique.length <= 1) return unique;
+  const copy = [...unique];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = copy[i]!;
+    copy[i] = copy[j]!;
+    copy[j] = tmp;
+  }
+  return normalizeCollageTileCount(copy, count);
+}
+
+/**
+ * Deterministic 2x2 collage selection for legacy playlists without a saved `collageUrls` snapshot.
+ */
+export function pickDeterministicCollageCovers(
+  seedKey: string,
+  tracks: readonly ArtworkTrackLike[],
+  count = 4
+): string[] {
+  const unique = collectUniqueTrackCovers(tracks);
+  if (unique.length <= 1) return unique;
+  const copy = [...unique];
+  let seed = hashSeed(seedKey || 'pmusic');
+  for (let i = copy.length - 1; i > 0; i--) {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    const j = seed % (i + 1);
+    const tmp = copy[i]!;
+    copy[i] = copy[j]!;
+    copy[j] = tmp;
+  }
+  return normalizeCollageTileCount(copy, count);
+}
+
+/**
+ * Resolves the canonical display cover for any playlist:
+ * 1) explicit custom `coverUrl`
+ * 2) frozen `collageUrls` 2x2 mosaic created with the playlist
+ * 3) deterministic fallback from `tracks` (4-cover mosaic if >=2 distinct covers, or single track thumb)
+ * 4) empty url when playlist has 0 tracks (rendered as neutral obsidian surface in PlaylistCoverArt)
  */
 export function resolvePlaylistCoverInfo(
   pl: {
+    id?: string;
     name: string;
     coverUrl?: string | null;
+    collageUrls?: string[] | null;
     coverStyleSeed?: number;
-    tracks: Array<{
-      id?: string;
-      thumbnailHighUrl?: string;
-      thumbnailUrl?: string;
-    }>;
+    tracks: Array<ArtworkTrackLike>;
   },
-  app?: { coverUrl?: string | null; coverStyleSeed?: number } | null
+  app?: {
+    coverUrl?: string | null;
+    collageUrls?: string[] | null;
+    coverStyleSeed?: number;
+  } | null
 ): ResolvedPlaylistCover {
-  const customRaw =
-    app && 'coverUrl' in app ? (app.coverUrl ?? '').trim() : (pl.coverUrl ?? '').trim();
-  if (customRaw) {
+  const hasExplicitAppCoverKey = Boolean(app && 'coverUrl' in app);
+  const appCoverRaw = hasExplicitAppCoverKey ? (app!.coverUrl ?? '').trim() : '';
+  if (appCoverRaw) {
     return {
-      url: customRaw,
+      url: appCoverRaw,
       hasCustomCover: true,
       fallbackTrackId: undefined,
     };
   }
+
+  const plCoverRaw = !hasExplicitAppCoverKey ? (pl.coverUrl ?? '').trim() : '';
+  if (plCoverRaw) {
+    const matchesTrackThumb = pl.tracks.some(
+      (t) =>
+        (t.thumbnailUrl ?? '').trim() === plCoverRaw ||
+        (t.thumbnailHighUrl ?? '').trim() === plCoverRaw
+    );
+    const distinctTrackCovers = collectUniqueTrackCovers(pl.tracks);
+    if (
+      plCoverRaw.startsWith('data:') ||
+      !matchesTrackThumb ||
+      distinctTrackCovers.length < 2
+    ) {
+      return {
+        url: plCoverRaw,
+        hasCustomCover: true,
+        fallbackTrackId: undefined,
+      };
+    }
+  }
+
+  const storedCollageRaw =
+    app && app.collageUrls !== undefined ? app.collageUrls : pl.collageUrls;
+  const storedCollage = Array.isArray(storedCollageRaw)
+    ? storedCollageRaw.map((u) => (typeof u === 'string' ? u.trim() : '')).filter(Boolean)
+    : [];
+  if (storedCollage.length >= 2) {
+    const tiles = normalizeCollageTileCount(storedCollage, 4);
+    return {
+      url: tiles[0]!,
+      collageUrls: tiles,
+      hasCustomCover: false,
+      fallbackTrackId: undefined,
+    };
+  }
+  if (storedCollage.length === 1) {
+    return {
+      url: storedCollage[0]!,
+      hasCustomCover: false,
+      fallbackTrackId: pl.tracks[0]?.id,
+    };
+  }
+
   const firstTrack = pl.tracks[0];
   const firstThumb = (firstTrack?.thumbnailHighUrl ?? firstTrack?.thumbnailUrl ?? '').trim();
+  if (pl.tracks.length >= 2) {
+    const tiles = pickDeterministicCollageCovers(pl.id || pl.name, pl.tracks, 4);
+    if (tiles.length >= 2) {
+      return {
+        url: tiles[0]!,
+        collageUrls: tiles,
+        hasCustomCover: false,
+        fallbackTrackId: firstTrack?.id,
+      };
+    }
+  }
   if (firstThumb) {
     return {
       url: firstThumb,
@@ -75,7 +215,7 @@ export function resolvePlaylistCoverInfo(
     };
   }
   return {
-    url: generatePlaylistCoverDataUrl(pl.name, app?.coverStyleSeed ?? pl.coverStyleSeed ?? 0),
+    url: '',
     hasCustomCover: false,
     fallbackTrackId: undefined,
   };

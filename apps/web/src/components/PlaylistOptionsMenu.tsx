@@ -19,7 +19,8 @@ import {
 } from 'lucide-react';
 import { getSyncSupabaseClient, usePMusicStore } from '../store/usePMusicStore.ts';
 import { buildPlaylistShareUrl, publishOrUpdateSharedPlaylistLink } from '../services/social-service.ts';
-import { formatPlaylistDuration, generatePlaylistCoverDataUrl } from '../utils/playlist-artwork.ts';
+import { PlaylistCoverArt } from './PlaylistCoverArt.tsx';
+import { formatPlaylistDuration, resolvePlaylistCoverInfo } from '../utils/playlist-artwork.ts';
 
 export const PlaylistOptionsMenu: React.FC = React.memo(() => {
   const open = usePMusicStore((s) => Boolean(s.playlistContextMenu));
@@ -92,12 +93,7 @@ const PlaylistOptionsMenuInner: React.FC = () => {
 
   const tracks = target.tracks ?? [];
   const savedApp = playlistAppearances[target.id];
-  const seed = savedApp?.coverStyleSeed ?? (localPl?.coverStyleSeed ?? 0);
-  const coverUrl =
-    savedApp?.coverUrl ??
-    target.coverUrl ??
-    tracks[0]?.thumbnailUrl ??
-    generatePlaylistCoverDataUrl(target.name, seed);
+  const coverInfo = resolvePlaylistCoverInfo(target, savedApp);
   const durationLabel = formatPlaylistDuration(
     tracks.reduce((acc, t) => acc + (t.durationSec || 0), 0)
   );
@@ -185,7 +181,15 @@ const PlaylistOptionsMenuInner: React.FC = () => {
       >
         {/* Header Summary */}
         <div className="mb-1 flex items-center gap-2.5 border-b border-white/10 px-2.5 py-2">
-          <img src={coverUrl} alt="" className="h-9 w-9 shrink-0 rounded-[8px] object-cover" />
+          <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-[8px]">
+            <PlaylistCoverArt
+              coverInfo={coverInfo}
+              title={target.name}
+              artistName={tracks[0]?.artists[0]?.name}
+              variant="list"
+              iconClassName="h-4 w-4"
+            />
+          </div>
           <div className="min-w-0 flex-1">
             <div className="truncate text-xs font-bold text-white">{target.name}</div>
             <div className="truncate text-[10.5px] text-white/60">

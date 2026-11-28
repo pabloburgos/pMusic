@@ -27,6 +27,7 @@ import {
   type SyncedEditorialMixesState,
 } from '../utils/editorial-cache.ts';
 import { optimizeArtworkUrl, setDataSaverMode, upgradeCoverUrlToHd } from '../utils/image-opt.ts';
+import { pickRandomCollageCovers } from '../utils/playlist-artwork.ts';
 import { findPlaylistDuplicates, getTrackDuplicateKey } from '../utils/playlist-tools.ts';
 import {
   buildInstantLocalSearchBundle,
@@ -613,6 +614,7 @@ let activePlaylistDownloadCancelled = false;
 
 export interface PlaylistAppearanceEntry {
   coverUrl?: string | null;
+  collageUrls?: string[] | null;
   bannerUrl?: string | null;
   bannerEnabled?: boolean;
   coverStyleSeed?: number;
@@ -8003,12 +8005,28 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   },
 
   createPlaylist: async (name, description, tracks) => {
+    const initialCollage =
+      tracks && tracks.length > 0 ? pickRandomCollageCovers(tracks, 4) : undefined;
     const created = await libraryStore.createPlaylist({
       name,
       description,
       tracks,
+      ...(initialCollage && initialCollage.length > 0 ? { collageUrls: initialCollage } : {}),
     });
-    set({ playlists: libraryStore.getPlaylists() });
+    set((prev) => ({
+      playlists: libraryStore.getPlaylists(),
+      ...(initialCollage && initialCollage.length > 0
+        ? {
+            playlistAppearances: {
+              ...prev.playlistAppearances,
+              [created.id]: {
+                ...(prev.playlistAppearances[created.id] ?? {}),
+                collageUrls: initialCollage,
+              },
+            },
+          }
+        : {}),
+    }));
     syncUserLibraryContextToEngine();
     scheduleLibraryCloudSync();
     return created;
@@ -8145,6 +8163,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     const nextApp: PlaylistAppearanceEntry = {
       ...prevApp,
       ...(patch.coverUrl !== undefined ? { coverUrl: patch.coverUrl || null } : {}),
+      ...(patch.collageUrls !== undefined ? { collageUrls: patch.collageUrls } : {}),
       ...(patch.bannerUrl !== undefined ? { bannerUrl: patch.bannerUrl || null } : {}),
       ...(patch.bannerEnabled !== undefined ? { bannerEnabled: patch.bannerEnabled } : {}),
       ...(patch.coverStyleSeed !== undefined ? { coverStyleSeed: patch.coverStyleSeed } : {}),
@@ -8153,6 +8172,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     if (kind === 'local') {
       await libraryStore.updatePlaylist(playlistId, {
         ...(patch.coverUrl !== undefined ? { coverUrl: patch.coverUrl ?? '' } : {}),
+        ...(patch.collageUrls !== undefined ? { collageUrls: patch.collageUrls } : {}),
         ...(patch.bannerUrl !== undefined ? { bannerUrl: patch.bannerUrl } : {}),
         ...(patch.bannerEnabled !== undefined ? { bannerEnabled: patch.bannerEnabled } : {}),
         ...(patch.coverStyleSeed !== undefined ? { coverStyleSeed: patch.coverStyleSeed } : {}),
@@ -8312,6 +8332,36 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }
     await libraryStore.addTrackToPlaylist(playlistId, stamped);
     await recommendationEngine.recordSignal(stamped, 'add_to_playlist');
+
+    // Freeze collage once built at creation or once initial empty playlist fills its first 4 unique covers.
+    const stBeforeCover = get();
+    const curApp = stBeforeCover.playlistAppearances[playlistId];
+    const hasCustomCover = Boolean(
+      (curApp && 'coverUrl' in curApp ? curApp.coverUrl : existing?.coverUrl)?.trim() &&
+        !(
+          existing &&
+          existing.coverUrl &&
+          existing.tracks.some(
+            (t) =>
+              t.thumbnailUrl === existing.coverUrl || t.thumbnailHighUrl === existing.coverUrl
+          )
+        )
+    );
+    const existingCollage = (curApp?.collageUrls ?? existing?.collageUrls ?? []).filter(Boolean);
+    const addedThumb = (stamped.thumbnailHighUrl ?? stamped.thumbnailUrl ?? '').trim();
+    let updatedCollage: string[] | null = null;
+    if (
+      !hasCustomCover &&
+      addedThumb &&
+      existing &&
+      existing.tracks.length < 4 &&
+      existingCollage.length < 4 &&
+      !existingCollage.includes(addedThumb)
+    ) {
+      updatedCollage = [...existingCollage, addedThumb].slice(0, 4);
+      await libraryStore.updatePlaylist(playlistId, { collageUrls: updatedCollage });
+    }
+
     scheduleLibraryCloudSync();
     const sb = getSyncSupabaseClient();
     const st = get();
@@ -8329,10 +8379,21 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         }).catch(() => {});
       }
     }
-    set({
+    set((prev) => ({
       playlists: libraryStore.getPlaylists(),
       affinityProfile: recommendationEngine.getAffinityProfile(),
-    });
+      ...(updatedCollage
+        ? {
+            playlistAppearances: {
+              ...prev.playlistAppearances,
+              [playlistId]: {
+                ...(prev.playlistAppearances[playlistId] ?? {}),
+                collageUrls: updatedCollage,
+              },
+            },
+          }
+        : {}),
+    }));
     syncUserLibraryContextToEngine();
     if (existing) {
       get().showToast(`Añadida a «${existing.name}»`);

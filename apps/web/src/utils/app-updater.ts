@@ -1,4 +1,4 @@
-export const APP_VERSION = '0.24.11';
+export const APP_VERSION = '0.24.12';
 
 const OTA_MANIFEST_URL =
   'https://raw.githubusercontent.com/pabloburgos/pMusic/main/ota/latest.json';

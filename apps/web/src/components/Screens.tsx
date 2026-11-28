@@ -74,6 +74,7 @@ import {
   setDraggedTrack,
 } from '../utils/track-dnd.ts';
 import { ArtistLinks } from './ArtistLinks.tsx';
+import { PlaylistCoverArt } from './PlaylistCoverArt.tsx';
 import { TrackArtwork } from './TrackArtwork.tsx';
 import { SwipeableTrackRow } from './SwipeableTrackRow.tsx';
 import { RoundedPauseIcon, RoundedPlayIcon } from './TransportIcons.tsx';
@@ -2658,6 +2659,7 @@ export const DetailViewPanel: React.FC = React.memo(() => {
     badgeCollab?: boolean;
     tracks: Track[];
     coverUrl?: string | null;
+    collageUrls?: string[] | null;
     bannerUrl?: string | null;
     bannerEnabled: boolean;
     seed: number;
@@ -2665,32 +2667,38 @@ export const DetailViewPanel: React.FC = React.memo(() => {
     titleContent: React.ReactNode;
   }) => {
     const firstTrackThumb = opts.tracks[0]?.thumbnailHighUrl ?? opts.tracks[0]?.thumbnailUrl ?? '';
-    const hasCustomCover = Boolean(opts.coverUrl && opts.coverUrl.trim());
-    const resolvedCover =
-      (hasCustomCover ? opts.coverUrl!.trim() : '') ||
-      firstTrackThumb ||
-      generatePlaylistCoverDataUrl(opts.name, opts.seed);
+    const coverInfo = resolvePlaylistCoverInfo(
+      {
+        id: opts.id,
+        name: opts.name,
+        coverUrl: opts.coverUrl,
+        collageUrls: opts.collageUrls,
+        coverStyleSeed: opts.seed,
+        tracks: opts.tracks,
+      },
+      {
+        ...(opts.coverUrl !== undefined ? { coverUrl: opts.coverUrl } : {}),
+        ...(opts.collageUrls !== undefined ? { collageUrls: opts.collageUrls } : {}),
+        coverStyleSeed: opts.seed,
+      }
+    );
     const hasCustomBanner = Boolean(opts.bannerUrl);
-    const resolvedBanner =
-      opts.bannerUrl || firstTrackThumb || generatePlaylistBannerDataUrl(opts.name, opts.seed);
+    const resolvedBanner = opts.bannerUrl || coverInfo.url || firstTrackThumb;
     const durText = formatPlaylistDuration(
       opts.tracks.reduce((acc, t) => acc + (t.durationSec || 0), 0)
     );
-    const isBannerAutoFromCover = !hasCustomBanner && Boolean(firstTrackThumb);
+    const isBannerAutoFromCover = !hasCustomBanner && Boolean(coverInfo.url || firstTrackThumb);
     const cleanDesc = (opts.description ?? '').trim();
     const showDesc = Boolean(cleanDesc) && !/^creada en pmusic$/i.test(cleanDesc);
 
     const renderCoverButton = (sizeClass: string) => (
       <div className={`group relative ${sizeClass} shrink-0 overflow-hidden`}>
-        <TrackArtwork
-          trackId={hasCustomCover ? undefined : opts.tracks[0]?.id}
-          src={resolvedCover}
+        <PlaylistCoverArt
+          coverInfo={coverInfo}
           title={opts.name}
           artistName={opts.tracks[0]?.artists[0]?.name}
-          artistId={opts.tracks[0]?.artists[0]?.id}
-          alt={opts.name}
           variant="card"
-          imgClassName="h-full w-full object-cover"
+          iconClassName="h-9 w-9"
         />
         <button
           type="button"
@@ -2764,18 +2772,20 @@ export const DetailViewPanel: React.FC = React.memo(() => {
         data-testid="playlist-hero-banner"
         className="relative -mx-4 flex min-h-[260px] flex-col justify-end overflow-hidden bg-[var(--pm-bg-canvas)] px-4 pt-[calc(5rem+var(--pm-safe-top,env(safe-area-inset-top)))] pb-5 sm:-mx-7 sm:min-h-[340px] sm:px-7 sm:pt-10 sm:pb-7"
       >
-        <img
-          src={resolvedBanner}
-          alt=""
-          aria-hidden="true"
-          className={`pointer-events-none absolute inset-0 h-full w-full object-cover ${
-            isBannerAutoFromCover
-              ? heroBarIsLight
-                ? 'scale-110 object-center blur-2xl brightness-100 saturate-110'
-                : 'scale-110 object-center blur-2xl brightness-75 saturate-125'
-              : 'scale-[1.02] object-[50%_25%] opacity-90'
-          }`}
-        />
+        {resolvedBanner && (
+          <img
+            src={resolvedBanner}
+            alt=""
+            aria-hidden="true"
+            className={`pointer-events-none absolute inset-0 h-full w-full object-cover ${
+              isBannerAutoFromCover
+                ? heroBarIsLight
+                  ? 'scale-110 object-center blur-2xl brightness-100 saturate-110'
+                  : 'scale-110 object-center blur-2xl brightness-75 saturate-125'
+                : 'scale-[1.02] object-[50%_25%] opacity-90'
+            }`}
+          />
+        )}
         <div
           aria-hidden="true"
           className="pointer-events-none absolute inset-0"
@@ -2849,6 +2859,7 @@ export const DetailViewPanel: React.FC = React.memo(() => {
           tracks: sharedPl.tracks,
           coverUrl:
             spApp && 'coverUrl' in spApp ? spApp.coverUrl : sharedPl.coverUrl,
+          collageUrls: spApp?.collageUrls,
           bannerUrl: spApp && 'bannerUrl' in spApp ? spApp.bannerUrl : null,
           bannerEnabled: spApp?.bannerEnabled ?? true,
           seed: spApp?.coverStyleSeed ?? 0,
@@ -3216,6 +3227,7 @@ export const DetailViewPanel: React.FC = React.memo(() => {
         tracks: localPl.tracks,
         coverUrl:
           localApp && 'coverUrl' in localApp ? localApp.coverUrl : localPl.coverUrl,
+        collageUrls: localApp?.collageUrls ?? localPl.collageUrls,
         bannerUrl:
           localApp && 'bannerUrl' in localApp ? localApp.bannerUrl : localPl.bannerUrl,
         bannerEnabled: localApp?.bannerEnabled ?? localPl.bannerEnabled ?? true,
@@ -4019,15 +4031,12 @@ export const HomeScreen: React.FC = React.memo(() => {
                   className="pm-quick-tile pm-card-lift group flex cursor-pointer items-center gap-2.5 overflow-hidden rounded-[10px] pr-2.5 sm:gap-3 sm:rounded-[8px]"
                 >
                   <div className="relative h-[52px] w-[52px] shrink-0 overflow-hidden bg-white/[0.05] sm:h-14 sm:w-14">
-                    <TrackArtwork
-                      trackId={coverInfo.fallbackTrackId}
-                      src={coverInfo.url}
+                    <PlaylistCoverArt
+                      coverInfo={coverInfo}
                       title={pl.name}
                       artistName={pl.tracks[0]?.artists[0]?.name}
-                      artistId={pl.tracks[0]?.artists[0]?.id}
-                      alt={pl.name}
                       variant="list"
-                      imgClassName="h-full w-full object-cover"
+                      iconClassName="h-5 w-5"
                     />
                   </div>
                   <div className="min-w-0 flex-1 py-1">
@@ -6033,14 +6042,12 @@ export const LibraryScreen: React.FC = React.memo(() => {
                       className="pm-pressable group relative cursor-pointer"
                     >
                       <div className="relative aspect-square w-full overflow-hidden rounded-[14px] bg-white/[0.04] ring-1 ring-white/[0.08] shadow-[0_14px_34px_rgba(0,0,0,0.45)] transition-transform duration-200 group-hover:scale-[1.015]">
-                        <TrackArtwork
-                          trackId={coverInfo.fallbackTrackId}
-                          src={coverInfo.url}
+                        <PlaylistCoverArt
+                          coverInfo={coverInfo}
                           title={sp.name}
                           artistName={sp.tracks[0]?.artists[0]?.name}
-                          alt={sp.name}
                           variant="card"
-                          imgClassName="h-full w-full object-cover"
+                          iconClassName="h-8 w-8"
                         />
                         {sp.tracks.length > 0 && (
                           <button
@@ -6096,14 +6103,12 @@ export const LibraryScreen: React.FC = React.memo(() => {
                   >
                     <div className="flex min-w-0 flex-1 items-center gap-3">
                       <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-[10px] shadow-sm sm:h-13 sm:w-13">
-                        <TrackArtwork
-                          trackId={coverInfo.fallbackTrackId}
-                          src={coverInfo.url}
+                        <PlaylistCoverArt
+                          coverInfo={coverInfo}
                           title={sp.name}
                           artistName={sp.tracks[0]?.artists[0]?.name}
-                          alt={sp.name}
                           variant="list"
-                          imgClassName="h-full w-full object-cover"
+                          iconClassName="h-5 w-5"
                         />
                       </div>
                       <div className="min-w-0 flex-1">
@@ -6190,14 +6195,12 @@ export const LibraryScreen: React.FC = React.memo(() => {
                       }`}
                     >
                       <div className="relative aspect-square w-full overflow-hidden rounded-[14px] bg-white/[0.04] ring-1 ring-white/[0.08] shadow-[0_14px_34px_rgba(0,0,0,0.45)] transition-transform duration-200 group-hover:scale-[1.015]">
-                        <TrackArtwork
-                          trackId={coverInfo.fallbackTrackId}
-                          src={coverInfo.url}
+                        <PlaylistCoverArt
+                          coverInfo={coverInfo}
                           title={pl.name}
                           artistName={pl.tracks[0]?.artists[0]?.name}
-                          alt={pl.name}
                           variant="card"
-                          imgClassName="h-full w-full object-cover"
+                          iconClassName="h-8 w-8"
                         />
                         {pl.tracks.length > 0 && (
                           <button
@@ -6274,14 +6277,12 @@ export const LibraryScreen: React.FC = React.memo(() => {
                   >
                     <div className="flex min-w-0 flex-1 items-center gap-3">
                       <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-[10px] shadow-sm sm:h-13 sm:w-13">
-                        <TrackArtwork
-                          trackId={coverInfo.fallbackTrackId}
-                          src={coverInfo.url}
+                        <PlaylistCoverArt
+                          coverInfo={coverInfo}
                           title={pl.name}
                           artistName={pl.tracks[0]?.artists[0]?.name}
-                          alt={pl.name}
                           variant="list"
-                          imgClassName="h-full w-full object-cover"
+                          iconClassName="h-5 w-5"
                         />
                       </div>
                       <div className="min-w-0 flex-1">

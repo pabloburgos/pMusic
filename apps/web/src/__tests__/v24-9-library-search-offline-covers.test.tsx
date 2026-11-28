@@ -4,10 +4,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type { PlaylistRecord, Track } from '@pmusic/core';
 import App from '../App.tsx';
+import { CreatePlaylistModal } from '../components/CreatePlaylistModal.tsx';
 import { LibraryScreen, SearchScreen } from '../components/Screens.tsx';
 import { TrackArtwork } from '../components/TrackArtwork.tsx';
 import { deleteOfflineCover, saveOfflineCover } from '../utils/offline-covers.ts';
-import { resolvePlaylistCoverInfo } from '../utils/playlist-artwork.ts';
+import {
+  pickRandomCollageCovers,
+  resolvePlaylistCoverInfo,
+} from '../utils/playlist-artwork.ts';
 import { preferExactArtistTopResult } from '../utils/instant-search.ts';
 import { usePMusicStore } from '../store/usePMusicStore.ts';
 
@@ -21,6 +25,7 @@ afterEach(async () => {
   });
   try {
     localStorage.removeItem('pmusic_library_view_v1');
+    localStorage.removeItem('pmusic_library_view_v2');
   } catch {
     // ignore
   }
@@ -246,5 +251,77 @@ describe('pMusic v0.24.9 interactive Library & Search, offline covers & unified 
     if (exactPicked?.kind === 'artist') {
       expect(exactPicked.item.name).toBe('La Pantera');
     }
+  });
+
+  it('freezes 4 random Spotify-style covers at playlist creation, preserves custom cover override, and renders OLED interactive CreatePlaylistModal without purple/Estilo', async () => {
+    const mkSampleTrack = (idx: number): Track => ({
+      id: `col_tr_${idx}`,
+      title: `Tema ${idx}`,
+      artists: [{ id: `art_${idx}`, name: `Artista ${idx}` }],
+      album: { id: `alb_${idx}`, name: `Álbum ${idx}` },
+      durationSec: 185,
+      thumbnailUrl: `https://example.com/cover-${idx}.jpg`,
+      source: 'ytmusic',
+    });
+
+    const initialTracks = [mkSampleTrack(1), mkSampleTrack(2), mkSampleTrack(3), mkSampleTrack(4)];
+    const collage = pickRandomCollageCovers(initialTracks, 4);
+    expect(collage).toHaveLength(4);
+    expect(new Set(collage).size).toBe(4);
+
+    // Create playlist with 4 tracks -> freezes collageUrls immediately
+    const created = await act(async () =>
+      usePMusicStore.getState().createPlaylist('Mosaico Congelado', '', initialTracks)
+    );
+    const frozenBeforeAdd = usePMusicStore.getState().playlistAppearances[created.id]?.collageUrls;
+    expect(frozenBeforeAdd).toHaveLength(4);
+
+    // Adding a 5th track must NOT mutate the frozen 4-cover mosaic
+    const fifthTrack = mkSampleTrack(5);
+    await act(async () => {
+      await usePMusicStore.getState().addTrackToPlaylist(created.id, fifthTrack);
+    });
+    const frozenAfterAdd = usePMusicStore.getState().playlistAppearances[created.id]?.collageUrls;
+    expect(frozenAfterAdd).toEqual(frozenBeforeAdd);
+    expect(frozenAfterAdd).not.toContain('https://example.com/cover-5.jpg');
+
+    // Legacy playlist whose pl.coverUrl equals tracks[0].thumbnailUrl still resolves 2x2 mosaic when >= 2 covers exist
+    const legacyResolved = resolvePlaylistCoverInfo({
+      id: 'pl_legacy',
+      name: 'Legacy',
+      coverUrl: 'https://example.com/cover-1.jpg',
+      tracks: initialTracks,
+    });
+    expect(legacyResolved.hasCustomCover).toBe(false);
+    expect(legacyResolved.collageUrls).toHaveLength(4);
+
+    // Custom uploaded/set cover overrides mosaic cleanly
+    const customResolved = resolvePlaylistCoverInfo(
+      { ...created, tracks: initialTracks },
+      { coverUrl: 'data:image/png;base64,AAA', collageUrls: frozenBeforeAdd }
+    );
+    expect(customResolved.hasCustomCover).toBe(true);
+    expect(customResolved.url).toBe('data:image/png;base64,AAA');
+
+    // Interactive CreatePlaylistModal builds live 2x2 mosaic via +4 al azar without Estilo button
+    act(() => {
+      usePMusicStore.setState({
+        likedTracks: initialTracks.map((t) => ({
+          trackId: t.id,
+          track: t,
+          likedAt: new Date().toISOString(),
+        })),
+        createPlaylistModalOpen: true,
+      });
+    });
+
+    render(<CreatePlaylistModal />);
+    expect(screen.queryByText(/^Estilo$/i)).toBeNull();
+    fireEvent.click(screen.getByTestId('create-playlist-quick-fill-btn'));
+    expect(await screen.findByTestId('playlist-mosaic-cover')).toBeTruthy();
+
+    act(() => {
+      usePMusicStore.setState({ createPlaylistModalOpen: false, likedTracks: [], playlists: [] });
+    });
   });
 });

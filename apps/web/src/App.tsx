@@ -67,6 +67,7 @@ import { SpotlightSearchModal } from './components/SpotlightSearchModal.tsx';
 import { AppToast, TrackContextMenu } from './components/TrackMenu.tsx';
 import { PlaylistOptionsMenu } from './components/PlaylistOptionsMenu.tsx';
 import { LiquidHeartIcon } from './components/LiquidHeartIcon.tsx';
+import { PlaylistCoverArt } from './components/PlaylistCoverArt.tsx';
 import { resolvePlaylistCoverInfo } from './utils/playlist-artwork.ts';
 import { ArtistLinks } from './components/ArtistLinks.tsx';
 import { SettingsModal } from './components/SettingsModal.tsx';
@@ -2163,14 +2164,12 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                         }`}
                       >
                         <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-[7px]">
-                          <TrackArtwork
-                            trackId={coverInfo.fallbackTrackId}
-                            src={coverInfo.url}
+                          <PlaylistCoverArt
+                            coverInfo={coverInfo}
                             title={pl.name}
                             artistName={pl.tracks[0]?.artists[0]?.name}
-                            alt={pl.name}
                             variant="list"
-                            imgClassName="h-full w-full object-cover"
+                            iconClassName="h-3.5 w-3.5"
                           />
                         </div>
                         <div className="min-w-0 flex-1">

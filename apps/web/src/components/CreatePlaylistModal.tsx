@@ -4,29 +4,27 @@ import {
   Camera,
   Check,
   Loader2,
-  Music2,
-  Palette,
   Plus,
   Search,
-  Sparkles,
+  Shuffle,
+  Trash2,
   X,
 } from 'lucide-react';
 import type { Track } from '@pmusic/core';
 import { usePMusicStore } from '../store/usePMusicStore.ts';
+import { PlaylistCoverArt } from './PlaylistCoverArt.tsx';
 import { TrackArtwork } from './TrackArtwork.tsx';
 import {
   compressImageFileToDataUrl,
-  generatePlaylistCoverDataUrl,
+  formatPlaylistDuration,
+  pickRandomCollageCovers,
+  type ResolvedPlaylistCover,
 } from '../utils/playlist-artwork.ts';
 import { triggerHaptic } from '../utils/haptics.ts';
 
-const QUICK_PLAYLIST_PRESETS = [
-  'Sesión de noche',
-  'Gym',
-  'Coche',
-  'Chill',
-  'Para descubrir',
-] as const;
+const QUICK_TITLE_CHIPS = ['Noche', 'Gym', 'Coche', 'Chill', 'Previa', 'Focus'] as const;
+type SourceTab = 'Para ti' | 'Me gusta' | 'Recientes' | 'Descubrir';
+const SOURCE_TABS: readonly SourceTab[] = ['Para ti', 'Me gusta', 'Recientes', 'Descubrir'];
 
 export const CreatePlaylistModal: React.FC = React.memo(() => {
   const open = usePMusicStore((s) => s.createPlaylistModalOpen);
@@ -41,6 +39,7 @@ const CreatePlaylistModalInner: React.FC = () => {
     likedTracks,
     playHistory,
     searchResults,
+    homeShelves,
     setCreatePlaylistModalOpen,
     createPlaylist,
     updatePlaylistAppearance,
@@ -51,9 +50,10 @@ const CreatePlaylistModalInner: React.FC = () => {
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [coverSeed, setCoverSeed] = useState(0);
   const [customCoverUrl, setCustomCoverUrl] = useState<string | null>(null);
+  const [mosaicUrls, setMosaicUrls] = useState<string[]>([]);
   const [selectedTracks, setSelectedTracks] = useState<Track[]>([]);
+  const [sourceTab, setSourceTab] = useState<SourceTab>('Para ti');
   const [songQuery, setSongQuery] = useState('');
   const [songResults, setSongResults] = useState<Track[]>([]);
   const [searchingSongs, setSearchingSongs] = useState(false);
@@ -90,7 +90,7 @@ const CreatePlaylistModalInner: React.FC = () => {
       void searchTracksForPlaylist(trimmed)
         .then((res) => {
           if (searchTokenRef.current === token) {
-            setSongResults(res.slice(0, 8));
+            setSongResults(res.slice(0, 12));
             setSearchingSongs(false);
           }
         })
@@ -99,35 +99,122 @@ const CreatePlaylistModalInner: React.FC = () => {
             setSearchingSongs(false);
           }
         });
-    }, 180);
+    }, 160);
     return () => window.clearTimeout(timer);
   }, [songQuery, searchTracksForPlaylist]);
 
   const fallbackName = `Mi Playlist #${playlists.length + 1}`;
   const previewTitle = name.trim() || fallbackName;
-  const generatedCover = useMemo(
-    () => generatePlaylistCoverDataUrl(previewTitle, coverSeed),
-    [previewTitle, coverSeed]
-  );
-  const activeCover = customCoverUrl || generatedCover;
 
-  const suggestedTracks = useMemo(() => {
-    if (songQuery.trim().length >= 2) return songResults;
-    const pool: Track[] = [];
+  // Keep mosaic reactive while adding initial songs, preserving custom shuffles when possible
+  useEffect(() => {
+    if (selectedTracks.length === 0) {
+      setMosaicUrls([]);
+      return;
+    }
+    const nextAuto = pickRandomCollageCovers(selectedTracks, 4);
+    setMosaicUrls((prev) => {
+      const validPool = new Set(
+        selectedTracks
+          .map((t) => (t.thumbnailHighUrl ?? t.thumbnailUrl ?? '').trim())
+          .filter(Boolean)
+      );
+      const retained = prev.filter((u) => validPool.has(u));
+      if (retained.length === 4) return retained;
+      if (nextAuto.length > 0) return nextAuto;
+      return retained;
+    });
+  }, [selectedTracks]);
+
+  const distinctCoverCount = useMemo(() => {
+    const s = new Set<string>();
+    for (const t of selectedTracks) {
+      const u = (t.thumbnailHighUrl ?? t.thumbnailUrl ?? '').trim();
+      if (u) s.add(u);
+    }
+    return s.size;
+  }, [selectedTracks]);
+
+  const coverInfo: ResolvedPlaylistCover = useMemo(() => {
+    if (customCoverUrl) {
+      return { url: customCoverUrl, hasCustomCover: true };
+    }
+    if (mosaicUrls.length >= 2) {
+      return { url: mosaicUrls[0]!, collageUrls: mosaicUrls, hasCustomCover: false };
+    }
+    if (mosaicUrls.length === 1) {
+      return {
+        url: mosaicUrls[0]!,
+        hasCustomCover: false,
+        fallbackTrackId: selectedTracks[0]?.id,
+      };
+    }
+    return { url: '', hasCustomCover: false };
+  }, [customCoverUrl, mosaicUrls, selectedTracks]);
+
+  const tabTrackPool = useMemo(() => {
+    const out: Track[] = [];
     const seen = new Set<string>();
     const pushUnique = (tr?: Track | null) => {
       if (!tr?.id || seen.has(tr.id)) return;
       seen.add(tr.id);
-      pool.push(tr);
+      out.push(tr);
     };
-    for (const l of likedTracks) pushUnique(l.track);
-    for (const h of playHistory) pushUnique(h.track);
-    for (const s of searchResults.songs) pushUnique(s);
-    return pool.slice(0, 6);
-  }, [songQuery, songResults, likedTracks, playHistory, searchResults.songs]);
+
+    if (sourceTab === 'Me gusta') {
+      for (const l of likedTracks) pushUnique(l.track);
+      return out;
+    }
+    if (sourceTab === 'Recientes') {
+      for (const h of playHistory) pushUnique(h.track);
+      return out;
+    }
+    if (sourceTab === 'Descubrir') {
+      for (const shelf of homeShelves) {
+        for (const t of shelf.tracks ?? []) pushUnique(t);
+      }
+      for (const s of searchResults.songs) pushUnique(s);
+      return out;
+    }
+
+    // "Para ti": balanced mix across likes, recents, shelves, and search
+    for (const l of likedTracks.slice(0, 8)) pushUnique(l.track);
+    for (const h of playHistory.slice(0, 8)) pushUnique(h.track);
+    for (const shelf of homeShelves) {
+      for (const t of (shelf.tracks ?? []).slice(0, 6)) pushUnique(t);
+    }
+    for (const s of searchResults.songs.slice(0, 6)) pushUnique(s);
+    return out;
+  }, [sourceTab, likedTracks, playHistory, homeShelves, searchResults.songs]);
+
+  const visibleTracks = useMemo(() => {
+    const q = songQuery.trim().toLowerCase();
+    if (!q) return tabTrackPool.slice(0, 14);
+    const localMatches = tabTrackPool.filter(
+      (t) =>
+        t.title.toLowerCase().includes(q) ||
+        t.artists.some((a) => a.name.toLowerCase().includes(q))
+    );
+    const merged: Track[] = [];
+    const seen = new Set<string>();
+    for (const t of [...localMatches, ...songResults]) {
+      if (!t?.id || seen.has(t.id)) continue;
+      seen.add(t.id);
+      merged.push(t);
+    }
+    return merged.slice(0, 16);
+  }, [songQuery, tabTrackPool, songResults]);
 
   const selectedIdSet = useMemo(
     () => new Set(selectedTracks.map((t) => t.id)),
+    [selectedTracks]
+  );
+
+  const selectedDurationLabel = useMemo(
+    () =>
+      formatPlaylistDuration(
+        selectedTracks.reduce((acc, t) => acc + (t.durationSec || 0), 0)
+      ),
     [selectedTracks]
   );
 
@@ -138,6 +225,24 @@ const CreatePlaylistModalInner: React.FC = () => {
         ? prev.filter((t) => t.id !== track.id)
         : [...prev, track]
     );
+  };
+
+  const handleQuickFill4 = () => {
+    const candidates = visibleTracks.filter((t) => !selectedIdSet.has(t.id));
+    if (candidates.length === 0) {
+      showToast('No quedan temas nuevos en esta vista');
+      return;
+    }
+    triggerHaptic('confirm');
+    const shuffled = [...candidates].sort(() => Math.random() - 0.5).slice(0, 4);
+    setSelectedTracks((prev) => [...prev, ...shuffled]);
+  };
+
+  const handleShuffleMosaic = () => {
+    if (distinctCoverCount < 2) return;
+    triggerHaptic('light');
+    setCustomCoverUrl(null);
+    setMosaicUrls(pickRandomCollageCovers(selectedTracks, 4));
   };
 
   const handleCoverUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -161,11 +266,10 @@ const CreatePlaylistModalInner: React.FC = () => {
     try {
       const finalName = name.trim() || fallbackName;
       const created = await createPlaylist(finalName, description.trim(), selectedTracks);
-      if (customCoverUrl || coverSeed !== 0) {
-        await updatePlaylistAppearance('local', created.id, {
-          ...(customCoverUrl ? { coverUrl: customCoverUrl } : {}),
-          coverStyleSeed: coverSeed,
-        });
+      if (customCoverUrl) {
+        await updatePlaylistAppearance('local', created.id, { coverUrl: customCoverUrl });
+      } else if (mosaicUrls.length > 0) {
+        await updatePlaylistAppearance('local', created.id, { collageUrls: mosaicUrls });
       }
       setCreatePlaylistModalOpen(false);
       openLocalPlaylistDetail(created.id);
@@ -187,7 +291,7 @@ const CreatePlaylistModalInner: React.FC = () => {
       <div
         aria-hidden="true"
         onClick={close}
-        className="pm-spotlight-backdrop absolute inset-0 bg-black/75 backdrop-blur-md"
+        className="pm-spotlight-backdrop absolute inset-0 bg-black/80 backdrop-blur-md"
       />
 
       <form
@@ -196,19 +300,23 @@ const CreatePlaylistModalInner: React.FC = () => {
         aria-label="Nueva playlist"
         data-testid="create-playlist-modal"
         onSubmit={(e) => void handleCreateSubmit(e)}
-        className="pm-glass-regular pm-modal-pop relative z-10 flex max-h-[88dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-[28px] border border-white/15 bg-[#09090d]/95 shadow-2xl sm:rounded-[26px]"
+        className="pm-hud-dark pm-modal-pop relative z-10 flex h-[92dvh] w-full max-w-xl flex-col overflow-hidden rounded-t-[28px] border border-white/[0.10] bg-[#0a0a0d] shadow-2xl sm:h-auto sm:max-h-[86dvh] sm:rounded-[26px]"
       >
-        {/* Subtle hero ambient glow matching artwork */}
+        {/* Pure obsidian ambient halo from real cover only */}
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 top-0 h-44 overflow-hidden opacity-45"
+          className="pointer-events-none absolute inset-x-0 top-0 h-44 overflow-hidden bg-gradient-to-b from-white/[0.04] to-transparent"
         >
-          <img
-            src={activeCover}
-            alt=""
-            className="h-full w-full scale-125 object-cover blur-3xl saturate-150"
-          />
-          <div className="absolute inset-0 bg-gradient-to-b from-black/25 via-[#09090d]/70 to-[#09090d]" />
+          {coverInfo.url && (
+            <>
+              <img
+                src={coverInfo.url}
+                alt=""
+                className="h-full w-full scale-125 object-cover opacity-30 blur-3xl saturate-125"
+              />
+              <div className="absolute inset-0 bg-gradient-to-b from-black/25 via-[#0a0a0d]/75 to-[#0a0a0d]" />
+            </>
+          )}
         </div>
 
         {/* Mobile drag bar */}
@@ -216,41 +324,39 @@ const CreatePlaylistModalInner: React.FC = () => {
           <div className="h-1 w-10 rounded-full bg-white/25" />
         </div>
 
-        {/* Header */}
-        <div className="relative z-10 flex items-center justify-between gap-3 px-5 pb-3 pt-3 sm:pt-4">
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-white/80" />
-            <h2 className="text-[17px] font-black tracking-tight pm-text-primary">
-              Nueva playlist
-            </h2>
-          </div>
+        {/* Minimal Close bar */}
+        <div className="relative z-10 flex items-center justify-between gap-2 px-5 pt-2.5 sm:pt-4">
+          <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/55">
+            Nueva playlist
+          </span>
           <button
             type="button"
             aria-label="Cerrar creación de playlist"
             onClick={close}
-            className="pm-compact-btn pm-hover flex h-8 w-8 items-center justify-center rounded-full pm-text-secondary hover:text-white"
+            className="pm-compact-btn pm-hover flex h-8 w-8 items-center justify-center rounded-full text-white/65 hover:text-white"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        {/* Scrollable body */}
-        <div className="relative z-10 flex-1 space-y-4 overflow-y-auto px-5 pb-4 pm-no-scrollbar">
-          {/* Interactive Cover + Name / Description */}
-          <div className="flex items-center gap-4">
-            <div className="shrink-0 space-y-1.5 text-center">
+        {/* Scrollable Interactive Creator */}
+        <div className="relative z-10 flex-1 space-y-4 overflow-y-auto px-5 pb-4 pt-2 pm-no-scrollbar">
+          {/* Interactive Hero Preview + Big Direct Title */}
+          <div className="flex items-start gap-4">
+            <div className="shrink-0 space-y-1.5">
               <button
                 type="button"
                 aria-label="Elegir portada de playlist"
                 onClick={() => fileInputRef.current?.click()}
-                className="pm-compact-btn pm-pressable group relative block h-24 w-24 overflow-hidden rounded-[16px] shadow-[0_16px_36px_rgba(0,0,0,0.55)] ring-1 ring-white/20 sm:h-28 sm:w-28"
+                className="pm-compact-btn pm-pressable group relative block h-24 w-24 overflow-hidden rounded-[16px] bg-[#141418] shadow-[0_18px_40px_rgba(0,0,0,0.65)] ring-1 ring-white/[0.14] sm:h-28 sm:w-28"
               >
-                <img
-                  src={activeCover}
-                  alt={previewTitle}
-                  className="h-full w-full object-cover"
+                <PlaylistCoverArt
+                  coverInfo={coverInfo}
+                  title={previewTitle}
+                  variant="card"
+                  iconClassName="h-8 w-8"
                 />
-                <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">
+                <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/55 opacity-0 transition-opacity group-hover:opacity-100">
                   <Camera className="h-4 w-4 text-white" />
                   <span className="text-[10px] font-bold text-white">Subir foto</span>
                 </span>
@@ -266,122 +372,186 @@ const CreatePlaylistModalInner: React.FC = () => {
               <div className="flex items-center justify-center gap-1">
                 <button
                   type="button"
-                  onClick={() => {
-                    if (customCoverUrl) {
-                      setCustomCoverUrl(null);
-                    } else {
-                      setCoverSeed((s) => s + 1);
-                    }
-                    triggerHaptic('light');
-                  }}
-                  className="pm-compact-btn pm-hover inline-flex h-6 items-center gap-1 rounded-full bg-white/[0.08] px-2 text-[10.5px] font-semibold pm-text-secondary hover:text-white"
+                  onClick={() =>
+                    customCoverUrl ? setCustomCoverUrl(null) : fileInputRef.current?.click()
+                  }
+                  className="pm-compact-btn pm-hover inline-flex h-6 items-center gap-1 rounded-full bg-white/[0.08] px-2.5 text-[10.5px] font-semibold text-white/80 hover:text-white"
                 >
-                  <Palette className="h-3 w-3" />
-                  <span>{customCoverUrl ? 'Auto' : 'Estilo'}</span>
+                  <Camera className="h-3 w-3" />
+                  <span>{customCoverUrl ? 'Mosaico' : 'Foto'}</span>
                 </button>
+                {distinctCoverCount >= 2 && !customCoverUrl && (
+                  <button
+                    type="button"
+                    data-testid="create-playlist-shuffle-mosaic-btn"
+                    onClick={handleShuffleMosaic}
+                    title="Mezclar 4 portadas"
+                    className="pm-compact-btn pm-hover inline-flex h-6 w-6 items-center justify-center rounded-full bg-white/[0.08] text-white/80 hover:text-white"
+                  >
+                    <Shuffle className="h-3 w-3" />
+                  </button>
+                )}
               </div>
             </div>
 
-            <div className="min-w-0 flex-1 space-y-2.5">
-              <div>
-                <label
-                  htmlFor="pm-create-playlist-name"
-                  className="mb-1 block text-[10.5px] font-bold uppercase tracking-wider pm-text-tertiary"
-                >
-                  Nombre
-                </label>
-                <input
-                  id="pm-create-playlist-name"
-                  data-testid="create-playlist-name-input"
-                  type="text"
-                  autoFocus
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder={fallbackName}
-                  maxLength={80}
-                  className="pm-input w-full rounded-[14px] px-3.5 py-2.5 text-sm font-bold pm-text-primary placeholder:pm-text-tertiary"
-                />
-              </div>
-
-              <div>
-                <input
-                  type="text"
-                  aria-label="Descripción opcional"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Descripción o vibra (opcional)..."
-                  maxLength={140}
-                  className="pm-input w-full rounded-[12px] px-3.5 py-2 text-xs pm-text-primary placeholder:pm-text-tertiary"
-                />
+            <div className="min-w-0 flex-1 space-y-2 pt-0.5">
+              <input
+                id="pm-create-playlist-name"
+                data-testid="create-playlist-name-input"
+                type="text"
+                autoFocus
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder={fallbackName}
+                maxLength={80}
+                className="w-full border-b border-white/[0.12] bg-transparent pb-1.5 text-xl font-black tracking-tight text-white placeholder:text-white/35 focus:border-white/50 focus:outline-none sm:text-2xl"
+              />
+              <input
+                type="text"
+                aria-label="Descripción opcional"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Añade una descripción opcional..."
+                maxLength={140}
+                className="w-full bg-transparent text-xs text-white/75 placeholder:text-white/35 focus:outline-none"
+              />
+              <div className="tabular-nums text-[11.5px] font-medium text-white/55">
+                {selectedTracks.length > 0
+                  ? `${selectedTracks.length} ${selectedTracks.length === 1 ? 'pista' : 'pistas'}${
+                      selectedDurationLabel ? ` · ${selectedDurationLabel}` : ''
+                    }`
+                  : 'El icono se creará automáticamente con 4 portadas'}
               </div>
             </div>
           </div>
 
-          {/* 1-tap preset ideas */}
+          {/* 1-tap quick title chips */}
           {!name.trim() && (
+            <div className="flex flex-nowrap gap-1.5 overflow-x-auto pb-0.5 pm-no-scrollbar">
+              {QUICK_TITLE_CHIPS.map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => {
+                    triggerHaptic('light');
+                    setName(preset);
+                  }}
+                  className="pm-compact-btn pm-pressable inline-flex h-7 shrink-0 items-center rounded-full border border-white/10 bg-white/[0.05] px-3 text-[11.5px] font-semibold text-white/80 transition hover:bg-white/[0.12] hover:text-white"
+                >
+                  {preset}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Selected tracks interactive chip tray */}
+          {selectedTracks.length > 0 && (
             <div className="space-y-1.5">
-              <div className="text-[10.5px] font-bold uppercase tracking-wider pm-text-tertiary">
-                Ideas rápidas
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {QUICK_PLAYLIST_PRESETS.map((preset) => (
+              <div className="flex items-center justify-between">
+                <span className="text-[10.5px] font-bold uppercase tracking-wider text-white/50">
+                  En tu lista ({selectedTracks.length})
+                </span>
+                {selectedTracks.length > 1 && (
                   <button
-                    key={preset}
                     type="button"
-                    onClick={() => {
-                      triggerHaptic('light');
-                      setName(preset);
-                    }}
-                    className="pm-compact-btn pm-pressable inline-flex h-7 items-center rounded-full border border-white/10 bg-white/[0.05] px-3 text-[11.5px] font-semibold pm-text-secondary transition hover:bg-white/[0.12] hover:text-white"
+                    onClick={() => setSelectedTracks([])}
+                    className="pm-compact-btn inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold text-white/55 hover:text-white"
                   >
-                    {preset}
+                    <Trash2 className="h-3 w-3" />
+                    <span>Vaciar</span>
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-nowrap gap-1.5 overflow-x-auto pb-0.5 pm-no-scrollbar">
+                {selectedTracks.map((tr) => (
+                  <button
+                    key={`sel-${tr.id}`}
+                    type="button"
+                    onClick={() => toggleTrackSelection(tr)}
+                    className="pm-compact-btn inline-flex h-8 max-w-[175px] shrink-0 items-center gap-1.5 rounded-full border border-white/15 bg-white/[0.08] pl-1 pr-2.5 text-[11.5px] font-semibold text-white hover:bg-white/[0.14]"
+                  >
+                    <span className="relative h-6 w-6 shrink-0 overflow-hidden rounded-full bg-white/[0.06]">
+                      <TrackArtwork
+                        trackId={tr.id}
+                        src={tr.thumbnailUrl}
+                        title={tr.title}
+                        artistName={tr.artists[0]?.name}
+                        alt={tr.title}
+                        variant="list"
+                        imgClassName="h-full w-full object-cover"
+                      />
+                    </span>
+                    <span className="truncate">{tr.title}</span>
+                    <X className="h-3 w-3 shrink-0 text-white/60" />
                   </button>
                 ))}
               </div>
             </div>
           )}
 
-          {/* Optional Fast Song Picker */}
-          <div className="space-y-2 border-t border-white/[0.08] pt-3">
+          {/* Interactive Song Builder */}
+          <div className="space-y-2.5 border-t border-white/[0.08] pt-3">
             <div className="flex items-center justify-between gap-2">
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider pm-text-tertiary">
-                <Music2 className="h-3.5 w-3.5" />
-                <span>Añadir temas al crear</span>
-              </span>
-              {selectedTracks.length > 0 && (
-                <span className="tabular-nums rounded-full bg-white px-2 py-0.5 text-[10.5px] font-black text-black">
-                  {selectedTracks.length}{' '}
-                  {selectedTracks.length === 1 ? 'elegida' : 'elegidas'}
-                </span>
-              )}
+              <div className="flex min-w-0 flex-1 flex-nowrap gap-1.5 overflow-x-auto pm-no-scrollbar">
+                {SOURCE_TABS.map((tab) => {
+                  const active = sourceTab === tab;
+                  return (
+                    <button
+                      key={tab}
+                      type="button"
+                      onClick={() => {
+                        triggerHaptic('light');
+                        setSourceTab(tab);
+                      }}
+                      className={`pm-compact-btn h-7 shrink-0 rounded-full px-3 text-[11.5px] font-bold transition ${
+                        active
+                          ? 'bg-white text-[#070709]'
+                          : 'bg-white/[0.06] text-white/70 hover:bg-white/[0.12] hover:text-white'
+                      }`}
+                    >
+                      {tab}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <button
+                type="button"
+                data-testid="create-playlist-quick-fill-btn"
+                onClick={handleQuickFill4}
+                className="pm-compact-btn pm-pressable inline-flex h-7 shrink-0 items-center gap-1 rounded-full border border-white/15 bg-white/[0.08] px-3 text-[11px] font-bold text-white hover:bg-white/[0.15]"
+              >
+                <Plus className="h-3 w-3" />
+                <span>+4 al azar</span>
+              </button>
             </div>
 
-            <div className="pm-input flex h-9 items-center gap-2 rounded-full px-3.5">
-              <Search className="h-3.5 w-3.5 shrink-0 pm-text-tertiary" />
+            <div className="flex h-9 items-center gap-2 rounded-full border border-white/[0.10] bg-white/[0.05] px-3.5">
+              <Search className="h-3.5 w-3.5 shrink-0 text-white/45" />
               <input
                 type="search"
                 aria-label="Buscar canciones para tu nueva playlist"
                 value={songQuery}
                 onChange={(e) => setSongQuery(e.target.value)}
-                placeholder="Buscar canción o artista..."
-                className="pm-text-btn w-full bg-transparent text-xs pm-text-primary placeholder:pm-text-tertiary focus:outline-none"
+                placeholder="Buscar canciones o artistas..."
+                className="pm-text-btn w-full bg-transparent text-xs text-white placeholder:text-white/40 focus:outline-none"
               />
-              {searchingSongs && <Loader2 className="h-3.5 w-3.5 animate-spin pm-text-tertiary" />}
+              {searchingSongs && <Loader2 className="h-3.5 w-3.5 animate-spin text-white/60" />}
               {songQuery && !searchingSongs && (
                 <button
                   type="button"
                   aria-label="Limpiar búsqueda de canciones"
                   onClick={() => setSongQuery('')}
-                  className="pm-compact-btn flex h-6 w-6 shrink-0 items-center justify-center rounded-full pm-text-tertiary hover:text-white"
+                  className="pm-compact-btn flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-white/55 hover:text-white"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
               )}
             </div>
 
-            {suggestedTracks.length > 0 ? (
-              <div className="max-h-44 space-y-1 overflow-y-auto pr-0.5 pm-no-scrollbar">
-                {suggestedTracks.map((tr) => {
+            {visibleTracks.length > 0 ? (
+              <div className="space-y-1">
+                {visibleTracks.map((tr) => {
                   const picked = selectedIdSet.has(tr.id);
                   return (
                     <button
@@ -389,13 +559,11 @@ const CreatePlaylistModalInner: React.FC = () => {
                       type="button"
                       onClick={() => toggleTrackSelection(tr)}
                       className={`pm-compact-btn pm-pressable flex w-full items-center justify-between gap-2.5 rounded-[12px] px-2 py-1.5 text-left transition ${
-                        picked
-                          ? 'bg-white/[0.12] ring-1 ring-white/25'
-                          : 'hover:bg-white/[0.06]'
+                        picked ? 'bg-white/[0.10]' : 'hover:bg-white/[0.05]'
                       }`}
                     >
                       <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                        <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-[8px] bg-white/[0.06]">
+                        <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-[8px] bg-[#141418]">
                           <TrackArtwork
                             trackId={tr.id}
                             src={tr.thumbnailUrl}
@@ -407,10 +575,10 @@ const CreatePlaylistModalInner: React.FC = () => {
                           />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="truncate text-xs font-bold pm-text-primary">
+                          <div className="truncate text-[13px] font-bold text-white">
                             {tr.title}
                           </div>
-                          <div className="truncate text-[11px] pm-text-tertiary">
+                          <div className="truncate text-[11px] text-white/55">
                             {tr.artists.map((a) => a.name).join(', ')}
                           </div>
                         </div>
@@ -418,7 +586,7 @@ const CreatePlaylistModalInner: React.FC = () => {
                       <span
                         className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition ${
                           picked
-                            ? 'bg-white text-black'
+                            ? 'bg-white text-[#070709]'
                             : 'bg-white/[0.08] text-white/80'
                         }`}
                       >
@@ -433,21 +601,21 @@ const CreatePlaylistModalInner: React.FC = () => {
                 })}
               </div>
             ) : (
-              <p className="py-2 text-center text-[11px] pm-text-tertiary">
+              <p className="py-4 text-center text-xs text-white/50">
                 {songQuery.trim().length >= 2 && !searchingSongs
                   ? 'Sin resultados para esta búsqueda'
-                  : 'Puedes crearla ahora y añadir canciones dentro en cualquier momento'}
+                  : 'Busca cualquier tema o elige canciones al instante'}
               </p>
             )}
           </div>
         </div>
 
-        {/* Footer actions */}
-        <div className="relative z-10 flex items-center justify-end gap-2 border-t border-white/[0.08] bg-black/35 px-5 py-3.5 pb-[max(0.9rem,env(safe-area-inset-bottom))]">
+        {/* Fixed OLED Footer */}
+        <div className="relative z-10 flex items-center justify-end gap-2 border-t border-white/[0.08] bg-black/50 px-5 py-3.5 pb-[max(0.9rem,env(safe-area-inset-bottom))]">
           <button
             type="button"
             onClick={close}
-            className="pm-btn-secondary pm-compact-btn h-10 rounded-full px-4 text-xs font-semibold"
+            className="pm-compact-btn h-10 rounded-full border border-white/12 bg-white/[0.06] px-4 text-xs font-semibold text-white/80 hover:bg-white/[0.12] hover:text-white"
           >
             Cancelar
           </button>
@@ -455,7 +623,7 @@ const CreatePlaylistModalInner: React.FC = () => {
             type="submit"
             disabled={submitting}
             data-testid="create-playlist-submit-btn"
-            className="pm-btn-primary pm-compact-btn pm-pressable inline-flex h-10 flex-1 items-center justify-center gap-1.5 rounded-full px-5 text-xs font-black shadow-lg disabled:opacity-50 sm:flex-initial"
+            className="pm-compact-btn pm-pressable inline-flex h-10 flex-1 items-center justify-center gap-1.5 rounded-full bg-white px-5 text-xs font-black text-[#070709] shadow-lg disabled:opacity-50 sm:flex-initial"
           >
             {submitting ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -464,7 +632,9 @@ const CreatePlaylistModalInner: React.FC = () => {
             )}
             <span>
               {selectedTracks.length > 0
-                ? `Crear (${selectedTracks.length})`
+                ? `Crear · ${selectedTracks.length} ${
+                    selectedTracks.length === 1 ? 'tema' : 'temas'
+                  }`
                 : 'Crear playlist'}
             </span>
           </button>

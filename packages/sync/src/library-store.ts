@@ -428,6 +428,7 @@ export class LibraryStore {
     name: string;
     description?: string;
     coverUrl?: string;
+    collageUrls?: string[] | null;
     source?: PlaylistRecordSource;
     sourceUrl?: string;
     tracks?: Track[];
@@ -437,7 +438,8 @@ export class LibraryStore {
       id: generateUuid(),
       name: input.name.trim() || 'Nueva playlist',
       description: input.description?.trim() ?? '',
-      coverUrl: input.coverUrl ?? input.tracks?.[0]?.thumbnailUrl,
+      coverUrl: input.coverUrl,
+      ...(input.collageUrls !== undefined ? { collageUrls: input.collageUrls } : {}),
       source: input.source ?? 'local',
       sourceUrl: input.sourceUrl,
       tracks: input.tracks ? input.tracks.map(canonicalizeStoredTrack) : [],
@@ -460,6 +462,7 @@ export class LibraryStore {
         | 'name'
         | 'description'
         | 'coverUrl'
+        | 'collageUrls'
         | 'bannerUrl'
         | 'bannerEnabled'
         | 'coverStyleSeed'
@@ -478,6 +481,7 @@ export class LibraryStore {
       ...(patch.name !== undefined ? { name: patch.name.trim() || current.name } : {}),
       ...(patch.description !== undefined ? { description: patch.description } : {}),
       ...(patch.coverUrl !== undefined ? { coverUrl: patch.coverUrl || undefined } : {}),
+      ...(patch.collageUrls !== undefined ? { collageUrls: patch.collageUrls } : {}),
       ...(patch.bannerUrl !== undefined ? { bannerUrl: patch.bannerUrl || undefined } : {}),
       ...(patch.bannerEnabled !== undefined ? { bannerEnabled: patch.bannerEnabled } : {}),
       ...(patch.coverStyleSeed !== undefined ? { coverStyleSeed: patch.coverStyleSeed } : {}),
@@ -507,7 +511,6 @@ export class LibraryStore {
     if (pl.tracks.some((t) => t.id === track.id)) return pl;
     return this.updatePlaylist(playlistId, {
       tracks: [...pl.tracks, track],
-      coverUrl: pl.coverUrl || track.thumbnailUrl,
     });
   }
 
@@ -517,13 +520,8 @@ export class LibraryStore {
   ): Promise<PlaylistRecord | null> {
     const pl = this.playlists.find((p) => p.id === playlistId);
     if (!pl) return null;
-    const keepCustomCover =
-      Boolean(pl.coverUrl) &&
-      (pl.coverUrl!.startsWith('data:') ||
-        nextTracks.some((t) => t.thumbnailUrl === pl.coverUrl));
     return this.updatePlaylist(playlistId, {
       tracks: nextTracks,
-      coverUrl: keepCustomCover ? pl.coverUrl : (nextTracks[0]?.thumbnailUrl ?? ''),
     });
   }
 
@@ -533,16 +531,10 @@ export class LibraryStore {
   ): Promise<PlaylistRecord | null> {
     const pl = this.playlists.find((p) => p.id === playlistId);
     if (!pl) return null;
-    const removed = pl.tracks.find((t) => t.id === trackId);
     const filtered = pl.tracks.filter((t) => t.id !== trackId);
     if (filtered.length === pl.tracks.length) return pl;
-    const keepCustomCover =
-      Boolean(pl.coverUrl) &&
-      (pl.coverUrl!.startsWith('data:') ||
-        (Boolean(removed?.thumbnailUrl) && pl.coverUrl !== removed!.thumbnailUrl));
     return this.updatePlaylist(playlistId, {
       tracks: filtered,
-      coverUrl: keepCustomCover ? pl.coverUrl : (filtered[0]?.thumbnailUrl ?? ''),
     });
   }
 
@@ -566,13 +558,8 @@ export class LibraryStore {
     const [moved] = copy.splice(fromIndex, 1);
     if (!moved) return pl;
     copy.splice(toIndex, 0, moved);
-    const keepCustomCover =
-      Boolean(pl.coverUrl) &&
-      pl.coverUrl !== pl.tracks[0]?.thumbnailUrl &&
-      pl.coverUrl !== pl.tracks[0]?.thumbnailHighUrl;
     return this.updatePlaylist(playlistId, {
       tracks: copy,
-      coverUrl: keepCustomCover ? pl.coverUrl : (copy[0]?.thumbnailUrl ?? ''),
     });
   }
 
