@@ -1150,6 +1150,7 @@ export interface PMusicStoreState {
   incomingTransitionTrack: Track | null;
   devicesSheetOpen: boolean;
   importModalOpen: boolean;
+  createPlaylistModalOpen: boolean;
   settingsOpen: boolean;
   settingsReturnToMobileHub: boolean;
   settingsInitialCategory:
@@ -1342,6 +1343,7 @@ export interface PMusicStoreState {
   playFromVoiceQuery: (query: string) => Promise<void>;
   setDevicesSheetOpen: (open: boolean) => void;
   setImportModalOpen: (open: boolean) => void;
+  setCreatePlaylistModalOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
   setMobileHubOpen: (open: boolean) => void;
   openSettingsCategory: (
@@ -3768,6 +3770,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   djPopoverOpen: false,
   devicesSheetOpen: false,
   importModalOpen: false,
+  createPlaylistModalOpen: false,
   settingsOpen: false,
   settingsReturnToMobileHub: false,
   settingsInitialCategory: null,
@@ -3993,7 +3996,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   socialSubTab: 'jam',
   shareListeningActivity: readShareListeningPref(),
   friendActivities: {},
-  personalTopStats: { '7d': null, '30d': null },
+  personalTopStats: { '7d': null, '30d': null, year: null },
   minimizeToTrayOnClose: true,
   desktopTrackNotifications: false,
   releaseNotificationsEnabled: loadReleaseNotificationsState().enabled,
@@ -5063,6 +5066,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     return null;
   },
   setImportModalOpen: (open) => set({ importModalOpen: open, importError: null }),
+  setCreatePlaylistModalOpen: (open) => set({ createPlaylistModalOpen: open }),
   setSettingsOpen: (open) =>
     set((prev) => ({
       settingsOpen: open,

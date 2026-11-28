@@ -422,7 +422,13 @@ export function computeWrappedSummary(
   };
 }
 
-export type TopStatsWindow = '7d' | '30d';
+export type TopStatsWindow = '7d' | '30d' | 'year';
+
+export interface DailyActivityPoint {
+  label: string;
+  minutes: number;
+  plays: number;
+}
 
 export interface PeriodTopStats {
   window: TopStatsWindow;
@@ -430,9 +436,47 @@ export interface PeriodTopStats {
   totalPlays: number;
   uniqueTracks: number;
   uniqueArtists: number;
+  activeDays: number;
+  longestStreakDays: number;
+  avgMinutesPerActiveDay: number;
+  peakTimeOfDay: 'Mañana' | 'Tarde' | 'Noche' | 'Madrugada' | null;
+  peakDayOfWeek: string | null;
+  dailyActivity: DailyActivityPoint[];
   topTracks: WrappedRankedItem[];
   topArtists: WrappedRankedItem[];
   topGenres: WrappedGenreItem[];
+}
+
+const WEEKDAY_NAMES_PLURAL = [
+  'Domingos',
+  'Lunes',
+  'Martes',
+  'Miércoles',
+  'Jueves',
+  'Viernes',
+  'Sábados',
+] as const;
+
+const WEEKDAY_SHORT_MON_FIRST = ['L', 'M', 'X', 'J', 'V', 'S', 'D'] as const;
+
+function splitArtistCredits(rawArtist: string | undefined): string[] {
+  const clean = (rawArtist ?? '').trim();
+  if (!clean) return ['Artista'];
+  const parts = clean
+    .split(/\s*(?:,|&|•|\bfeat\.?\b|\bft\.?\b|\bx\b|\bwith\b)\s*/i)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+  if (parts.length === 0) return [clean];
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const part of parts) {
+    const k = part.toLowerCase();
+    if (!seen.has(k)) {
+      seen.add(k);
+      unique.push(part);
+    }
+  }
+  return unique;
 }
 
 export function computePeriodTopStats(
@@ -440,8 +484,12 @@ export function computePeriodTopStats(
   window: TopStatsWindow,
   nowMs: number = Date.now()
 ): PeriodTopStats {
-  const days = window === '7d' ? 7 : 30;
-  const cutoffMs = nowMs - days * 86_400_000;
+  const nowDate = new Date(nowMs);
+  const cutoffMs =
+    window === 'year'
+      ? new Date(nowDate.getFullYear(), 0, 1, 0, 0, 0, 0).getTime()
+      : nowMs - (window === '7d' ? 7 : 30) * 86_400_000;
+
   const filtered = allEvents.filter((ev) => {
     const ts = new Date(ev.playedAt).getTime();
     return Number.isFinite(ts) && ts >= cutoffMs && ts <= nowMs + 60_000;
@@ -451,10 +499,36 @@ export function computePeriodTopStats(
   const trackMap = new Map<string, WrappedRankedItem>();
   const artistMap = new Map<string, WrappedRankedItem>();
   const genreMap = new Map<string, { plays: number; sec: number }>();
+  const activeDaySet = new Set<string>();
+  const weekdayBuckets = Array.from({ length: 7 }, () => ({ sec: 0, plays: 0 }));
+  const timeOfDayBuckets: Record<'Mañana' | 'Tarde' | 'Noche' | 'Madrugada', number> = {
+    Mañana: 0,
+    Tarde: 0,
+    Noche: 0,
+    Madrugada: 0,
+  };
 
   for (const ev of filtered) {
     const sec = Math.max(0, ev.playedSec || 0);
     totalSec += sec;
+
+    const d = new Date(ev.playedAt);
+    if (!Number.isNaN(d.getTime())) {
+      const dayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+        d.getDate()
+      ).padStart(2, '0')}`;
+      activeDaySet.add(dayKey);
+      const dow = d.getDay();
+      weekdayBuckets[dow]!.sec += sec;
+      weekdayBuckets[dow]!.plays += 1;
+
+      const hr = typeof ev.hourOfDay === 'number' ? ev.hourOfDay : d.getHours();
+      const weight = sec > 0 ? sec : 60;
+      if (hr >= 6 && hr < 12) timeOfDayBuckets.Mañana += weight;
+      else if (hr >= 12 && hr < 18) timeOfDayBuckets.Tarde += weight;
+      else if (hr >= 18) timeOfDayBuckets.Noche += weight;
+      else timeOfDayBuckets.Madrugada += weight;
+    }
 
     const existingTrack = trackMap.get(ev.trackId);
     if (existingTrack) {
@@ -474,22 +548,28 @@ export function computePeriodTopStats(
       });
     }
 
-    const artistKey = ev.artist.trim().toLowerCase() || 'desconocido';
-    const existingArtist = artistMap.get(artistKey);
-    if (existingArtist) {
-      existingArtist.plays += 1;
-      existingArtist.minutes += sec / 60;
-      if (!existingArtist.thumbnailUrl && ev.thumbnailUrl) {
-        existingArtist.thumbnailUrl = ev.thumbnailUrl;
+    const creditedArtists = splitArtistCredits(ev.artist);
+    const isSoloArtistCredit = creditedArtists.length === 1;
+    for (const artistName of creditedArtists) {
+      const artistKey = artistName.toLowerCase();
+      const existingArtist = artistMap.get(artistKey);
+      if (existingArtist) {
+        existingArtist.plays += 1;
+        existingArtist.minutes += sec / 60;
+        if ((!existingArtist.thumbnailUrl || isSoloArtistCredit) && ev.thumbnailUrl) {
+          if (!existingArtist.thumbnailUrl) {
+            existingArtist.thumbnailUrl = ev.thumbnailUrl;
+          }
+        }
+      } else {
+        artistMap.set(artistKey, {
+          key: artistKey,
+          title: artistName,
+          thumbnailUrl: ev.thumbnailUrl,
+          plays: 1,
+          minutes: sec / 60,
+        });
       }
-    } else {
-      artistMap.set(artistKey, {
-        key: artistKey,
-        title: ev.artist || 'Artista',
-        thumbnailUrl: ev.thumbnailUrl,
-        plays: 1,
-        minutes: sec / 60,
-      });
     }
 
     const genre = ev.genre || 'Pop / Urbano';
@@ -500,6 +580,49 @@ export function computePeriodTopStats(
   }
 
   const totalPlays = filtered.length;
+  const totalMinutes = Math.round(totalSec / 60);
+  const activeDays = activeDaySet.size;
+  const longestStreakDays = computeLongestStreakDays(filtered);
+  const avgMinutesPerActiveDay = activeDays > 0 ? Math.max(1, Math.round(totalMinutes / activeDays)) : 0;
+
+  let peakTimeOfDay: PeriodTopStats['peakTimeOfDay'] = null;
+  if (totalPlays > 0) {
+    let bestTodd: 'Mañana' | 'Tarde' | 'Noche' | 'Madrugada' = 'Tarde';
+    let bestScore = -1;
+    (Object.keys(timeOfDayBuckets) as Array<'Mañana' | 'Tarde' | 'Noche' | 'Madrugada'>).forEach(
+      (slot) => {
+        if (timeOfDayBuckets[slot] > bestScore) {
+          bestScore = timeOfDayBuckets[slot];
+          bestTodd = slot;
+        }
+      }
+    );
+    peakTimeOfDay = bestTodd;
+  }
+
+  let peakDayOfWeek: string | null = null;
+  if (totalPlays > 0) {
+    let bestDow = 0;
+    for (let i = 1; i < 7; i++) {
+      if (
+        weekdayBuckets[i]!.sec > weekdayBuckets[bestDow]!.sec ||
+        (weekdayBuckets[i]!.sec === weekdayBuckets[bestDow]!.sec &&
+          weekdayBuckets[i]!.plays > weekdayBuckets[bestDow]!.plays)
+      ) {
+        bestDow = i;
+      }
+    }
+    peakDayOfWeek = WEEKDAY_NAMES_PLURAL[bestDow] ?? null;
+  }
+
+  // Monday-first 7-day activity profile (L, M, X, J, V, S, D)
+  const monFirstOrder = [1, 2, 3, 4, 5, 6, 0];
+  const dailyActivity: DailyActivityPoint[] = monFirstOrder.map((dowIdx, pos) => ({
+    label: WEEKDAY_SHORT_MON_FIRST[pos]!,
+    minutes: Math.round(weekdayBuckets[dowIdx]!.sec / 60),
+    plays: weekdayBuckets[dowIdx]!.plays,
+  }));
+
   const topTracks = Array.from(trackMap.values())
     .sort((a, b) => b.plays - a.plays || b.minutes - a.minutes)
     .slice(0, 10)
@@ -507,7 +630,7 @@ export function computePeriodTopStats(
 
   const topArtists = Array.from(artistMap.values())
     .sort((a, b) => b.minutes - a.minutes || b.plays - a.plays)
-    .slice(0, 8)
+    .slice(0, 10)
     .map((item) => ({ ...item, minutes: Math.max(1, Math.round(item.minutes)) }));
 
   const topGenres: WrappedGenreItem[] = Array.from(genreMap.entries())
@@ -522,10 +645,16 @@ export function computePeriodTopStats(
 
   return {
     window,
-    totalMinutes: Math.round(totalSec / 60),
+    totalMinutes,
     totalPlays,
     uniqueTracks: trackMap.size,
     uniqueArtists: artistMap.size,
+    activeDays,
+    longestStreakDays,
+    avgMinutesPerActiveDay,
+    peakTimeOfDay,
+    peakDayOfWeek,
+    dailyActivity,
     topTracks,
     topArtists,
     topGenres,

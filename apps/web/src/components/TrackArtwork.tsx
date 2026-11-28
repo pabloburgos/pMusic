@@ -123,7 +123,7 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
   artistId,
   variant,
   className = '',
-  imgClassName = 'h-full w-full object-cover',
+  imgClassName,
   loading,
   draggable = false,
   onUnavailableChange,
@@ -614,6 +614,12 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
     });
   };
 
+  const resolvedImgClass =
+    imgClassName ??
+    (/\b(h-|w-|size-)/.test(className)
+      ? `${className} object-cover`.trim()
+      : `${className} h-full w-full object-cover`.trim());
+
   return (
     <>
       {!imgLoaded && (
@@ -639,7 +645,7 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
         draggable={draggable}
         onLoad={handleImgLoad}
         onError={handleImgError}
-        className={imgClassName}
+        className={resolvedImgClass}
       />
       {children}
     </>

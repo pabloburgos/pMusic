@@ -148,9 +148,9 @@ describe('pMusic v0.24.9 interactive Library & Search, offline covers & unified 
     expect(sortBtn.textContent).toContain('A–Z');
 
     const viewToggle = screen.getByTestId('library-view-toggle');
-    expect(viewToggle.textContent).toContain('Cuadrícula');
-    fireEvent.click(viewToggle);
     expect(viewToggle.textContent).toContain('Lista');
+    fireEvent.click(viewToggle);
+    expect(viewToggle.textContent).toContain('Cuadrícula');
 
     // Updated playlist cover propagates immediately to LibraryScreen
     const srcsBefore = Array.from(container.querySelectorAll('img')).map((el) =>

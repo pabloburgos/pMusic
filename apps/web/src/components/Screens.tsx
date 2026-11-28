@@ -1537,7 +1537,7 @@ export const DetailViewPanel: React.FC = React.memo(() => {
             </>
           )}
 
-          <div className="relative z-10 flex items-end justify-between gap-4">
+          <div className="relative z-10 flex flex-col gap-3 md:flex-row md:items-end md:justify-between md:gap-4">
             <div className="min-w-0 flex-1 space-y-1.5">
               <h1 className="truncate text-4xl font-black tracking-tight pm-text-primary drop-shadow-[0_4px_20px_rgba(0,0,0,0.65)] sm:text-5xl md:text-6xl">
                 {artist.name}
@@ -1549,7 +1549,10 @@ export const DetailViewPanel: React.FC = React.memo(() => {
               )}
             </div>
 
-            <div className="flex shrink-0 items-center gap-2 pb-0.5 sm:gap-3.5">
+            <div
+              data-testid="detail-hero-actions"
+              className="flex w-full shrink-0 flex-row-reverse items-center justify-end gap-2 self-start pb-0.5 sm:gap-3.5 md:w-auto md:flex-row md:self-end"
+            >
               <button
                 type="button"
                 data-testid="artist-like-btn"
@@ -2090,7 +2093,10 @@ export const DetailViewPanel: React.FC = React.memo(() => {
               </div>
             </div>
 
-            <div className="relative flex shrink-0 flex-wrap items-center justify-end gap-2 self-end sm:gap-3 md:pb-0.5">
+            <div
+              data-testid="detail-hero-actions"
+              className="relative flex w-full shrink-0 flex-row-reverse flex-wrap items-center justify-end gap-2 self-start sm:gap-3 md:w-auto md:flex-row md:self-end md:pb-0.5"
+            >
               <HeroIconAction
                 label="Aleatorio"
                 tooltip="Reproducir en aleatorio"
@@ -2164,7 +2170,7 @@ export const DetailViewPanel: React.FC = React.memo(() => {
                 {heroMoreMenuId === `album:${album.id}` && (
                   <div
                     role="menu"
-                    className="pm-menu-glass pm-modal-pop absolute right-0 top-14 z-40 w-60 space-y-0.5 rounded-[14px] p-1.5"
+                    className="pm-menu-glass pm-modal-pop absolute left-0 top-14 z-40 w-60 space-y-0.5 rounded-[14px] p-1.5 md:left-auto md:right-0"
                   >
                     <button
                       type="button"
@@ -2208,7 +2214,7 @@ export const DetailViewPanel: React.FC = React.memo(() => {
                     void playCollection(tracks);
                   }
                 }}
-                className="pm-pressable ml-1 flex h-[72px] w-[72px] items-center justify-center overflow-visible border-0 bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.65)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none disabled:opacity-40 sm:h-[86px] sm:w-[86px]"
+                className="pm-pressable mr-1 flex h-[72px] w-[72px] items-center justify-center overflow-visible border-0 bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.65)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none disabled:opacity-40 sm:h-[86px] sm:w-[86px] md:ml-1 md:mr-0"
               >
                 {isPlayingAlbum ? (
                   <RoundedPauseIcon className="h-[64px] w-[64px] sm:h-[78px] sm:w-[78px]" />
@@ -2319,7 +2325,10 @@ export const DetailViewPanel: React.FC = React.memo(() => {
               </div>
             </div>
 
-            <div className="relative flex shrink-0 flex-wrap items-center justify-end gap-2 self-end sm:gap-3 md:pb-0.5">
+            <div
+              data-testid="detail-hero-actions"
+              className="relative flex w-full shrink-0 flex-row-reverse flex-wrap items-center justify-end gap-2 self-start sm:gap-3 md:w-auto md:flex-row md:self-end md:pb-0.5"
+            >
               <HeroIconAction
                 label={
                   isDownloadingThis
@@ -2377,7 +2386,7 @@ export const DetailViewPanel: React.FC = React.memo(() => {
                 {heroMoreMenuId === `ed:${playlist.id}` && (
                   <div
                     role="menu"
-                    className="pm-menu-glass pm-modal-pop absolute right-0 top-14 z-40 w-60 space-y-0.5 rounded-[14px] p-1.5"
+                    className="pm-menu-glass pm-modal-pop absolute left-0 top-14 z-40 w-60 space-y-0.5 rounded-[14px] p-1.5 md:left-auto md:right-0"
                   >
                     <button
                       type="button"
@@ -2430,7 +2439,7 @@ export const DetailViewPanel: React.FC = React.memo(() => {
                     void playCollection(tracks, { isPlaylist: true });
                   }
                 }}
-                className="pm-pressable ml-1 flex h-[72px] w-[72px] items-center justify-center overflow-visible border-0 bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.65)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none disabled:opacity-40 sm:h-[86px] sm:w-[86px]"
+                className="pm-pressable mr-1 flex h-[72px] w-[72px] items-center justify-center overflow-visible border-0 bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.65)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none disabled:opacity-40 sm:h-[86px] sm:w-[86px] md:ml-1 md:mr-0"
               >
                 {isPlaying && currentTrack && tracks.some((t) => t.id === currentTrack.id) ? (
                   <RoundedPauseIcon className="h-[64px] w-[64px] sm:h-[78px] sm:w-[78px]" />
@@ -2849,7 +2858,10 @@ export const DetailViewPanel: React.FC = React.memo(() => {
             </h1>
           ),
           actionsRow: (
-            <div className="relative flex shrink-0 flex-wrap items-center justify-end gap-2 self-end sm:gap-3 md:pb-0.5">
+            <div
+              data-testid="detail-hero-actions"
+              className="relative flex w-full shrink-0 flex-row-reverse flex-wrap items-center justify-end gap-2 self-start sm:gap-3 md:w-auto md:flex-row md:self-end md:pb-0.5"
+            >
               <HeroIconAction
                 label={
                   isDownloadingThis
@@ -2923,7 +2935,11 @@ export const DetailViewPanel: React.FC = React.memo(() => {
                 tooltip="Más opciones"
                 onClick={(e) => {
                   const r = e.currentTarget.getBoundingClientRect();
-                  openPlaylistContextMenu('shared', sharedPl.id, Math.max(12, r.right - 250), r.bottom + 8);
+                  const menuX =
+                    typeof window !== 'undefined' && window.innerWidth < 768
+                      ? Math.max(12, Math.min(r.left, window.innerWidth - 262))
+                      : Math.max(12, r.right - 250);
+                  openPlaylistContextMenu('shared', sharedPl.id, menuX, r.bottom + 8);
                 }}
                 className="text-white/75 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-white"
               >
@@ -2959,7 +2975,7 @@ export const DetailViewPanel: React.FC = React.memo(() => {
                     void playCollection(sharedPl.tracks, { isPlaylist: true });
                   }
                 }}
-                className="pm-pressable ml-1 flex h-[72px] w-[72px] items-center justify-center overflow-visible border-0 bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.65)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none sm:h-[86px] sm:w-[86px]"
+                className="pm-pressable mr-1 flex h-[72px] w-[72px] items-center justify-center overflow-visible border-0 bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.65)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none sm:h-[86px] sm:w-[86px] md:ml-1 md:mr-0"
               >
                 {isPlaying &&
                 currentTrack &&
@@ -3267,7 +3283,10 @@ export const DetailViewPanel: React.FC = React.memo(() => {
           </div>
         ),
         actionsRow: (
-          <div className="relative flex shrink-0 flex-wrap items-center justify-end gap-2 self-end sm:gap-3 md:pb-0.5">
+          <div
+            data-testid="detail-hero-actions"
+            className="relative flex w-full shrink-0 flex-row-reverse flex-wrap items-center justify-end gap-2 self-start sm:gap-3 md:w-auto md:flex-row md:self-end md:pb-0.5"
+          >
             <HeroIconAction
               label={
                 isDownloadingThis
@@ -3344,7 +3363,11 @@ export const DetailViewPanel: React.FC = React.memo(() => {
               tooltip="Más opciones"
               onClick={(e) => {
                 const r = e.currentTarget.getBoundingClientRect();
-                openPlaylistContextMenu('local', localPl.id, Math.max(12, r.right - 250), r.bottom + 8);
+                const menuX =
+                  typeof window !== 'undefined' && window.innerWidth < 768
+                    ? Math.max(12, Math.min(r.left, window.innerWidth - 262))
+                    : Math.max(12, r.right - 250);
+                openPlaylistContextMenu('local', localPl.id, menuX, r.bottom + 8);
               }}
               className="text-white/75 drop-shadow-[0_3px_12px_rgba(0,0,0,0.6)] hover:text-white"
             >
@@ -3381,7 +3404,7 @@ export const DetailViewPanel: React.FC = React.memo(() => {
                   void playCollection(localPl.tracks, { isPlaylist: true });
                 }
               }}
-              className="pm-pressable ml-1 flex h-[72px] w-[72px] items-center justify-center overflow-visible border-0 bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.65)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none sm:h-[86px] sm:w-[86px]"
+              className="pm-pressable mr-1 flex h-[72px] w-[72px] items-center justify-center overflow-visible border-0 bg-transparent text-white drop-shadow-[0_6px_22px_rgba(0,0,0,0.65)] transition-transform duration-150 hover:scale-105 active:scale-90 focus:outline-none sm:h-[86px] sm:w-[86px] md:ml-1 md:mr-0"
             >
               {isPlaying &&
               currentTrack &&
@@ -3720,8 +3743,6 @@ export const HomeScreen: React.FC = React.memo(() => {
     exploreEmergingArtists,
     playlistPlayCounts,
     isOfflineNetwork,
-    wrappedSeasonActive,
-    openWrappedModal,
     favoriteArtists,
     playTrack,
     playCollection,
@@ -3746,8 +3767,6 @@ export const HomeScreen: React.FC = React.memo(() => {
       exploreEmergingArtists: s.exploreEmergingArtists,
       playlistPlayCounts: s.playlistPlayCounts,
       isOfflineNetwork: s.isOfflineNetwork,
-      wrappedSeasonActive: s.wrappedSeasonActive,
-      openWrappedModal: s.openWrappedModal,
       favoriteArtists: s.favoriteArtists,
       playTrack: s.playTrack,
       playCollection: s.playCollection,
@@ -3889,30 +3908,6 @@ export const HomeScreen: React.FC = React.memo(() => {
           <span className="hidden sm:inline">Reiniciar inicio</span>
         </button>
       </div>
-
-      {wrappedSeasonActive && (
-        <button
-          type="button"
-          onClick={() => void openWrappedModal()}
-          className="pm-pressable relative flex w-full items-center justify-between gap-4 overflow-hidden rounded-3xl border border-[#fa233b]/35 bg-gradient-to-r from-[#2e0c29] via-[#5c1031] to-[#1a1033] p-5 text-left shadow-xl"
-        >
-          <div className="space-y-1">
-            <span className="inline-flex items-center gap-1 rounded-full bg-[#fa233b]/25 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-[#ff7a8a]">
-              <Sparkles className="h-3 w-3" />
-              Ya disponible
-            </span>
-            <h2 className="text-xl font-black text-white sm:text-2xl">
-              Tu pMusic Wrapped {new Date().getFullYear()}
-            </h2>
-            <p className="text-xs text-white/75 sm:text-sm">
-              Descubre tus minutos, géneros, artistas y canciones #1 en tarjetas 9:16.
-            </p>
-          </div>
-          <span className="shrink-0 rounded-full bg-white px-4 py-2 text-xs font-extrabold text-zinc-900 shadow-md">
-            Ver ahora
-          </span>
-        </button>
-      )}
 
       {/* Filter Pills */}
       <div
@@ -5537,7 +5532,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
     currentTrack,
     setLibraryCategory,
     setLibraryFilterQuery,
-    createPlaylist,
+    setCreatePlaylistModalOpen,
     addTrackToPlaylist,
     openLocalPlaylistDetail,
     openSharedPlaylistDetail,
@@ -5570,7 +5565,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
       currentTrack: s.currentTrack,
       setLibraryCategory: s.setLibraryCategory,
       setLibraryFilterQuery: s.setLibraryFilterQuery,
-      createPlaylist: s.createPlaylist,
+      setCreatePlaylistModalOpen: s.setCreatePlaylistModalOpen,
       addTrackToPlaylist: s.addTrackToPlaylist,
       openLocalPlaylistDetail: s.openLocalPlaylistDetail,
       openSharedPlaylistDetail: s.openSharedPlaylistDetail,
@@ -5588,20 +5583,18 @@ export const LibraryScreen: React.FC = React.memo(() => {
     }))
   );
 
-  const [newPlaylistName, setNewPlaylistName] = useState('');
-  const [showCreateBar, setShowCreateBar] = useState(false);
   const [showMobileFilter, setShowMobileFilter] = useState(false);
   const [dragOverPlaylistId, setDragOverPlaylistId] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<'recent' | 'alpha' | 'tracks'>('recent');
   const [viewMode, setViewMode] = useState<'list' | 'grid'>(() => {
     try {
       if (typeof localStorage !== 'undefined') {
-        return localStorage.getItem('pmusic_library_view_v1') === 'grid' ? 'grid' : 'list';
+        return localStorage.getItem('pmusic_library_view_v2') === 'list' ? 'list' : 'grid';
       }
     } catch {
       // ignore storage errors
     }
-    return 'list';
+    return 'grid';
   });
 
   const toggleViewMode = () => {
@@ -5609,7 +5602,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
       const next = prev === 'list' ? 'grid' : 'list';
       try {
         if (typeof localStorage !== 'undefined') {
-          localStorage.setItem('pmusic_library_view_v1', next);
+          localStorage.setItem('pmusic_library_view_v2', next);
         }
       } catch {
         // ignore storage errors
@@ -5761,13 +5754,13 @@ export const LibraryScreen: React.FC = React.memo(() => {
           </button>
           <button
             type="button"
+            data-testid="library-create-playlist-btn"
             aria-label="Nueva playlist"
-            onClick={() => setShowCreateBar((v) => !v)}
-            className={`pm-compact-btn pm-pressable flex h-9 w-9 items-center justify-center rounded-full sm:hidden ${
-              showCreateBar ? 'pm-btn-primary' : 'pm-btn-secondary'
-            }`}
+            onClick={() => setCreatePlaylistModalOpen(true)}
+            className="pm-btn-secondary pm-compact-btn pm-pressable inline-flex h-9 w-9 items-center justify-center gap-1.5 rounded-full text-xs font-bold sm:w-auto sm:px-3.5"
           >
-            <Plus className="h-4 w-4" />
+            <Plus className="h-4 w-4 shrink-0" />
+            <span className="hidden sm:inline">Nueva playlist</span>
           </button>
           <button
             type="button"
@@ -5888,44 +5881,11 @@ export const LibraryScreen: React.FC = React.memo(() => {
         </div>
       </div>
 
-      {/* Create New Playlist Quick Bar */}
-      {(libraryCategory === 'Todo' || libraryCategory === 'Playlists') && (
-        <div
-          data-surface="content"
-          className={`pm-surface-card items-center gap-2 rounded-[16px] p-3 sm:gap-2.5 sm:p-3.5 ${
-            showCreateBar ? 'flex' : 'hidden sm:flex'
-          }`}
-        >
-          <input
-            type="text"
-            aria-label="Nombre de la nueva playlist"
-            placeholder="Nueva playlist (ej. Sesión Canarias)..."
-            value={newPlaylistName}
-            onChange={(e) => setNewPlaylistName(e.target.value)}
-            className="pm-input pm-text-btn min-w-0 flex-1 rounded-full px-4 py-2 text-xs"
-          />
-          <button
-            type="button"
-            onClick={async () => {
-              const name = newPlaylistName.trim() || `Mi Playlist #${playlists.length + 1}`;
-              const created = await createPlaylist(name, '', []);
-              setNewPlaylistName('');
-              setShowCreateBar(false);
-              showToast(`Playlist «${created.name}» creada`);
-            }}
-            className="pm-btn-primary pm-compact-btn pm-pressable inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full px-4 text-xs font-bold"
-          >
-            <Plus className="h-4 w-4" />
-            <span>Crear playlist</span>
-          </button>
-        </div>
-      )}
-
       {/* Pinned pMusic Glass Quick Smart Tiles in Todo */}
       {libraryCategory === 'Todo' &&
         !filterNorm &&
         (likedTracks.length > 0 || offlineEntries.length > 0) && (
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-2.5">
+          <div className="grid grid-cols-1 gap-2 min-[380px]:grid-cols-2 sm:gap-2.5">
             {likedTracks.length > 0 && (
               <div
                 data-surface="content"
@@ -6070,9 +6030,9 @@ export const LibraryScreen: React.FC = React.memo(() => {
                         e.stopPropagation();
                         openPlaylistContextMenu('shared', sp.id, e.clientX, e.clientY);
                       }}
-                      className="pm-surface-card pm-card-lift pm-pressable group relative cursor-pointer rounded-[16px] p-2.5"
+                      className="pm-pressable group relative cursor-pointer"
                     >
-                      <div className="relative aspect-square w-full overflow-hidden rounded-[12px]">
+                      <div className="relative aspect-square w-full overflow-hidden rounded-[14px] bg-white/[0.04] ring-1 ring-white/[0.08] shadow-[0_14px_34px_rgba(0,0,0,0.45)] transition-transform duration-200 group-hover:scale-[1.015]">
                         <TrackArtwork
                           trackId={coverInfo.fallbackTrackId}
                           src={coverInfo.url}
@@ -6090,19 +6050,20 @@ export const LibraryScreen: React.FC = React.memo(() => {
                               e.stopPropagation();
                               void playCollection(sp.tracks, { isPlaylist: true });
                             }}
-                            className="pm-btn-primary pm-pressable absolute bottom-2 right-2 inline-flex h-9 w-9 items-center justify-center rounded-full shadow-lg"
+                            className="pm-btn-primary pm-compact-btn pm-pressable absolute bottom-2.5 right-2.5 inline-flex h-9 w-9 items-center justify-center rounded-full shadow-lg"
                           >
                             <Play className="h-4 w-4 translate-x-[1px] fill-current" />
                           </button>
                         )}
                       </div>
-                      <div className="mt-2 flex items-start justify-between gap-1">
+                      <div className="mt-2 flex items-start justify-between gap-1 px-0.5">
                         <div className="min-w-0 flex-1">
-                          <h3 className="truncate text-[13.5px] font-bold pm-text-primary">
+                          <h3 className="truncate text-[13.5px] font-bold leading-snug pm-text-primary">
                             {sp.name}
                           </h3>
-                          <p className="truncate text-[11px] pm-text-tertiary">
-                            {sp.kind === 'blend' ? 'Blend' : 'Colab'} · {sp.tracks.length} pistas
+                          <p className="tabular-nums truncate text-[11.5px] pm-text-tertiary">
+                            {sp.kind === 'blend' ? 'Blend' : 'Colab'} · {sp.tracks.length}{' '}
+                            {sp.tracks.length === 1 ? 'pista' : 'pistas'}
                           </p>
                         </div>
                         <button
@@ -6113,7 +6074,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
                             const r = e.currentTarget.getBoundingClientRect();
                             openPlaylistContextMenu('shared', sp.id, r.right - 260, r.bottom + 8);
                           }}
-                          className="pm-hover inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full pm-text-tertiary"
+                          className="pm-hover pm-compact-btn inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full pm-text-tertiary hover:text-white"
                         >
                           <MoreHorizontal className="h-4 w-4" />
                         </button>
@@ -6224,13 +6185,11 @@ export const LibraryScreen: React.FC = React.memo(() => {
                         openPlaylistContextMenu('local', pl.id, e.clientX, e.clientY);
                       }}
                       onClick={() => openLocalPlaylistDetail(pl.id)}
-                      className={`pm-surface-card pm-card-lift pm-pressable group relative cursor-pointer rounded-[16px] p-2.5 ${
-                        isDropTarget
-                          ? 'pm-active-row ring-2 ring-[var(--pm-accent-primary)]'
-                          : ''
+                      className={`pm-pressable group relative cursor-pointer ${
+                        isDropTarget ? 'rounded-[16px] ring-2 ring-[var(--pm-accent-primary)] p-1' : ''
                       }`}
                     >
-                      <div className="relative aspect-square w-full overflow-hidden rounded-[12px]">
+                      <div className="relative aspect-square w-full overflow-hidden rounded-[14px] bg-white/[0.04] ring-1 ring-white/[0.08] shadow-[0_14px_34px_rgba(0,0,0,0.45)] transition-transform duration-200 group-hover:scale-[1.015]">
                         <TrackArtwork
                           trackId={coverInfo.fallbackTrackId}
                           src={coverInfo.url}
@@ -6249,18 +6208,18 @@ export const LibraryScreen: React.FC = React.memo(() => {
                               recordPlaylistPlay(pl);
                               void playCollection(pl.tracks, { isPlaylist: true });
                             }}
-                            className="pm-btn-primary pm-pressable absolute bottom-2 right-2 inline-flex h-9 w-9 items-center justify-center rounded-full shadow-lg"
+                            className="pm-btn-primary pm-compact-btn pm-pressable absolute bottom-2.5 right-2.5 inline-flex h-9 w-9 items-center justify-center rounded-full shadow-lg"
                           >
                             <Play className="h-4 w-4 translate-x-[1px] fill-current" />
                           </button>
                         )}
                       </div>
-                      <div className="mt-2 flex items-start justify-between gap-1">
+                      <div className="mt-2 flex items-start justify-between gap-1 px-0.5">
                         <div className="min-w-0 flex-1">
-                          <h3 className="truncate text-[13.5px] font-bold pm-text-primary">
+                          <h3 className="truncate text-[13.5px] font-bold leading-snug pm-text-primary">
                             {pl.name}
                           </h3>
-                          <p className="truncate text-[11px] pm-text-tertiary">
+                          <p className="tabular-nums truncate text-[11.5px] pm-text-tertiary">
                             {pl.tracks.length} {pl.tracks.length === 1 ? 'pista' : 'pistas'}
                             {plDur ? ` · ${plDur}` : ''}
                           </p>
@@ -6273,7 +6232,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
                             const r = e.currentTarget.getBoundingClientRect();
                             openPlaylistContextMenu('local', pl.id, r.right - 260, r.bottom + 8);
                           }}
-                          className="pm-hover inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full pm-text-tertiary"
+                          className="pm-hover pm-compact-btn inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full pm-text-tertiary hover:text-white"
                         >
                           <MoreHorizontal className="h-4 w-4" />
                         </button>
@@ -6379,14 +6338,24 @@ export const LibraryScreen: React.FC = React.memo(() => {
               })}
             </div>
           ) : (
-            <p className="text-xs pm-text-tertiary">
-              Aún no has creado playlists personalizadas. Toca «+» o importa desde Spotify/YouTube.
-            </p>
+            <div className="pm-surface-card flex flex-wrap items-center justify-between gap-3 rounded-[16px] p-4">
+              <p className="text-xs pm-text-secondary">
+                Aún no tienes playlists. Crea una en segundos o importa desde Spotify/YouTube.
+              </p>
+              <button
+                type="button"
+                onClick={() => setCreatePlaylistModalOpen(true)}
+                className="pm-btn-primary pm-compact-btn pm-pressable inline-flex h-9 items-center gap-1.5 rounded-full px-4 text-xs font-bold"
+              >
+                <Plus className="h-4 w-4" />
+                <span>Crear primera playlist</span>
+              </button>
+            </div>
           )}
         </section>
       )}
 
-      {/* Favorite Artists Section (hidden in Todo when empty) */}
+      {/* Favorite Artists Section (circular portrait grid in grid mode) */}
       {(libraryCategory === 'Artistas' ||
         (libraryCategory === 'Todo' && filteredArtists.length > 0)) && (
         <section className="space-y-2.5">
@@ -6394,58 +6363,111 @@ export const LibraryScreen: React.FC = React.memo(() => {
             Artistas favoritos ({filteredArtists.length})
           </h2>
           {filteredArtists.length > 0 ? (
-            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4">
-              {filteredArtists.map((fa) => (
-                <div
-                  key={fa.artistId}
-                  data-surface="content"
-                  onClick={() =>
-                    void openArtistDetail(fa.artistId, {
-                      name: fa.artistName,
-                      thumbnailUrl: fa.thumbnailUrl,
-                    })
-                  }
-                  className="pm-surface-card pm-card-lift pm-pressable flex cursor-pointer items-center justify-between gap-2 rounded-[14px] p-2.5 sm:p-3"
-                >
-                  <div className="flex min-w-0 items-center gap-2.5">
-                    {fa.thumbnailUrl ? (
-                      <img
-                        src={optimizeArtworkUrl(fa.thumbnailUrl, 'avatar')}
-                        alt={fa.artistName}
-                        loading="lazy"
-                        decoding="async"
-                        className="h-11 w-11 shrink-0 rounded-full object-cover object-[50%_20%]"
-                      />
-                    ) : (
-                      <div className="pm-elevated flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-bold pm-text-primary">
-                        {fa.artistName.slice(0, 1).toUpperCase()}
-                      </div>
-                    )}
-                    <div className="min-w-0">
-                      <div className="truncate text-xs font-bold pm-text-primary">
-                        {fa.artistName}
-                      </div>
-                      <div className="text-[10.5px] pm-text-tertiary">Artista</div>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    aria-label={`Quitar ${fa.artistName} de favoritos`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void toggleFavoriteArtist({
-                        id: fa.artistId,
+            viewMode === 'grid' ? (
+              <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
+                {filteredArtists.map((fa) => (
+                  <div
+                    key={fa.artistId}
+                    data-surface="content"
+                    onClick={() =>
+                      void openArtistDetail(fa.artistId, {
                         name: fa.artistName,
                         thumbnailUrl: fa.thumbnailUrl,
-                      });
-                    }}
-                    className="rounded-full p-1.5 text-rose-400 hover:bg-rose-500/15"
+                      })
+                    }
+                    className="pm-pressable group relative flex cursor-pointer flex-col items-center text-center"
                   >
-                    <Heart className="h-3.5 w-3.5 fill-current" />
-                  </button>
-                </div>
-              ))}
-            </div>
+                    <div className="relative aspect-square w-full overflow-hidden rounded-full bg-white/[0.05] ring-1 ring-white/[0.12] shadow-[0_12px_28px_rgba(0,0,0,0.45)] transition-transform duration-200 group-hover:scale-[1.03]">
+                      {fa.thumbnailUrl ? (
+                        <img
+                          src={optimizeArtworkUrl(fa.thumbnailUrl, 'avatar')}
+                          alt={fa.artistName}
+                          loading="lazy"
+                          decoding="async"
+                          className="h-full w-full object-cover object-[50%_20%]"
+                        />
+                      ) : (
+                        <div className="pm-elevated flex h-full w-full items-center justify-center text-lg font-black pm-text-primary">
+                          {fa.artistName.slice(0, 1).toUpperCase()}
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        aria-label={`Quitar ${fa.artistName} de favoritos`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void toggleFavoriteArtist({
+                            id: fa.artistId,
+                            name: fa.artistName,
+                            thumbnailUrl: fa.thumbnailUrl,
+                          });
+                        }}
+                        className="pm-compact-btn absolute bottom-1.5 right-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-black/65 text-rose-400 backdrop-blur-md hover:bg-rose-500/25"
+                      >
+                        <Heart className="h-3.5 w-3.5 fill-current" />
+                      </button>
+                    </div>
+                    <div className="mt-2 w-full truncate text-xs font-bold pm-text-primary">
+                      {fa.artistName}
+                    </div>
+                    <div className="text-[10.5px] pm-text-tertiary">Artista</div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4">
+                {filteredArtists.map((fa) => (
+                  <div
+                    key={fa.artistId}
+                    data-surface="content"
+                    onClick={() =>
+                      void openArtistDetail(fa.artistId, {
+                        name: fa.artistName,
+                        thumbnailUrl: fa.thumbnailUrl,
+                      })
+                    }
+                    className="pm-surface-card pm-card-lift pm-pressable flex cursor-pointer items-center justify-between gap-2 rounded-[14px] p-2.5 sm:p-3"
+                  >
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      {fa.thumbnailUrl ? (
+                        <img
+                          src={optimizeArtworkUrl(fa.thumbnailUrl, 'avatar')}
+                          alt={fa.artistName}
+                          loading="lazy"
+                          decoding="async"
+                          className="h-11 w-11 shrink-0 rounded-full object-cover object-[50%_20%]"
+                        />
+                      ) : (
+                        <div className="pm-elevated flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-bold pm-text-primary">
+                          {fa.artistName.slice(0, 1).toUpperCase()}
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <div className="truncate text-xs font-bold pm-text-primary">
+                          {fa.artistName}
+                        </div>
+                        <div className="text-[10.5px] pm-text-tertiary">Artista</div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label={`Quitar ${fa.artistName} de favoritos`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void toggleFavoriteArtist({
+                          id: fa.artistId,
+                          name: fa.artistName,
+                          thumbnailUrl: fa.thumbnailUrl,
+                        });
+                      }}
+                      className="pm-compact-btn flex h-7 w-7 items-center justify-center rounded-full text-rose-400 hover:bg-rose-500/15"
+                    >
+                      <Heart className="h-3.5 w-3.5 fill-current" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )
           ) : (
             <p className="text-xs pm-text-tertiary">
               Pulsa «Me gusta» en el perfil de cualquier artista para verlo aquí y en tus mixes.

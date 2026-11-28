@@ -1,14 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
+  BarChart3,
+  Calendar,
   Check,
   Clock,
   Copy,
+  Disc3,
   Flame,
   Headphones,
   Link2,
   ListMusic,
   Loader2,
+  Music2,
   Play,
   Plus,
   QrCode,
@@ -22,6 +26,7 @@ import {
 import type { UserProfile } from '@pmusic/core';
 import { getSyncSupabaseClient, usePMusicStore } from '../store/usePMusicStore.ts';
 import type { TopStatsWindow } from '../lib/wrapped-stats.ts';
+import { getCachedArtistArtwork } from '../utils/artist-artwork.ts';
 import {
   buildJamQrImageUrl,
   buildJamShareUrl,
@@ -45,6 +50,7 @@ export const SocialScreen: React.FC = React.memo(() => {
     friends,
     sharedPlaylists,
     shareListeningActivity,
+    favoriteArtists,
     friendActivities,
     personalTopStats,
     activeJamSession,
@@ -54,8 +60,8 @@ export const SocialScreen: React.FC = React.memo(() => {
     setShareListeningActivity,
     loadPersonalTopStats,
     playFriendActivityTrack,
-    openWrappedModal,
     playFromVoiceQuery,
+    openArtistDetail,
     hydrateSocialAndSubscribe,
     startJam,
     joinJamInApp,
@@ -82,6 +88,7 @@ export const SocialScreen: React.FC = React.memo(() => {
       friends: s.friends,
       sharedPlaylists: s.sharedPlaylists,
       shareListeningActivity: s.shareListeningActivity,
+      favoriteArtists: s.favoriteArtists,
       friendActivities: s.friendActivities,
       personalTopStats: s.personalTopStats,
       activeJamSession: s.activeJamSession,
@@ -91,8 +98,8 @@ export const SocialScreen: React.FC = React.memo(() => {
       setShareListeningActivity: s.setShareListeningActivity,
       loadPersonalTopStats: s.loadPersonalTopStats,
       playFriendActivityTrack: s.playFriendActivityTrack,
-      openWrappedModal: s.openWrappedModal,
       playFromVoiceQuery: s.playFromVoiceQuery,
+      openArtistDetail: s.openArtistDetail,
       hydrateSocialAndSubscribe: s.hydrateSocialAndSubscribe,
       startJam: s.startJam,
       joinJamInApp: s.joinJamInApp,
@@ -239,7 +246,11 @@ export const SocialScreen: React.FC = React.memo(() => {
           </div>
         </div>
 
-        <div className="grid w-full grid-cols-2 gap-1 rounded-[20px] border pm-border bg-white/[0.04] p-1 sm:inline-flex sm:w-auto sm:gap-0 sm:rounded-full">
+        <div
+          role="tablist"
+          aria-label="Secciones de Social"
+          className="pm-no-scrollbar flex w-full flex-nowrap gap-1.5 overflow-x-auto pb-0.5 sm:inline-flex sm:w-auto sm:gap-1 sm:rounded-full sm:border sm:pm-border sm:bg-white/[0.04] sm:p-1"
+        >
           {[
             {
               id: 'jam' as const,
@@ -252,9 +263,13 @@ export const SocialScreen: React.FC = React.memo(() => {
             <button
               key={tab.id}
               type="button"
+              role="tab"
+              aria-selected={socialSubTab === tab.id}
               onClick={() => setSocialSubTab(tab.id)}
-              className={`truncate rounded-full px-3 py-1.5 text-xs font-bold transition sm:px-3.5 ${
-                socialSubTab === tab.id ? 'pm-btn-primary shadow-sm' : 'pm-text-secondary hover:text-white'
+              className={`pm-compact-btn pm-pressable h-8 shrink-0 whitespace-nowrap rounded-full px-3.5 text-xs font-bold transition sm:px-4 ${
+                socialSubTab === tab.id
+                  ? 'pm-btn-primary shadow-sm'
+                  : 'bg-white/[0.05] pm-text-secondary hover:text-white sm:bg-transparent'
               }`}
             >
               {tab.label}
@@ -559,12 +574,17 @@ export const SocialScreen: React.FC = React.memo(() => {
                         className="flex items-center justify-between gap-2.5 rounded-xl border pm-border bg-white/[0.03] p-2.5"
                       >
                         <div className="flex min-w-0 items-center gap-2.5">
-                          <TrackArtwork
-                            src={act.thumbnailUrl}
-                            alt={act.trackTitle}
-                            variant="list"
-                            className="h-10 w-10 shrink-0 rounded-lg"
-                          />
+                          <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-[9px] bg-white/[0.06]">
+                            <TrackArtwork
+                              trackId={act.trackId}
+                              src={act.thumbnailUrl}
+                              title={act.trackTitle}
+                              artistName={act.trackArtist}
+                              alt={act.trackTitle}
+                              variant="list"
+                              imgClassName="h-full w-full object-cover"
+                            />
+                          </div>
                           <div className="min-w-0">
                             <div className="truncate text-[11px] font-bold text-emerald-300">
                               {friendName}
@@ -878,40 +898,36 @@ export const SocialScreen: React.FC = React.memo(() => {
         </div>
       )}
 
-      {/* 4. MI TOP SEMANAL Y MENSUAL (7d / 30d) */}
+      {/* 4. MI TOP SEMANAL, MENSUAL Y ANUAL (7d / 30d / year) */}
       {socialSubTab === 'top' && (
         <div data-testid="social-top-panel" className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="inline-flex rounded-full border pm-border bg-white/[0.04] p-1">
-              <button
-                type="button"
-                data-testid="top-window-7d"
-                onClick={() => setTopWindow('7d')}
-                className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition ${
-                  topWindow === '7d' ? 'pm-btn-primary shadow-sm' : 'pm-text-secondary'
-                }`}
-              >
-                Últimos 7 días
-              </button>
-              <button
-                type="button"
-                data-testid="top-window-30d"
-                onClick={() => setTopWindow('30d')}
-                className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition ${
-                  topWindow === '30d' ? 'pm-btn-primary shadow-sm' : 'pm-text-secondary'
-                }`}
-              >
-                Últimos 30 días
-              </button>
+              {[
+                { id: '7d' as const, label: '7 días', testId: 'top-window-7d' },
+                { id: '30d' as const, label: '30 días', testId: 'top-window-30d' },
+                { id: 'year' as const, label: 'Este año', testId: 'top-window-year' },
+              ].map((win) => (
+                <button
+                  key={win.id}
+                  type="button"
+                  data-testid={win.testId}
+                  onClick={() => setTopWindow(win.id)}
+                  className={`pm-compact-btn h-8 rounded-full px-3.5 text-xs font-bold transition ${
+                    topWindow === win.id ? 'pm-btn-primary shadow-sm' : 'pm-text-secondary hover:text-white'
+                  }`}
+                >
+                  {win.label}
+                </button>
+              ))}
             </div>
-            <button
-              type="button"
-              onClick={() => void openWrappedModal()}
-              className="pm-btn-secondary inline-flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-bold"
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-              <span>Ver pMusic Wrapped</span>
-            </button>
+            <span className="text-[11px] font-semibold pm-text-tertiary">
+              {topWindow === '7d'
+                ? 'Tu semana en pMusic'
+                : topWindow === '30d'
+                  ? 'Tu último mes'
+                  : `Tu resumen ${new Date().getFullYear()}`}
+            </span>
           </div>
 
           {(() => {
@@ -926,46 +942,324 @@ export const SocialScreen: React.FC = React.memo(() => {
             if (stats.totalPlays === 0) {
               return (
                 <div className="pm-surface-card rounded-2xl p-8 text-center text-xs pm-text-secondary">
-                  Todavía no hay escuchas registradas en los últimos {topWindow === '7d' ? '7' : '30'} días.
+                  Todavía no hay escuchas registradas en{' '}
+                  {topWindow === '7d'
+                    ? 'los últimos 7 días'
+                    : topWindow === '30d'
+                      ? 'los últimos 30 días'
+                      : 'lo que va de año'}
+                  .
                 </div>
               );
             }
+
+            const formatTimeBadge = (mins: number) =>
+              mins >= 60 ? `${Math.floor(mins / 60)} h ${mins % 60} m` : `${mins} min`;
+
+            const resolveTopArtistAvatar = (artistName: string, fallbackThumb?: string) => {
+              const norm = artistName.trim().toLowerCase();
+              const favMatch = favoriteArtists.find(
+                (fa) => fa.artistName.trim().toLowerCase() === norm && fa.thumbnailUrl
+              );
+              return (
+                favMatch?.thumbnailUrl ||
+                getCachedArtistArtwork(artistName) ||
+                fallbackThumb
+              );
+            };
+
+            const handleOpenTopArtist = (artistName: string, thumb?: string) => {
+              const norm = artistName.trim().toLowerCase();
+              const favMatch = favoriteArtists.find(
+                (fa) => fa.artistName.trim().toLowerCase() === norm
+              );
+              if (favMatch) {
+                void openArtistDetail(favMatch.artistId, {
+                  name: favMatch.artistName,
+                  thumbnailUrl: favMatch.thumbnailUrl ?? thumb,
+                });
+                return;
+              }
+              void playFromVoiceQuery(artistName);
+            };
+
+            const leadTrack = stats.topTracks[0] ?? null;
+            const leadArtist = stats.topArtists[0] ?? null;
+            const leadArtistThumb = leadArtist
+              ? resolveTopArtistAvatar(leadArtist.title, leadArtist.thumbnailUrl)
+              : undefined;
+            const heroBackdrop = leadArtistThumb || leadTrack?.thumbnailUrl;
+            const dailyActivity = stats.dailyActivity ?? [];
+            const peakBarMinutes = Math.max(
+              1,
+              ...dailyActivity.map((d) => (d.minutes > 0 ? d.minutes : d.plays))
+            );
+            const periodTag =
+              topWindow === '7d'
+                ? '7 DÍAS'
+                : topWindow === '30d'
+                  ? '30 DÍAS'
+                  : `RESUMEN ${new Date().getFullYear()}`;
+
             return (
               <>
-                <div className="grid grid-cols-3 gap-2.5">
-                  <div className="pm-surface-card rounded-2xl p-3.5">
-                    <div className="flex items-center gap-1.5 text-[11px] font-semibold pm-text-tertiary">
-                      <Clock className="h-3.5 w-3.5" /> Minutos
+                {/* Modern pMusic Hero Spotlight (matching artist/playlist visual language) */}
+                {(leadArtist || leadTrack) && (
+                  <section className="relative overflow-hidden rounded-[22px] border border-white/[0.08] bg-[var(--pm-bg-canvas)] p-4 shadow-[0_18px_46px_rgba(0,0,0,0.45)] sm:p-5">
+                    {heroBackdrop && (
+                      <>
+                        <img
+                          src={heroBackdrop}
+                          alt=""
+                          aria-hidden="true"
+                          className="pointer-events-none absolute inset-0 h-full w-full scale-125 object-cover opacity-40 blur-3xl saturate-150"
+                        />
+                        <div
+                          aria-hidden="true"
+                          className="pointer-events-none absolute inset-0 bg-gradient-to-br from-black/50 via-[#0a0a0f]/75 to-[#08080c]/95"
+                        />
+                      </>
+                    )}
+                    <div className="relative z-10 space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="inline-flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-[0.14em] text-white/70">
+                          <BarChart3 className="h-3.5 w-3.5" />
+                          <span>{periodTag} EN PMUSIC</span>
+                        </span>
+                        <span className="tabular-nums text-[11px] font-semibold text-white/65">
+                          {formatTimeBadge(stats.totalMinutes)} · {stats.totalPlays} escuchas
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                        {leadArtist && (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenTopArtist(leadArtist.title, leadArtistThumb)}
+                            className="pm-pressable group flex items-center gap-3 rounded-[16px] border border-white/10 bg-white/[0.06] p-3 text-left backdrop-blur-md transition hover:bg-white/[0.11]"
+                          >
+                            <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-full ring-1 ring-white/20">
+                              <TrackArtwork
+                                src={leadArtistThumb}
+                                artistName={leadArtist.title}
+                                alt={leadArtist.title}
+                                variant="list"
+                                imgClassName="h-full w-full object-cover object-top"
+                              />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/60">
+                                Artista #1
+                              </div>
+                              <div className="truncate text-[16px] font-black leading-tight text-white">
+                                {leadArtist.title}
+                              </div>
+                              <div className="tabular-nums truncate text-[11.5px] text-white/70">
+                                {leadArtist.minutes} min · {leadArtist.plays} rep
+                              </div>
+                            </div>
+                          </button>
+                        )}
+
+                        {leadTrack && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void playFromVoiceQuery(
+                                `${leadTrack.title} ${leadTrack.subtitle ?? ''}`.trim()
+                              )
+                            }
+                            className="pm-pressable group flex items-center gap-3 rounded-[16px] border border-white/10 bg-white/[0.06] p-3 text-left backdrop-blur-md transition hover:bg-white/[0.11]"
+                          >
+                            <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-[11px] ring-1 ring-white/20">
+                              <TrackArtwork
+                                trackId={leadTrack.key}
+                                src={leadTrack.thumbnailUrl}
+                                title={leadTrack.title}
+                                artistName={leadTrack.subtitle}
+                                alt={leadTrack.title}
+                                variant="list"
+                                imgClassName="h-full w-full object-cover"
+                              />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/60">
+                                Canción #1
+                              </div>
+                              <div className="truncate text-[16px] font-black leading-tight text-white">
+                                {leadTrack.title}
+                              </div>
+                              <div className="truncate text-[11.5px] text-white/70">
+                                {leadTrack.subtitle} · {leadTrack.plays} rep
+                              </div>
+                            </div>
+                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-black shadow">
+                              <Play className="h-3.5 w-3.5 translate-x-[0.5px] fill-current" />
+                            </span>
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    <div className="mt-1 text-2xl font-black pm-text-primary">
-                      {stats.totalMinutes}
+                  </section>
+                )}
+
+                {/* Core Listening Stats Grid */}
+                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+                  <div className="pm-surface-card rounded-[16px] p-3.5">
+                    <div className="flex items-center gap-1.5 text-[11px] font-semibold pm-text-tertiary">
+                      <Clock className="h-3.5 w-3.5" /> Tiempo
+                    </div>
+                    <div className="tabular-nums mt-1 text-xl font-black pm-text-primary sm:text-2xl">
+                      {formatTimeBadge(stats.totalMinutes)}
                     </div>
                   </div>
-                  <div className="pm-surface-card rounded-2xl p-3.5">
+                  <div className="pm-surface-card rounded-[16px] p-3.5">
                     <div className="flex items-center gap-1.5 text-[11px] font-semibold pm-text-tertiary">
                       <Flame className="h-3.5 w-3.5" /> Escuchas
                     </div>
-                    <div className="mt-1 text-2xl font-black pm-text-primary">
+                    <div className="tabular-nums mt-1 text-xl font-black pm-text-primary sm:text-2xl">
                       {stats.totalPlays}
                     </div>
                   </div>
-                  <div className="pm-surface-card rounded-2xl p-3.5">
+                  <div className="pm-surface-card rounded-[16px] p-3.5">
                     <div className="flex items-center gap-1.5 text-[11px] font-semibold pm-text-tertiary">
                       <Users className="h-3.5 w-3.5" /> Artistas
                     </div>
-                    <div className="mt-1 text-2xl font-black pm-text-primary">
+                    <div className="tabular-nums mt-1 text-xl font-black pm-text-primary sm:text-2xl">
                       {stats.uniqueArtists}
+                    </div>
+                  </div>
+                  <div className="pm-surface-card rounded-[16px] p-3.5">
+                    <div className="flex items-center gap-1.5 text-[11px] font-semibold pm-text-tertiary">
+                      <Calendar className="h-3.5 w-3.5" /> Días activos
+                    </div>
+                    <div className="tabular-nums mt-1 text-xl font-black pm-text-primary sm:text-2xl">
+                      {stats.activeDays ?? 0}
                     </div>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                  <div className="pm-surface-card space-y-2.5 rounded-2xl p-4">
-                    <div className="text-xs font-bold uppercase tracking-wider pm-text-tertiary">
-                      Top Canciones ({topWindow === '7d' ? '7 días' : '30 días'})
+                {/* Mini-Wrapped Habits & Weekly Rhythm */}
+                {(dailyActivity.length > 0 || (stats.topGenres && stats.topGenres.length > 0)) && (
+                  <div className="grid grid-cols-1 gap-3 lg:grid-cols-12">
+                    {dailyActivity.length > 0 && (
+                      <div className="pm-surface-card rounded-[18px] p-4 lg:col-span-5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-bold uppercase tracking-wider pm-text-tertiary">
+                            Ritmo semanal
+                          </span>
+                          {stats.avgMinutesPerActiveDay > 0 && (
+                            <span className="tabular-nums text-[11px] font-semibold pm-text-secondary">
+                              ~{stats.avgMinutesPerActiveDay} min/día
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-4 flex h-20 items-end justify-between gap-2 px-1">
+                          {dailyActivity.map((day) => {
+                            const val = day.minutes > 0 ? day.minutes : day.plays;
+                            const pct =
+                              val > 0 ? Math.max(14, Math.round((val / peakBarMinutes) * 100)) : 6;
+                            return (
+                              <div
+                                key={day.label}
+                                className="flex flex-1 flex-col items-center gap-1.5"
+                                title={`${day.label}: ${day.minutes} min · ${day.plays} rep`}
+                              >
+                                <div className="flex h-14 w-full items-end justify-center">
+                                  <div
+                                    className={`w-full max-w-[18px] rounded-full transition-all ${
+                                      val > 0 ? 'bg-white/85' : 'bg-white/10'
+                                    }`}
+                                    style={{ height: `${pct}%` }}
+                                  />
+                                </div>
+                                <span className="text-[10px] font-bold pm-text-tertiary">
+                                  {day.label}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="pm-surface-card flex flex-col justify-between gap-3 rounded-[18px] p-4 lg:col-span-7">
+                      <div className="flex flex-wrap gap-2">
+                        <div className="rounded-[12px] bg-white/[0.04] px-3 py-2">
+                          <div className="text-[10px] font-bold uppercase tracking-wider pm-text-tertiary">
+                            Racha máx.
+                          </div>
+                          <div className="tabular-nums text-sm font-black pm-text-primary">
+                            {stats.longestStreakDays ?? 0}{' '}
+                            {stats.longestStreakDays === 1 ? 'día' : 'días'}
+                          </div>
+                        </div>
+                        {stats.peakTimeOfDay && (
+                          <div className="rounded-[12px] bg-white/[0.04] px-3 py-2">
+                            <div className="text-[10px] font-bold uppercase tracking-wider pm-text-tertiary">
+                              Tu momento
+                            </div>
+                            <div className="text-sm font-black pm-text-primary">
+                              {stats.peakTimeOfDay}
+                            </div>
+                          </div>
+                        )}
+                        {stats.peakDayOfWeek && (
+                          <div className="rounded-[12px] bg-white/[0.04] px-3 py-2">
+                            <div className="text-[10px] font-bold uppercase tracking-wider pm-text-tertiary">
+                              Día más fuerte
+                            </div>
+                            <div className="text-sm font-black pm-text-primary">
+                              {stats.peakDayOfWeek}
+                            </div>
+                          </div>
+                        )}
+                        <div className="rounded-[12px] bg-white/[0.04] px-3 py-2">
+                          <div className="text-[10px] font-bold uppercase tracking-wider pm-text-tertiary">
+                            Temas distintos
+                          </div>
+                          <div className="tabular-nums text-sm font-black pm-text-primary">
+                            {stats.uniqueTracks}
+                          </div>
+                        </div>
+                      </div>
+
+                      {stats.topGenres.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="inline-flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider pm-text-tertiary">
+                            <Disc3 className="h-3 w-3" /> Géneros:
+                          </span>
+                          {stats.topGenres.slice(0, 4).map((g) => (
+                            <span
+                              key={g.genre}
+                              className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.05] px-2.5 py-0.5 text-[11px] font-semibold pm-text-primary"
+                            >
+                              <span>{g.genre}</span>
+                              <span className="tabular-nums text-[10px] pm-text-tertiary">
+                                {g.percent}%
+                              </span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    <div className="space-y-1.5">
-                      {stats.topTracks.map((item, idx) => (
+                  </div>
+                )}
+
+                {/* Top 10 Canciones & Top 10 Artistas (fixed square/circle artwork frames) */}
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                  <div className="pm-surface-card space-y-2.5 rounded-[18px] p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider pm-text-tertiary">
+                        <Music2 className="h-3.5 w-3.5" />
+                        <span>
+                          Top {Math.min(10, stats.topTracks.length)} Canciones (
+                          {topWindow === '7d' ? '7 días' : topWindow === '30d' ? '30 días' : 'Año'})
+                        </span>
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      {stats.topTracks.slice(0, 10).map((item, idx) => (
                         <button
                           key={item.key}
                           type="button"
@@ -974,20 +1268,25 @@ export const SocialScreen: React.FC = React.memo(() => {
                               `${item.title} ${item.subtitle ?? ''}`.trim()
                             )
                           }
-                          className="pm-hover flex w-full items-center justify-between gap-3 rounded-xl px-2 py-1.5 text-left"
+                          className="pm-hover flex w-full items-center justify-between gap-2.5 rounded-[12px] px-2 py-1.5 text-left"
                         >
-                          <div className="flex min-w-0 items-center gap-2.5">
-                            <span className="w-5 text-center text-xs font-black pm-text-tertiary">
+                          <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                            <span className="tabular-nums w-5 shrink-0 text-center text-xs font-black pm-text-tertiary">
                               {idx + 1}
                             </span>
-                            <TrackArtwork
-                              src={item.thumbnailUrl}
-                              alt={item.title}
-                              variant="list"
-                              className="h-9 w-9 shrink-0 rounded-lg"
-                            />
-                            <div className="min-w-0">
-                              <div className="truncate text-xs font-bold pm-text-primary">
+                            <div className="relative h-11 w-11 shrink-0 overflow-hidden rounded-[9px] bg-white/[0.06]">
+                              <TrackArtwork
+                                trackId={item.key}
+                                src={item.thumbnailUrl}
+                                title={item.title}
+                                artistName={item.subtitle}
+                                alt={item.title}
+                                variant="list"
+                                imgClassName="h-full w-full object-cover"
+                              />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-[13px] font-bold pm-text-primary">
                                 {item.title}
                               </div>
                               <div className="truncate text-[11px] pm-text-secondary">
@@ -995,7 +1294,7 @@ export const SocialScreen: React.FC = React.memo(() => {
                               </div>
                             </div>
                           </div>
-                          <span className="shrink-0 text-[11px] font-semibold pm-text-tertiary">
+                          <span className="tabular-nums shrink-0 whitespace-nowrap text-[11px] font-semibold pm-text-tertiary">
                             {item.plays} rep · {item.minutes}m
                           </span>
                         </button>
@@ -1003,37 +1302,56 @@ export const SocialScreen: React.FC = React.memo(() => {
                     </div>
                   </div>
 
-                  <div className="pm-surface-card space-y-2.5 rounded-2xl p-4">
-                    <div className="text-xs font-bold uppercase tracking-wider pm-text-tertiary">
-                      Top Artistas ({topWindow === '7d' ? '7 días' : '30 días'})
+                  <div className="pm-surface-card space-y-2.5 rounded-[18px] p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider pm-text-tertiary">
+                        <Users className="h-3.5 w-3.5" />
+                        <span>
+                          Top {Math.min(10, stats.topArtists.length)} Artistas (
+                          {topWindow === '7d' ? '7 días' : topWindow === '30d' ? '30 días' : 'Año'})
+                        </span>
+                      </div>
                     </div>
-                    <div className="space-y-1.5">
-                      {stats.topArtists.map((artist, idx) => (
-                        <button
-                          key={artist.key}
-                          type="button"
-                          onClick={() => void playFromVoiceQuery(artist.title)}
-                          className="pm-hover flex w-full items-center justify-between gap-3 rounded-xl px-2 py-1.5 text-left"
-                        >
-                          <div className="flex min-w-0 items-center gap-2.5">
-                            <span className="w-5 text-center text-xs font-black pm-text-tertiary">
-                              {idx + 1}
-                            </span>
-                            <TrackArtwork
-                              src={artist.thumbnailUrl}
-                              alt={artist.title}
-                              variant="list"
-                              className="h-9 w-9 shrink-0 rounded-full"
-                            />
-                            <div className="truncate text-xs font-bold pm-text-primary">
-                              {artist.title}
+                    <div className="space-y-1">
+                      {stats.topArtists.slice(0, 10).map((artist, idx) => {
+                        const resolvedArtistImg = resolveTopArtistAvatar(
+                          artist.title,
+                          artist.thumbnailUrl
+                        );
+                        return (
+                          <button
+                            key={artist.key}
+                            type="button"
+                            onClick={() =>
+                              handleOpenTopArtist(artist.title, resolvedArtistImg)
+                            }
+                            className="pm-hover flex w-full items-center justify-between gap-2.5 rounded-[12px] px-2 py-1.5 text-left"
+                          >
+                            <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                              <span className="tabular-nums w-5 shrink-0 text-center text-xs font-black pm-text-tertiary">
+                                {idx + 1}
+                              </span>
+                              <div className="relative h-11 w-11 shrink-0 overflow-hidden rounded-full bg-white/[0.06]">
+                                <TrackArtwork
+                                  src={resolvedArtistImg}
+                                  artistName={artist.title}
+                                  alt={artist.title}
+                                  variant="list"
+                                  imgClassName="h-full w-full object-cover object-top"
+                                />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-[13px] font-bold pm-text-primary">
+                                  {artist.title}
+                                </div>
+                              </div>
                             </div>
-                          </div>
-                          <span className="shrink-0 text-[11px] font-semibold pm-text-tertiary">
-                            {artist.minutes} min · {artist.plays} rep
-                          </span>
-                        </button>
-                      ))}
+                            <span className="tabular-nums shrink-0 whitespace-nowrap text-[11px] font-semibold pm-text-tertiary">
+                              {artist.minutes} min · {artist.plays} rep
+                            </span>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 </div>

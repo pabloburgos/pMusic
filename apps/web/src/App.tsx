@@ -74,6 +74,7 @@ import { MobileHubPage } from './components/MobileHubPage.tsx';
 import { TrackInfoModal } from './components/TrackInfoModal.tsx';
 import { AuthOnboardingModal } from './components/AuthOnboardingModal.tsx';
 import { AddToPlaylistModal } from './components/AddToPlaylistModal.tsx';
+import { CreatePlaylistModal } from './components/CreatePlaylistModal.tsx';
 import { UserAvatar } from './components/UserAvatar.tsx';
 import { ReleaseNotificationsModal } from './components/ReleaseNotificationsModal.tsx';
 import { syncNativeSystemBars } from './utils/system-bars.ts';
@@ -311,6 +312,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     setDjPopoverOpen,
     setDevicesSheetOpen,
     setImportModalOpen,
+    setCreatePlaylistModalOpen,
     setSettingsOpen,
     setMobileHubOpen,
     setSpotlightOpen,
@@ -331,7 +333,6 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     toggleMute,
     toggleLike,
     likeTrackIfNeeded,
-    createPlaylist,
     addTrackToPlaylist,
     moveQueueItem,
     removeQueueItem,
@@ -417,6 +418,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       setDjPopoverOpen: s.setDjPopoverOpen,
       setDevicesSheetOpen: s.setDevicesSheetOpen,
       setImportModalOpen: s.setImportModalOpen,
+      setCreatePlaylistModalOpen: s.setCreatePlaylistModalOpen,
       setSettingsOpen: s.setSettingsOpen,
       setMobileHubOpen: s.setMobileHubOpen,
       setSpotlightOpen: s.setSpotlightOpen,
@@ -437,7 +439,6 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       toggleMute: s.toggleMute,
       toggleLike: s.toggleLike,
       likeTrackIfNeeded: s.likeTrackIfNeeded,
-      createPlaylist: s.createPlaylist,
       addTrackToPlaylist: s.addTrackToPlaylist,
       moveQueueItem: s.moveQueueItem,
       removeQueueItem: s.removeQueueItem,
@@ -1353,6 +1354,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
         else if (eqSheetOpen) setEqSheetOpen(false);
         else if (nowPlayingOpen) setNowPlayingOpen(false);
         else if (devicesSheetOpen) setDevicesSheetOpen(false);
+        else if (usePMusicStore.getState().createPlaylistModalOpen) setCreatePlaylistModalOpen(false);
         else if (importModalOpen) setImportModalOpen(false);
         else if (settingsOpen) setSettingsOpen(false);
         else if (mobileHubOpen) setMobileHubOpen(false);
@@ -1443,6 +1445,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     setDjPopoverOpen,
     setDevicesSheetOpen,
     setImportModalOpen,
+    setCreatePlaylistModalOpen,
     setSettingsOpen,
     togglePlayPause,
     toggleShuffle,
@@ -2047,15 +2050,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                       <button
                         type="button"
                         aria-label="Crear nueva playlist"
-                        onClick={async () => {
-                          const created = await createPlaylist(
-                            `Mi Playlist #${playlists.length + 1}`,
-                            '',
-                            []
-                          );
-                          openLocalPlaylistDetail(created.id);
-                          showToast(`Playlist «${created.name}» creada`);
-                        }}
+                        onClick={() => setCreatePlaylistModalOpen(true)}
                         className="pm-hover inline-flex h-7 w-7 items-center justify-center rounded-md pm-text-tertiary hover:text-[var(--pm-text-primary)]"
                       >
                         <Plus className="h-3.5 w-3.5" />
@@ -4141,6 +4136,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
         </Suspense>
       )}
       <ImportPlaylistModal />
+      <CreatePlaylistModal />
       <SettingsModal />
       <MobileHubPage />
       <AuthOnboardingModal />

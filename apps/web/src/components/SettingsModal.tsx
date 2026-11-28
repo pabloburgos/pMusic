@@ -130,7 +130,6 @@ const SettingsModalInner: React.FC = () => {
     sleepTimerRemainingSec,
     authState,
     userProfile,
-    wrappedLocalCount,
     onlineDevices,
     deviceName,
     offlineEntries,
@@ -145,7 +144,6 @@ const SettingsModalInner: React.FC = () => {
     setDevicesSheetOpen,
     setDeviceName,
     signInWithGoogle,
-    openWrappedModal,
     setTheme,
     setPlayerBarStyle,
     setAccentPreset,
@@ -1860,32 +1858,26 @@ const SettingsModalInner: React.FC = () => {
                     )}
 
                     <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t pm-border pt-3">
-                      <div className="text-[11px] pm-text-secondary">
-                        <strong className="pm-text-primary">pMusic Wrapped {new Date().getFullYear()}</strong>
-                        {userProfile?.username ? ` · @${userProfile.username}` : ''} ·{' '}
-                        {wrappedLocalCount} escuchas guardadas en segundo plano (se desbloquea en diciembre)
+                      <div>
+                        <div className="text-xs font-bold pm-text-primary">
+                          Resumen de escucha
+                        </div>
+                        <div className="text-[11px] pm-text-secondary">
+                          {userProfile?.username ? `@${userProfile.username} · ` : ''}Estadísticas de 7 días, 30 días y de todo el año
+                        </div>
                       </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          data-testid="settings-open-my-top-btn"
-                          onClick={() => {
-                            setSettingsOpen(false);
-                            setActiveTab('Social');
-                            setSocialSubTab('top');
-                          }}
-                          className="pm-btn-secondary rounded-full px-3 py-1.5 text-[11px] font-semibold"
-                        >
-                          Mi Top (7d / 30d)
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void openWrappedModal()}
-                          className="pm-btn-secondary rounded-full px-3 py-1.5 text-[11px] font-semibold"
-                        >
-                          Vista previa Wrapped
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        data-testid="settings-open-my-top-btn"
+                        onClick={() => {
+                          setSettingsOpen(false);
+                          setActiveTab('Social');
+                          setSocialSubTab('top');
+                        }}
+                        className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-[11px] font-semibold"
+                      >
+                        Mi Top
+                      </button>
                     </div>
 
                     <div className="mt-3 flex items-center justify-between gap-3 border-t pm-border pt-3">

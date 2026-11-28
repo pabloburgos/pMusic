@@ -62,7 +62,8 @@ const MobileHubPageInner: React.FC = () => {
     signOutSupabase,
     setAuthOnboardingOpen,
     openSettingsCategory,
-    openWrappedModal,
+    setActiveTab,
+    setSocialSubTab,
     playHistory,
     clearPlayHistory,
     playTrack,
@@ -78,7 +79,6 @@ const MobileHubPageInner: React.FC = () => {
     setAmbientMotionEnabled,
     sleepTimerMode,
     sleepTimerRemainingSec,
-    wrappedLocalCount,
   } = usePMusicStore();
 
   const [subView, setSubView] = useState<MobileHubSubView>('home');
@@ -348,18 +348,19 @@ const MobileHubPageInner: React.FC = () => {
                 type="button"
                 onClick={() => {
                   handleClose();
-                  void openWrappedModal();
+                  setActiveTab('Social');
+                  setSocialSubTab('top');
                 }}
                 className="pm-hover flex w-full items-center justify-between gap-3 px-4 py-3.5 text-left"
               >
                 <div className="flex min-w-0 items-center gap-3">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[11px] bg-fuchsia-500/20 text-fuchsia-400">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[11px] bg-white/10 text-white/90">
                     <Sparkles className="h-4.5 w-4.5" />
                   </span>
                   <div className="min-w-0">
-                    <div className="text-sm font-bold pm-text-primary">Tu pMusic Wrapped</div>
+                    <div className="text-sm font-bold pm-text-primary">Mi Top y estadísticas</div>
                     <div className="truncate text-xs pm-text-secondary">
-                      {wrappedLocalCount} escuchas registradas este año
+                      Tu resumen de 7 días, 30 días y este año
                     </div>
                   </div>
                 </div>
