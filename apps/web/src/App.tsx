@@ -67,7 +67,7 @@ import { SpotlightSearchModal } from './components/SpotlightSearchModal.tsx';
 import { AppToast, TrackContextMenu } from './components/TrackMenu.tsx';
 import { PlaylistOptionsMenu } from './components/PlaylistOptionsMenu.tsx';
 import { LiquidHeartIcon } from './components/LiquidHeartIcon.tsx';
-import { generatePlaylistCoverDataUrl } from './utils/playlist-artwork.ts';
+import { resolvePlaylistCoverInfo } from './utils/playlist-artwork.ts';
 import { ArtistLinks } from './components/ArtistLinks.tsx';
 import { SettingsModal } from './components/SettingsModal.tsx';
 import { MobileHubPage } from './components/MobileHubPage.tsx';
@@ -1571,6 +1571,14 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     { id: 'Biblioteca', label: 'Biblioteca', icon: <Library className="h-[18px] w-[18px]" /> },
     { id: 'Social', label: 'Social', icon: <Users className="h-[18px] w-[18px]" /> },
   ];
+  const mobileNavTabs = navTabs.filter((item) => item.id !== 'Explorar');
+
+  useEffect(() => {
+    if (isMobileViewport && activeTab === 'Explorar') {
+      setActiveTab('Buscar');
+    }
+  }, [isMobileViewport, activeTab, setActiveTab]);
+
   const dockHoverSec =
     dockHoverPct !== null ? (dockHoverPct / 100) * activeDockDurSec : null;
 
@@ -1986,7 +1994,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                   </button>
 
                   {playlists.slice(0, 5).map((pl) => {
-                    const thumb = pl.coverUrl ?? pl.tracks[0]?.thumbnailUrl;
+                    const coverInfo = resolvePlaylistCoverInfo(pl, playlistAppearances[pl.id]);
                     const isDropActive = sidebarDropTargetId === pl.id;
                     return (
                       <button
@@ -2009,21 +2017,19 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                           if (dropped) void addTrackToPlaylist(pl.id, dropped);
                         }}
                         onClick={() => openLocalPlaylistDetail(pl.id)}
-                        className={`mx-auto flex h-10 w-10 items-center justify-center overflow-hidden rounded-[11px] transition-all hover:scale-105 ${
+                        className={`relative mx-auto flex h-10 w-10 items-center justify-center overflow-hidden rounded-[11px] transition-all hover:scale-105 ${
                           isDropActive ? 'ring-2 ring-[var(--pm-accent-primary)]' : ''
                         }`}
                       >
-                        {thumb ? (
-                          <img
-                            src={thumb}
-                            alt=""
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <span className="pm-elevated flex h-full w-full items-center justify-center text-xs font-bold pm-text-secondary">
-                            {pl.name.slice(0, 1).toUpperCase()}
-                          </span>
-                        )}
+                        <TrackArtwork
+                          trackId={coverInfo.fallbackTrackId}
+                          src={coverInfo.url}
+                          title={pl.name}
+                          artistName={pl.tracks[0]?.artists[0]?.name}
+                          alt={pl.name}
+                          variant="list"
+                          imgClassName="h-full w-full object-cover"
+                        />
                       </button>
                     );
                   })}
@@ -2128,12 +2134,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                   </button>
 
                   {playlists.slice(0, 12).map((pl) => {
-                    const app = playlistAppearances[pl.id];
-                    const thumb =
-                      app?.coverUrl ??
-                      pl.coverUrl ??
-                      pl.tracks[0]?.thumbnailUrl ??
-                      generatePlaylistCoverDataUrl(pl.name, app?.coverStyleSeed ?? pl.coverStyleSeed ?? 0);
+                    const coverInfo = resolvePlaylistCoverInfo(pl, playlistAppearances[pl.id]);
                     const isDropActive = sidebarDropTargetId === pl.id;
                     return (
                       <button
@@ -2166,11 +2167,17 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                             : 'pm-hover'
                         }`}
                       >
-                        <img
-                          src={thumb}
-                          alt=""
-                          className="h-8 w-8 shrink-0 rounded-[7px] object-cover"
-                        />
+                        <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-[7px]">
+                          <TrackArtwork
+                            trackId={coverInfo.fallbackTrackId}
+                            src={coverInfo.url}
+                            title={pl.name}
+                            artistName={pl.tracks[0]?.artists[0]?.name}
+                            alt={pl.name}
+                            variant="list"
+                            imgClassName="h-full w-full object-cover"
+                          />
+                        </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5">
                             <span className="truncate text-[13px] pm-text-primary">
@@ -2198,12 +2205,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                     )
                     .slice(0, 8)
                     .map((sp) => {
-                      const spApp = playlistAppearances[sp.id];
-                      const spThumb =
-                        spApp?.coverUrl ??
-                        sp.coverUrl ??
-                        sp.tracks[0]?.thumbnailUrl ??
-                        generatePlaylistCoverDataUrl(sp.name, spApp?.coverStyleSeed ?? 0);
+                      const spCover = resolvePlaylistCoverInfo(sp, playlistAppearances[sp.id]);
                       return (
                       <button
                         key={`sb-sp-${sp.id}`}
@@ -2217,11 +2219,17 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                         onClick={() => openSharedPlaylistDetail(sp.id)}
                         className="pm-hover flex w-full items-center gap-3 rounded-[10px] px-2 py-1.5 text-left transition-all"
                       >
-                        <img
-                          src={spThumb}
-                          alt=""
-                          className="h-8 w-8 shrink-0 rounded-[7px] object-cover"
-                        />
+                        <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-[7px]">
+                          <TrackArtwork
+                            trackId={spCover.fallbackTrackId}
+                            src={spCover.url}
+                            title={sp.name}
+                            artistName={sp.tracks[0]?.artists[0]?.name}
+                            alt={sp.name}
+                            variant="list"
+                            imgClassName="h-full w-full object-cover"
+                          />
+                        </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5">
                             <span className="truncate text-[13px] pm-text-primary">{sp.name}</span>
@@ -4085,9 +4093,9 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
             role="tablist"
             aria-label="Navegación móvil"
             data-testid="mobile-tab-bar"
-            className={`pm-glass-regular fixed inset-x-3 bottom-[max(0.75rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] z-40 grid grid-cols-5 gap-1 rounded-[22px] p-1.5 ${nowPlayingOpen ? 'pm-behind-nowplaying' : ''}`}
+            className={`pm-glass-regular fixed inset-x-3 bottom-[max(0.75rem,var(--pm-safe-bottom,env(safe-area-inset-bottom)))] z-40 grid grid-cols-4 gap-1 rounded-[22px] p-1.5 ${nowPlayingOpen ? 'pm-behind-nowplaying' : ''}`}
           >
-            {navTabs.map((item) => {
+            {mobileNavTabs.map((item) => {
               const active = activeTab === item.id;
               return (
                 <button

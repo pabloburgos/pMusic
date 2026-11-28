@@ -32,6 +32,55 @@ function pickPalette(name: string, seed = 0): [string, string, string, string] {
   return ARTWORK_PALETTES[h % ARTWORK_PALETTES.length] ?? ARTWORK_PALETTES[0]!;
 }
 
+export interface ResolvedPlaylistCover {
+  url: string;
+  hasCustomCover: boolean;
+  fallbackTrackId?: string;
+}
+
+/**
+ * Resolves the canonical display cover for any playlist, preferring explicit
+ * appearance overrides (`coverUrl` in `playlistAppearances`) over `pl.coverUrl`
+ * and falling back cleanly to track #0 or a deterministic pMusic cover.
+ */
+export function resolvePlaylistCoverInfo(
+  pl: {
+    name: string;
+    coverUrl?: string | null;
+    coverStyleSeed?: number;
+    tracks: Array<{
+      id?: string;
+      thumbnailHighUrl?: string;
+      thumbnailUrl?: string;
+    }>;
+  },
+  app?: { coverUrl?: string | null; coverStyleSeed?: number } | null
+): ResolvedPlaylistCover {
+  const customRaw =
+    app && 'coverUrl' in app ? (app.coverUrl ?? '').trim() : (pl.coverUrl ?? '').trim();
+  if (customRaw) {
+    return {
+      url: customRaw,
+      hasCustomCover: true,
+      fallbackTrackId: undefined,
+    };
+  }
+  const firstTrack = pl.tracks[0];
+  const firstThumb = (firstTrack?.thumbnailHighUrl ?? firstTrack?.thumbnailUrl ?? '').trim();
+  if (firstThumb) {
+    return {
+      url: firstThumb,
+      hasCustomCover: false,
+      fallbackTrackId: firstTrack?.id,
+    };
+  }
+  return {
+    url: generatePlaylistCoverDataUrl(pl.name, app?.coverStyleSeed ?? pl.coverStyleSeed ?? 0),
+    hasCustomCover: false,
+    fallbackTrackId: undefined,
+  };
+}
+
 /**
  * Formats playlist total seconds into clean pMusic Spanish duration strings (e.g. "2 h 15 min", "43 min").
  */

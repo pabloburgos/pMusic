@@ -5,6 +5,7 @@ import {
   getCachedOfflineCoverUrl,
   resolveOfflineCoverUrl,
   saveOfflineCover,
+  subscribeOfflineCoverSaved,
 } from '../utils/offline-covers.ts';
 import {
   getCachedArtistArtwork,
@@ -131,6 +132,10 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
   const uid = useId().replace(/[^a-zA-Z0-9_-]/g, '');
   const isOfflineNetwork = usePMusicStore((s) => s.isOfflineNetwork);
   const streamQuality = usePMusicStore((s) => s.streamQuality);
+  const isDownloaded = usePMusicStore((s) =>
+    Boolean(trackId && s.offlineDownloads[trackId] === 'downloaded')
+  );
+  const [coverRevision, setCoverRevision] = useState(0);
   const isDataSaver = streamQuality === 'low';
   const rawSrc = (src ?? '').trim();
   const cleanSrc = isBrokenCoverUrl(rawSrc) ? '' : rawSrc;
@@ -143,8 +148,18 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
   const optimizedSrc = optimizeArtworkUrl(cleanSrc, artworkSlot, isDataSaver ? true : undefined);
 
   const isEagerVariant = variant === 'nowplaying' || variant === 'mini';
-  const requireHdOffline = !isOfflineNetwork && (variant === 'nowplaying' || variant === 'card');
+  const requireHdOffline =
+    !isOfflineNetwork && !isDownloaded && (variant === 'nowplaying' || variant === 'card');
   const effectiveLoading = loading ?? (isEagerVariant ? 'eager' : 'lazy');
+
+  useEffect(() => {
+    if (!trackId) return;
+    return subscribeOfflineCoverSaved((savedId) => {
+      if (savedId === trackId) {
+        setCoverRevision((n) => n + 1);
+      }
+    });
+  }, [trackId]);
   const [resolvedSrc, setResolvedSrc] = useState<string | null>(() => {
     const cached = getCachedOfflineCoverUrl(trackId, cleanSrc, { requireHd: requireHdOffline });
     if (cached) return cached;
@@ -288,6 +303,8 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
     optimizedSrc,
     artworkSlot,
     isDataSaver,
+    isDownloaded,
+    coverRevision,
     requireHdOffline,
     displayTitle,
     primaryArtist,
@@ -560,6 +577,16 @@ export const TrackArtwork: React.FC<TrackArtworkProps> = ({
   const handleImgLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
     setImgLoaded(true);
     const img = e.currentTarget;
+    if (
+      !isOfflineNetwork &&
+      isDownloaded &&
+      trackId &&
+      renderSrc &&
+      !renderSrc.startsWith('blob:') &&
+      !getCachedOfflineCoverUrl(trackId, renderSrc)
+    ) {
+      void saveOfflineCover(trackId, renderSrc).catch(() => false);
+    }
     if (
       isOfflineNetwork ||
       isDataSaver ||

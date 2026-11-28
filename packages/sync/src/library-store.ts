@@ -566,7 +566,14 @@ export class LibraryStore {
     const [moved] = copy.splice(fromIndex, 1);
     if (!moved) return pl;
     copy.splice(toIndex, 0, moved);
-    return this.updatePlaylist(playlistId, { tracks: copy });
+    const keepCustomCover =
+      Boolean(pl.coverUrl) &&
+      pl.coverUrl !== pl.tracks[0]?.thumbnailUrl &&
+      pl.coverUrl !== pl.tracks[0]?.thumbnailHighUrl;
+    return this.updatePlaylist(playlistId, {
+      tracks: copy,
+      coverUrl: keepCustomCover ? pl.coverUrl : (copy[0]?.thumbnailUrl ?? ''),
+    });
   }
 
   public getLikedTracks(): LikedTrackRecord[] {

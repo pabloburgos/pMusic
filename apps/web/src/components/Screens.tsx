@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
   ArrowDownAZ,
+  ArrowUpDown,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -13,7 +14,9 @@ import {
   Download,
   GripVertical,
   Heart,
+  LayoutGrid,
   Link2,
+  List,
   ListMusic,
   ListOrdered,
   ListPlus,
@@ -61,6 +64,7 @@ import {
   formatPlaylistDuration,
   generatePlaylistBannerDataUrl,
   generatePlaylistCoverDataUrl,
+  resolvePlaylistCoverInfo,
 } from '../utils/playlist-artwork.ts';
 import { extractCharacteristicImageColor, type RgbTriple } from '../utils/cover-color.ts';
 import {
@@ -684,20 +688,35 @@ const CoverCard: React.FC<{
           type="button"
           aria-label={`Abrir ${title}`}
           onClick={onOpen}
-          className={`block w-full overflow-hidden text-left ${
+          className={`relative block aspect-square w-full overflow-hidden text-left shadow-[0_10px_24px_rgba(0,0,0,0.42)] ring-1 ring-white/[0.08] ${
             round ? 'rounded-full' : 'rounded-[12px] sm:rounded-[8px]'
           }`}
         >
-          <img
-            src={optimizeArtworkUrl(image, round ? 'avatar' : 'card')}
-            alt={title}
-            loading="lazy"
-            decoding="async"
-            fetchPriority="low"
-            className={`pm-skeleton-shimmer aspect-square w-full object-cover shadow-[0_10px_24px_rgba(0,0,0,0.42)] ring-1 ring-white/[0.08] transition-transform duration-300 ease-out group-hover:scale-[1.04] ${
-              round ? 'rounded-full object-[50%_20%]' : 'rounded-[12px] sm:rounded-[8px]'
-            }`}
-          />
+          {dragTrack ? (
+            <TrackArtwork
+              trackId={dragTrack.id}
+              src={image}
+              title={title}
+              artistName={dragTrack.artists?.[0]?.name}
+              artistId={dragTrack.artists?.[0]?.id}
+              alt={title}
+              variant="card"
+              imgClassName={`h-full w-full object-cover transition-transform duration-300 ease-out group-hover:scale-[1.04] ${
+                round ? 'object-[50%_20%]' : ''
+              }`}
+            />
+          ) : (
+            <img
+              src={optimizeArtworkUrl(image, round ? 'avatar' : 'card')}
+              alt={title}
+              loading="lazy"
+              decoding="async"
+              fetchPriority="low"
+              className={`pm-skeleton-shimmer h-full w-full object-cover transition-transform duration-300 ease-out group-hover:scale-[1.04] ${
+                round ? 'object-[50%_20%]' : ''
+              }`}
+            />
+          )}
         </button>
         {badge && (
           <span className="pointer-events-none absolute top-2 left-2 rounded-full bg-black/60 backdrop-blur-md px-2 py-0.5 text-[10px] font-bold tracking-wider text-white">
@@ -2637,8 +2656,11 @@ export const DetailViewPanel: React.FC = React.memo(() => {
     titleContent: React.ReactNode;
   }) => {
     const firstTrackThumb = opts.tracks[0]?.thumbnailHighUrl ?? opts.tracks[0]?.thumbnailUrl ?? '';
+    const hasCustomCover = Boolean(opts.coverUrl && opts.coverUrl.trim());
     const resolvedCover =
-      opts.coverUrl || firstTrackThumb || generatePlaylistCoverDataUrl(opts.name, opts.seed);
+      (hasCustomCover ? opts.coverUrl!.trim() : '') ||
+      firstTrackThumb ||
+      generatePlaylistCoverDataUrl(opts.name, opts.seed);
     const hasCustomBanner = Boolean(opts.bannerUrl);
     const resolvedBanner =
       opts.bannerUrl || firstTrackThumb || generatePlaylistBannerDataUrl(opts.name, opts.seed);
@@ -2652,7 +2674,7 @@ export const DetailViewPanel: React.FC = React.memo(() => {
     const renderCoverButton = (sizeClass: string) => (
       <div className={`group relative ${sizeClass} shrink-0 overflow-hidden`}>
         <TrackArtwork
-          trackId={opts.tracks[0]?.id}
+          trackId={hasCustomCover ? undefined : opts.tracks[0]?.id}
           src={resolvedCover}
           title={opts.name}
           artistName={opts.tracks[0]?.artists[0]?.name}
@@ -2816,8 +2838,9 @@ export const DetailViewPanel: React.FC = React.memo(() => {
           badgeLabel: sharedPl.kind === 'blend' ? 'BLEND' : 'LISTA COLABORATIVA',
           badgeCollab: true,
           tracks: sharedPl.tracks,
-          coverUrl: spApp?.coverUrl ?? sharedPl.coverUrl,
-          bannerUrl: spApp?.bannerUrl ?? null,
+          coverUrl:
+            spApp && 'coverUrl' in spApp ? spApp.coverUrl : sharedPl.coverUrl,
+          bannerUrl: spApp && 'bannerUrl' in spApp ? spApp.bannerUrl : null,
           bannerEnabled: spApp?.bannerEnabled ?? true,
           seed: spApp?.coverStyleSeed ?? 0,
           titleContent: (
@@ -3175,8 +3198,10 @@ export const DetailViewPanel: React.FC = React.memo(() => {
         badgeLabel: localPl.isCollaborative ? 'COLABORATIVA' : 'TU PLAYLIST',
         badgeCollab: Boolean(localPl.isCollaborative),
         tracks: localPl.tracks,
-        coverUrl: localApp?.coverUrl ?? localPl.coverUrl,
-        bannerUrl: localApp?.bannerUrl ?? localPl.bannerUrl,
+        coverUrl:
+          localApp && 'coverUrl' in localApp ? localApp.coverUrl : localPl.coverUrl,
+        bannerUrl:
+          localApp && 'bannerUrl' in localApp ? localApp.bannerUrl : localPl.bannerUrl,
         bannerEnabled: localApp?.bannerEnabled ?? localPl.bannerEnabled ?? true,
         seed: localApp?.coverStyleSeed ?? localPl.coverStyleSeed ?? 0,
         titleContent: isEditingName ? (
@@ -3980,14 +4005,7 @@ export const HomeScreen: React.FC = React.memo(() => {
         <section aria-label="Escuchar de nuevo">
           <div className="grid grid-cols-2 gap-2 sm:gap-2.5 lg:grid-cols-3">
             {frequentPlaylists.map((pl) => {
-              const appEntry = playlistAppearances[pl.id];
-              const customCover =
-                appEntry && 'coverUrl' in appEntry ? appEntry.coverUrl : pl.coverUrl;
-              const plCover =
-                (customCover && customCover.trim()) ||
-                pl.tracks[0]?.thumbnailHighUrl ||
-                pl.tracks[0]?.thumbnailUrl ||
-                '';
+              const coverInfo = resolvePlaylistCoverInfo(pl, playlistAppearances[pl.id]);
               return (
                 <div
                   key={`quick-pl-${pl.id}`}
@@ -4007,8 +4025,8 @@ export const HomeScreen: React.FC = React.memo(() => {
                 >
                   <div className="relative h-[52px] w-[52px] shrink-0 overflow-hidden bg-white/[0.05] sm:h-14 sm:w-14">
                     <TrackArtwork
-                      trackId={pl.tracks[0]?.id}
-                      src={plCover}
+                      trackId={coverInfo.fallbackTrackId}
+                      src={coverInfo.url}
                       title={pl.name}
                       artistName={pl.tracks[0]?.artists[0]?.name}
                       artistId={pl.tracks[0]?.artists[0]?.id}
@@ -4621,6 +4639,10 @@ export const SearchScreen: React.FC = React.memo(() => {
     favoriteArtists,
     homeShelves,
     affinityProfile,
+    exploreSimilarTracks,
+    exploreEmergingArtists,
+    isLoadingExplore,
+    refreshExploreDiscovery,
     setSearchQuery,
     submitSearch,
     setSearchScope,
@@ -4651,6 +4673,10 @@ export const SearchScreen: React.FC = React.memo(() => {
       favoriteArtists: s.favoriteArtists,
       homeShelves: s.homeShelves,
       affinityProfile: s.affinityProfile,
+      exploreSimilarTracks: s.exploreSimilarTracks,
+      exploreEmergingArtists: s.exploreEmergingArtists,
+      isLoadingExplore: s.isLoadingExplore,
+      refreshExploreDiscovery: s.refreshExploreDiscovery,
       setSearchQuery: s.setSearchQuery,
       submitSearch: s.submitSearch,
       setSearchScope: s.setSearchScope,
@@ -4676,6 +4702,27 @@ export const SearchScreen: React.FC = React.memo(() => {
     homeShelves,
     affinityProfile,
   });
+
+  const mergedRecommendedTracks: Track[] = [];
+  const seenRecTrackIds = new Set<string>();
+  for (const tr of [...recommendedTracks, ...exploreSimilarTracks]) {
+    if (!tr?.id || seenRecTrackIds.has(tr.id)) continue;
+    seenRecTrackIds.add(tr.id);
+    mergedRecommendedTracks.push(tr);
+  }
+
+  const mergedRecommendedArtists = [...recommendedArtists];
+  const seenRecArtistKeys = new Set(
+    recommendedArtists.map((a) => `${a.id}::${a.name.trim().toLowerCase()}`)
+  );
+  for (const ar of exploreEmergingArtists) {
+    const key = `${ar.id}::${ar.name.trim().toLowerCase()}`;
+    if (!ar?.name || seenRecArtistKeys.has(key)) continue;
+    seenRecArtistKeys.add(key);
+    mergedRecommendedArtists.push(ar);
+  }
+
+  const discoverySpotlightTrack = exploreSimilarTracks[0] ?? mergedRecommendedTracks[0] ?? null;
   const hasSearchText = Boolean(searchQuery.trim());
 
   const scopes: readonly SearchScopeTab[] = [
@@ -4686,31 +4733,60 @@ export const SearchScreen: React.FC = React.memo(() => {
     'Playlists',
   ];
 
+  const scopeCount = (scope: SearchScopeTab): number => {
+    if (!hasSearchText) return 0;
+    if (scope === 'Canciones') return searchResults.songs.length;
+    if (scope === 'Artistas') return searchResults.artists.length;
+    if (scope === 'Álbumes') return searchResults.albums.length;
+    if (scope === 'Playlists') return searchResults.playlists.length;
+    return (
+      searchResults.songs.length +
+      searchResults.artists.length +
+      searchResults.albums.length +
+      searchResults.playlists.length
+    );
+  };
+
   return (
-    <div className="pm-page-enter space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-[28px] font-bold tracking-tight pm-text-primary">
+    <div className="pm-page-enter space-y-5 sm:space-y-6">
+      <div className="flex items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-[28px] font-black tracking-tight pm-text-primary sm:text-[32px]">
             Buscar
           </h1>
-          <p className="text-[13px] pm-text-tertiary">
-            Canciones, artistas, álbumes y listas completas
+          <p className="text-[12.5px] pm-text-tertiary sm:text-[13px]">
+            Canciones, artistas, álbumes y descubrimiento para tu vibra
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setSpotlightOpen(true)}
-          className="pm-btn-secondary hidden items-center gap-2 rounded-full px-3.5 py-1.5 text-xs font-medium md:inline-flex"
-        >
-          <Search className="h-3.5 w-3.5" />
-          <span>Búsqueda rápida</span>
-          <kbd className="pm-elevated rounded border pm-border px-1.5 py-0.5 text-[11px] font-semibold pm-text-primary">
-            Ctrl K
-          </kbd>
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            aria-label="Actualizar recomendaciones"
+            onClick={() => void refreshExploreDiscovery(true)}
+            className="pm-btn-secondary pm-pressable inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold"
+          >
+            {isLoadingExplore ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="h-3.5 w-3.5 text-purple-300" />
+            )}
+            <span className="hidden sm:inline">Descubrir</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSpotlightOpen(true)}
+            className="pm-btn-secondary hidden items-center gap-2 rounded-full px-3.5 py-1.5 text-xs font-medium md:inline-flex"
+          >
+            <Search className="h-3.5 w-3.5" />
+            <span>Búsqueda rápida</span>
+            <kbd className="pm-elevated rounded border pm-border px-1.5 py-0.5 text-[11px] font-semibold pm-text-primary">
+              Ctrl K
+            </kbd>
+          </button>
+        </div>
       </div>
 
-      {/* Sleek Liquid Glass Search Field (hides native searchbox role when Spotlight modal is open to avoid duplicates) */}
+      {/* Liquid Glass Interactive Search Field */}
       {spotlightOpen ? (
         <button
           type="button"
@@ -4727,9 +4803,9 @@ export const SearchScreen: React.FC = React.memo(() => {
             e.preventDefault();
             void submitSearch();
           }}
-          className="pm-glass-search flex items-center gap-3 rounded-full px-4 py-2.5"
+          className="pm-glass-search flex items-center gap-2.5 rounded-[18px] px-4 py-2.5 ring-1 ring-white/10 transition-all focus-within:ring-2 focus-within:ring-[var(--pm-accent-primary)]/50 sm:rounded-full sm:py-3"
         >
-          <Search className="h-4 w-4 shrink-0 pm-text-secondary" />
+          <Search className="h-4.5 w-4.5 shrink-0 pm-text-secondary" />
           <input
             type="search"
             role="searchbox"
@@ -4737,77 +4813,85 @@ export const SearchScreen: React.FC = React.memo(() => {
             placeholder="¿Qué te apetece escuchar hoy?"
             value={searchQuery}
             onChange={(e) => void setSearchQuery(e.target.value)}
-            className="pm-input-frameless flex-1 bg-transparent text-[14px] font-medium pm-text-primary placeholder:pm-text-tertiary focus:outline-none"
+            className="pm-input-frameless min-w-0 flex-1 bg-transparent text-[14.5px] font-medium pm-text-primary placeholder:pm-text-tertiary focus:outline-none"
           />
           {isSearching && (
-            <Loader2 className="h-4 w-4 animate-spin pm-text-secondary" />
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin pm-text-secondary" />
           )}
           {searchQuery && (
             <button
               type="button"
               aria-label="Limpiar búsqueda"
               onClick={() => void setSearchQuery('', true)}
-              className="pm-btn-secondary rounded-full px-3 py-1 text-xs font-semibold"
+              className="pm-btn-secondary pm-pressable inline-flex h-7 shrink-0 items-center gap-1 rounded-full px-2.5 text-[11px] font-bold"
             >
-              Limpiar
+              <X className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Limpiar</span>
             </button>
           )}
         </form>
       )}
 
-      {/* Autocomplete & Recent Searches */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-        <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1 pm-no-scrollbar sm:flex-wrap sm:overflow-visible sm:pb-0">
-          {autocompleteSuggestions.slice(0, 6).map((sug) => (
-            <button
-              key={sug.text}
-              type="button"
-              onClick={() => void submitSearch(sug.text)}
-              className="pm-btn-secondary shrink-0 rounded-full px-3.5 py-1.5 text-xs font-medium"
-            >
-              {sug.text}
-            </button>
-          ))}
-        </div>
-
-        {recentSearches.length > 0 && (
-          <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1 pm-no-scrollbar sm:flex-wrap sm:overflow-visible sm:pb-0">
-            <span className="shrink-0 text-xs pm-text-tertiary">Recientes:</span>
-            {recentSearches.slice(0, 3).map((rec) => (
+      {/* Instant Autocomplete & Recent Query Pills */}
+      {(autocompleteSuggestions.length > 0 || recentSearches.length > 0) && (
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+          <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5 pm-no-scrollbar sm:flex-wrap sm:overflow-visible sm:pb-0">
+            {autocompleteSuggestions.slice(0, 6).map((sug) => (
               <button
-                key={rec}
+                key={sug.text}
                 type="button"
-                onClick={() => void submitSearch(rec)}
-                className="pm-elevated shrink-0 rounded-full border pm-border px-3 py-1 text-xs pm-text-secondary hover:text-[var(--pm-text-primary)]"
+                onClick={() => void submitSearch(sug.text)}
+                className="pm-btn-secondary pm-pressable inline-flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold"
               >
-                {rec}
+                <Search className="h-3 w-3 opacity-60" />
+                <span>{sug.text}</span>
               </button>
             ))}
-            <button
-              type="button"
-              onClick={() => clearRecentSearches()}
-              className="shrink-0 text-xs font-medium pm-text-secondary hover:text-[var(--pm-text-primary)] hover:underline"
-            >
-              Borrar
-            </button>
           </div>
-        )}
-      </div>
 
-      {/* Personal Recent Searches & Personalized Recommendations when query is empty */}
+          {recentSearches.length > 0 && (
+            <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-0.5 pm-no-scrollbar sm:flex-wrap sm:overflow-visible sm:pb-0">
+              <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wider pm-text-tertiary">
+                Recientes:
+              </span>
+              {recentSearches.slice(0, 3).map((rec) => (
+                <button
+                  key={rec}
+                  type="button"
+                  onClick={() => void submitSearch(rec)}
+                  className="pm-elevated pm-pressable shrink-0 rounded-full border pm-border px-3 py-1 text-xs font-medium pm-text-secondary hover:text-[var(--pm-text-primary)]"
+                >
+                  {rec}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => clearRecentSearches()}
+                className="shrink-0 text-xs font-medium pm-text-secondary hover:text-[var(--pm-text-primary)] hover:underline"
+              >
+                Borrar
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Personal Recent Searches + pMusic Interactive Discovery Hub when query is empty */}
       {!hasSearchText && !spotlightOpen && (
         <div className="space-y-6">
           {(recentSearchItems.length > 0 || recentSearches.length > 0) && (
             <section data-testid="search-recent-items" className="space-y-3">
               <div className="flex items-center justify-between gap-2">
-                <h2 className="text-[18px] font-bold pm-text-primary">Tus búsquedas recientes</h2>
+                <h2 className="text-[18px] font-bold tracking-tight pm-text-primary">
+                  Tus búsquedas recientes
+                </h2>
                 <button
                   type="button"
                   onClick={() => {
                     clearRecentSearchItems();
                     clearRecentSearches();
                   }}
-                  className="text-xs font-medium pm-text-secondary hover:text-[var(--pm-text-primary)] hover:underline"
+                  className="text-xs font-semibold pm-text-secondary hover:text-[var(--pm-text-primary)] hover:underline"
                 >
                   Borrar todo
                 </button>
@@ -4818,7 +4902,7 @@ export const SearchScreen: React.FC = React.memo(() => {
                     item.kind === 'artist' ? (
                       <div
                         key={`search-rec-${item.id}`}
-                        className="pm-surface-card pm-hover flex items-center gap-2.5 rounded-[12px] p-2.5"
+                        className="pm-surface-card pm-hover pm-pressable flex items-center gap-2.5 rounded-[14px] p-2.5"
                       >
                         <button
                           type="button"
@@ -4836,12 +4920,14 @@ export const SearchScreen: React.FC = React.memo(() => {
                           className="flex min-w-0 flex-1 items-center gap-3 text-left"
                         >
                           <img
-                            src={item.thumbnailUrl}
+                            src={optimizeArtworkUrl(item.thumbnailUrl, 'avatar')}
                             alt={item.name}
-                            className="h-10 w-10 shrink-0 rounded-full object-cover"
+                            loading="lazy"
+                            decoding="async"
+                            className="h-11 w-11 shrink-0 rounded-full object-cover object-[50%_20%]"
                           />
                           <div className="min-w-0 flex-1">
-                            <div className="truncate text-[13.5px] font-semibold pm-text-primary">
+                            <div className="truncate text-[13.5px] font-bold pm-text-primary">
                               {item.name}
                             </div>
                             <div className="truncate text-[11px] pm-text-tertiary">Artista</div>
@@ -4859,7 +4945,7 @@ export const SearchScreen: React.FC = React.memo(() => {
                     ) : (
                       <div
                         key={`search-rec-${item.id}`}
-                        className="pm-surface-card pm-hover group flex items-center gap-2.5 rounded-[12px] p-2.5"
+                        className="pm-surface-card pm-hover pm-pressable group flex items-center gap-2.5 rounded-[14px] p-2.5"
                       >
                         <button
                           type="button"
@@ -4868,12 +4954,17 @@ export const SearchScreen: React.FC = React.memo(() => {
                             addRecentSearchTrack(item.track);
                             void playTrack(item.track, [item.track]);
                           }}
-                          className="relative h-10 w-10 shrink-0 overflow-hidden rounded-[8px]"
+                          className="relative h-11 w-11 shrink-0 overflow-hidden rounded-[9px]"
                         >
-                          <img
-                            src={item.track.thumbnailUrl}
+                          <TrackArtwork
+                            trackId={item.track.id}
+                            src={item.track.thumbnailHighUrl ?? item.track.thumbnailUrl}
+                            title={item.track.title}
+                            artistName={item.track.artists[0]?.name}
+                            artistId={item.track.artists[0]?.id}
                             alt={item.track.title}
-                            className="h-full w-full object-cover"
+                            variant="list"
+                            imgClassName="h-full w-full object-cover"
                           />
                           <span className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 transition-opacity group-hover:opacity-100">
                             <Play className="h-3.5 w-3.5 translate-x-[1px] fill-current text-white" />
@@ -4887,7 +4978,7 @@ export const SearchScreen: React.FC = React.memo(() => {
                           }}
                           className="min-w-0 flex-1 text-left"
                         >
-                          <div className="truncate text-[13.5px] font-semibold pm-text-primary hover:underline">
+                          <div className="truncate text-[13.5px] font-bold pm-text-primary hover:underline">
                             {item.track.title}
                           </div>
                           <div className="truncate text-[11px] pm-text-tertiary">
@@ -4910,10 +5001,101 @@ export const SearchScreen: React.FC = React.memo(() => {
             </section>
           )}
 
-          {recommendedArtists.length > 0 && (
+          {/* pMusic Vibe Discovery Spotlight Hero */}
+          {discoverySpotlightTrack && (
+            <section
+              data-surface="content"
+              data-testid="search-vibe-spotlight"
+              className="pm-surface-card relative overflow-hidden rounded-[20px] border border-white/10 p-4 sm:p-5"
+            >
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute -right-12 -top-12 h-44 w-44 rounded-full bg-[var(--pm-accent-primary)]/20 blur-3xl"
+              />
+              <div className="relative z-10 flex items-center gap-3.5 sm:gap-5">
+                <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-[14px] shadow-xl sm:h-20 sm:w-20">
+                  <TrackArtwork
+                    trackId={discoverySpotlightTrack.id}
+                    src={
+                      discoverySpotlightTrack.thumbnailHighUrl ??
+                      discoverySpotlightTrack.thumbnailUrl
+                    }
+                    title={discoverySpotlightTrack.title}
+                    artistName={discoverySpotlightTrack.artists[0]?.name}
+                    artistId={discoverySpotlightTrack.artists[0]?.id}
+                    alt={discoverySpotlightTrack.title}
+                    variant="card"
+                    imgClassName="h-full w-full object-cover"
+                  />
+                </div>
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.08] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white/85">
+                    <Sparkles className="h-3 w-3 text-purple-300" />
+                    <span>Selección pMusic · Para tu vibra</span>
+                  </div>
+                  <h2 className="truncate text-[17px] font-black tracking-tight pm-text-primary sm:text-xl">
+                    {discoverySpotlightTrack.title}
+                  </h2>
+                  <p className="truncate text-xs font-medium pm-text-secondary">
+                    {discoverySpotlightTrack.artists.map((a) => a.name).join(', ')}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  aria-label={`Reproducir ${discoverySpotlightTrack.title}`}
+                  onClick={() =>
+                    void playTrack(discoverySpotlightTrack, mergedRecommendedTracks)
+                  }
+                  className="pm-btn-primary pm-pressable inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full shadow-lg"
+                >
+                  <Play className="h-4 w-4 translate-x-[1px] fill-current" />
+                </button>
+              </div>
+            </section>
+          )}
+
+          {/* Interactive pMusic Genre & Mood Grid */}
+          <section data-testid="search-genre-grid" className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-[18px] font-bold tracking-tight pm-text-primary">
+                Explora por estilo y vibra
+              </h2>
+            </div>
+            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 sm:gap-3">
+              {GENRE_CARDS.map((g) => (
+                <button
+                  key={g.query}
+                  type="button"
+                  onClick={() => void submitSearch(g.query)}
+                  className="pm-surface-card pm-card-lift pm-pressable group relative flex h-[84px] flex-col justify-between overflow-hidden rounded-[16px] border border-white/10 p-3.5 text-left transition-transform sm:h-[92px]"
+                  style={{
+                    background: `radial-gradient(115% 110% at 100% 0%, ${g.accent}42 0%, ${g.accent}14 48%, rgba(16,16,24,0.65) 100%)`,
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none absolute -bottom-2 -right-2 flex h-12 w-12 rotate-12 items-center justify-center rounded-[12px] border border-white/15 shadow-lg transition-transform duration-300 group-hover:scale-110 group-hover:rotate-6"
+                    style={{ backgroundColor: `${g.accent}35` }}
+                  >
+                    <Music2 className="h-5 w-5 text-white/90" />
+                  </span>
+                  <span
+                    aria-hidden="true"
+                    className="h-1.5 w-6 rounded-full"
+                    style={{ backgroundColor: g.accent }}
+                  />
+                  <span className="relative z-10 pr-8 text-[14.5px] font-extrabold leading-tight tracking-tight text-white drop-shadow-sm">
+                    {g.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          {mergedRecommendedArtists.length > 0 && (
             <div data-testid="search-recommended-artists">
-              <CarouselSection title="Artistas para ti">
-                {recommendedArtists.map((artist) => (
+              <CarouselSection title="Artistas para descubrir">
+                {mergedRecommendedArtists.slice(0, 12).map((artist) => (
                   <CoverCard
                     key={`rec-artist-${artist.id}-${artist.name}`}
                     image={artist.thumbnailUrl}
@@ -4937,19 +5119,21 @@ export const SearchScreen: React.FC = React.memo(() => {
             </div>
           )}
 
-          {recommendedTracks.length > 0 && (
+          {mergedRecommendedTracks.length > 0 && (
             <section data-testid="search-recommended-for-you" className="space-y-2.5">
               <div className="flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-white/80" />
-                <h2 className="text-[18px] font-bold pm-text-primary">Recomendado para ti</h2>
+                <Sparkles className="h-4 w-4 text-purple-300" />
+                <h2 className="text-[18px] font-bold tracking-tight pm-text-primary">
+                  Recomendado para ti
+                </h2>
               </div>
               <div className="grid grid-cols-1 gap-x-6 md:grid-cols-2">
-                {recommendedTracks.slice(0, 8).map((track, idx) => (
+                {mergedRecommendedTracks.slice(0, 8).map((track, idx) => (
                   <TrackListRow
                     key={`rec-row-${track.id}`}
                     track={track}
                     index={idx}
-                    queueContext={recommendedTracks}
+                    queueContext={mergedRecommendedTracks}
                   />
                 ))}
               </div>
@@ -4959,29 +5143,52 @@ export const SearchScreen: React.FC = React.memo(() => {
       )}
 
       {/* 5 Scope Filter Tabs */}
-      <div
-        role="tablist"
-        aria-label="Filtros de búsqueda"
-        className="flex flex-nowrap gap-1.5 overflow-x-auto pb-1 pm-no-scrollbar sm:flex-wrap sm:overflow-visible sm:pb-0"
-      >
-        {scopes.map((scope) => {
-          const active = searchScope === scope;
-          return (
-            <button
-              key={scope}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => setSearchScope(scope)}
-              className={`shrink-0 rounded-full px-4 py-1.5 text-xs font-bold transition-colors ${
-                active ? 'pm-btn-primary' : 'pm-btn-secondary'
-              }`}
-            >
-              {scope}
-            </button>
-          );
-        })}
-      </div>
+      {hasSearchText && (
+        <div
+          role="tablist"
+          aria-label="Filtros de búsqueda"
+          className="flex flex-nowrap gap-1.5 overflow-x-auto pb-1 pm-no-scrollbar sm:flex-wrap sm:overflow-visible sm:pb-0"
+        >
+          {scopes.map((scope) => {
+            const active = searchScope === scope;
+            const count = scopeCount(scope);
+            return (
+              <button
+                key={scope}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setSearchScope(scope)}
+                className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold transition-colors sm:px-4 ${
+                  active ? 'pm-btn-primary' : 'pm-btn-secondary'
+                }`}
+              >
+                <span>{scope}</span>
+                {count > 0 && scope !== 'Todo' && (
+                  <span className={`tabular-nums text-[10px] ${active ? 'opacity-80' : 'opacity-65'}`}>
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Responsive Search Skeletons while fetching */}
+      {hasSearchText && isSearching && searchResults.songs.length === 0 && !bestResult && (
+        <div data-testid="search-loading-skeleton" className="space-y-2.5">
+          {[0, 1, 2, 3, 4].map((i) => (
+            <div key={`search-sk-${i}`} className="flex items-center gap-3 rounded-[12px] py-1.5">
+              <div className="pm-skeleton-shimmer h-12 w-12 shrink-0 rounded-[10px]" />
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <div className="pm-skeleton-shimmer h-3.5 w-3/5 rounded" />
+                <div className="pm-skeleton-shimmer h-2.5 w-2/5 rounded" />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Spotify Desktop 2-Column Top Result + Top 4 Songs */}
       {searchScope === 'Todo' && bestResult ? (
@@ -4993,15 +5200,15 @@ export const SearchScreen: React.FC = React.memo(() => {
             <div
               data-testid="best-result-card"
               data-surface="content"
-              className="pm-surface-card group flex flex-col justify-between gap-4 rounded-[16px] p-5"
+              className="pm-surface-card group relative flex flex-col justify-between gap-4 overflow-hidden rounded-[18px] border border-white/10 p-5"
             >
               {bestResult.kind === 'artist' && (
                 <>
                   <div className="flex items-center gap-4">
                     <img
-                      src={bestResult.item.thumbnailUrl}
+                      src={optimizeArtworkUrl(bestResult.item.thumbnailUrl, 'avatar')}
                       alt={bestResult.item.name}
-                      className="h-24 w-24 shrink-0 rounded-full object-cover shadow-xl"
+                      className="h-24 w-24 shrink-0 rounded-full object-cover object-[50%_20%] shadow-xl"
                     />
                     <div className="min-w-0">
                       <span className="pm-elevated inline-block rounded-md border pm-border px-2.5 py-0.5 text-[11px] font-semibold pm-text-secondary">
@@ -5028,7 +5235,7 @@ export const SearchScreen: React.FC = React.memo(() => {
                           ) ?? searchResults.songs[0];
                         if (song) void playTrack(song, [song]);
                       }}
-                      className="pm-btn-primary inline-flex items-center gap-1.5 rounded-full px-5 py-2 text-xs font-bold"
+                      className="pm-btn-primary pm-pressable inline-flex items-center gap-1.5 rounded-full px-5 py-2 text-xs font-bold"
                     >
                       <Play className="h-4 w-4 fill-current" />
                       <span>Reproducir</span>
@@ -5046,7 +5253,7 @@ export const SearchScreen: React.FC = React.memo(() => {
                           thumbnailUrl: bestResult.item.thumbnailUrl,
                         });
                       }}
-                      className="pm-btn-secondary rounded-full px-4 py-2 text-xs font-semibold"
+                      className="pm-btn-secondary pm-pressable rounded-full px-4 py-2 text-xs font-semibold"
                     >
                       Ver perfil
                     </button>
@@ -5057,14 +5264,21 @@ export const SearchScreen: React.FC = React.memo(() => {
               {bestResult.kind === 'song' && (
                 <>
                   <div className="flex items-center gap-4">
-                    <img
-                      src={
-                        bestResult.item.thumbnailHighUrl ??
-                        bestResult.item.thumbnailUrl
-                      }
-                      alt={bestResult.item.title}
-                      className="h-24 w-24 shrink-0 rounded-[12px] object-cover shadow-xl"
-                    />
+                    <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-[12px] shadow-xl">
+                      <TrackArtwork
+                        trackId={bestResult.item.id}
+                        src={
+                          bestResult.item.thumbnailHighUrl ??
+                          bestResult.item.thumbnailUrl
+                        }
+                        title={bestResult.item.title}
+                        artistName={bestResult.item.artists[0]?.name}
+                        artistId={bestResult.item.artists[0]?.id}
+                        alt={bestResult.item.title}
+                        variant="card"
+                        imgClassName="h-full w-full object-cover"
+                      />
+                    </div>
                     <div className="min-w-0">
                       <span className="pm-elevated inline-block rounded-md border pm-border px-2.5 py-0.5 text-[11px] font-semibold pm-text-secondary">
                         CANCIÓN
@@ -5088,7 +5302,7 @@ export const SearchScreen: React.FC = React.memo(() => {
                         addRecentSearchTrack(bestResult.item);
                         void playTrack(bestResult.item, [bestResult.item]);
                       }}
-                      className="pm-btn-primary inline-flex items-center gap-1.5 rounded-full px-5 py-2 text-xs font-bold"
+                      className="pm-btn-primary pm-pressable inline-flex items-center gap-1.5 rounded-full px-5 py-2 text-xs font-bold"
                     >
                       <Play className="h-4 w-4 fill-current" />
                       <span>Reproducir</span>
@@ -5123,15 +5337,15 @@ export const SearchScreen: React.FC = React.memo(() => {
             <div
               data-testid="best-result-card"
               data-surface="content"
-              className="pm-surface-card flex flex-wrap items-center justify-between gap-4 rounded-[16px] p-5"
+              className="pm-surface-card flex flex-wrap items-center justify-between gap-4 rounded-[18px] p-5"
             >
               {bestResult.kind === 'artist' ? (
                 <>
                   <div className="flex items-center gap-4">
                     <img
-                      src={bestResult.item.thumbnailUrl}
+                      src={optimizeArtworkUrl(bestResult.item.thumbnailUrl, 'avatar')}
                       alt={bestResult.item.name}
-                      className="h-20 w-20 rounded-full object-cover"
+                      className="h-20 w-20 rounded-full object-cover object-[50%_20%]"
                     />
                     <div>
                       <span className="pm-elevated inline-block rounded-md border pm-border px-2.5 py-0.5 text-[11px] font-semibold pm-text-secondary">
@@ -5150,7 +5364,7 @@ export const SearchScreen: React.FC = React.memo(() => {
                         thumbnailUrl: bestResult.item.thumbnailUrl,
                       })
                     }
-                    className="pm-btn-primary rounded-full px-5 py-2 text-xs font-bold"
+                    className="pm-btn-primary pm-pressable rounded-full px-5 py-2 text-xs font-bold"
                   >
                     Ver perfil
                   </button>
@@ -5159,11 +5373,18 @@ export const SearchScreen: React.FC = React.memo(() => {
                 bestResult.kind === 'song' && (
                   <>
                     <div className="flex items-center gap-4">
-                      <img
-                        src={bestResult.item.thumbnailUrl}
-                        alt={bestResult.item.title}
-                        className="h-20 w-20 rounded-[10px] object-cover"
-                      />
+                      <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-[10px]">
+                        <TrackArtwork
+                          trackId={bestResult.item.id}
+                          src={bestResult.item.thumbnailHighUrl ?? bestResult.item.thumbnailUrl}
+                          title={bestResult.item.title}
+                          artistName={bestResult.item.artists[0]?.name}
+                          artistId={bestResult.item.artists[0]?.id}
+                          alt={bestResult.item.title}
+                          variant="card"
+                          imgClassName="h-full w-full object-cover"
+                        />
+                      </div>
                       <div>
                         <span className="pm-elevated inline-block rounded-md border pm-border px-2.5 py-0.5 text-[11px] font-semibold pm-text-secondary">
                           CANCIÓN
@@ -5184,7 +5405,7 @@ export const SearchScreen: React.FC = React.memo(() => {
                       onClick={() =>
                         void playTrack(bestResult.item, [bestResult.item])
                       }
-                      className="pm-btn-primary rounded-full px-5 py-2 text-xs font-bold"
+                      className="pm-btn-primary pm-pressable rounded-full px-5 py-2 text-xs font-bold"
                     >
                       Reproducir
                     </button>
@@ -5320,7 +5541,11 @@ export const LibraryScreen: React.FC = React.memo(() => {
     favoriteArtists,
     playHistory,
     offlineEntries,
+    offlineTrackMeta,
     searchResults,
+    homeShelves,
+    queue,
+    currentTrack,
     setLibraryCategory,
     setLibraryFilterQuery,
     createPlaylist,
@@ -5349,7 +5574,11 @@ export const LibraryScreen: React.FC = React.memo(() => {
       favoriteArtists: s.favoriteArtists,
       playHistory: s.playHistory,
       offlineEntries: s.offlineEntries,
+      offlineTrackMeta: s.offlineTrackMeta,
       searchResults: s.searchResults,
+      homeShelves: s.homeShelves,
+      queue: s.queue,
+      currentTrack: s.currentTrack,
       setLibraryCategory: s.setLibraryCategory,
       setLibraryFilterQuery: s.setLibraryFilterQuery,
       createPlaylist: s.createPlaylist,
@@ -5374,6 +5603,37 @@ export const LibraryScreen: React.FC = React.memo(() => {
   const [showCreateBar, setShowCreateBar] = useState(false);
   const [showMobileFilter, setShowMobileFilter] = useState(false);
   const [dragOverPlaylistId, setDragOverPlaylistId] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<'recent' | 'alpha' | 'tracks'>('recent');
+  const [viewMode, setViewMode] = useState<'list' | 'grid'>(() => {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        return localStorage.getItem('pmusic_library_view_v1') === 'grid' ? 'grid' : 'list';
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return 'list';
+  });
+
+  const toggleViewMode = () => {
+    setViewMode((prev) => {
+      const next = prev === 'list' ? 'grid' : 'list';
+      try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('pmusic_library_view_v1', next);
+        }
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
+  };
+
+  const cycleSortBy = () => {
+    setSortBy((prev) =>
+      prev === 'recent' ? 'alpha' : prev === 'alpha' ? 'tracks' : 'recent'
+    );
+  };
 
   const categories: readonly LibraryCategoryTab[] = [
     'Todo',
@@ -5386,16 +5646,86 @@ export const LibraryScreen: React.FC = React.memo(() => {
 
   const filterNorm = libraryFilterQuery.trim().toLowerCase();
 
-  const filteredPlaylists = playlists.filter(
-    (p) => !filterNorm || p.name.toLowerCase().includes(filterNorm)
-  );
-  const filteredSharedPlaylists = sharedPlaylists.filter(
-    (sp) =>
-      (!sp.shareCode ||
-        !playlists.some((lp) => lp.shareCode?.toUpperCase() === sp.shareCode?.toUpperCase())) &&
-      (!filterNorm || sp.name.toLowerCase().includes(filterNorm))
-  );
+  // Build O(1) track metadata lookup covering cached offline snapshots, playlists, likes, history & queues
+  const trackMetaLookup = new Map<string, Track>();
+  const registerTrackMeta = (tr?: Track | null) => {
+    if (!tr?.id) return;
+    const prev = trackMetaLookup.get(tr.id);
+    if (!prev || (!prev.thumbnailUrl && (tr.thumbnailHighUrl || tr.thumbnailUrl))) {
+      trackMetaLookup.set(tr.id, tr);
+    }
+  };
+  for (const meta of Object.values(offlineTrackMeta)) registerTrackMeta(meta);
+  registerTrackMeta(currentTrack);
+  for (const tr of queue) registerTrackMeta(tr);
+  for (const pl of playlists) {
+    for (const tr of pl.tracks) registerTrackMeta(tr);
+  }
+  for (const spl of sharedPlaylists) {
+    for (const tr of spl.tracks) registerTrackMeta(tr);
+  }
+  for (const l of likedTracks) registerTrackMeta(l.track);
+  for (const h of playHistory) registerTrackMeta(h.track);
+  for (const tr of searchResults.songs) registerTrackMeta(tr);
+  for (const shelf of homeShelves) {
+    for (const tr of shelf.tracks ?? []) registerTrackMeta(tr);
+  }
+
+  const resolvedOfflineItems = offlineEntries
+    .map((entry) => {
+      const resolvedTrack = trackMetaLookup.get(entry.trackId) ?? null;
+      const displayTitle = resolvedTrack?.title?.trim() || entry.trackId;
+      const displayArtist =
+        resolvedTrack?.artists?.map((a) => a.name).filter(Boolean).join(', ') ||
+        'Disponible sin conexión';
+      return {
+        entry,
+        track: resolvedTrack,
+        displayTitle,
+        displayArtist,
+      };
+    })
+    .filter(
+      (item) =>
+        !filterNorm ||
+        item.displayTitle.toLowerCase().includes(filterNorm) ||
+        item.displayArtist.toLowerCase().includes(filterNorm)
+    );
+
+  const playableOfflineTracks: Track[] = resolvedOfflineItems
+    .map((item) => item.track)
+    .filter((tr): tr is Track => Boolean(tr?.id));
+  const totalOfflineBytes = offlineEntries.reduce((acc, e) => acc + (e.sizeBytes || 0), 0);
+  const totalOfflineSizeLabel =
+    totalOfflineBytes >= 1024 * 1024
+      ? `${(totalOfflineBytes / (1024 * 1024)).toFixed(1)} MB`
+      : totalOfflineBytes > 0
+        ? `${Math.max(1, Math.round(totalOfflineBytes / 1024))} KB`
+        : '';
+
+  const filteredPlaylists = playlists
+    .filter((p) => !filterNorm || p.name.toLowerCase().includes(filterNorm))
+    .slice()
+    .sort((a, b) => {
+      if (sortBy === 'alpha') return a.name.localeCompare(b.name, 'es');
+      if (sortBy === 'tracks') return b.tracks.length - a.tracks.length;
+      return (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt);
+    });
+  const filteredSharedPlaylists = sharedPlaylists
+    .filter(
+      (sp) =>
+        (!sp.shareCode ||
+          !playlists.some((lp) => lp.shareCode?.toUpperCase() === sp.shareCode?.toUpperCase())) &&
+        (!filterNorm || sp.name.toLowerCase().includes(filterNorm))
+    )
+    .slice()
+    .sort((a, b) => {
+      if (sortBy === 'alpha') return a.name.localeCompare(b.name, 'es');
+      if (sortBy === 'tracks') return b.tracks.length - a.tracks.length;
+      return 0;
+    });
   const totalUnifiedPlaylistCount = filteredPlaylists.length + filteredSharedPlaylists.length;
+
   const filteredLikes = likedTracks.filter(
     (l) =>
       !filterNorm ||
@@ -5403,12 +5733,25 @@ export const LibraryScreen: React.FC = React.memo(() => {
       l.track.artists.some((a) => a.name.toLowerCase().includes(filterNorm))
   );
 
+  const filteredArtists = favoriteArtists
+    .filter((a) => !filterNorm || a.artistName.toLowerCase().includes(filterNorm))
+    .slice()
+    .sort((a, b) =>
+      sortBy === 'alpha' ? a.artistName.localeCompare(b.artistName, 'es') : 0
+    );
+
+  const sortLabel =
+    sortBy === 'alpha' ? 'A–Z' : sortBy === 'tracks' ? 'Más pistas' : 'Recientes';
+
+  const visibleOfflineItems =
+    libraryCategory === 'Todo' ? resolvedOfflineItems.slice(0, 6) : resolvedOfflineItems;
+
   return (
     <div className="pm-page-enter space-y-5 sm:space-y-6">
-      {/* Clean pMusic Library Header */}
-      <div className="flex items-center justify-between gap-2.5">
+      {/* Spotify / Tidal Clean Library Header (compact zero-overlap spacing on mobile) */}
+      <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <h1 className="text-[28px] font-black tracking-tight pm-text-primary sm:text-[30px]">
+          <h1 className="truncate text-[24px] font-black leading-tight tracking-tight pm-text-primary sm:text-[30px]">
             Biblioteca
           </h1>
           <p className="hidden text-[13px] pm-text-tertiary sm:block">
@@ -5431,7 +5774,9 @@ export const LibraryScreen: React.FC = React.memo(() => {
             type="button"
             aria-label="Nueva playlist"
             onClick={() => setShowCreateBar((v) => !v)}
-            className="pm-btn-secondary pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full sm:hidden"
+            className={`pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full sm:hidden ${
+              showCreateBar ? 'pm-btn-primary' : 'pm-btn-secondary'
+            }`}
           >
             <Plus className="h-4 w-4" />
           </button>
@@ -5443,16 +5788,16 @@ export const LibraryScreen: React.FC = React.memo(() => {
               setActiveTab('Social');
               setSocialSubTab('top');
             }}
-            className="pm-btn-secondary pm-pressable inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-xs font-bold sm:h-auto sm:px-4 sm:py-2"
+            className="pm-btn-secondary pm-pressable inline-flex h-9 items-center gap-1.5 rounded-full px-2.5 text-xs font-bold sm:h-auto sm:px-4 sm:py-2"
           >
             <Sparkles className="h-3.5 w-3.5" />
-            <span>Mi Top</span>
+            <span className="hidden min-[380px]:inline">Mi Top</span>
           </button>
           <button
             type="button"
             aria-label="Importar playlist"
             onClick={() => setImportModalOpen(true)}
-            className="pm-btn-primary pm-pressable inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-xs font-bold sm:h-auto sm:px-5 sm:py-2"
+            className="pm-btn-primary pm-pressable inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-xs font-bold sm:h-auto sm:px-5 sm:py-2"
           >
             <ListMusic className="h-4 w-4" />
             <span className="sm:hidden">Importar</span>
@@ -5461,56 +5806,100 @@ export const LibraryScreen: React.FC = React.memo(() => {
         </div>
       </div>
 
-      {/* Category Pills & Search Filter */}
-      <div className="flex flex-col gap-2.5 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3">
-        <div
-          role="tablist"
-          aria-label="Categorías de biblioteca"
-          className="flex w-full flex-nowrap gap-1.5 overflow-x-auto pb-0.5 pm-no-scrollbar sm:w-auto sm:flex-wrap sm:overflow-visible sm:pb-0"
-        >
-          {categories.map((cat) => {
-            const active = libraryCategory === cat;
-            return (
+      {/* Category Pills & Interactive Filter / Sort / Grid Bar */}
+      <div className="space-y-2.5">
+        <div className="flex flex-col gap-2.5 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3">
+          <div
+            role="tablist"
+            aria-label="Categorías de biblioteca"
+            className="flex w-full flex-nowrap gap-1.5 overflow-x-auto pb-0.5 pm-no-scrollbar sm:w-auto sm:flex-wrap sm:overflow-visible sm:pb-0"
+          >
+            {categories.map((cat) => {
+              const active = libraryCategory === cat;
+              const badgeCount = cat === 'Descargas' ? offlineEntries.length : 0;
+              return (
+                <button
+                  key={cat}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setLibraryCategory(cat)}
+                  className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold transition-colors sm:px-4 ${
+                    active ? 'pm-btn-primary' : 'pm-btn-secondary'
+                  }`}
+                >
+                  <span>{cat}</span>
+                  {badgeCount > 0 && (
+                    <span
+                      className={`tabular-nums rounded-full px-1.5 py-0.2 text-[10px] ${
+                        active ? 'bg-black/20' : 'bg-emerald-500/20 text-emerald-400'
+                      }`}
+                    >
+                      {badgeCount}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          <div
+            className={`pm-input w-full items-center gap-2 rounded-full px-3.5 py-1.5 sm:flex sm:w-56 ${
+              showMobileFilter || libraryFilterQuery ? 'flex' : 'hidden'
+            }`}
+          >
+            <Search className="h-3.5 w-3.5 shrink-0 pm-text-tertiary" />
+            <input
+              type="search"
+              aria-label="Filtrar en biblioteca"
+              placeholder="Filtrar en tu biblioteca..."
+              value={libraryFilterQuery}
+              onChange={(e) => setLibraryFilterQuery(e.target.value)}
+              className="pm-text-btn w-full bg-transparent text-xs pm-text-primary placeholder:pm-text-tertiary focus:outline-none"
+            />
+            {libraryFilterQuery && (
               <button
-                key={cat}
                 type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => setLibraryCategory(cat)}
-                className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-bold transition-colors sm:px-4 ${
-                  active ? 'pm-btn-primary' : 'pm-btn-secondary'
-                }`}
+                aria-label="Limpiar filtro"
+                onClick={() => setLibraryFilterQuery('')}
+                className="pm-compact-btn pm-text-tertiary hover:text-[var(--pm-text-primary)]"
               >
-                {cat}
+                <X className="h-3.5 w-3.5" />
               </button>
-            );
-          })}
+            )}
+          </div>
         </div>
 
+        {/* Sort & View Switcher Toolbar */}
         <div
-          className={`pm-input w-full items-center gap-2 rounded-full px-3.5 py-1.5 sm:flex sm:w-56 ${
-            showMobileFilter || libraryFilterQuery ? 'flex' : 'hidden'
-          }`}
+          data-testid="library-controls-bar"
+          className="flex items-center justify-between gap-2 pt-0.5"
         >
-          <Search className="h-3.5 w-3.5 shrink-0 pm-text-tertiary" />
-          <input
-            type="search"
-            aria-label="Filtrar en biblioteca"
-            placeholder="Filtrar en tu biblioteca..."
-            value={libraryFilterQuery}
-            onChange={(e) => setLibraryFilterQuery(e.target.value)}
-            className="pm-text-btn w-full bg-transparent text-xs pm-text-primary placeholder:pm-text-tertiary focus:outline-none"
-          />
-          {libraryFilterQuery && (
-            <button
-              type="button"
-              aria-label="Limpiar filtro"
-              onClick={() => setLibraryFilterQuery('')}
-              className="pm-compact-btn pm-text-tertiary hover:text-[var(--pm-text-primary)]"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
+          <button
+            type="button"
+            data-testid="library-sort-btn"
+            aria-label={`Ordenar por ${sortLabel}`}
+            onClick={cycleSortBy}
+            className="pm-hover pm-pressable inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold pm-text-secondary hover:text-[var(--pm-text-primary)]"
+          >
+            <ArrowUpDown className="h-3.5 w-3.5" />
+            <span>{sortLabel}</span>
+          </button>
+
+          <button
+            type="button"
+            data-testid="library-view-toggle"
+            aria-label={viewMode === 'list' ? 'Cambiar a vista en cuadrícula' : 'Cambiar a vista en lista'}
+            onClick={toggleViewMode}
+            className="pm-hover pm-pressable inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold pm-text-secondary hover:text-[var(--pm-text-primary)]"
+          >
+            {viewMode === 'list' ? (
+              <LayoutGrid className="h-3.5 w-3.5" />
+            ) : (
+              <List className="h-3.5 w-3.5" />
+            )}
+            <span>{viewMode === 'list' ? 'Cuadrícula' : 'Lista'}</span>
+          </button>
         </div>
       </div>
 
@@ -5539,7 +5928,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
               setShowCreateBar(false);
               showToast(`Playlist «${created.name}» creada`);
             }}
-            className="pm-btn-primary inline-flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-xs font-bold"
+            className="pm-btn-primary pm-pressable inline-flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-xs font-bold"
           >
             <Plus className="h-4 w-4" />
             <span>Crear playlist</span>
@@ -5547,50 +5936,123 @@ export const LibraryScreen: React.FC = React.memo(() => {
         </div>
       )}
 
-      {/* Pinned Liked Songs Summary Tile */}
-      {libraryCategory === 'Todo' && likedTracks.length > 0 && !filterNorm && (
-        <div
-          data-surface="content"
-          role="button"
-          tabIndex={0}
-          onClick={() => setLibraryCategory('Me gusta')}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              setLibraryCategory('Me gusta');
-            }
-          }}
-          className="pm-hover flex cursor-pointer items-center justify-between gap-3 rounded-[14px] bg-white/[0.03] px-2.5 py-2.5 sm:px-3.5 sm:py-3"
-        >
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[11px] bg-gradient-to-br from-rose-500/85 to-purple-600/85 text-white shadow-md sm:h-13 sm:w-13">
-              <Heart className="h-5 w-5 fill-current" />
-            </div>
-            <div className="min-w-0">
-              <div className="truncate text-[15px] font-bold pm-text-primary">
-                Tus Me gusta
+      {/* Pinned Spotify / Tidal Quick Smart Tiles in Todo */}
+      {libraryCategory === 'Todo' &&
+        !filterNorm &&
+        (likedTracks.length > 0 || offlineEntries.length > 0) && (
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3">
+            {likedTracks.length > 0 && (
+              <div
+                data-surface="content"
+                role="button"
+                tabIndex={0}
+                onClick={() => setLibraryCategory('Me gusta')}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setLibraryCategory('Me gusta');
+                  }
+                }}
+                className="pm-surface-card pm-hover pm-pressable flex cursor-pointer items-center justify-between gap-3 rounded-[16px] p-2.5 sm:p-3"
+              >
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[11px] bg-gradient-to-br from-rose-500/85 to-purple-600/85 text-white shadow-md">
+                    <Heart className="h-5 w-5 fill-current" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="truncate text-[14.5px] font-bold pm-text-primary">
+                      Canciones que te gustan
+                    </div>
+                    <div className="tabular-nums truncate text-xs pm-text-tertiary">
+                      {likedTracks.length} {likedTracks.length === 1 ? 'pista' : 'pistas'}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Reproducir Me gusta"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const list = likedTracks.map((l) => l.track);
+                    if (list.length > 0) void playCollection(list, { isPlaylist: true });
+                  }}
+                  className="pm-btn-primary pm-pressable inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full shadow-md"
+                >
+                  <Play className="h-4 w-4 translate-x-[1px] fill-current" />
+                </button>
               </div>
-              <div className="text-xs pm-text-tertiary">
-                {likedTracks.length} {likedTracks.length === 1 ? 'canción' : 'canciones'}
-              </div>
-            </div>
-          </div>
-          <button
-            type="button"
-            aria-label="Reproducir Me gusta"
-            onClick={(e) => {
-              e.stopPropagation();
-              const list = likedTracks.map((l) => l.track);
-              if (list.length > 0) void playCollection(list, { isPlaylist: true });
-            }}
-            className="pm-btn-primary pm-pressable inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full shadow-md"
-          >
-            <Play className="h-4 w-4 translate-x-[1px] fill-current" />
-          </button>
-        </div>
-      )}
+            )}
 
-      {/* Playlists Section (Clean compact mobile list, rich 2-col desktop grid) */}
+            {offlineEntries.length > 0 && (
+              <div
+                data-surface="content"
+                role="button"
+                tabIndex={0}
+                onClick={() => setLibraryCategory('Descargas')}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setLibraryCategory('Descargas');
+                  }
+                }}
+                className="pm-surface-card pm-hover pm-pressable flex cursor-pointer items-center justify-between gap-3 rounded-[16px] p-2.5 sm:p-3"
+              >
+                <div className="flex min-w-0 items-center gap-3">
+                  {playableOfflineTracks.length > 0 ? (
+                    <div className="grid h-12 w-12 shrink-0 grid-cols-2 grid-rows-2 gap-[1px] overflow-hidden rounded-[11px] bg-emerald-500/20 shadow-md">
+                      {Array.from({ length: 4 }).map((_, idx) => {
+                        const tileTrack =
+                          playableOfflineTracks[idx] ?? playableOfflineTracks[0]!;
+                        return (
+                          <div key={`dl-collage-${idx}`} className="relative h-full w-full overflow-hidden">
+                            <TrackArtwork
+                              trackId={tileTrack.id}
+                              src={tileTrack.thumbnailHighUrl ?? tileTrack.thumbnailUrl}
+                              title={tileTrack.title}
+                              artistName={tileTrack.artists[0]?.name}
+                              alt={tileTrack.title}
+                              variant="list"
+                              imgClassName="h-full w-full object-cover"
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[11px] bg-emerald-500/20 text-emerald-400 shadow-md">
+                      <Download className="h-5 w-5" />
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <div className="truncate text-[14.5px] font-bold pm-text-primary">
+                      Descargas offline
+                    </div>
+                    <div className="tabular-nums truncate text-xs text-emerald-400">
+                      {offlineEntries.length}{' '}
+                      {offlineEntries.length === 1 ? 'descargada' : 'descargadas'}
+                      {totalOfflineSizeLabel ? ` · ${totalOfflineSizeLabel}` : ''}
+                    </div>
+                  </div>
+                </div>
+                {playableOfflineTracks.length > 0 && (
+                  <button
+                    type="button"
+                    aria-label="Reproducir descargas offline"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void playCollection(playableOfflineTracks, { isPlaylist: true });
+                    }}
+                    className="pm-btn-primary pm-pressable inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full shadow-md"
+                  >
+                    <Play className="h-4 w-4 translate-x-[1px] fill-current" />
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+      {/* Playlists Section (Interactive List or Grid mode) */}
       {(libraryCategory === 'Todo' || libraryCategory === 'Playlists') && (
         <section className="space-y-2.5">
           <div className="flex items-center justify-between">
@@ -5599,17 +6061,81 @@ export const LibraryScreen: React.FC = React.memo(() => {
             </h2>
           </div>
           {totalUnifiedPlaylistCount > 0 ? (
-            <div className="grid grid-cols-1 gap-1 sm:grid-cols-2 sm:gap-3">
+            <div
+              className={
+                viewMode === 'grid'
+                  ? 'grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 sm:gap-3.5'
+                  : 'grid grid-cols-1 gap-1.5 sm:grid-cols-2 sm:gap-3'
+              }
+            >
               {filteredSharedPlaylists.map((sp) => {
                 const spApp = playlistAppearances[sp.id];
-                const thumb =
-                  spApp?.coverUrl ??
-                  sp.coverUrl ??
-                  sp.tracks[0]?.thumbnailUrl ??
-                  generatePlaylistCoverDataUrl(sp.name, spApp?.coverStyleSeed ?? 0);
+                const coverInfo = resolvePlaylistCoverInfo(sp, spApp);
                 const spDur = formatPlaylistDuration(
                   sp.tracks.reduce((acc, t) => acc + (t.durationSec || 0), 0)
                 );
+                if (viewMode === 'grid') {
+                  return (
+                    <article
+                      key={`lib-sp-${sp.id}`}
+                      data-surface="content"
+                      onClick={() => openSharedPlaylistDetail(sp.id)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        openPlaylistContextMenu('shared', sp.id, e.clientX, e.clientY);
+                      }}
+                      className="pm-surface-card pm-card-lift pm-pressable group relative cursor-pointer rounded-[16px] p-2.5"
+                    >
+                      <div className="relative aspect-square w-full overflow-hidden rounded-[12px]">
+                        <TrackArtwork
+                          trackId={coverInfo.fallbackTrackId}
+                          src={coverInfo.url}
+                          title={sp.name}
+                          artistName={sp.tracks[0]?.artists[0]?.name}
+                          alt={sp.name}
+                          variant="card"
+                          imgClassName="h-full w-full object-cover"
+                        />
+                        {sp.tracks.length > 0 && (
+                          <button
+                            type="button"
+                            aria-label={`Reproducir ${sp.name}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void playCollection(sp.tracks, { isPlaylist: true });
+                            }}
+                            className="pm-btn-primary pm-pressable absolute bottom-2 right-2 inline-flex h-9 w-9 items-center justify-center rounded-full shadow-lg"
+                          >
+                            <Play className="h-4 w-4 translate-x-[1px] fill-current" />
+                          </button>
+                        )}
+                      </div>
+                      <div className="mt-2 flex items-start justify-between gap-1">
+                        <div className="min-w-0 flex-1">
+                          <h3 className="truncate text-[13.5px] font-bold pm-text-primary">
+                            {sp.name}
+                          </h3>
+                          <p className="truncate text-[11px] pm-text-tertiary">
+                            {sp.kind === 'blend' ? 'Blend' : 'Colab'} · {sp.tracks.length} pistas
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          aria-label={`Opciones de ${sp.name}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const r = e.currentTarget.getBoundingClientRect();
+                            openPlaylistContextMenu('shared', sp.id, r.right - 260, r.bottom + 8);
+                          }}
+                          className="pm-hover inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full pm-text-tertiary"
+                        >
+                          <MoreHorizontal className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </article>
+                  );
+                }
                 return (
                   <article
                     key={`lib-sp-${sp.id}`}
@@ -5620,14 +6146,20 @@ export const LibraryScreen: React.FC = React.memo(() => {
                       openPlaylistContextMenu('shared', sp.id, e.clientX, e.clientY);
                     }}
                     onClick={() => openSharedPlaylistDetail(sp.id)}
-                    className="pm-hover sm:pm-surface-card relative flex cursor-pointer items-center justify-between gap-3 rounded-[12px] px-2 py-2 transition-all sm:rounded-[14px] sm:p-3.5"
+                    className="pm-hover sm:pm-surface-card relative flex cursor-pointer items-center justify-between gap-2.5 rounded-[14px] px-2 py-2 transition-all sm:p-3.5"
                   >
                     <div className="flex min-w-0 flex-1 items-center gap-3">
-                      <img
-                        src={thumb}
-                        alt={sp.name}
-                        className="h-12 w-12 shrink-0 rounded-[10px] object-cover shadow-sm sm:h-13 sm:w-13"
-                      />
+                      <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-[10px] shadow-sm sm:h-13 sm:w-13">
+                        <TrackArtwork
+                          trackId={coverInfo.fallbackTrackId}
+                          src={coverInfo.url}
+                          title={sp.name}
+                          artistName={sp.tracks[0]?.artists[0]?.name}
+                          alt={sp.name}
+                          variant="list"
+                          imgClassName="h-full w-full object-cover"
+                        />
+                      </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
                           <h3 className="truncate text-[15px] font-bold leading-tight pm-text-primary">
@@ -5652,7 +6184,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
                           type="button"
                           aria-label={`Reproducir ${sp.name}`}
                           onClick={() => void playCollection(sp.tracks, { isPlaylist: true })}
-                          className="pm-btn-secondary pm-pressable hidden h-9 w-9 shrink-0 items-center justify-center rounded-full sm:inline-flex"
+                          className="pm-btn-secondary pm-pressable inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full sm:h-9 sm:w-9"
                         >
                           <Play className="h-3.5 w-3.5 translate-x-[1px] fill-current" />
                         </button>
@@ -5664,7 +6196,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
                           const r = e.currentTarget.getBoundingClientRect();
                           openPlaylistContextMenu('shared', sp.id, r.right - 260, r.bottom + 8);
                         }}
-                        className="pm-hover pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-tertiary hover:text-[var(--pm-text-primary)]"
+                        className="pm-hover pm-pressable inline-flex h-8 w-8 items-center justify-center rounded-full pm-text-tertiary hover:text-[var(--pm-text-primary)] sm:h-9 sm:w-9"
                       >
                         <MoreHorizontal className="h-4 w-4" />
                       </button>
@@ -5672,17 +6204,98 @@ export const LibraryScreen: React.FC = React.memo(() => {
                   </article>
                 );
               })}
+
               {filteredPlaylists.map((pl) => {
                 const plApp = playlistAppearances[pl.id];
-                const thumb =
-                  plApp?.coverUrl ??
-                  pl.coverUrl ??
-                  pl.tracks[0]?.thumbnailUrl ??
-                  generatePlaylistCoverDataUrl(pl.name, plApp?.coverStyleSeed ?? pl.coverStyleSeed ?? 0);
+                const coverInfo = resolvePlaylistCoverInfo(pl, plApp);
                 const plDur = formatPlaylistDuration(
                   pl.tracks.reduce((acc, t) => acc + (t.durationSec || 0), 0)
                 );
                 const isDropTarget = dragOverPlaylistId === pl.id;
+                if (viewMode === 'grid') {
+                  return (
+                    <article
+                      key={pl.id}
+                      data-surface="content"
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'copy';
+                        setDragOverPlaylistId(pl.id);
+                      }}
+                      onDragLeave={() => {
+                        if (dragOverPlaylistId === pl.id) setDragOverPlaylistId(null);
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        setDragOverPlaylistId(null);
+                        const dropped = readTrackFromDropEvent(e);
+                        if (dropped) {
+                          void addTrackToPlaylist(pl.id, dropped);
+                        }
+                      }}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        openPlaylistContextMenu('local', pl.id, e.clientX, e.clientY);
+                      }}
+                      onClick={() => openLocalPlaylistDetail(pl.id)}
+                      className={`pm-surface-card pm-card-lift pm-pressable group relative cursor-pointer rounded-[16px] p-2.5 ${
+                        isDropTarget
+                          ? 'pm-active-row ring-2 ring-[var(--pm-accent-primary)]'
+                          : ''
+                      }`}
+                    >
+                      <div className="relative aspect-square w-full overflow-hidden rounded-[12px]">
+                        <TrackArtwork
+                          trackId={coverInfo.fallbackTrackId}
+                          src={coverInfo.url}
+                          title={pl.name}
+                          artistName={pl.tracks[0]?.artists[0]?.name}
+                          alt={pl.name}
+                          variant="card"
+                          imgClassName="h-full w-full object-cover"
+                        />
+                        {pl.tracks.length > 0 && (
+                          <button
+                            type="button"
+                            aria-label={`Reproducir ${pl.name}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              recordPlaylistPlay(pl);
+                              void playCollection(pl.tracks, { isPlaylist: true });
+                            }}
+                            className="pm-btn-primary pm-pressable absolute bottom-2 right-2 inline-flex h-9 w-9 items-center justify-center rounded-full shadow-lg"
+                          >
+                            <Play className="h-4 w-4 translate-x-[1px] fill-current" />
+                          </button>
+                        )}
+                      </div>
+                      <div className="mt-2 flex items-start justify-between gap-1">
+                        <div className="min-w-0 flex-1">
+                          <h3 className="truncate text-[13.5px] font-bold pm-text-primary">
+                            {pl.name}
+                          </h3>
+                          <p className="truncate text-[11px] pm-text-tertiary">
+                            {pl.tracks.length} {pl.tracks.length === 1 ? 'pista' : 'pistas'}
+                            {plDur ? ` · ${plDur}` : ''}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          aria-label={`Opciones de ${pl.name}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const r = e.currentTarget.getBoundingClientRect();
+                            openPlaylistContextMenu('local', pl.id, r.right - 260, r.bottom + 8);
+                          }}
+                          className="pm-hover inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full pm-text-tertiary"
+                        >
+                          <MoreHorizontal className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </article>
+                  );
+                }
                 return (
                   <article
                     key={pl.id}
@@ -5709,18 +6322,24 @@ export const LibraryScreen: React.FC = React.memo(() => {
                       openPlaylistContextMenu('local', pl.id, e.clientX, e.clientY);
                     }}
                     onClick={() => openLocalPlaylistDetail(pl.id)}
-                    className={`pm-hover sm:pm-surface-card relative flex cursor-pointer items-center justify-between gap-3 rounded-[12px] px-2 py-2 transition-all sm:rounded-[14px] sm:p-3.5 ${
+                    className={`pm-hover sm:pm-surface-card relative flex cursor-pointer items-center justify-between gap-2.5 rounded-[14px] px-2 py-2 transition-all sm:p-3.5 ${
                       isDropTarget
                         ? 'pm-active-row ring-2 ring-[var(--pm-accent-primary)]'
                         : ''
                     }`}
                   >
                     <div className="flex min-w-0 flex-1 items-center gap-3">
-                      <img
-                        src={thumb}
-                        alt={pl.name}
-                        className="h-12 w-12 shrink-0 rounded-[10px] object-cover shadow-sm sm:h-13 sm:w-13"
-                      />
+                      <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-[10px] shadow-sm sm:h-13 sm:w-13">
+                        <TrackArtwork
+                          trackId={coverInfo.fallbackTrackId}
+                          src={coverInfo.url}
+                          title={pl.name}
+                          artistName={pl.tracks[0]?.artists[0]?.name}
+                          alt={pl.name}
+                          variant="list"
+                          imgClassName="h-full w-full object-cover"
+                        />
+                      </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
                           <h3 className="truncate text-[15px] font-bold leading-tight pm-text-primary">
@@ -5753,7 +6372,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
                               void playCollection(pl.tracks, { isPlaylist: true });
                             }
                           }}
-                          className="pm-btn-secondary pm-pressable hidden h-9 w-9 items-center justify-center rounded-full sm:inline-flex"
+                          className="pm-btn-secondary pm-pressable inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full sm:h-9 sm:w-9"
                         >
                           <Play className="h-3.5 w-3.5 translate-x-[1px] fill-current" />
                         </button>
@@ -5765,7 +6384,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
                           const r = e.currentTarget.getBoundingClientRect();
                           openPlaylistContextMenu('local', pl.id, r.right - 260, r.bottom + 8);
                         }}
-                        className="pm-hover pm-pressable inline-flex h-9 w-9 items-center justify-center rounded-full pm-text-tertiary hover:text-[var(--pm-text-primary)]"
+                        className="pm-hover pm-pressable inline-flex h-8 w-8 items-center justify-center rounded-full pm-text-tertiary hover:text-[var(--pm-text-primary)] sm:h-9 sm:w-9"
                       >
                         <MoreHorizontal className="h-4 w-4" />
                       </button>
@@ -5776,7 +6395,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
             </div>
           ) : (
             <p className="text-xs pm-text-tertiary">
-              Aún no has creado playlists personalizadas. Toca «Nueva» o importa desde Spotify/YouTube.
+              Aún no has creado playlists personalizadas. Toca «+» o importa desde Spotify/YouTube.
             </p>
           )}
         </section>
@@ -5784,70 +6403,67 @@ export const LibraryScreen: React.FC = React.memo(() => {
 
       {/* Favorite Artists Section (hidden in Todo when empty) */}
       {(libraryCategory === 'Artistas' ||
-        (libraryCategory === 'Todo' && favoriteArtists.length > 0)) && (
+        (libraryCategory === 'Todo' && filteredArtists.length > 0)) && (
         <section className="space-y-2.5">
-          <h2 className="text-[18px] font-bold pm-text-primary">
-            Artistas favoritos ({favoriteArtists.length})
+          <h2 className="text-[17px] font-bold pm-text-primary sm:text-[18px]">
+            Artistas favoritos ({filteredArtists.length})
           </h2>
-          {favoriteArtists.length > 0 ? (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-              {favoriteArtists
-                .filter(
-                  (a) => !filterNorm || a.artistName.toLowerCase().includes(filterNorm)
-                )
-                .map((fa) => (
-                  <div
-                    key={fa.artistId}
-                    data-surface="content"
-                    onClick={() =>
-                      void openArtistDetail(fa.artistId, {
+          {filteredArtists.length > 0 ? (
+            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4">
+              {filteredArtists.map((fa) => (
+                <div
+                  key={fa.artistId}
+                  data-surface="content"
+                  onClick={() =>
+                    void openArtistDetail(fa.artistId, {
+                      name: fa.artistName,
+                      thumbnailUrl: fa.thumbnailUrl,
+                    })
+                  }
+                  className="pm-surface-card pm-card-lift pm-pressable flex cursor-pointer items-center justify-between gap-2 rounded-[14px] p-2.5 sm:p-3"
+                >
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    {fa.thumbnailUrl ? (
+                      <img
+                        src={optimizeArtworkUrl(fa.thumbnailUrl, 'avatar')}
+                        alt={fa.artistName}
+                        loading="lazy"
+                        decoding="async"
+                        className="h-11 w-11 shrink-0 rounded-full object-cover object-[50%_20%]"
+                      />
+                    ) : (
+                      <div className="pm-elevated flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-bold pm-text-primary">
+                        {fa.artistName.slice(0, 1).toUpperCase()}
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-bold pm-text-primary">
+                        {fa.artistName}
+                      </div>
+                      <div className="text-[10.5px] pm-text-tertiary">Artista</div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label={`Quitar ${fa.artistName} de favoritos`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void toggleFavoriteArtist({
+                        id: fa.artistId,
                         name: fa.artistName,
                         thumbnailUrl: fa.thumbnailUrl,
-                      })
-                    }
-                    className="pm-surface-card pm-card-lift flex cursor-pointer items-center justify-between gap-2.5 rounded-[14px] p-3"
+                      });
+                    }}
+                    className="rounded-full p-1.5 text-rose-400 hover:bg-rose-500/15"
                   >
-                    <div className="flex min-w-0 items-center gap-2.5">
-                      {fa.thumbnailUrl ? (
-                        <img
-                          src={fa.thumbnailUrl}
-                          alt={fa.artistName}
-                          className="h-11 w-11 shrink-0 rounded-full object-cover"
-                        />
-                      ) : (
-                        <div className="pm-elevated flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-bold pm-text-primary">
-                          {fa.artistName.slice(0, 1).toUpperCase()}
-                        </div>
-                      )}
-                      <div className="min-w-0">
-                        <div className="truncate text-xs font-bold pm-text-primary">
-                          {fa.artistName}
-                        </div>
-                        <div className="text-[10.5px] pm-text-tertiary">Artista favorito</div>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      aria-label={`Quitar ${fa.artistName} de favoritos`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void toggleFavoriteArtist({
-                          id: fa.artistId,
-                          name: fa.artistName,
-                          thumbnailUrl: fa.thumbnailUrl,
-                        });
-                      }}
-                      className="rounded-full p-1.5 text-rose-400 hover:bg-rose-500/15"
-                    >
-                      <Heart className="h-3.5 w-3.5 fill-current" />
-                    </button>
-                  </div>
-                ))}
+                    <Heart className="h-3.5 w-3.5 fill-current" />
+                  </button>
+                </div>
+              ))}
             </div>
           ) : (
             <p className="text-xs pm-text-tertiary">
-              Pulsa «Me gusta» en el perfil de cualquier artista para ver sus temas recomendados
-              aquí y en tus mixes diarios.
+              Pulsa «Me gusta» en el perfil de cualquier artista para verlo aquí y en tus mixes.
             </p>
           )}
         </section>
@@ -5857,7 +6473,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
       {(libraryCategory === 'Me gusta' ||
         (libraryCategory === 'Todo' && filteredLikes.length > 0)) && (
         <section className="space-y-2.5">
-          <h2 className="text-[18px] font-bold pm-text-primary">
+          <h2 className="text-[17px] font-bold pm-text-primary sm:text-[18px]">
             Canciones que te gustan ({filteredLikes.length})
           </h2>
           {filteredLikes.length > 0 ? (
@@ -5879,53 +6495,118 @@ export const LibraryScreen: React.FC = React.memo(() => {
         </section>
       )}
 
-      {/* Offline Downloads Section */}
+      {/* Interactive Spotify / Tidal Offline Downloads Section */}
       {(libraryCategory === 'Descargas' ||
         (libraryCategory === 'Todo' && offlineEntries.length > 0)) && (
-        <section className="space-y-2.5">
-          <h2 className="text-[18px] font-bold pm-text-primary">
-            En este dispositivo · Offline ({offlineEntries.length})
-          </h2>
-          {offlineEntries.length > 0 ? (
+        <section data-testid="library-downloads-section" className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-[17px] font-bold pm-text-primary sm:text-[18px]">
+                En este dispositivo · Offline ({resolvedOfflineItems.length})
+              </h2>
+              {totalOfflineSizeLabel && (
+                <p className="tabular-nums text-[11.5px] text-emerald-400">
+                  Listas para sonar sin conexión · {totalOfflineSizeLabel}
+                </p>
+              )}
+            </div>
+
+            {playableOfflineTracks.length > 0 && (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  aria-label="Reproducir canciones descargadas"
+                  onClick={() => void playCollection(playableOfflineTracks, { isPlaylist: true })}
+                  className="pm-btn-primary pm-pressable inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold"
+                >
+                  <Play className="h-3.5 w-3.5 translate-x-[1px] fill-current" />
+                  <span>Reproducir</span>
+                </button>
+                <button
+                  type="button"
+                  aria-label="Reproducir descargas en aleatorio"
+                  onClick={() => {
+                    const shuffled = [...playableOfflineTracks].sort(() => Math.random() - 0.5);
+                    if (shuffled.length > 0) void playCollection(shuffled, { isPlaylist: true });
+                  }}
+                  className="pm-btn-secondary pm-pressable inline-flex h-8 w-8 items-center justify-center rounded-full sm:w-auto sm:gap-1.5 sm:px-3"
+                >
+                  <Shuffle className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline text-xs font-semibold">Aleatorio</span>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {visibleOfflineItems.length > 0 ? (
             <div className="space-y-1.5">
-              {offlineEntries.map((entry) => {
-                const track =
-                  searchResults.songs.find((s) => s.id === entry.trackId) ??
-                  likedTracks.find((l) => l.trackId === entry.trackId)?.track ??
-                  playHistory.find((h) => h.track.id === entry.trackId)?.track;
+              {visibleOfflineItems.map(({ entry, track, displayTitle, displayArtist }) => {
+                const sizeLabel =
+                  entry.sizeBytes > 1024 * 1024
+                    ? `${(entry.sizeBytes / (1024 * 1024)).toFixed(1)} MB`
+                    : `${Math.max(1, Math.round(entry.sizeBytes / 1024))} KB`;
                 return (
                   <div
                     key={entry.trackId}
                     data-surface="content"
-                    className="pm-surface-card flex items-center justify-between gap-3 rounded-[10px] p-3"
+                    data-testid={`offline-track-row-${entry.trackId}`}
+                    className="pm-surface-card pm-hover group flex items-center justify-between gap-3 rounded-[14px] p-2.5 sm:px-3"
                   >
                     <button
                       type="button"
                       onClick={() => {
-                        if (track) void playTrack(track);
+                        if (track) void playTrack(track, playableOfflineTracks);
                       }}
-                      className="min-w-0 flex-1 text-left"
+                      className="flex min-w-0 flex-1 items-center gap-3 text-left"
                     >
-                      <div className="truncate text-sm font-semibold pm-text-primary">
-                        {track?.title ?? entry.trackId}
+                      <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-[9px] shadow-sm">
+                        <TrackArtwork
+                          trackId={entry.trackId}
+                          src={track?.thumbnailHighUrl ?? track?.thumbnailUrl}
+                          title={displayTitle}
+                          artistName={track?.artists[0]?.name}
+                          artistId={track?.artists[0]?.id}
+                          alt={displayTitle}
+                          variant="list"
+                          imgClassName="h-full w-full object-cover"
+                        />
                       </div>
-                      <div className="text-xs pm-text-tertiary">
-                        Disponible sin conexión ·{' '}
-                        {entry.sizeBytes > 1024 * 1024
-                          ? `${(entry.sizeBytes / (1024 * 1024)).toFixed(1)} MB`
-                          : `${(entry.sizeBytes / 1024).toFixed(0)} KB`}
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[14px] font-bold pm-text-primary">
+                          {displayTitle}
+                        </div>
+                        <div className="mt-0.5 flex items-center gap-1.5 truncate text-xs pm-text-tertiary">
+                          <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-400">
+                            <Check className="h-2.5 w-2.5" />
+                          </span>
+                          <span className="truncate">
+                            {displayArtist} · {sizeLabel}
+                          </span>
+                        </div>
                       </div>
                     </button>
                     <button
                       type="button"
+                      aria-label={`Borrar ${displayTitle} de descargas`}
                       onClick={() => void removeOfflineTrack(entry.trackId)}
-                      className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-semibold text-rose-500"
+                      className="pm-btn-secondary pm-pressable inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-xs font-semibold text-rose-400 hover:bg-rose-500/15 sm:px-3.5"
                     >
-                      Borrar
+                      <Trash2 className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">Borrar</span>
                     </button>
                   </div>
                 );
               })}
+
+              {libraryCategory === 'Todo' && resolvedOfflineItems.length > 6 && (
+                <button
+                  type="button"
+                  onClick={() => setLibraryCategory('Descargas')}
+                  className="pm-btn-secondary pm-pressable w-full rounded-full py-2 text-xs font-bold"
+                >
+                  Ver todas las descargas ({resolvedOfflineItems.length})
+                </button>
+              )}
             </div>
           ) : (
             <p className="text-xs pm-text-tertiary">
@@ -5939,7 +6620,7 @@ export const LibraryScreen: React.FC = React.memo(() => {
       {(libraryCategory === 'Historial' ||
         (libraryCategory === 'Todo' && playHistory.length > 0)) && (
         <section className="space-y-2.5">
-          <h2 className="text-[18px] font-bold pm-text-primary">
+          <h2 className="text-[17px] font-bold pm-text-primary sm:text-[18px]">
             Historial reciente ({playHistory.length})
           </h2>
           {playHistory.length > 0 ? (

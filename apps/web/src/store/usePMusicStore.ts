@@ -79,6 +79,30 @@ function writeOfflineAutoPlaylistIds(ids: string[]): void {
   }
 }
 
+const OFFLINE_TRACK_META_KEY = 'pmusic_offline_track_meta_v1';
+
+function readOfflineTrackMeta(): Record<string, Track> {
+  try {
+    if (typeof localStorage === 'undefined') return {};
+    const raw = localStorage.getItem(OFFLINE_TRACK_META_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, Track>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeOfflineTrackMeta(map: Record<string, Track>): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(OFFLINE_TRACK_META_KEY, JSON.stringify(map));
+    }
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
 import {
   isMeteredOrCellularNetwork,
   recordStreamLoadTelemetry,
@@ -1226,6 +1250,7 @@ export interface PMusicStoreState {
   playHistory: PlayHistoryRecord[];
   offlineDownloads: Record<string, OfflineDownloadStatus>;
   offlineEntries: OfflineAudioEntry[];
+  offlineTrackMeta: Record<string, Track>;
   wifiOnlyDownloads: boolean;
   offlineAutoPlaylistIds: string[];
 
@@ -3919,6 +3944,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   playHistory: [],
   offlineDownloads: {},
   offlineEntries: [],
+  offlineTrackMeta: readOfflineTrackMeta(),
   wifiOnlyDownloads: readWifiOnlyDownloadsPref(),
   offlineAutoPlaylistIds: readOfflineAutoPlaylistIds(),
 
@@ -4057,6 +4083,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     for (const entry of offlineEntries) {
       offlineDownloads[entry.trackId] = 'downloaded';
     }
+    const nextOfflineTrackMeta: Record<string, Track> = { ...get().offlineTrackMeta };
 
     let hydratedRecentItems = get().recentSearchItems;
     try {
@@ -4207,6 +4234,29 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       track: canonicalizeTrackArtists(h.track),
     }));
 
+    if (offlineEntries.length > 0) {
+      const offlineIdSet = new Set(offlineEntries.map((e) => e.trackId));
+      let metaChanged = false;
+      const collectOfflineMeta = (tr?: Track | null) => {
+        if (!tr?.id || !offlineIdSet.has(tr.id)) return;
+        const prev = nextOfflineTrackMeta[tr.id];
+        if (!prev || (!prev.thumbnailUrl && (tr.thumbnailHighUrl || tr.thumbnailUrl))) {
+          nextOfflineTrackMeta[tr.id] = tr;
+          metaChanged = true;
+        }
+      };
+      for (const pl of canonicalPlaylists) {
+        for (const tr of pl.tracks) collectOfflineMeta(tr);
+      }
+      for (const spl of cachedSharedPlaylists) {
+        for (const tr of spl.tracks) collectOfflineMeta(tr);
+      }
+      for (const l of canonicalLiked) collectOfflineMeta(l.track);
+      for (const h of canonicalHistory) collectOfflineMeta(h.track);
+      for (const tr of get().searchResults.songs) collectOfflineMeta(tr);
+      if (metaChanged) writeOfflineTrackMeta(nextOfflineTrackMeta);
+    }
+
     // 2. Commit instant local state immediately (auth, cached profile, playlists, likes, prefs)
     set((prev) => ({
       ...(isMobileHardwareVolumeRuntime()
@@ -4228,6 +4278,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       recentSearchItems: hydratedRecentItems,
       offlineEntries,
       offlineDownloads,
+      offlineTrackMeta: nextOfflineTrackMeta,
       onlineDevices: syncEngine.getOnlineDevices(),
       ...(rpcStatus ? { discordRpcStatus: rpcStatus } : {}),
       ...(hydratedPrefs
@@ -8572,10 +8623,15 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       const entries = await defaultPlatformBridge.offlineStorage.listOfflineIds();
       const verified = entries.some((e) => e.trackId === track.id);
       if (!verified) throw new Error('persist_failed');
-      set((prev) => ({
-        offlineDownloads: { ...prev.offlineDownloads, [track.id]: 'downloaded' },
-        offlineEntries: entries,
-      }));
+      set((prev) => {
+        const nextMeta = { ...prev.offlineTrackMeta, [track.id]: canonicalizeTrackArtists(track) };
+        writeOfflineTrackMeta(nextMeta);
+        return {
+          offlineDownloads: { ...prev.offlineDownloads, [track.id]: 'downloaded' },
+          offlineEntries: entries,
+          offlineTrackMeta: nextMeta,
+        };
+      });
     } catch {
       set((prev) => ({
         offlineDownloads: { ...prev.offlineDownloads, [track.id]: 'error' },
@@ -8590,9 +8646,13 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     set((prev) => {
       const nextMap = { ...prev.offlineDownloads };
       delete nextMap[trackId];
+      const nextMeta = { ...prev.offlineTrackMeta };
+      delete nextMeta[trackId];
+      writeOfflineTrackMeta(nextMeta);
       return {
         offlineDownloads: nextMap,
         offlineEntries: entries,
+        offlineTrackMeta: nextMeta,
       };
     });
   },
@@ -8631,13 +8691,17 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     const entries = await defaultPlatformBridge.offlineStorage.listOfflineIds();
     set((prev) => {
       const nextMap = { ...prev.offlineDownloads };
+      const nextMeta = { ...prev.offlineTrackMeta };
       for (const trackId of removedIds) {
         delete nextMap[trackId];
+        delete nextMeta[trackId];
       }
+      writeOfflineTrackMeta(nextMeta);
       return {
         offlineAutoPlaylistIds: remainingAutoIds,
         offlineDownloads: nextMap,
         offlineEntries: entries,
+        offlineTrackMeta: nextMeta,
       };
     });
     st.showToast(
@@ -8662,9 +8726,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     await defaultPlatformBridge.offlineStorage.clearAll();
     await clearOfflineCovers();
     writeOfflineAutoPlaylistIds([]);
+    writeOfflineTrackMeta({});
     set({
       offlineDownloads: {},
       offlineEntries: [],
+      offlineTrackMeta: {},
       offlineAutoPlaylistIds: [],
     });
   },

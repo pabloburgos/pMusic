@@ -16,7 +16,26 @@ interface StoredCoverEntry {
 
 const memoryCoverUrls = new Map<string, string>();
 const memoryCoverIsHd = new Map<string, boolean>();
+const coverSavedListeners = new Set<(trackId: string) => void>();
 let coverDbPromise: Promise<IDBDatabase | null> | null = null;
+
+export function subscribeOfflineCoverSaved(listener: (trackId: string) => void): () => void {
+  coverSavedListeners.add(listener);
+  return () => {
+    coverSavedListeners.delete(listener);
+  };
+}
+
+function emitOfflineCoverSaved(trackId?: string): void {
+  if (!trackId) return;
+  for (const listener of coverSavedListeners) {
+    try {
+      listener(trackId);
+    } catch {
+      // ignore listener error
+    }
+  }
+}
 
 function isCoverBlobHd(blob: Blob, markedHd?: boolean): boolean {
   if (markedHd === true && blob.size >= MIN_HD_COVER_BYTES) return true;
@@ -61,6 +80,7 @@ function registerMemoryCover(
       memoryCoverUrls.set(`url:${norm}`, objUrl);
       memoryCoverIsHd.set(`url:${norm}`, isHd);
     }
+    emitOfflineCoverSaved(trackId);
     return objUrl;
   } catch {
     return null;
@@ -223,7 +243,10 @@ export async function saveOfflineCover(
   const existingDbHd = await resolveOfflineCoverUrl(trackId, cleanUrl, { requireHd: true });
   if (existingDbHd) return true;
 
-  const blob = await fetchCoverBlobWithFallback(cleanUrl);
+  let blob = await fetchCoverBlobWithFallback(cleanUrl);
+  if (!blob && rawClean && rawClean !== cleanUrl) {
+    blob = await fetchCoverBlobWithFallback(rawClean);
+  }
   if (!blob) {
     const anyExisting = await resolveOfflineCoverUrl(trackId, cleanUrl);
     return Boolean(anyExisting);

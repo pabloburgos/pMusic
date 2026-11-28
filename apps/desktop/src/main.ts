@@ -1056,7 +1056,7 @@ ipcMain.handle('pmusic:check-and-apply-update', async (_event, currentWebVersion
         return (r[i] ?? 0) > (l[i] ?? 0);
       });
     };
-    const nativeVer = app.getVersion() || '0.24.8';
+    const nativeVer = app.getVersion() || '0.24.9';
     const webVer = typeof currentWebVersion === 'string' && currentWebVersion.trim() ? currentWebVersion.trim() : '0.0.0';
     const effectiveLocalVer = isGreater(webVer, nativeVer) ? webVer : nativeVer;
     if (!latestVer || !isGreater(latestVer, effectiveLocalVer)) {

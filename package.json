@@ -1,6 +1,6 @@
 {
   "name": "pmusic",
-  "version": "0.24.8",
+  "version": "0.24.9",
   "private": true,
   "type": "module",
   "description": "Cross-platform OLED Liquid Glass music player for Windows & Android with a Dual-Deck Web Audio DJ AutoMix engine, 15-day multi-source release radar, and free real-time Supabase sync.",
