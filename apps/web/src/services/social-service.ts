@@ -89,12 +89,14 @@ export interface JamHostSyncMeta {
   crossfadeSec: number;
   eqEnabled: boolean;
   eqPreset: string;
+  allowGuestPlaybackControls?: boolean;
 }
 
 export interface JamQueueOpPayload {
-  __jamOp: 'move' | 'remove' | 'add_next';
+  __jamOp: 'move' | 'remove' | 'add_next' | 'toggle_play' | 'next' | 'prev' | 'seek';
   targetTrackId: string;
   toUpNextIndex?: number;
+  seekSec?: number;
   track?: Track;
 }
 
@@ -106,6 +108,7 @@ export interface JamSessionRecord {
   queue: Track[];
   isPlaying: boolean;
   allowGuestDirectAdd: boolean;
+  allowGuestPlaybackControls?: boolean;
   maxRequestsPerGuest: number;
   active: boolean;
   updatedAt: string;
@@ -124,6 +127,8 @@ export function extractJamSyncMeta(session: JamSessionRecord | null | undefined)
     crossfadeSec: typeof raw.crossfadeSec === 'number' && Number.isFinite(raw.crossfadeSec) ? raw.crossfadeSec : 4,
     eqEnabled: Boolean(raw.eqEnabled),
     eqPreset: typeof raw.eqPreset === 'string' && raw.eqPreset ? raw.eqPreset : 'flat',
+    allowGuestPlaybackControls:
+      typeof raw.allowGuestPlaybackControls === 'boolean' ? raw.allowGuestPlaybackControls : false,
   };
 }
 
@@ -849,6 +854,63 @@ export async function submitPublicJamQueueOp(
   });
 }
 
+export async function submitPublicJamPlaybackOp(
+  code: string,
+  guestName: string,
+  op: 'toggle_play' | 'next' | 'prev' | 'seek',
+  seekSec?: number
+): Promise<void> {
+  return submitPublicJamQueueOp(code, guestName, {
+    __jamOp: op,
+    targetTrackId: op,
+    ...(typeof seekSec === 'number' ? { seekSec } : {}),
+  });
+}
+
+export async function listActiveGlobalJamSessions(
+  client?: SupabaseClient | null
+): Promise<JamSessionRecord[]> {
+  const sb = client ?? getAnonClient();
+  const { data, error } = await sb
+    .from('jam_sessions')
+    .select('*')
+    .eq('active', true)
+    .order('updated_at', { ascending: false })
+    .limit(20);
+  if (error || !Array.isArray(data)) return [];
+  return data.map(mapJamRow);
+}
+
+export function subscribeGlobalActiveJams(
+  client: SupabaseClient | null,
+  onChange: () => void
+): () => void {
+  const sb = client ?? getAnonClient();
+  let channel: any = null;
+  try {
+    channel = sb
+      .channel(`pmusic-global-jams:${Date.now()}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'jam_sessions' },
+        () => {
+          onChange();
+        }
+      )
+      .subscribe();
+  } catch {
+    // ignore realtime setup errors
+  }
+  return () => {
+    try {
+      void channel?.unsubscribe?.();
+      if (channel) sb.removeChannel?.(channel);
+    } catch {
+      // ignore
+    }
+  };
+}
+
 function mapDeezerItemsToTracks(items: unknown): Track[] {
   if (!Array.isArray(items)) return [];
   return items
@@ -946,14 +1008,22 @@ export async function searchPublicCatalog(query: string): Promise<Track[]> {
 }
 
 function mapJamRow(row: any): JamSessionRecord {
+  const currentTrack = (row.current_track as (Track & { __jamSync?: Partial<JamHostSyncMeta> }) | null) ?? null;
+  const syncAllow = currentTrack?.__jamSync?.allowGuestPlaybackControls;
   return {
     code: String(row.code),
     hostUserId: String(row.host_user_id),
     hostName: String(row.host_name ?? 'pMusic'),
-    currentTrack: (row.current_track as Track | null) ?? null,
+    currentTrack,
     queue: Array.isArray(row.queue) ? (row.queue as Track[]) : [],
     isPlaying: Boolean(row.is_playing),
     allowGuestDirectAdd: Boolean(row.allow_guest_direct_add ?? true),
+    allowGuestPlaybackControls:
+      typeof row.allow_guest_playback_controls === 'boolean'
+        ? row.allow_guest_playback_controls
+        : typeof syncAllow === 'boolean'
+          ? syncAllow
+          : false,
     maxRequestsPerGuest: Number(row.max_requests_per_guest ?? 0),
     active: Boolean(row.active ?? true),
     updatedAt: String(row.updated_at ?? new Date().toISOString()),

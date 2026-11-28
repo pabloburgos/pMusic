@@ -78,6 +78,7 @@ import {
   type LyricLine,
   type Track,
 } from '@pmusic/core';
+import { parsePlaylistCsvOrText } from '@pmusic/providers';
 import {
   getLivePlaybackPosition,
   usePMusicStore,
@@ -384,12 +385,15 @@ const NowPlayingSheetInner: React.FC = () => {
   );
 
   const isGuestInJam = Boolean(activeJamSession?.active && activeJamRole === 'guest');
+  const guestCanControlPlayback = Boolean(activeJamSession?.allowGuestPlaybackControls);
+  const lockGuestPlayback = isGuestInJam && !guestCanControlPlayback;
 
   const initialPosSec = usePMusicStore.getState().positionSec;
   const isElectronDesktop = isElectronDesktopRuntime();
   const showBuffering = useDelayedBuffering(isBuffering, 500);
   const sheetRootRef = useRef<HTMLDivElement | null>(null);
   const lyricsContainerRef = useRef<HTMLDivElement | null>(null);
+  const lyricsScrollAnimRef = useRef<number | null>(null);
   const activeLyricRef = useRef<HTMLButtonElement | null>(null);
   const cachedSingLineElRef = useRef<HTMLButtonElement | null>(null);
   const cachedSingSpansRef = useRef<NodeListOf<HTMLElement> | null>(null);
@@ -1121,6 +1125,10 @@ const NowPlayingSheetInner: React.FC = () => {
       sheetRootRef.current.scrollTop = 0;
       sheetRootRef.current.scrollLeft = 0;
     }
+    if (lyricsScrollAnimRef.current && typeof cancelAnimationFrame === 'function') {
+      cancelAnimationFrame(lyricsScrollAnimRef.current);
+      lyricsScrollAnimRef.current = null;
+    }
     if (
       nowPlayingOpen &&
       nowPlayingTab === 'Letras' &&
@@ -1137,15 +1145,41 @@ const NowPlayingSheetInner: React.FC = () => {
         0,
         offsetWithinContainer - container.clientHeight * 0.42 + activeRect.height * 0.5
       );
-      if (typeof container.scrollTo === 'function') {
-        container.scrollTo({
-          top: targetTop,
-          behavior: reducedMotionPref ? 'auto' : 'smooth',
-        });
-      } else {
+      if (reducedMotionPref || typeof requestAnimationFrame !== 'function') {
         container.scrollTop = targetTop;
+        return;
       }
+      const startTop = container.scrollTop;
+      const delta = targetTop - startTop;
+      if (Math.abs(delta) < 1) {
+        container.scrollTop = targetTop;
+        return;
+      }
+      const startTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      const durationMs = Math.min(540, Math.max(300, Math.abs(delta) * 1.15));
+      const animateScroll = (now: number) => {
+        if (!lyricsContainerRef.current) {
+          lyricsScrollAnimRef.current = null;
+          return;
+        }
+        const elapsed = Math.max(0, now - startTime);
+        const progress = Math.min(1, elapsed / durationMs);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        lyricsContainerRef.current.scrollTop = startTop + delta * eased;
+        if (progress < 1) {
+          lyricsScrollAnimRef.current = requestAnimationFrame(animateScroll);
+        } else {
+          lyricsScrollAnimRef.current = null;
+        }
+      };
+      lyricsScrollAnimRef.current = requestAnimationFrame(animateScroll);
     }
+    return () => {
+      if (lyricsScrollAnimRef.current && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(lyricsScrollAnimRef.current);
+        lyricsScrollAnimRef.current = null;
+      }
+    };
   }, [
     nowPlayingOpen,
     nowPlayingTab,
@@ -1271,8 +1305,8 @@ const NowPlayingSheetInner: React.FC = () => {
               : 'pm-cover-slide-next'
         } relative aspect-square overflow-hidden rounded-[16px] bg-[#111115] shadow-[0_26px_64px_rgba(0,0,0,0.58)] transition-transform duration-300 ease-out ${
           compact
-            ? 'w-[min(68vw,320px,36dvh)] xl:w-[min(68vw,346px,38dvh)]'
-            : 'w-[min(78vw,316px,35dvh)] md:w-[min(74vw,340px,38dvh)] xl:w-[min(74vw,380px,42dvh)]'
+            ? 'w-[min(64vw,290px,34dvh)] xl:w-[min(68vw,346px,38dvh)]'
+            : 'w-[min(74vw,300px,33dvh)] md:w-[min(70vw,310px,35dvh)] xl:w-[min(74vw,380px,42dvh)]'
         } ${isPlaying ? 'scale-100' : 'scale-[0.96]'}`}
       >
         <TrackArtwork
@@ -1607,7 +1641,7 @@ const NowPlayingSheetInner: React.FC = () => {
             type="range"
             role="slider"
             aria-label="Progreso de la canción"
-            disabled={isGuestInJam}
+            disabled={lockGuestPlayback}
             min={0}
             max={Math.max(1, Math.round(activeSheetDurSec))}
             step={0.1}
@@ -1618,7 +1652,7 @@ const NowPlayingSheetInner: React.FC = () => {
               ).toFixed(1)
             )}
             onChange={(e) => {
-              if (isGuestInJam) return;
+              if (lockGuestPlayback) return;
               const effDur = activeSheetDurSec;
               const next = Math.max(0, Math.min(effDur, Number(e.target.value)));
               const pct = Math.min(100, Math.max(0, (next / effDur) * 100));
@@ -1656,7 +1690,7 @@ const NowPlayingSheetInner: React.FC = () => {
               seekTo(next);
             }}
             className={`pm-range-gpu-overlay absolute inset-0 z-10 h-full w-full ${
-              isGuestInJam ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'
+              lockGuestPlayback ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'
             }`}
           />
         </div>
@@ -1719,14 +1753,14 @@ const NowPlayingSheetInner: React.FC = () => {
 
         <button
           type="button"
-          disabled={isGuestInJam}
+          disabled={lockGuestPlayback}
           aria-label="Canción anterior"
           onClick={() => {
             triggerTransportAnim('prev');
             void prevTrack();
           }}
           className={`pm-pressable relative flex h-12 w-12 items-center justify-center overflow-visible bg-transparent text-white/90 transition-transform duration-150 focus:outline-none ${
-            isGuestInJam ? 'cursor-not-allowed opacity-40' : 'hover:scale-110 hover:text-white active:scale-90'
+            lockGuestPlayback ? 'cursor-not-allowed opacity-40' : 'hover:scale-110 hover:text-white active:scale-90'
           }`}
         >
           <AnimatedSkipBackIcon
@@ -1738,7 +1772,7 @@ const NowPlayingSheetInner: React.FC = () => {
 
         <button
           type="button"
-          disabled={isGuestInJam}
+          disabled={lockGuestPlayback}
           data-testid="nowplaying-play-btn"
           aria-label={showBuffering ? 'Cargando canción' : isPlaying ? 'Pausar' : 'Reproducir'}
           onClick={() => {
@@ -1746,7 +1780,7 @@ const NowPlayingSheetInner: React.FC = () => {
             void togglePlayPause();
           }}
           className={`pm-pressable relative flex h-16 w-16 items-center justify-center overflow-visible bg-transparent text-white outline-none ring-0 transition-transform duration-200 focus:outline-none ${
-            isGuestInJam ? 'cursor-not-allowed opacity-45' : 'hover:scale-105 active:scale-90'
+            lockGuestPlayback ? 'cursor-not-allowed opacity-45' : 'hover:scale-105 active:scale-90'
           }`}
         >
           {showBuffering ? (
@@ -1773,14 +1807,14 @@ const NowPlayingSheetInner: React.FC = () => {
 
         <button
           type="button"
-          disabled={isGuestInJam}
+          disabled={lockGuestPlayback}
           aria-label="Siguiente canción"
           onClick={() => {
             triggerTransportAnim('next');
             void nextTrack();
           }}
           className={`pm-pressable relative flex h-12 w-12 items-center justify-center overflow-visible bg-transparent text-white/90 transition-transform duration-150 focus:outline-none ${
-            isGuestInJam ? 'cursor-not-allowed opacity-40' : 'hover:scale-110 hover:text-white active:scale-90'
+            lockGuestPlayback ? 'cursor-not-allowed opacity-40' : 'hover:scale-110 hover:text-white active:scale-90'
           }`}
         >
           <AnimatedSkipForwardIcon
@@ -1832,8 +1866,17 @@ const NowPlayingSheetInner: React.FC = () => {
           data-testid="nowplaying-jam-guest-lock"
           className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-black/35 px-3 py-1 text-[11px] font-semibold text-white/80 backdrop-blur-md"
         >
-          <Lock className="h-3 w-3 shrink-0" />
-          <span>Solo el jefe de la Jam controla la reproducción</span>
+          {lockGuestPlayback ? (
+            <>
+              <Lock className="h-3 w-3 shrink-0" />
+              <span>Solo el jefe de la Jam controla la reproducción</span>
+            </>
+          ) : (
+            <>
+              <Radio className="h-3 w-3 shrink-0 text-emerald-400" />
+              <span>Jam compartida · Puedes pausar, pasar y adelantar</span>
+            </>
+          )}
         </div>
       )}
 
@@ -2122,8 +2165,20 @@ const NowPlayingSheetInner: React.FC = () => {
             <div
               ref={lyricsContainerRef}
               data-testid="synced-lyrics-view"
-              onWheel={markLyricsUserScrolled}
-              onTouchMove={markLyricsUserScrolled}
+              onWheel={() => {
+                if (lyricsScrollAnimRef.current && typeof cancelAnimationFrame === 'function') {
+                  cancelAnimationFrame(lyricsScrollAnimRef.current);
+                  lyricsScrollAnimRef.current = null;
+                }
+                markLyricsUserScrolled();
+              }}
+              onTouchMove={() => {
+                if (lyricsScrollAnimRef.current && typeof cancelAnimationFrame === 'function') {
+                  cancelAnimationFrame(lyricsScrollAnimRef.current);
+                  lyricsScrollAnimRef.current = null;
+                }
+                markLyricsUserScrolled();
+              }}
               onPointerDown={(e) => {
                 lyricsPointerStartRef.current = { x: e.clientX, y: e.clientY };
                 if (lyricsLongPressTimerRef.current) clearTimeout(lyricsLongPressTimerRef.current);
@@ -2313,26 +2368,28 @@ const NowPlayingSheetInner: React.FC = () => {
                       }
 
                       const nextLine = currentLyrics.lines[idx + 1];
-                      const lineEndMs =
-                        nextLine && nextLine.timeMs > line.timeMs
-                          ? nextLine.timeMs
-                          : line.timeMs + 4200;
-                      const spanMs = Math.max(800, lineEndMs - line.timeMs);
-                      const vocalSpanMs = Math.min(
-                        spanMs * 0.92,
-                        Math.max(1100, line.text.length * 90)
-                      );
-                      const verseProgress01 = isActive
-                        ? Math.max(
-                            0,
-                            Math.min(1, (smoothPosMs - line.timeMs) / vocalSpanMs)
-                          )
-                        : 0;
-                      const showInstrumentalGap =
-                        isActive &&
-                        nextLine &&
-                        nextLine.timeMs - line.timeMs > 6500 &&
-                        smoothPosMs - line.timeMs > 3200;
+                      let verseProgress01 = 0;
+                      let showInstrumentalGap = false;
+                      if (isActive) {
+                        const lineEndMs =
+                          nextLine && nextLine.timeMs > line.timeMs
+                            ? nextLine.timeMs
+                            : line.timeMs + 4200;
+                        const spanMs = Math.max(800, lineEndMs - line.timeMs);
+                        const vocalSpanMs = Math.min(
+                          spanMs * 0.92,
+                          Math.max(1100, line.text.length * 90)
+                        );
+                        verseProgress01 = Math.max(
+                          0,
+                          Math.min(1, (smoothPosMs - line.timeMs) / vocalSpanMs)
+                        );
+                        showInstrumentalGap = Boolean(
+                          nextLine &&
+                            nextLine.timeMs - line.timeMs > 6500 &&
+                            smoothPosMs - line.timeMs > 3200
+                        );
+                      }
 
                       const lyricSizeClass =
                         lyricsStyle === 'kinetic' || lyricsStyle === 'wordflow'
@@ -2361,6 +2418,10 @@ const NowPlayingSheetInner: React.FC = () => {
                                       ? 'text-[30px] leading-[1.22] md:text-[38px] md:leading-[1.2]'
                                       : 'text-[26px] leading-[1.26] md:text-[32px] md:leading-[1.24]';
 
+                      const statePoseClass = isPast
+                        ? 'pm-lyric-line-past'
+                        : 'pm-lyric-line-upcoming';
+
                       const distClass =
                         lyricsStyle === 'kinetic' && isPast
                           ? 'pm-kinetic-vanish max-h-0 overflow-hidden !py-0'
@@ -2373,22 +2434,24 @@ const NowPlayingSheetInner: React.FC = () => {
                                     : ''
                               }`
                             : highlightIdx === -1 && idx === 0
-                              ? 'pm-lyric-line-inactive opacity-85'
+                              ? 'pm-lyric-line-inactive pm-lyric-line-upcoming opacity-85'
                               : lyricsStyle === 'editorial' || lyricsStyle === 'poster' || lyricsStyle === 'typewriter'
-                              ? isPast
-                                ? 'opacity-25'
-                                : dist === 1
-                                  ? 'opacity-60'
-                                  : 'opacity-35'
+                              ? `pm-lyric-line-inactive ${statePoseClass} ${
+                                  isPast
+                                    ? 'opacity-25'
+                                    : dist === 1
+                                      ? 'opacity-60'
+                                      : 'opacity-35'
+                                }`
                               : lyricsBlurEnabled
-                                ? `pm-lyric-line-inactive ${
+                                ? `pm-lyric-line-inactive ${statePoseClass} ${
                                     dist === 1
                                       ? 'pm-lyric-dist-1'
                                       : dist === 2
                                         ? 'pm-lyric-dist-2'
                                         : 'pm-lyric-dist-far'
                                   }`
-                                : `pm-lyric-line-inactive ${
+                                : `pm-lyric-line-inactive ${statePoseClass} ${
                                     dist === 1
                                       ? 'opacity-65'
                                       : dist === 2
@@ -2396,33 +2459,36 @@ const NowPlayingSheetInner: React.FC = () => {
                                         : 'opacity-35'
                                   }`;
 
-                      const words = line.text.trim().split(/\s+/).filter(Boolean);
+                      const words = isActive
+                        ? line.text.trim().split(/\s+/).filter(Boolean)
+                        : [];
                       const emphasis =
                         (lyricsStyle === 'kinetic' || lyricsStyle === 'poster') && isActive
                           ? analyzeKineticWords(currentLyrics.lines, idx)
                           : null;
-                      const totalWeight = words.reduce(
-                        (sum, w) => sum + w.length + 1,
-                        0
-                      );
-                      let weightCursor = 0;
-                      const perWordTiming = words.map((word) => {
-                        const wLen = word.length + 1;
-                        const wStart = weightCursor / Math.max(1, totalWeight);
-                        weightCursor += wLen;
-                        const wEnd = weightCursor / Math.max(1, totalWeight);
-                        const wp = Math.max(
-                          0,
-                          Math.min(
-                            1,
-                            (verseProgress01 - wStart) / Math.max(0.01, wEnd - wStart)
-                          )
-                        );
-                        return { word, wp, wStart, wEnd };
-                      });
-                      const currentWordIdx = perWordTiming.findIndex(
-                        (item) => item.wp > 0.005 && item.wp < 0.995
-                      );
+                      const perWordTiming = isActive
+                        ? (() => {
+                            const totalWeight = words.reduce((sum, w) => sum + w.length + 1, 0);
+                            let weightCursor = 0;
+                            return words.map((word) => {
+                              const wLen = word.length + 1;
+                              const wStart = weightCursor / Math.max(1, totalWeight);
+                              weightCursor += wLen;
+                              const wEnd = weightCursor / Math.max(1, totalWeight);
+                              const wp = Math.max(
+                                0,
+                                Math.min(
+                                  1,
+                                  (verseProgress01 - wStart) / Math.max(0.01, wEnd - wStart)
+                                )
+                              );
+                              return { word, wp, wStart, wEnd };
+                            });
+                          })()
+                        : [];
+                      const currentWordIdx = isActive
+                        ? perWordTiming.findIndex((item) => item.wp > 0.005 && item.wp < 0.995)
+                        : -1;
 
                       return (
                         <React.Fragment key={`${line.index}-${line.timeMs}`}>
@@ -2956,6 +3022,8 @@ const AudioStudioSheetInner: React.FC = () => {
     );
 
   const isGuestInJam = Boolean(activeJamSession?.active && activeJamRole === 'guest');
+  const guestCanControlPlayback = Boolean(activeJamSession?.allowGuestPlaybackControls);
+  const lockGuestPlayback = isGuestInJam && !guestCanControlPlayback;
 
   const [isMobileViewport, setIsMobileViewport] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth < 768 : false
@@ -4279,6 +4347,8 @@ const JamInviteModalInner: React.FC = () => {
     setJamInviteModalOpen,
     activeJamSession,
     activeJamRole,
+    jamAllowGuestPlaybackControls,
+    setJamAllowGuestPlaybackControls,
     updateJamSettings,
     leaveOrEndJam,
     showToast,
@@ -4437,6 +4507,29 @@ const JamInviteModalInner: React.FC = () => {
             </div>
 
             <div className="flex items-center justify-between gap-2 border-t border-white/10 pt-2">
+              <div>
+                <div className="text-xs font-bold text-white">Control de reproducción</div>
+                <div className="text-[11px] text-white/65">
+                  {jamAllowGuestPlaybackControls
+                    ? 'Invitados pueden pausar, pasar y mover'
+                    : 'Solo tú controlas la reproducción'}
+                </div>
+              </div>
+              <button
+                type="button"
+                data-testid="jam-invite-playback-toggle"
+                onClick={() => setJamAllowGuestPlaybackControls(!jamAllowGuestPlaybackControls)}
+                className={`rounded-full px-3 py-1 text-[11px] font-bold ${
+                  jamAllowGuestPlaybackControls
+                    ? 'bg-white text-[#070709]'
+                    : 'bg-white/10 text-white/80'
+                }`}
+              >
+                {jamAllowGuestPlaybackControls ? 'Libre' : 'Solo jefe'}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between gap-2 border-t border-white/10 pt-2">
               <span className="text-[11px] font-semibold text-white/75">
                 Límite por invitado
               </span>
@@ -4477,6 +4570,103 @@ const JamInviteModalInner: React.FC = () => {
   );
 };
 
+export const JamJoinAudioModal: React.FC = React.memo(() => {
+  const pendingCode = usePMusicStore((s) => s.pendingJamJoinCode);
+  if (!pendingCode) return null;
+  return <JamJoinAudioModalInner code={pendingCode} />;
+});
+JamJoinAudioModal.displayName = 'JamJoinAudioModal';
+
+const JamJoinAudioModalInner: React.FC<{ code: string }> = ({ code }) => {
+  const { globalActiveJams, closeJamJoinPrompt, joinJamInApp } = usePMusicStore();
+  const [joiningMode, setJoiningMode] = useState<'local_and_host' | 'host_only' | null>(null);
+  const preview = globalActiveJams.find((j) => j.code === code) ?? null;
+
+  const chooseMode = async (mode: 'local_and_host' | 'host_only') => {
+    setJoiningMode(mode);
+    try {
+      await joinJamInApp(code, mode);
+    } finally {
+      setJoiningMode(null);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[76] flex items-center justify-center p-4">
+      <div
+        aria-hidden="true"
+        onClick={() => closeJamJoinPrompt()}
+        className="pm-spotlight-backdrop absolute inset-0 bg-black/75 backdrop-blur-sm"
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Unirse a la Jam"
+        data-testid="jam-join-audio-modal"
+        className="pm-glass-frosted-neutral pm-hud-dark pm-modal-pop relative z-10 w-full max-w-md space-y-5 rounded-[26px] border border-white/15 p-6 shadow-2xl"
+      >
+        <div className="flex items-center justify-between">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/30 bg-emerald-500/15 px-3 py-1 text-[11px] font-bold text-emerald-300">
+            <Radio className="h-3 w-3 animate-pulse" />
+            JAM · {code}
+          </span>
+          <button
+            type="button"
+            aria-label="Cancelar"
+            onClick={() => closeJamJoinPrompt()}
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/80 hover:bg-white/20 hover:text-white"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div>
+          <h3 className="text-lg font-extrabold tracking-tight text-white">
+            {preview ? `Entrar a la Jam de ${preview.hostName}` : `Entrar a la Jam ${code}`}
+          </h3>
+          <p className="mt-1 text-xs text-white/70">
+            Elige dónde quieres que suene la música al conectarte:
+          </p>
+        </div>
+
+        <div className="space-y-2.5">
+          <button
+            type="button"
+            disabled={joiningMode !== null}
+            data-testid="jam-join-local-and-host-btn"
+            onClick={() => void chooseMode('local_and_host')}
+            className="pm-pressable flex w-full items-center justify-between gap-3 rounded-2xl border border-white/20 bg-white px-4 py-3.5 text-left text-[#070709] shadow-lg transition hover:bg-white/90 disabled:opacity-60"
+          >
+            <div>
+              <div className="text-sm font-extrabold">Escuchar también en este dispositivo</div>
+              <div className="text-[11px] font-medium text-[#070709]/70">
+                Sincronizado con el jefe · Sonará aquí y en su altavoz
+              </div>
+            </div>
+            {joiningMode === 'local_and_host' && <Loader2 className="h-4 w-4 animate-spin shrink-0" />}
+          </button>
+
+          <button
+            type="button"
+            disabled={joiningMode !== null}
+            data-testid="jam-join-host-only-btn"
+            onClick={() => void chooseMode('host_only')}
+            className="pm-pressable flex w-full items-center justify-between gap-3 rounded-2xl border border-white/15 bg-white/[0.06] px-4 py-3.5 text-left text-white transition hover:bg-white/[0.12] disabled:opacity-60"
+          >
+            <div>
+              <div className="text-sm font-bold">Solo en el altavoz del jefe</div>
+              <div className="text-[11px] text-white/65">
+                Controla la cola y la reproducción sin audio local
+              </div>
+            </div>
+            {joiningMode === 'host_only' && <Loader2 className="h-4 w-4 animate-spin shrink-0" />}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const ImportPlaylistModal: React.FC = React.memo(() => {
   const importModalOpen = usePMusicStore((s) => s.importModalOpen);
   if (!importModalOpen) return null;
@@ -4494,9 +4684,14 @@ const ImportPlaylistModalInner: React.FC = () => {
     importResult,
     importError,
     startPlaylistImport,
+    startRawTracksPlaylistImport,
     cancelPlaylistImport,
     saveImportedPlaylistToLibrary,
   } = usePMusicStore();
+  const [importMode, setImportMode] = useState<'url' | 'csv'>('url');
+  const [csvPlaylistName, setCsvPlaylistName] = useState('Playlist importada');
+  const [csvRawText, setCsvRawText] = useState('');
+  const csvFileInputRef = useRef<HTMLInputElement | null>(null);
 
   if (!importModalOpen) return null;
 
@@ -4532,52 +4727,133 @@ const ImportPlaylistModalInner: React.FC = () => {
         </div>
 
         <div className="mt-4 space-y-4">
-          <p className="text-xs font-medium pm-text-secondary">
-            Pega el enlace público de cualquier playlist o álbum de Spotify o YouTube Music:
-          </p>
-
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <input
-              type="text"
-              aria-label="URL de playlist de Spotify o YouTube"
-              placeholder="https://open.spotify.com/playlist/... o https://music.youtube.com/playlist?list=..."
-              value={importUrlInput}
-              onChange={(e) => setImportUrlInput(e.target.value)}
-              className="pm-input flex-1 rounded-full px-4 py-2.5 text-sm"
-            />
+          <div className="inline-flex rounded-full border pm-border bg-white/[0.04] p-1">
             <button
               type="button"
-              onClick={() => void startPlaylistImport()}
-              className="pm-btn-primary rounded-full px-5 py-2.5 text-sm font-bold"
+              onClick={() => setImportMode('url')}
+              className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition ${
+                importMode === 'url' ? 'pm-btn-primary' : 'pm-text-secondary hover:text-white'
+              }`}
             >
-              Importar
+              Por enlace público (+500 temas)
+            </button>
+            <button
+              type="button"
+              onClick={() => setImportMode('csv')}
+              className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition ${
+                importMode === 'csv' ? 'pm-btn-primary' : 'pm-text-secondary hover:text-white'
+              }`}
+            >
+              Archivo CSV (Exportify / Chosic)
             </button>
           </div>
 
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() =>
-                void startPlaylistImport(
-                  'https://open.spotify.com/playlist/37i9dQZF1DX123456'
-                )
-              }
-              className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-medium"
-            >
-              Probar ejemplo Spotify Urbano ES
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                void startPlaylistImport(
-                  'https://music.youtube.com/playlist?list=PL_URBANO_ES_2026'
-                )
-              }
-              className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-medium"
-            >
-              Probar ejemplo YouTube Music
-            </button>
-          </div>
+          {importMode === 'url' ? (
+            <>
+              <p className="text-xs font-medium pm-text-secondary">
+                Pega el enlace público de cualquier playlist o álbum de Spotify o YouTube Music (compatible con listas de más de 100 canciones):
+              </p>
+
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <input
+                  type="text"
+                  aria-label="URL de playlist de Spotify o YouTube"
+                  placeholder="https://open.spotify.com/playlist/... o https://music.youtube.com/playlist?list=..."
+                  value={importUrlInput}
+                  onChange={(e) => setImportUrlInput(e.target.value)}
+                  className="pm-input flex-1 rounded-full px-4 py-2.5 text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={() => void startPlaylistImport()}
+                  className="pm-btn-primary rounded-full px-5 py-2.5 text-sm font-bold"
+                >
+                  Importar
+                </button>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    void startPlaylistImport(
+                      'https://open.spotify.com/playlist/37i9dQZF1DX123456'
+                    )
+                  }
+                  className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-medium"
+                >
+                  Probar ejemplo Spotify Urbano ES
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void startPlaylistImport(
+                      'https://music.youtube.com/playlist?list=PL_URBANO_ES_2026'
+                    )
+                  }
+                  className="pm-btn-secondary rounded-full px-3.5 py-1.5 text-xs font-medium"
+                >
+                  Probar ejemplo YouTube Music
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-xs font-medium pm-text-secondary">
+                Sube un archivo <code className="text-white">.csv</code> exportado desde Exportify/Chosic o pega tus canciones (<code className="text-white">Artista - Título</code>, sin límite):
+              </p>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <input
+                  type="text"
+                  aria-label="Nombre de la playlist importada"
+                  value={csvPlaylistName}
+                  onChange={(e) => setCsvPlaylistName(e.target.value)}
+                  placeholder="Nombre de la playlist..."
+                  className="pm-input flex-1 rounded-full px-4 py-2 text-xs font-semibold"
+                />
+                <input
+                  ref={csvFileInputRef}
+                  type="file"
+                  accept=".csv,.txt,text/csv,text/plain"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const baseName = file.name.replace(/\.(csv|txt)$/i, '').replace(/[_-]+/g, ' ').trim();
+                    if (baseName) setCsvPlaylistName(baseName);
+                    void file.text().then((txt) => setCsvRawText(txt));
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => csvFileInputRef.current?.click()}
+                  className="pm-btn-secondary rounded-full px-4 py-2 text-xs font-bold"
+                >
+                  Elegir archivo CSV/TXT
+                </button>
+              </div>
+              <textarea
+                rows={4}
+                value={csvRawText}
+                onChange={(e) => setCsvRawText(e.target.value)}
+                placeholder={'Track Name,Artist Name(s)\nPERRO NEGRO,"Bad Bunny, Feid"\nó\nLa Pantera, Quevedo - DOGGY'}
+                className="pm-input w-full rounded-2xl p-3 text-xs"
+              />
+              <button
+                type="button"
+                disabled={!csvRawText.trim()}
+                onClick={() => {
+                  const parsed = parsePlaylistCsvOrText(csvRawText);
+                  if (parsed.length > 0) {
+                    void startRawTracksPlaylistImport(csvPlaylistName, parsed);
+                  }
+                }}
+                className="pm-btn-primary rounded-full px-5 py-2 text-xs font-bold disabled:opacity-45"
+              >
+                Importar lista completa
+              </button>
+            </div>
+          )}
 
           {importProgress && importProgress.phase !== 'done' && (
             <div

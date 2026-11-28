@@ -94,12 +94,12 @@ describe('pMusic v0.24.3 fixes & UX polish', () => {
     expect(electronBuildSrc).toContain("state.displayMode === 'app' ? 0 : state.displayMode === 'artist' ? 1 : 2");
   });
 
-  it('centers the desktop top search bar in the window and removes fullscreen button from main header only', () => {
+  it('centers the desktop top search bar cleanly without absolute overlap and removes fullscreen button from main header only', () => {
     render(<App />);
     const searchBtn = screen.getByTestId('top-center-search-btn');
     const centerWrapper = searchBtn.parentElement as HTMLElement;
-    expect(centerWrapper.className).toContain('left-1/2');
-    expect(centerWrapper.className).toContain('-translate-x-1/2');
+    expect(centerWrapper.className).toContain('justify-center');
+    expect(centerWrapper.className).toContain('flex-1');
     expect(screen.queryByTestId('desktop-fullscreen-btn')).toBeNull();
 
     const overlaysSrc = readFileSync(

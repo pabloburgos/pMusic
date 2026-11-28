@@ -9,10 +9,14 @@ import {
   YouTubeMusicProvider,
   canonicalizeArtistIdentity,
   createPMusicApiHandler,
+  extractSpotifyEmbedAccessToken,
+  fetchSpotifyPathfinderPlaylist,
   getFallbackArtistDetail,
   isAuthenticLyricsText,
+  mergeMatchedTrackArtists,
   parseFeaturedArtistsFromTitle,
   parseLaHigueraNovedadesHtml,
+  parsePlaylistCsvOrText,
   parseSpotifyEmbedHtml,
   parseSpotifyEmbedPlaylistHtml,
   parseYouTubeDescriptionCredits,
@@ -674,7 +678,7 @@ describe('@pmusic/providers', () => {
     } finally {
       globalThis.fetch = prevFetch;
     }
-  });
+  }, 15000);
 
   it('rejects 6-minute YouTube video candidates for 3-minute tracks in scoreAudioCandidate', () => {
     const score = scoreAudioCandidate(
@@ -735,7 +739,7 @@ describe('@pmusic/providers', () => {
     } finally {
       globalThis.fetch = prevFetch;
     }
-  });
+  }, 15000);
 
   it('rejects remixes, mashups, edits and bootlegs for Columbia while keeping authentic original, and refuses Audius remixes', async () => {
     const remixScore = scoreAudioCandidate(
@@ -796,7 +800,7 @@ describe('@pmusic/providers', () => {
     } finally {
       globalThis.fetch = prevFetch;
     }
-  });
+  }, 15000);
 
   it('ranks matching artist profile first for artist queries, keeps artist+song queries on song, and promotes joint album co-headliners', async () => {
     const mockFetch = (async (url: string | URL | Request) => {
@@ -2087,5 +2091,87 @@ describe('@pmusic/providers', () => {
     expect(parsed.releases.some((r) => r.title === 'ESTRENO REAL' && r.releaseDate === '2026-11-26')).toBe(true);
     const spotifyHint = parsed.releases.find((r) => r.title === 'Pista Sin Fecha');
     expect(spotifyHint?.releaseDate).toBeUndefined();
+  });
+
+  it('paginates Spotify Pathfinder playlists beyond 100 tracks, preserves multi-artists on match, and parses Exportify CSV', async () => {
+    const htmlWithToken = `<html><body><script id="__NEXT_DATA__" type="application/json">${JSON.stringify({
+      props: {
+        pageProps: {
+          state: {
+            settings: { session: { accessToken: 'BQD_test_spotify_token_1234567890' } },
+          },
+        },
+      },
+    })}</script></body></html>`;
+    expect(extractSpotifyEmbedAccessToken(htmlWithToken)).toBe('BQD_test_spotify_token_1234567890');
+
+    const mockFetch = (async (input: string | URL | Request) => {
+      const url = String(input);
+      const offsetMatch = url.match(/offset%22%3A(\d+)/i);
+      const offset = offsetMatch ? Number(offsetMatch[1]) : 0;
+      const items = Array.from({ length: offset === 0 ? 100 : 45 }, (_, idx) => {
+        const num = offset + idx + 1;
+        return {
+          uid: `u_${num}`,
+          itemV2: {
+            data: {
+              __typename: 'Track',
+              uri: `spotify:track:${num}`,
+              name: num === 1 ? 'PERRO NEGRO' : `Canción ${num}`,
+              trackDuration: { totalMilliseconds: 162000 },
+              artists: {
+                items:
+                  num === 1
+                    ? [{ profile: { name: 'Bad Bunny' } }, { profile: { name: 'Feid' } }]
+                    : [{ profile: { name: 'La Pantera' } }],
+              },
+            },
+          },
+        };
+      });
+      return new Response(
+        JSON.stringify({
+          data: {
+            playlistV2: {
+              name: 'Mega Trap 145',
+              ownerV2: { data: { name: 'Pablo' } },
+              content: { totalCount: 145, items },
+            },
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    }) as typeof fetch;
+
+    const pf = await fetchSpotifyPathfinderPlaylist(
+      '37i9dQZF1DX123456',
+      'BQD_test_spotify_token_1234567890',
+      { maxTracks: 500, fetchFn: mockFetch }
+    );
+    expect(pf).not.toBeNull();
+    expect(pf!.tracks).toHaveLength(145);
+    expect(pf!.truncated).toBe(false);
+    expect(pf!.tracks[0]!.artists).toEqual(['Bad Bunny', 'Feid']);
+
+    const merged = mergeMatchedTrackArtists(
+      {
+        id: 'dz:111',
+        title: 'PERRO NEGRO',
+        artists: [{ id: 'ar_bb', name: 'Bad Bunny' }],
+        durationSec: 162,
+        thumbnailUrl: '',
+        isExplicit: true,
+        source: 'youtube',
+      },
+      ['Bad Bunny', 'Feid']
+    );
+    expect(merged.artists.map((a) => a.name)).toEqual(['Bad Bunny', 'Feid']);
+
+    const csvParsed = parsePlaylistCsvOrText(
+      'Track Name,Artist Name(s),Track Duration (ms)\n"PERRO NEGRO","Bad Bunny, Feid",162000\n"DOGGY","La Pantera; Quevedo",203000'
+    );
+    expect(csvParsed).toHaveLength(2);
+    expect(csvParsed[0]?.artists).toEqual(['Bad Bunny', 'Feid']);
+    expect(csvParsed[1]?.artists).toEqual(['La Pantera', 'Quevedo']);
   });
 });

@@ -1277,8 +1277,8 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="es.pmusic.app"
-    android:versionCode="73"
-    android:versionName="0.24.12">
+    android:versionCode="74"
+    android:versionName="0.24.13">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -1327,6 +1327,8 @@ writeFileSync(
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="pmusic" android:host="auth" />
+                <data android:scheme="pmusic" android:host="jam" />
+                <data android:scheme="pmusic" android:host="playlist" />
             </intent-filter>
         </activity>
 
@@ -2295,7 +2297,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 public class MainActivity extends Activity {
-    private static final String NATIVE_APP_VERSION = "0.24.12";
+    private static final String NATIVE_APP_VERSION = "0.24.13";
     private volatile File activeOtaDir = null;
 
     private static int compareSemverNative(String a, String b) {
@@ -3229,15 +3231,22 @@ public class MainActivity extends Activity {
 
                     if ("/api/radar-proxy".equals(path)) {
                         String targetUrl = uri.getQueryParameter("url");
-                        if (targetUrl != null && (targetUrl.startsWith("https://open.spotify.com/embed/playlist/") || targetUrl.startsWith("https://www.lahiguera.net/musicalia/"))) {
+                        String authHdr = uri.getQueryParameter("auth");
+                        if (targetUrl != null && (targetUrl.startsWith("https://open.spotify.com/embed/")
+                                || targetUrl.startsWith("https://api-partner.spotify.com/pathfinder/")
+                                || targetUrl.startsWith("https://www.lahiguera.net/musicalia/"))) {
                             HttpURLConnection conn = null;
                             try {
                                 URL u = new URL(targetUrl);
                                 conn = (HttpURLConnection) u.openConnection();
-                                conn.setConnectTimeout(4000);
-                                conn.setReadTimeout(4500);
+                                conn.setConnectTimeout(4500);
+                                conn.setReadTimeout(5500);
                                 conn.setInstanceFollowRedirects(true);
                                 conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36");
+                                if (authHdr != null && !authHdr.isEmpty()) {
+                                    conn.setRequestProperty("Authorization", authHdr);
+                                    conn.setRequestProperty("Accept", "application/json");
+                                }
                                 if (conn.getResponseCode() >= 200 && conn.getResponseCode() < 300) {
                                     InputStream in = conn.getInputStream();
                                     ByteArrayOutputStream bos = new ByteArrayOutputStream();
@@ -3245,7 +3254,8 @@ public class MainActivity extends Activity {
                                     int n;
                                     while ((n = in.read(buf)) != -1) bos.write(buf, 0, n);
                                     in.close();
-                                    return new WebResourceResponse("text/html", "UTF-8", 200, "OK", corsHeaders, new ByteArrayInputStream(bos.toByteArray()));
+                                    String respMime = targetUrl.contains("api-partner.spotify.com") ? "application/json" : "text/html";
+                                    return new WebResourceResponse(respMime, "UTF-8", 200, "OK", corsHeaders, new ByteArrayInputStream(bos.toByteArray()));
                                 }
                             } catch (Throwable ignored) {
                             } finally {
@@ -6119,7 +6129,7 @@ public class PMusicReleaseCheckJobService extends JobService {
             conn.setConnectTimeout(3500);
             conn.setReadTimeout(4500);
             conn.setInstanceFollowRedirects(true);
-            conn.setRequestProperty("User-Agent", "pMusic-Android/0.24.12");
+            conn.setRequestProperty("User-Agent", "pMusic-Android/0.24.13");
             if (conn.getResponseCode() < 200 || conn.getResponseCode() >= 300) return null;
             InputStream in = conn.getInputStream();
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
@@ -6143,7 +6153,7 @@ public class PMusicReleaseCheckJobService extends JobService {
             conn.setConnectTimeout(timeoutMs);
             conn.setReadTimeout(timeoutMs);
             conn.setInstanceFollowRedirects(true);
-            conn.setRequestProperty("User-Agent", "pMusic-Android/0.24.12");
+            conn.setRequestProperty("User-Agent", "pMusic-Android/0.24.13");
             if (conn.getResponseCode() < 200 || conn.getResponseCode() >= 300) return null;
             InputStream in = conn.getInputStream();
             ByteArrayOutputStream bos = new ByteArrayOutputStream();

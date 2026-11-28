@@ -213,14 +213,17 @@ import {
   joinSharedPlaylistByCode,
   listFriendships,
   listSharedPlaylists,
+  listActiveGlobalJamSessions,
   publishOrUpdateSharedPlaylistLink,
   removeTrackFromSharedPlaylist,
   respondFriendRequest,
   searchPublicCatalog,
   sendFriendRequest,
   stampTrackAddedBy,
+  submitPublicJamPlaybackOp,
   submitPublicJamQueueOp,
   submitPublicJamRequest,
+  subscribeGlobalActiveJams,
   extractJamSyncMeta,
   updateJamRequestStatus,
   updateJamSessionState,
@@ -1324,6 +1327,10 @@ export interface PMusicStoreState {
   activeJamRole: 'host' | 'guest' | null;
   activeJamRequests: JamRequestRecord[];
   jamInviteModalOpen: boolean;
+  jamAllowGuestPlaybackControls: boolean;
+  jamGuestAudioMode: 'local_and_host' | 'host_only';
+  pendingJamJoinCode: string | null;
+  globalActiveJams: JamSessionRecord[];
   wrappedModalOpen: boolean;
   wrappedSummary: WrappedSummary | null;
   wrappedSoundtrackTracks: Track[];
@@ -1462,10 +1469,19 @@ export interface PMusicStoreState {
   hydrateSocialAndSubscribe: () => Promise<void>;
   startJam: (opts?: {
     allowGuestDirectAdd?: boolean;
+    allowGuestPlaybackControls?: boolean;
     maxRequestsPerGuest?: number;
     openSheet?: boolean;
   }) => Promise<JamSessionRecord | null>;
-  joinJamInApp: (code: string) => Promise<JamSessionRecord | null>;
+  joinJamInApp: (
+    code: string,
+    audioMode?: 'local_and_host' | 'host_only'
+  ) => Promise<JamSessionRecord | null>;
+  setJamAllowGuestPlaybackControls: (enabled: boolean) => void;
+  setJamGuestAudioMode: (mode: 'local_and_host' | 'host_only') => void;
+  openJamJoinPrompt: (code: string) => void;
+  closeJamJoinPrompt: () => void;
+  refreshGlobalActiveJams: () => Promise<void>;
   leaveOrEndJam: (reason?: string) => Promise<void>;
   checkJamIdleAutoEnd: (nowMs?: number) => Promise<boolean>;
   addTrackToActiveJam: (track: Track, playNext?: boolean) => Promise<void>;
@@ -1562,6 +1578,10 @@ export interface PMusicStoreState {
   // Importer Actions
   setImportUrlInput: (url: string) => void;
   startPlaylistImport: (url?: string) => Promise<void>;
+  startRawTracksPlaylistImport: (
+    name: string,
+    tracks: Array<{ title: string; artists: string[]; durationSec?: number }>
+  ) => Promise<void>;
   cancelPlaylistImport: () => void;
   saveImportedPlaylistToLibrary: () => Promise<void>;
 
@@ -2857,6 +2877,91 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   }
 
   let lastHostJamPushAtMs = 0;
+  let globalJamsUnsub: (() => void) | null = null;
+  let knownGlobalJamCodes = new Set<string>();
+  let globalJamsInitialized = false;
+
+  async function syncGuestAudioToHost(
+    cleanTrack: Track,
+    syncedPos: number,
+    hostPlaying: boolean,
+    forceTrackReload: boolean
+  ): Promise<void> {
+    const cur = get();
+    if (cur.activeJamRole !== 'guest' || !cur.activeJamSession?.active) return;
+    if (cur.jamGuestAudioMode === 'host_only') {
+      try {
+        audioEngine.pause();
+      } catch {
+        // ignore in mock test envs
+      }
+      return;
+    }
+    try {
+      ensureAudioEngineBindings();
+      if (forceTrackReload) {
+        if (hostPlaying) {
+          await audioEngine.loadAndPlay(cleanTrack, syncedPos);
+        } else {
+          audioEngine.pause();
+        }
+        return;
+      }
+      if (!hostPlaying) {
+        audioEngine.pause();
+        return;
+      }
+      const engineLive = audioEngine.getLivePositionSec();
+      const loadedAnyAudio =
+        typeof document !== 'undefined' &&
+        Array.from(document.querySelectorAll('audio')).some((a) => Boolean(a.src));
+      if (!loadedAnyAudio && typeof document !== 'undefined') {
+        await audioEngine.loadAndPlay(cleanTrack, syncedPos);
+        return;
+      }
+      if (!cur.isPlaying) {
+        await audioEngine.play();
+      }
+      if (Math.abs((engineLive || cur.positionSec) - syncedPos) > 1.8) {
+        audioEngine.seek(syncedPos);
+      }
+    } catch {
+      // keep UI synced gracefully even if audio autoplay is blocked before interaction
+    }
+  }
+
+  function startGlobalJamsWatcher(): void {
+    if (globalJamsUnsub) return;
+    const sb = getSyncSupabaseClient() ?? getAnonSupabaseClient();
+    const runRefresh = async () => {
+      try {
+        const list = await listActiveGlobalJamSessions(sb);
+        const cur = get();
+        const myUid = cur.authState.userId;
+        const myActiveCode = cur.activeJamSession?.code;
+        if (globalJamsInitialized) {
+          for (const jam of list) {
+            if (
+              !knownGlobalJamCodes.has(jam.code) &&
+              jam.hostUserId !== myUid &&
+              jam.code !== myActiveCode
+            ) {
+              cur.showToast(`Jam en directo · ${jam.hostName} abrió una sala (${jam.code})`);
+            }
+          }
+        }
+        knownGlobalJamCodes = new Set(list.map((j) => j.code));
+        globalJamsInitialized = true;
+        set({ globalActiveJams: list });
+      } catch {
+        // ignore transient network errors
+      }
+    };
+    void runRefresh();
+    globalJamsUnsub = subscribeGlobalActiveJams(sb, () => {
+      void runRefresh();
+    });
+  }
 
   function buildHostSyncedTrack(cur: PMusicStoreState): Track {
     const cleanBase = { ...cur.currentTrack } as Track & { __jamSync?: unknown };
@@ -2873,6 +2978,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
         crossfadeSec: cur.safeCrossfade.durationSec,
         eqEnabled: cur.userEq.enabled,
         eqPreset: cur.userEq.preset,
+        allowGuestPlaybackControls: cur.jamAllowGuestPlaybackControls,
       },
     } as Track;
   }
@@ -2987,10 +3093,29 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
                   displayName: req.guestName || 'Invitado',
                   avatarUrl: cleaned.addedBy?.avatarUrl ?? null,
                 });
-            if (!upNext.some((t) => t.id === stamped.id)) {
+              if (!upNext.some((t) => t.id === stamped.id)) {
               set({ queue: [...cur.queue.slice(0, baseIdx + 1), stamped, ...upNext] });
               if (!isOwnOp) cur.showToast(`${req.guestName} puso «${stamped.title}» a continuación`);
               pushHostJamStateSoon();
+            }
+          } else if (
+            cur.jamAllowGuestPlaybackControls &&
+            (op.__jamOp === 'toggle_play' ||
+              op.__jamOp === 'next' ||
+              op.__jamOp === 'prev' ||
+              op.__jamOp === 'seek')
+          ) {
+            if (op.__jamOp === 'toggle_play') {
+              void cur.togglePlayPause();
+              if (!isOwnOp) cur.showToast(`${req.guestName} ${cur.isPlaying ? 'pausó' : 'reanudó'} la Jam`);
+            } else if (op.__jamOp === 'next') {
+              void cur.nextTrack();
+              if (!isOwnOp) cur.showToast(`${req.guestName} pasó a la siguiente canción`);
+            } else if (op.__jamOp === 'prev') {
+              void cur.prevTrack();
+              if (!isOwnOp) cur.showToast(`${req.guestName} volvió a la canción anterior`);
+            } else if (op.__jamOp === 'seek' && typeof op.seekSec === 'number' && Number.isFinite(op.seekSec)) {
+              cur.seekTo(op.seekSec);
             }
           }
           continue;
@@ -3062,14 +3187,22 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
             0,
             syncedQueue.findIndex((q) => q.id === cleanTrack.id)
           );
+          const trackChanged = cleanTrack.id !== cur.currentTrack.id;
           guestPatch.currentTrack = cleanTrack;
           guestPatch.durationSec = cleanTrack.durationSec || cur.durationSec;
-          guestPatch.isPlaying = sess.isPlaying;
+          guestPatch.isPlaying = cur.jamGuestAudioMode === 'host_only' ? false : sess.isPlaying;
           guestPatch.positionSec = syncedPos;
           guestPatch.queue = syncedQueue;
           guestPatch.queueIndex = idx;
+          set(guestPatch);
+          if (trackChanged) {
+            applyAmbientPaletteForTrack(cleanTrack);
+            void get().loadLyricsForTrack(cleanTrack);
+          }
+          void syncGuestAudioToHost(cleanTrack, syncedPos, sess.isPlaying, trackChanged);
+        } else {
+          set(guestPatch);
         }
-        set(guestPatch);
       } else {
         set({
           activeJamSession: sess,
@@ -4010,6 +4143,10 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   activeJamRole: null,
   activeJamRequests: [],
   jamInviteModalOpen: false,
+  jamAllowGuestPlaybackControls: true,
+  jamGuestAudioMode: 'local_and_host',
+  pendingJamJoinCode: null,
+  globalActiveJams: [],
   wrappedModalOpen: false,
   wrappedSummary: null,
   wrappedSoundtrackTracks: [],
@@ -4768,6 +4905,7 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     if (isLiveRuntime() && isOnline) {
       void get().refreshExploreDiscovery();
       void get().replenishRecommendedQueue();
+      startGlobalJamsWatcher();
     }
     if (get().djMode.enabled) {
       void recomputeActiveDjPlan();
@@ -5677,6 +5815,21 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   togglePlayPause: async () => {
     const preSt = get();
     if (preSt.activeJamRole === 'guest' && preSt.activeJamSession?.active) {
+      if (preSt.activeJamSession.allowGuestPlaybackControls) {
+        const guestNick = getOwnAdderIdentity().displayName;
+        void submitPublicJamPlaybackOp(preSt.activeJamSession.code, guestNick, 'toggle_play').catch(() => {});
+        const nextPlaying = !preSt.isPlaying;
+        set({ isPlaying: nextPlaying });
+        if (preSt.jamGuestAudioMode === 'local_and_host') {
+          try {
+            if (nextPlaying) await audioEngine.play();
+            else audioEngine.pause();
+          } catch {
+            // ignore
+          }
+        }
+        return;
+      }
       preSt.showToast('Solo el jefe de la Jam controla la reproducción');
       return;
     }
@@ -5724,7 +5877,14 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   nextTrack: async (isAutoAdvance = false) => {
     const preSt = get();
     if (preSt.activeJamRole === 'guest' && preSt.activeJamSession?.active) {
-      if (!isAutoAdvance) preSt.showToast('Solo el jefe de la Jam controla la reproducción');
+      if (isAutoAdvance) return;
+      if (preSt.activeJamSession.allowGuestPlaybackControls) {
+        const guestNick = getOwnAdderIdentity().displayName;
+        void submitPublicJamPlaybackOp(preSt.activeJamSession.code, guestNick, 'next').catch(() => {});
+        preSt.showToast('Siguiente canción en la Jam');
+        return;
+      }
+      preSt.showToast('Solo el jefe de la Jam controla la reproducción');
       return;
     }
     if (isAutoAdvance && (autoAdvanceInFlight || manualTrackSwitchInFlight)) return;
@@ -5844,6 +6004,12 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   prevTrack: async () => {
     const st = get();
     if (st.activeJamRole === 'guest' && st.activeJamSession?.active) {
+      if (st.activeJamSession.allowGuestPlaybackControls) {
+        const guestNick = getOwnAdderIdentity().displayName;
+        void submitPublicJamPlaybackOp(st.activeJamSession.code, guestNick, 'prev').catch(() => {});
+        st.showToast('Canción anterior en la Jam');
+        return;
+      }
       st.showToast('Solo el jefe de la Jam controla la reproducción');
       return;
     }
@@ -5948,6 +6114,20 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   seekTo: (positionSec) => {
     const preSt = get();
     if (preSt.activeJamRole === 'guest' && preSt.activeJamSession?.active) {
+      if (preSt.activeJamSession.allowGuestPlaybackControls) {
+        const guestNick = getOwnAdderIdentity().displayName;
+        const clamped = Math.max(0, positionSec);
+        void submitPublicJamPlaybackOp(preSt.activeJamSession.code, guestNick, 'seek', clamped).catch(() => {});
+        set({ positionSec: clamped });
+        if (preSt.jamGuestAudioMode === 'local_and_host') {
+          try {
+            audioEngine.seek(clamped);
+          } catch {
+            // ignore
+          }
+        }
+        return;
+      }
       preSt.showToast('Solo el jefe de la Jam controla la reproducción');
       return;
     }
@@ -7418,19 +7598,24 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       set({ authOnboardingOpen: true });
       return null;
     }
+    const allowPlaybackCtrl =
+      opts?.allowGuestPlaybackControls ?? st.jamAllowGuestPlaybackControls;
     const existing = await fetchActiveHostJamSession(sb, myUserId);
     if (existing) {
       const reqs = await fetchJamRequests(sb, existing.code);
       set({
-        activeJamSession: existing,
+        activeJamSession: { ...existing, allowGuestPlaybackControls: allowPlaybackCtrl },
         activeJamRole: 'host',
         activeJamCode: existing.code,
         activeJamRequests: reqs,
+        jamAllowGuestPlaybackControls: allowPlaybackCtrl,
         ...(opts?.openSheet !== false
           ? { nowPlayingOpen: true, nowPlayingTab: 'Cola' as const, jamInviteModalOpen: true }
           : {}),
       });
       subscribeJamRealtime(existing.code);
+      pushHostJamStateSoon();
+      void get().refreshGlobalActiveJams();
       return existing;
     }
 
@@ -7442,15 +7627,29 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       avatarUrl: identity.avatarUrl,
     });
 
+    const baseTrack = st.currentTrack.addedBy?.displayName
+      ? st.currentTrack
+      : stampTrackAddedBy(st.currentTrack, identity);
     const stampedQueue = st.queue.slice(Math.max(0, st.queueIndex)).map((t) =>
       t.addedBy?.displayName ? t : stampTrackAddedBy(t, identity)
     );
     const created = await createJamSession(sb, {
       hostUserId: myUserId,
       hostName: identity.displayName,
-      currentTrack: st.currentTrack.addedBy?.displayName
-        ? st.currentTrack
-        : stampTrackAddedBy(st.currentTrack, identity),
+      currentTrack: {
+        ...baseTrack,
+        __jamSync: {
+          positionSec: Number(Math.max(0, st.positionSec).toFixed(2)),
+          updatedAtMs: Date.now(),
+          isPlaying: st.isPlaying,
+          djEnabled: st.djMode.enabled,
+          crossfadeEnabled: st.safeCrossfade.enabled,
+          crossfadeSec: st.safeCrossfade.durationSec,
+          eqEnabled: st.userEq.enabled,
+          eqPreset: st.userEq.preset,
+          allowGuestPlaybackControls: allowPlaybackCtrl,
+        },
+      } as Track,
       queue: stampedQueue,
       isPlaying: st.isPlaying,
       allowGuestDirectAdd: opts?.allowGuestDirectAdd ?? true,
@@ -7458,20 +7657,22 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     });
     processedJamRequestIds.clear();
     set({
-      activeJamSession: created,
+      activeJamSession: { ...created, allowGuestPlaybackControls: allowPlaybackCtrl },
       activeJamRole: 'host',
       activeJamCode: created.code,
       activeJamRequests: [],
+      jamAllowGuestPlaybackControls: allowPlaybackCtrl,
       ...(opts?.openSheet !== false
         ? { nowPlayingOpen: true, nowPlayingTab: 'Cola' as const, jamInviteModalOpen: true }
         : {}),
     });
     subscribeJamRealtime(created.code);
+    void get().refreshGlobalActiveJams();
     st.showToast(`Jam ${created.code} iniciada`);
     return created;
   },
 
-  joinJamInApp: async (code) => {
+  joinJamInApp: async (code, audioMode) => {
     const cleanCode = code.trim().toUpperCase().replace(/^.*\/JAM\//i, '').replace(/[^A-Z0-9]/g, '');
     if (cleanCode.length < 4) {
       get().showToast('Introduce un código de Jam válido');
@@ -7486,27 +7687,114 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
       return null;
     }
     const st = get();
+    const chosenMode = audioMode ?? st.jamGuestAudioMode;
     const isOwnHost = Boolean(st.authState.userId && sess.hostUserId === st.authState.userId);
+    const syncMeta = extractJamSyncMeta(sess);
+    const cleanTrack = sess.currentTrack
+      ? (() => {
+          const copy = { ...sess.currentTrack } as Track & { __jamSync?: unknown };
+          delete copy.__jamSync;
+          return copy;
+        })()
+      : null;
+    const elapsedSec =
+      syncMeta && syncMeta.isPlaying
+        ? Math.max(0, (Date.now() - syncMeta.updatedAtMs) / 1000)
+        : 0;
+    const syncedPos = syncMeta
+      ? Math.min(cleanTrack?.durationSec || 9999, syncMeta.positionSec + elapsedSec)
+      : 0;
+
     set({
       activeJamSession: sess,
       activeJamRole: isOwnHost ? 'host' : 'guest',
       activeJamCode: sess.code,
       activeJamRequests: reqs,
+      jamGuestAudioMode: chosenMode,
+      pendingJamJoinCode: null,
       nowPlayingOpen: true,
       nowPlayingTab: 'Cola',
       jamInviteModalOpen: false,
-      ...(sess.currentTrack && !st.isPlaying
+      ...(cleanTrack
         ? {
-            currentTrack: sess.currentTrack,
-            queue: sess.queue.length > 0 ? sess.queue : [sess.currentTrack],
+            currentTrack: cleanTrack,
+            queue: sess.queue.length > 0 ? sess.queue : [cleanTrack],
             queueIndex: 0,
-            durationSec: sess.currentTrack.durationSec,
+            durationSec: cleanTrack.durationSec,
+            positionSec: syncedPos,
+            isPlaying: !isOwnHost && chosenMode === 'host_only' ? false : sess.isPlaying,
           }
         : {}),
     });
     subscribeJamRealtime(sess.code);
-    get().showToast(`Conectado a la Jam de ${sess.hostName} (${sess.code})`);
+    if (!isOwnHost && cleanTrack) {
+      void syncGuestAudioToHost(cleanTrack, syncedPos, sess.isPlaying, true);
+    }
+    get().showToast(
+      chosenMode === 'host_only'
+        ? `Conectado a la Jam de ${sess.hostName} (solo altavoz del jefe)`
+        : `Conectado a la Jam de ${sess.hostName} (${sess.code})`
+    );
     return sess;
+  },
+
+  setJamAllowGuestPlaybackControls: (enabled) => {
+    set((prev) => ({
+      jamAllowGuestPlaybackControls: enabled,
+      activeJamSession: prev.activeJamSession
+        ? { ...prev.activeJamSession, allowGuestPlaybackControls: enabled }
+        : prev.activeJamSession,
+    }));
+    const cur = get();
+    if (cur.activeJamRole === 'host' && cur.activeJamSession?.active) {
+      pushHostJamStateSoon();
+    }
+  },
+
+  setJamGuestAudioMode: (mode) => {
+    set({ jamGuestAudioMode: mode });
+    const cur = get();
+    if (cur.activeJamRole === 'guest' && cur.activeJamSession?.active) {
+      if (mode === 'host_only') {
+        try {
+          audioEngine.pause();
+        } catch {
+          // ignore
+        }
+        set({ isPlaying: false });
+        cur.showToast('Audio local pausado: sonando solo en el altavoz del jefe');
+      } else {
+        const meta = extractJamSyncMeta(cur.activeJamSession);
+        const pos = meta
+          ? meta.positionSec + (meta.isPlaying ? Math.max(0, (Date.now() - meta.updatedAtMs) / 1000) : 0)
+          : cur.positionSec;
+        const playing = Boolean(meta?.isPlaying ?? cur.activeJamSession.isPlaying);
+        set({ isPlaying: playing, positionSec: pos });
+        void syncGuestAudioToHost(cur.currentTrack, pos, playing, true);
+        cur.showToast('Audio sincronizado también en este dispositivo');
+      }
+    }
+  },
+
+  openJamJoinPrompt: (code) => {
+    const cleanCode = code.trim().toUpperCase().replace(/^.*\/JAM\//i, '').replace(/[^A-Z0-9]/g, '');
+    if (cleanCode.length >= 4) {
+      set({ pendingJamJoinCode: cleanCode });
+    }
+  },
+
+  closeJamJoinPrompt: () => set({ pendingJamJoinCode: null }),
+
+  refreshGlobalActiveJams: async () => {
+    try {
+      const sb = getSyncSupabaseClient() ?? getAnonSupabaseClient();
+      const list = await listActiveGlobalJamSessions(sb);
+      knownGlobalJamCodes = new Set(list.map((j) => j.code));
+      globalJamsInitialized = true;
+      set({ globalActiveJams: list });
+    } catch {
+      // ignore
+    }
   },
 
   leaveOrEndJam: async (reason) => {
@@ -8863,6 +9151,45 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
     }
   },
 
+  startRawTracksPlaylistImport: async (name, tracks) => {
+    importAbortController?.abort();
+    importAbortController = new AbortController();
+
+    set({
+      importError: null,
+      importResult: null,
+      importProgress: {
+        phase: 'extracting_source',
+        completed: 0,
+        total: Math.max(1, tracks.length),
+        matchedCount: 0,
+        unmatchedCount: 0,
+      },
+    });
+
+    try {
+      const result = await playlistImporter.importFromSourceTracks(
+        {
+          name: name.trim() || 'Playlist importada',
+          sourcePlatform: 'spotify',
+          sourceUrl: 'import://csv',
+          tracks,
+        },
+        (ev) => set({ importProgress: ev }),
+        importAbortController.signal
+      );
+      set({ importResult: result });
+    } catch (err) {
+      set({
+        importError:
+          err instanceof Error
+            ? err.message
+            : 'No se pudo procesar el archivo CSV/lista de canciones.',
+        importProgress: null,
+      });
+    }
+  },
+
   cancelPlaylistImport: () => {
     importAbortController?.abort();
     importAbortController = null;
@@ -9077,6 +9404,11 @@ export const usePMusicStore = create<PMusicStoreState>((set, get) => {
   },
 
   handleAuthCallbackUrl: async (callbackUrl) => {
+    const jamDeepMatch = callbackUrl.match(/^pmusic:\/\/jam\/([A-Za-z0-9]{4,12})/i);
+    if (jamDeepMatch?.[1]) {
+      get().openJamJoinPrompt(jamDeepMatch[1].toUpperCase());
+      return;
+    }
     const playlistDeepMatch = callbackUrl.match(/^pmusic:\/\/playlist\/([A-Za-z0-9]{4,16})/i);
     if (playlistDeepMatch?.[1] && typeof window !== 'undefined') {
       window.dispatchEvent(

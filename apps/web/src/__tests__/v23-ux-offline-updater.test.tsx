@@ -919,6 +919,7 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
     splashEl.id = 'pm-boot-splash';
     document.body.appendChild(splashEl);
     localStorage.setItem('pmusic.jam.guestName', 'Ana');
+    sessionStorage.setItem('pmusic.jam.joined:AB3K9P', 'host_only');
 
     const tNow = makeTrack(950);
     const tQ1 = { ...makeTrack(951), id: 'jam-q-1', title: 'LA PRUEBA', artists: [{ id: 'ar-rc', name: 'Raul Clyde' }], thumbnailUrl: '' };
@@ -1015,6 +1016,7 @@ describe('pMusic v0.23.0 UX, offline covers, Android media & updater', () => {
       vi.stubGlobal('fetch', origFetch);
       localStorage.removeItem('pmusic.jam.guestName');
       localStorage.removeItem('pmusic.jam.guestPrefs');
+      sessionStorage.removeItem('pmusic.jam.joined:AB3K9P');
       splashEl.remove();
     }
   });

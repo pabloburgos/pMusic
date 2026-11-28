@@ -4,6 +4,8 @@ import { FALLBACK_TRACKS } from './catalog-fallback.ts';
 import { isAuthenticLyricsText } from './lrclib.ts';
 import {
   PlaylistImporter,
+  extractSpotifyEmbedAccessToken,
+  fetchSpotifyPathfinderPlaylist,
   parseSpotifyEmbedHtml,
   type SpotifyEmbedExtraction,
 } from './importer.ts';
@@ -490,19 +492,50 @@ export function createPMusicApiHandler(options: PMusicApiHandlerOptions = {}) {
           return true;
         }
 
+        const maxParam = Number(urlObj.searchParams.get('max') ?? 500);
+        const maxTracks = Number.isFinite(maxParam)
+          ? Math.max(50, Math.min(1000, Math.round(maxParam)))
+          : 500;
         const embedUrl = `https://open.spotify.com/embed/${parsed.kind}/${parsed.id}`;
         try {
-          const embedRes = await fetchFn(embedUrl, {
-            headers: {
-              'User-Agent':
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-            },
-          });
-          if (embedRes.ok) {
-            const html = await embedRes.text();
-            const extracted = parseSpotifyEmbedHtml(html, parsed);
-            if (extracted && extracted.tracks.length > 0) {
-              sendJson(res, 200, extracted);
+          let html = '';
+          for (let attempt = 0; attempt < 2; attempt++) {
+            const embedRes = await fetchFn(embedUrl, {
+              headers: {
+                'User-Agent':
+                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                Accept: 'text/html,application/xhtml+xml',
+              },
+            });
+            if (embedRes.ok) {
+              const candidateHtml = await embedRes.text();
+              if (candidateHtml.includes('__NEXT_DATA__')) {
+                html = candidateHtml;
+                break;
+              }
+            }
+          }
+          if (html) {
+            const embedExtracted = parseSpotifyEmbedHtml(html, parsed);
+            const accessToken = extractSpotifyEmbedAccessToken(html);
+            if (parsed.kind === 'playlist' && accessToken) {
+              const pfExtracted = await fetchSpotifyPathfinderPlaylist(parsed.id, accessToken, {
+                maxTracks,
+                fetchFn,
+                fallbackMeta: {
+                  name: embedExtracted?.name,
+                  author: embedExtracted?.author,
+                  coverUrl: embedExtracted?.coverUrl,
+                  sourceUrl: parsed.canonicalUrl,
+                },
+              });
+              if (pfExtracted && pfExtracted.tracks.length > 0) {
+                sendJson(res, 200, pfExtracted);
+                return true;
+              }
+            }
+            if (embedExtracted && embedExtracted.tracks.length > 0) {
+              sendJson(res, 200, embedExtracted);
               return true;
             }
           }

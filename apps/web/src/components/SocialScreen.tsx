@@ -65,10 +65,13 @@ export const SocialScreen: React.FC = React.memo(() => {
     hydrateSocialAndSubscribe,
     startJam,
     joinJamInApp,
+    openJamJoinPrompt,
     leaveOrEndJam,
     approveJamRequest,
     rejectJamRequest,
     updateJamSettings,
+    jamAllowGuestPlaybackControls,
+    setJamAllowGuestPlaybackControls,
     setJamInviteModalOpen,
     setNowPlayingOpen,
     setNowPlayingTab,
@@ -94,6 +97,7 @@ export const SocialScreen: React.FC = React.memo(() => {
       activeJamSession: s.activeJamSession,
       activeJamRole: s.activeJamRole,
       activeJamRequests: s.activeJamRequests,
+      jamAllowGuestPlaybackControls: s.jamAllowGuestPlaybackControls,
       setSocialSubTab: s.setSocialSubTab,
       setShareListeningActivity: s.setShareListeningActivity,
       loadPersonalTopStats: s.loadPersonalTopStats,
@@ -103,10 +107,12 @@ export const SocialScreen: React.FC = React.memo(() => {
       hydrateSocialAndSubscribe: s.hydrateSocialAndSubscribe,
       startJam: s.startJam,
       joinJamInApp: s.joinJamInApp,
+      openJamJoinPrompt: s.openJamJoinPrompt,
       leaveOrEndJam: s.leaveOrEndJam,
       approveJamRequest: s.approveJamRequest,
       rejectJamRequest: s.rejectJamRequest,
       updateJamSettings: s.updateJamSettings,
+      setJamAllowGuestPlaybackControls: s.setJamAllowGuestPlaybackControls,
       setJamInviteModalOpen: s.setJamInviteModalOpen,
       setNowPlayingOpen: s.setNowPlayingOpen,
       setNowPlayingTab: s.setNowPlayingTab,
@@ -289,7 +295,7 @@ export const SocialScreen: React.FC = React.memo(() => {
         <div className="space-y-4">
           {!activeJamSession?.active ? (
             <div className="space-y-4">
-              <div className="pm-surface-card relative overflow-hidden space-y-5 rounded-[24px] border border-emerald-400/20 bg-gradient-to-br from-emerald-500/[0.10] via-transparent to-purple-500/[0.12] p-5 sm:p-6">
+              <div className="pm-surface-card relative overflow-hidden space-y-5 rounded-[24px] border border-white/12 bg-white/[0.03] p-5 sm:p-6">
                 <div className="flex items-start gap-4">
                   <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-400/30">
                     <Radio className="h-6 w-6" />
@@ -308,6 +314,24 @@ export const SocialScreen: React.FC = React.memo(() => {
                   </div>
                 </div>
 
+                <label className="flex cursor-pointer items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/35 px-4 py-3">
+                  <div>
+                    <div className="text-xs font-bold pm-text-primary">
+                      Control de reproducción por invitados
+                    </div>
+                    <div className="text-[11px] pm-text-secondary">
+                      Permitir pausar, pasar canción y mover la barra en la app y en web
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    data-testid="social-jam-allow-controls-toggle"
+                    checked={jamAllowGuestPlaybackControls}
+                    onChange={(e) => setJamAllowGuestPlaybackControls(e.target.checked)}
+                    className="h-4 w-4 accent-white"
+                  />
+                </label>
+
                 <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center">
                   <button
                     type="button"
@@ -324,7 +348,7 @@ export const SocialScreen: React.FC = React.memo(() => {
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
-                  void joinJamInApp(joinJamInput);
+                  openJamJoinPrompt(joinJamInput);
                   setJoinJamInput('');
                 }}
                 className="pm-surface-card flex items-center gap-2 rounded-full p-1.5 pl-4"
@@ -431,7 +455,14 @@ export const SocialScreen: React.FC = React.memo(() => {
                     Peticiones entrantes ({visibleJamReqs.length})
                   </h3>
                   {activeJamRole === 'host' && (
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setJamAllowGuestPlaybackControls(!jamAllowGuestPlaybackControls)}
+                        className="pm-btn-secondary rounded-full px-3 py-1 text-[11px] font-semibold"
+                      >
+                        {jamAllowGuestPlaybackControls ? 'Controles: Libres' : 'Controles: Solo tú'}
+                      </button>
                       <button
                         type="button"
                         onClick={() =>

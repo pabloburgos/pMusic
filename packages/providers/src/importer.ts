@@ -36,6 +36,330 @@ const SPOTIFY_URI_RE = /^spotify:(playlist|album):([A-Za-z0-9]{10,40})$/i;
 const SPOTIFY_WEB_RE =
   /^https?:\/\/(?:open\.spotify\.com|play\.spotify\.com)\/(?:intl-[a-z]{2}(?:-[a-z]{2})?\/)?(?:embed\/)?(playlist|album)\/([A-Za-z0-9]{8,40})/i;
 const NEXT_DATA_SCRIPT_RE = /<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i;
+const SPOTIFY_PATHFINDER_PLAYLIST_HASH =
+  'b39f62e9b566aa849b1780927de1450f47e02c54abf1e66e513f96e849591e41';
+
+/**
+ * Extracts Spotify's anonymous web-player access token embedded inside `__NEXT_DATA__`.
+ */
+export function extractSpotifyEmbedAccessToken(html: string): string | null {
+  const match = NEXT_DATA_SCRIPT_RE.exec(html);
+  if (!match || !match[1]) return null;
+  try {
+    const json = JSON.parse(match[1]) as {
+      props?: {
+        pageProps?: {
+          state?: {
+            settings?: {
+              session?: {
+                accessToken?: string;
+              };
+            };
+          };
+        };
+      };
+    };
+    const tok = json?.props?.pageProps?.state?.settings?.session?.accessToken;
+    return typeof tok === 'string' && tok.trim().length > 16 ? tok.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Paginates Spotify's public Pathfinder GraphQL playlist endpoint so playlists with >100 tracks
+ * can be extracted cleanly without user OAuth.
+ */
+export async function fetchSpotifyPathfinderPlaylist(
+  playlistId: string,
+  accessToken: string,
+  options?: {
+    maxTracks?: number;
+    fetchFn?: typeof fetch;
+    signal?: AbortSignal;
+    fallbackMeta?: {
+      name?: string;
+      author?: string;
+      coverUrl?: string;
+      sourceUrl?: string;
+    };
+  }
+): Promise<SpotifyEmbedExtraction | null> {
+  const fetchFn = options?.fetchFn ?? globalThis.fetch.bind(globalThis);
+  const maxTracks = Math.max(50, Math.min(1500, options?.maxTracks ?? 500));
+  const cleanId = playlistId.trim();
+  if (!cleanId || !accessToken.trim()) return null;
+
+  let playlistName = options?.fallbackMeta?.name?.trim() || 'Playlist de Spotify';
+  let playlistAuthor = options?.fallbackMeta?.author;
+  let playlistCover = options?.fallbackMeta?.coverUrl;
+  let totalCount = 0;
+  const collected: ImportedSourceTrack[] = [];
+
+  for (let offset = 0; offset < maxTracks; offset += 100) {
+    if (options?.signal?.aborted) break;
+    const limit = Math.min(100, maxTracks - offset);
+    const variables = JSON.stringify({
+      uri: `spotify:playlist:${cleanId}`,
+      offset,
+      limit,
+    });
+    const extensions = JSON.stringify({
+      persistedQuery: {
+        version: 1,
+        sha256Hash: SPOTIFY_PATHFINDER_PLAYLIST_HASH,
+      },
+    });
+    const endpoint =
+      `https://api-partner.spotify.com/pathfinder/v1/query?operationName=fetchPlaylist` +
+      `&variables=${encodeURIComponent(variables)}&extensions=${encodeURIComponent(extensions)}`;
+
+    let res: Response;
+    try {
+      res = await fetchFn(endpoint, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/json',
+        },
+        signal: options?.signal,
+      });
+    } catch {
+      break;
+    }
+
+    if (!res.ok) {
+      if (offset === 0) return null;
+      break;
+    }
+
+    let payload: {
+      data?: {
+        playlistV2?: {
+          name?: string;
+          ownerV2?: { data?: { name?: string } };
+          images?: { items?: Array<{ sources?: Array<{ url?: string }> }> };
+          content?: {
+            totalCount?: number;
+            items?: Array<{
+              uid?: string;
+              itemV2?: {
+                data?: {
+                  __typename?: string;
+                  uri?: string;
+                  name?: string;
+                  trackDuration?: { totalMilliseconds?: number };
+                  artists?: { items?: Array<{ profile?: { name?: string } }> };
+                  albumOfTrack?: {
+                    coverArt?: { sources?: Array<{ url?: string }> };
+                  };
+                };
+              };
+            }>;
+          };
+        };
+      };
+    };
+
+    try {
+      payload = (await res.json()) as typeof payload;
+    } catch {
+      break;
+    }
+
+    const pv2 = payload?.data?.playlistV2;
+    if (!pv2) {
+      if (offset === 0) return null;
+      break;
+    }
+
+    if (offset === 0) {
+      if (typeof pv2.name === 'string' && pv2.name.trim()) {
+        playlistName = pv2.name.trim();
+      }
+      if (pv2.ownerV2?.data?.name) {
+        playlistAuthor = pv2.ownerV2.data.name;
+      }
+      const coverCandidate = pv2.images?.items?.[0]?.sources?.[0]?.url;
+      if (coverCandidate) {
+        playlistCover = coverCandidate;
+      }
+      totalCount = Number(pv2.content?.totalCount ?? 0) || 0;
+    }
+
+    const items = Array.isArray(pv2.content?.items) ? pv2.content.items : [];
+    if (items.length === 0) break;
+
+    for (const entry of items) {
+      const t = entry?.itemV2?.data;
+      if (!t || typeof t.name !== 'string' || !t.name.trim()) continue;
+      const artists = Array.isArray(t.artists?.items)
+        ? t.artists.items
+            .map((a) => a?.profile?.name?.trim())
+            .filter((n): n is string => Boolean(n && n.length > 0))
+        : [];
+      const durMs = Number(t.trackDuration?.totalMilliseconds ?? 0);
+      const trackCover =
+        t.albumOfTrack?.coverArt?.sources?.[1]?.url ??
+        t.albumOfTrack?.coverArt?.sources?.[0]?.url ??
+        playlistCover;
+      collected.push({
+        title: t.name.trim(),
+        artists: artists.length > 0 ? artists : ['Artista desconocido'],
+        durationSec: Number.isFinite(durMs) && durMs > 0 ? Math.round(durMs / 1000) : undefined,
+        externalId: t.uri ?? entry?.uid,
+        thumbnailUrl: trackCover,
+      });
+    }
+
+    if (items.length < limit) break;
+    if (totalCount > 0 && collected.length >= totalCount) break;
+  }
+
+  if (collected.length === 0) return null;
+
+  const effectiveTotal = Math.max(totalCount, collected.length);
+  const truncated = effectiveTotal > collected.length;
+  const warning = truncated
+    ? `La playlist tiene ${effectiveTotal} canciones; se importaron las primeras ${collected.length} para mantener la fluidez.`
+    : undefined;
+
+  return {
+    id: cleanId,
+    kind: 'playlist',
+    name: playlistName,
+    author: playlistAuthor,
+    coverUrl: playlistCover,
+    sourceUrl: options?.fallbackMeta?.sourceUrl ?? `https://open.spotify.com/playlist/${cleanId}`,
+    truncated,
+    warning,
+    tracks: collected,
+  };
+}
+
+function splitCsvRow(line: string, delimiter: string): string[] {
+  const cells: string[] = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]!;
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === delimiter && !inQuotes) {
+      cells.push(cur.trim());
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  cells.push(cur.trim());
+  return cells;
+}
+
+/**
+ * Parses Exportify / Chosic CSV exports or plain `Artist - Track` text lists into `ImportedSourceTrack[]`.
+ */
+export function parsePlaylistCsvOrText(raw: string): ImportedSourceTrack[] {
+  if (typeof raw !== 'string') return [];
+  const lines = raw
+    .replace(/^\uFEFF/, '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  if (lines.length === 0) return [];
+
+  const headerLine = lines[0]!;
+  const delimiter = headerLine.includes('\t') ? '\t' : headerLine.includes(';') && !headerLine.includes(',') ? ';' : ',';
+  const headerCells = splitCsvRow(headerLine, delimiter).map((c) => c.toLowerCase());
+  const titleIdx = headerCells.findIndex((h) =>
+    h === 'track name' || h === 'track' || h === 'title' || h === 'name' || h === 'canción' || h === 'cancion'
+  );
+  const artistIdx = headerCells.findIndex((h) =>
+    h.startsWith('artist') || h === 'artista' || h === 'artistas'
+  );
+  const durMsIdx = headerCells.findIndex((h) =>
+    h.includes('duration (ms)') || h === 'duration_ms'
+  );
+  const durSecIdx = headerCells.findIndex((h) =>
+    h === 'duration' || h === 'duration_sec'
+  );
+
+  if (titleIdx >= 0) {
+    const parsedTracks: ImportedSourceTrack[] = [];
+    for (let i = 1; i < lines.length; i++) {
+      const cells = splitCsvRow(lines[i]!, delimiter);
+      const rawTitle = cells[titleIdx]?.trim();
+      if (!rawTitle) continue;
+      const rawArtists = artistIdx >= 0 ? cells[artistIdx] ?? '' : '';
+      const artists = rawArtists
+        .split(/\s*[;,]\s*|\s*&\s*/u)
+        .map((a) => a.trim())
+        .filter(Boolean);
+      let durationSec: number | undefined;
+      if (durMsIdx >= 0) {
+        const ms = Number(cells[durMsIdx]);
+        if (Number.isFinite(ms) && ms > 0) durationSec = Math.round(ms / 1000);
+      } else if (durSecIdx >= 0) {
+        const s = Number(cells[durSecIdx]);
+        if (Number.isFinite(s) && s > 0) durationSec = Math.round(s);
+      }
+      parsedTracks.push({
+        title: rawTitle,
+        artists: artists.length > 0 ? artists : ['Artista desconocido'],
+        durationSec,
+      });
+    }
+    return parsedTracks;
+  }
+
+  // Fallback plain-text lines: `Artist - Track` or `Track`
+  return lines.map((line) => {
+    const sepIdx = line.indexOf(' - ');
+    if (sepIdx > 0) {
+      const artistPart = line.slice(0, sepIdx).trim();
+      const titlePart = line.slice(sepIdx + 3).trim();
+      return {
+        title: titlePart || line,
+        artists: splitSpotifySubtitleArtists(artistPart),
+      };
+    }
+    return {
+      title: line,
+      artists: ['Artista desconocido'],
+    };
+  });
+}
+
+/**
+ * Merges collaborating artists extracted from the source playlist into the matched provider Track
+ * so multi-artist tracks display every artist immediately upon import (before playback enrichment).
+ */
+export function mergeMatchedTrackArtists(match: Track, sourceArtists: string[]): Track {
+  const validSourceArtists = sourceArtists
+    .map((a) => a.trim())
+    .filter((a) => a.length > 0 && normalizeSearchText(a) !== 'artista desconocido');
+  if (validSourceArtists.length === 0) return match;
+
+  const merged = [...match.artists];
+  const seen = new Set(merged.map((a) => normalizeSearchText(a.name)).filter(Boolean));
+  for (const name of validSourceArtists) {
+    const norm = normalizeSearchText(name);
+    if (!norm || seen.has(norm)) continue;
+    seen.add(norm);
+    const slug = norm.replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+    merged.push({
+      id: `imported_artist_${slug || merged.length}`,
+      name,
+    });
+  }
+
+  return merged.length === match.artists.length ? match : { ...match, artists: merged };
+}
 
 /**
  * Splits Spotify embed subtitle artist strings on `, ` including `\u00A0` non-breaking space.
@@ -319,25 +643,43 @@ export class PlaylistImporter implements IPlaylistImporter {
     }
 
     const extraction = await this.extractSpotifySource(parsed, signal);
-    const total = extraction.tracks.length;
-    const items: MatchedImportTrack[] = [];
+    return this.importFromSourceTracks(
+      {
+        name: extraction.name,
+        author: extraction.author,
+        coverUrl: extraction.coverUrl,
+        sourcePlatform: 'spotify',
+        sourceUrl: extraction.sourceUrl,
+        truncated: extraction.truncated,
+        warning: extraction.warning,
+        tracks: extraction.tracks,
+      },
+      onProgress,
+      signal
+    );
+  }
+
+  public async importFromSourceTracks(
+    input: {
+      name: string;
+      author?: string;
+      coverUrl?: string;
+      sourcePlatform: 'spotify' | 'youtube';
+      sourceUrl: string;
+      truncated?: boolean;
+      warning?: string;
+      tracks: ImportedSourceTrack[];
+    },
+    onProgress?: (event: ImportProgressEvent) => void,
+    signal?: AbortSignal
+  ): Promise<PlaylistImportResult> {
+    const total = input.tracks.length;
+    const items: MatchedImportTrack[] = new Array(total);
+    let completedCount = 0;
     let matchedCount = 0;
     let unmatchedCount = 0;
 
-    for (let i = 0; i < extraction.tracks.length; i++) {
-      if (signal?.aborted) {
-        throw new DomainError('ABORTED', 'Importación cancelada por el usuario.');
-      }
-      const sourceTrack = extraction.tracks[i]!;
-      onProgress?.({
-        phase: 'matching_tracks',
-        completed: i,
-        total,
-        matchedCount,
-        unmatchedCount,
-        currentTrackTitle: sourceTrack.title,
-      });
-
+    const matchSingle = async (sourceTrack: ImportedSourceTrack): Promise<MatchedImportTrack> => {
       const query = `${sourceTrack.title} ${sourceTrack.artists[0] ?? ''}`.trim();
       const searchBundle = await this.musicProvider.search(query, 'song', signal);
       const candidates = searchBundle.songs.length > 0 ? searchBundle.songs : searchBundle.videos;
@@ -354,29 +696,55 @@ export class PlaylistImporter implements IPlaylistImporter {
       }
 
       if (bestMatch && bestConfidence >= 0.6) {
-        matchedCount++;
-        items.push({
+        return {
           source: sourceTrack,
-          match: bestMatch,
+          match: mergeMatchedTrackArtists(bestMatch, sourceTrack.artists),
           confidence: bestConfidence,
           status: 'matched',
-        });
-      } else if (bestMatch && bestConfidence >= 0.35) {
-        matchedCount++;
-        items.push({
+        };
+      }
+      if (bestMatch && bestConfidence >= 0.35) {
+        return {
           source: sourceTrack,
-          match: bestMatch,
+          match: mergeMatchedTrackArtists(bestMatch, sourceTrack.artists),
           confidence: bestConfidence,
           status: 'low_confidence',
-        });
-      } else {
-        unmatchedCount++;
-        items.push({
-          source: sourceTrack,
-          confidence: bestConfidence,
-          status: 'unmatched',
-        });
+        };
       }
+      return {
+        source: sourceTrack,
+        confidence: bestConfidence,
+        status: 'unmatched',
+      };
+    };
+
+    const BATCH_SIZE = 6;
+    for (let start = 0; start < total; start += BATCH_SIZE) {
+      if (signal?.aborted) {
+        throw new DomainError('ABORTED', 'Importación cancelada por el usuario.');
+      }
+      const end = Math.min(total, start + BATCH_SIZE);
+      const indices: number[] = [];
+      for (let i = start; i < end; i++) indices.push(i);
+
+      await Promise.all(
+        indices.map(async (idx) => {
+          const sourceTrack = input.tracks[idx]!;
+          const result = await matchSingle(sourceTrack);
+          items[idx] = result;
+          completedCount++;
+          if (result.status === 'unmatched') unmatchedCount++;
+          else matchedCount++;
+          onProgress?.({
+            phase: 'matching_tracks',
+            completed: completedCount,
+            total,
+            matchedCount,
+            unmatchedCount,
+            currentTrackTitle: sourceTrack.title,
+          });
+        })
+      );
     }
 
     onProgress?.({
@@ -388,13 +756,13 @@ export class PlaylistImporter implements IPlaylistImporter {
     });
 
     return {
-      name: extraction.name,
-      author: extraction.author,
-      coverUrl: extraction.coverUrl,
-      sourcePlatform: 'spotify',
-      sourceUrl: extraction.sourceUrl,
-      truncated: extraction.truncated,
-      warning: extraction.warning,
+      name: input.name,
+      author: input.author,
+      coverUrl: input.coverUrl,
+      sourcePlatform: input.sourcePlatform,
+      sourceUrl: input.sourceUrl,
+      truncated: Boolean(input.truncated),
+      warning: input.warning,
       items,
     };
   }
@@ -413,6 +781,47 @@ export class PlaylistImporter implements IPlaylistImporter {
       headers: { Accept: 'application/json' },
       signal,
     });
+
+    if (response.status === 404 && this.apiBaseUrl === '') {
+      // Android WebView offline/asset interceptor does not implement /api/import/spotify directly,
+      // so use /api/radar-proxy + Spotify Pathfinder pagination directly from the client.
+      const embedTarget = `https://open.spotify.com/embed/${parsed.kind}/${parsed.id}`;
+      const proxyEmbedRes = await this.fetchFn(
+        `/api/radar-proxy?url=${encodeURIComponent(embedTarget)}`,
+        { method: 'GET', signal }
+      ).catch(() => null);
+      if (proxyEmbedRes && proxyEmbedRes.ok) {
+        const html = await proxyEmbedRes.text();
+        const embedExtracted = parseSpotifyEmbedHtml(html, parsed);
+        const token = extractSpotifyEmbedAccessToken(html);
+        if (parsed.kind === 'playlist' && token) {
+          const proxiedFetch: typeof fetch = (input, init) => {
+            const rawTarget = String(input);
+            const authHeader =
+              init?.headers && typeof (init.headers as Record<string, string>).Authorization === 'string'
+                ? (init.headers as Record<string, string>).Authorization
+                : '';
+            const proxyUrl = `/api/radar-proxy?url=${encodeURIComponent(rawTarget)}${
+              authHeader ? `&auth=${encodeURIComponent(authHeader)}` : ''
+            }`;
+            return this.fetchFn(proxyUrl, { method: 'GET', signal: init?.signal });
+          };
+          const pf = await fetchSpotifyPathfinderPlaylist(parsed.id, token, {
+            maxTracks: 500,
+            fetchFn: proxiedFetch,
+            signal,
+            fallbackMeta: {
+              name: embedExtracted?.name,
+              author: embedExtracted?.author,
+              coverUrl: embedExtracted?.coverUrl,
+              sourceUrl: parsed.canonicalUrl,
+            },
+          });
+          if (pf && pf.tracks.length > 0) return pf;
+        }
+        if (embedExtracted && embedExtracted.tracks.length > 0) return embedExtracted;
+      }
+    }
 
     if (response.status === 404 || response.status === 403) {
       throw new DomainError(

@@ -409,11 +409,15 @@ create table if not exists public.jam_sessions (
   queue jsonb not null default '[]'::jsonb,
   is_playing boolean not null default false,
   allow_guest_direct_add boolean not null default true,
+  allow_guest_playback_controls boolean not null default true,
   max_requests_per_guest smallint not null default 0 check (max_requests_per_guest >= 0),
   active boolean not null default true,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
+
+alter table public.jam_sessions
+  add column if not exists allow_guest_playback_controls boolean not null default true;
 
 drop trigger if exists trg_jam_sessions_updated_at on public.jam_sessions;
 create trigger trg_jam_sessions_updated_at

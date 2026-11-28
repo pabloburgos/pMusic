@@ -78,6 +78,7 @@ import { AddToPlaylistModal } from './components/AddToPlaylistModal.tsx';
 import { CreatePlaylistModal } from './components/CreatePlaylistModal.tsx';
 import { UserAvatar } from './components/UserAvatar.tsx';
 import { ReleaseNotificationsModal } from './components/ReleaseNotificationsModal.tsx';
+import { VolumeHoverPopover } from './components/VolumeHoverPopover.tsx';
 import { syncNativeSystemBars } from './utils/system-bars.ts';
 
 const PlaylistAppearanceModal = lazy(() =>
@@ -128,6 +129,7 @@ import {
   EqAndCrossfadeSheet,
   ImportPlaylistModal,
   JamInviteModal,
+  JamJoinAudioModal,
   NowPlayingSheet,
 } from './components/Overlays.tsx';
 
@@ -302,6 +304,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     friendActivities,
     activeJamSession,
     activeJamRole,
+    globalActiveJams,
     releaseNotifications,
     setAuthOnboardingOpen,
     setActiveTab,
@@ -342,6 +345,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     addTrackToActiveJam,
     modifyJamQueueAsGuest,
     joinJamInApp,
+    openJamJoinPrompt,
     setJamInviteModalOpen,
     setNotificationsPanelOpen,
     searchTracksForPlaylist,
@@ -408,6 +412,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       friendActivities: s.friendActivities,
       activeJamSession: s.activeJamSession,
       activeJamRole: s.activeJamRole,
+      globalActiveJams: s.globalActiveJams,
       releaseNotifications: s.releaseNotifications,
       setAuthOnboardingOpen: s.setAuthOnboardingOpen,
       setActiveTab: s.setActiveTab,
@@ -448,6 +453,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       addTrackToActiveJam: s.addTrackToActiveJam,
       modifyJamQueueAsGuest: s.modifyJamQueueAsGuest,
       joinJamInApp: s.joinJamInApp,
+      openJamJoinPrompt: s.openJamJoinPrompt,
       setJamInviteModalOpen: s.setJamInviteModalOpen,
       setNotificationsPanelOpen: s.setNotificationsPanelOpen,
       searchTracksForPlaylist: s.searchTracksForPlaylist,
@@ -494,9 +500,9 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     if (!initialJamCode || !appReady || initialJamHandledRef.current) return;
     if (authState.connected) {
       initialJamHandledRef.current = true;
-      void joinJamInApp(initialJamCode);
+      openJamJoinPrompt(initialJamCode);
     }
-  }, [initialJamCode, appReady, authState.connected, joinJamInApp]);
+  }, [initialJamCode, appReady, authState.connected, openJamJoinPrompt]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -549,7 +555,11 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
   );
   const isElectronDesktop = isElectronDesktopRuntime();
   const showBuffering = useDelayedBuffering(isBuffering, 500);
-  const unreadReleaseCount = releaseNotifications.filter((n) => !n.read).length;
+  const joinableGlobalJamCount = globalActiveJams.filter(
+    (j) => j.active && j.code !== activeJamSession?.code && j.hostUserId !== authState.userId
+  ).length;
+  const unreadReleaseCount =
+    releaseNotifications.filter((n) => !n.read).length + joinableGlobalJamCount;
 
   useEffect(() => {
     let active = true;
@@ -1359,6 +1369,9 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
         else if (importModalOpen) setImportModalOpen(false);
         else if (settingsOpen) setSettingsOpen(false);
         else if (mobileHubOpen) setMobileHubOpen(false);
+        else if (usePMusicStore.getState().notificationsPanelOpen) {
+          setNotificationsPanelOpen(false);
+        }
         return;
       }
 
@@ -1633,6 +1646,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
   };
 
   const isGuestInJam = Boolean(activeJamSession?.active && activeJamRole === 'guest');
+  const lockGuestPlayback = isGuestInJam && !activeJamSession?.allowGuestPlaybackControls;
 
   if (initialJamCode && appReady && !authState.connected) {
     return (
@@ -1650,7 +1664,12 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
     >
       {/* Unified Desktop Header & Integrated Frameless Windows Drag Bar (borderless unified canvas) */}
       {!isMobileViewport && (
-        <header className={`pm-canvas relative z-30 flex h-12 w-full shrink-0 items-center justify-between gap-2 px-3 ${nowPlayingOpen ? 'pm-behind-nowplaying' : ''}`}>
+        <header
+          data-testid="desktop-top-header"
+          className={`pm-canvas pm-drag-region relative z-30 flex h-12 w-full shrink-0 items-center justify-between gap-2 px-3 ${
+            isElectronDesktop && !isRealFullscreen ? 'pr-[144px]' : ''
+          } ${nowPlayingOpen ? 'pm-behind-nowplaying' : ''}`}
+        >
           <div className="pm-no-drag relative z-20 flex shrink-0 items-center gap-2">
             <button
               type="button"
@@ -1667,38 +1686,32 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                 aria-label="Volver"
                 data-testid="back-detail-btn"
                 onClick={() => closeDetailView()}
-                className="pm-no-drag pm-btn-secondary pm-pressable pointer-events-auto relative z-20 inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full px-3 text-xs font-semibold"
+                className="pm-no-drag pm-btn-secondary pm-pressable pointer-events-auto relative z-20 inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full px-2.5 text-xs font-semibold sm:px-3"
               >
                 <ArrowLeft className="pointer-events-none h-3.5 w-3.5" />
-                <span className="pointer-events-none">Volver</span>
+                <span className="pointer-events-none hidden sm:inline">Volver</span>
               </button>
             )}
           </div>
 
-          <div className="pm-drag-region h-full min-w-4 flex-1" aria-hidden="true" />
-
-          <div className="pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2">
+          <div className="pm-drag-region flex min-w-0 flex-1 items-center justify-center px-1 lg:px-3">
             <button
               type="button"
               data-testid="top-center-search-btn"
               onClick={() => setSpotlightOpen(true)}
-              className="pm-no-drag pm-input pm-text-tertiary pointer-events-auto flex w-56 items-center justify-between gap-2 rounded-full px-3.5 py-1.5 text-xs transition-colors hover:border-[var(--pm-border-strong)] hover:text-[var(--pm-text-primary)] md:w-72 lg:w-96"
+              className="pm-no-drag pm-input pm-text-tertiary pointer-events-auto flex w-full min-w-[130px] max-w-[380px] items-center justify-between gap-2 rounded-full px-3 py-1.5 text-xs transition-colors hover:border-[var(--pm-border-strong)] hover:text-[var(--pm-text-primary)]"
             >
-              <span className="flex items-center gap-2">
-                <Search className="h-3.5 w-3.5 pm-text-secondary" />
-                <span>Buscar canciones, artistas o álbumes…</span>
+              <span className="flex min-w-0 items-center gap-2">
+                <Search className="h-3.5 w-3.5 shrink-0 pm-text-secondary" />
+                <span className="truncate">Buscar canciones, artistas o álbumes…</span>
               </span>
-              <kbd className="pm-elevated rounded border pm-border px-1.5 py-0.5 text-[11px] font-semibold pm-text-secondary">
+              <kbd className="pm-elevated hidden shrink-0 rounded border pm-border px-1.5 py-0.5 text-[11px] font-semibold pm-text-secondary lg:inline-block">
                 Ctrl K
               </kbd>
             </button>
           </div>
 
-          <div
-            className={`pm-no-drag relative z-20 flex shrink-0 items-center gap-1.5 ${
-              isElectronDesktop && !isRealFullscreen ? 'mr-[138px]' : ''
-            }`}
-          >
+          <div className="pm-no-drag relative z-20 flex shrink-0 items-center gap-1.5">
             <button
               type="button"
               data-testid="desktop-notifications-btn"
@@ -1723,7 +1736,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                 type="button"
                 aria-label="Temporizador de apagado activo"
                 onClick={() => setSettingsOpen(true)}
-                className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/15 px-3 py-1 text-xs font-semibold text-amber-500"
+                className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/15 px-2.5 py-1 text-xs font-semibold text-amber-500"
               >
                 <Timer className="h-3.5 w-3.5" />
                 <span className="tabular-nums">
@@ -1739,7 +1752,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                 type="button"
                 data-testid="desktop-profile-btn"
                 onClick={() => setSettingsOpen(true)}
-                className="pm-no-drag pm-btn-secondary pm-pressable inline-flex h-8 items-center gap-2 rounded-full pl-1.5 pr-3 text-xs font-semibold"
+                className="pm-no-drag pm-btn-secondary pm-pressable inline-flex h-8 items-center gap-2 rounded-full pl-1.5 pr-1.5 text-xs font-semibold lg:pr-3"
                 title={authState.email ?? 'Tu cuenta pMusic'}
               >
                 <UserAvatar
@@ -1748,7 +1761,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                   size="sm"
                   className="!h-5 !w-5 !text-[10px]"
                 />
-                <span className="max-w-[110px] truncate">
+                <span className="hidden max-w-[110px] truncate lg:inline">
                   {userProfile?.username ? `@${userProfile.username}` : authState.email?.split('@')[0] ?? 'Cuenta'}
                 </span>
               </button>
@@ -1757,7 +1770,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                 type="button"
                 data-testid="desktop-signin-btn"
                 onClick={() => setAuthOnboardingOpen(true)}
-                className="pm-no-drag pm-btn-primary pm-pressable inline-flex h-8 items-center gap-1.5 rounded-full px-3.5 text-xs font-bold shadow-sm"
+                className="pm-no-drag pm-btn-primary pm-pressable inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-bold shadow-sm lg:px-3.5"
               >
                 <span>Iniciar sesión</span>
               </button>
@@ -1784,6 +1797,8 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
         <div
           data-testid="mobile-top-header"
           className={`${nowPlayingOpen ? 'pm-behind-nowplaying ' : ''}${
+            isElectronDesktop && !isRealFullscreen ? 'pr-[142px] ' : ''
+          }${
             isFullBleedHeroView
               ? 'fixed inset-x-0 top-0 z-40 flex items-center justify-between gap-3 bg-transparent px-4 pt-[calc(var(--pm-safe-top,env(safe-area-inset-top,0px))+0.6rem)] pb-3'
               : 'pm-mobile-glass-header sticky top-0 z-40 flex shrink-0 items-center justify-between gap-3 px-4 pt-[max(0.8rem,var(--pm-safe-top,env(safe-area-inset-top)))] pb-3'
@@ -1864,15 +1879,16 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
           <aside
             aria-label="Navegación principal"
             data-testid="desktop-sidebar"
-            style={{ width: sidebarCollapsed ? 68 : 244 }}
-            className={`pm-glass-regular z-30 flex h-full shrink-0 flex-col justify-between rounded-[20px] transition-[width] duration-200 ${
-              sidebarCollapsed ? 'items-center px-2 py-3' : 'p-3'
+            className={`pm-glass-regular z-30 flex h-full shrink-0 flex-col justify-between overflow-hidden rounded-[20px] transition-[width] duration-200 ${
+              sidebarCollapsed
+                ? 'w-[68px] items-center px-2 py-2.5'
+                : 'w-[208px] p-3 lg:w-[236px] xl:w-[244px]'
             }`}
           >
-            <div className="flex w-full min-h-0 flex-1 flex-col gap-3 overflow-y-auto pm-no-scrollbar">
+            <div className={`flex w-full min-h-0 flex-1 flex-col overflow-y-auto pm-no-scrollbar ${sidebarCollapsed ? 'gap-2' : 'gap-3'}`}>
               {/* Unified Sidebar Panel Toggle Header */}
               <div
-                className={`flex items-center ${
+                className={`flex shrink-0 items-center ${
                   sidebarCollapsed ? 'justify-center' : 'justify-between px-2'
                 }`}
               >
@@ -1900,7 +1916,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
               <nav
                 role="tablist"
                 aria-label="Secciones principales"
-                className={`flex flex-col ${sidebarCollapsed ? 'items-center gap-1.5' : 'gap-1'}`}
+                className={`flex shrink-0 flex-col ${sidebarCollapsed ? 'items-center gap-1' : 'gap-1'}`}
               >
                 {navTabs.map((item) => {
                   const active =
@@ -1924,12 +1940,12 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                       }}
                       className={
                         sidebarCollapsed
-                          ? `pm-pressable mx-auto flex h-11 w-11 items-center justify-center rounded-[14px] transition-all ${
+                          ? `pm-pressable relative mx-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-[11px] transition-all ${
                               active
                                 ? 'pm-btn-primary shadow-sm'
                                 : 'pm-text-secondary pm-hover hover:text-[var(--pm-text-primary)]'
                             }`
-                          : `pm-pressable flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-[13.5px] font-semibold transition-colors ${
+                          : `pm-pressable flex w-full shrink-0 items-center gap-3 rounded-[10px] px-3 py-2 text-[13.5px] font-semibold transition-colors ${
                               active
                                 ? 'pm-btn-primary'
                                 : 'pm-text-secondary pm-hover hover:text-[var(--pm-text-primary)]'
@@ -1937,13 +1953,19 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                       }
                     >
                       {item.icon}
-                      {!sidebarCollapsed && <span className="flex-1 text-left">{item.label}</span>}
+                      {!sidebarCollapsed && (
+                        <span className="flex-1 truncate whitespace-nowrap text-left">{item.label}</span>
+                      )}
                       {item.id === 'Social' && Object.keys(friendActivities).length > 0 && (
                         <span
                           data-testid="social-live-friends-dot"
-                          className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-400"
+                          className={
+                            sidebarCollapsed
+                              ? 'absolute right-1.5 top-1.5 inline-flex h-2 w-2 rounded-full bg-emerald-400 ring-2 ring-[#070709]'
+                              : 'inline-flex items-center gap-1 rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-400'
+                          }
                         >
-                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                          {!sidebarCollapsed && <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />}
                           {!sidebarCollapsed && Object.keys(friendActivities).length}
                         </span>
                       )}
@@ -1952,11 +1974,96 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                 })}
               </nav>
 
-              {/* Compact Collapsed Shortcut Icons + Drop Targets */}
+              {/* Compact Collapsed Collection (Playlists FIRST, Likes/Downloads fixed shrink-0, Right-Click Enabled) */}
               {sidebarCollapsed && (
-                <div className="flex w-full flex-col items-center gap-2 border-t pm-border pt-3">
+                <div
+                  data-testid="sidebar-collapsed-collection"
+                  className="flex w-full shrink-0 flex-col items-center gap-1.5 border-t pm-border pt-2"
+                >
+                  {playlists.map((pl) => {
+                    const coverInfo = resolvePlaylistCoverInfo(pl, playlistAppearances[pl.id]);
+                    const isDropActive = sidebarDropTargetId === pl.id;
+                    return (
+                      <button
+                        key={pl.id}
+                        type="button"
+                        data-testid={`sidebar-collapsed-playlist-${pl.id}`}
+                        title={pl.name}
+                        aria-label={`Playlist ${pl.name}`}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = 'copy';
+                          setSidebarDropTargetId(pl.id);
+                        }}
+                        onDragLeave={() => {
+                          if (sidebarDropTargetId === pl.id) setSidebarDropTargetId(null);
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          setSidebarDropTargetId(null);
+                          const dropped = readTrackFromDropEvent(e);
+                          if (dropped) void addTrackToPlaylist(pl.id, dropped);
+                        }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          openPlaylistContextMenu('local', pl.id, e.clientX, e.clientY);
+                        }}
+                        onClick={() => openLocalPlaylistDetail(pl.id)}
+                        className={`relative mx-auto flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-[10px] transition-all hover:scale-105 ${
+                          isDropActive ? 'ring-2 ring-[var(--pm-accent-primary)]' : ''
+                        }`}
+                      >
+                        <PlaylistCoverArt
+                          coverInfo={coverInfo}
+                          title={pl.name}
+                          artistName={pl.tracks[0]?.artists[0]?.name}
+                          variant="list"
+                          iconClassName="h-4 w-4"
+                        />
+                      </button>
+                    );
+                  })}
+
+                  {sharedPlaylists
+                    .filter(
+                      (sp) =>
+                        !sp.shareCode ||
+                        !playlists.some(
+                          (lp) => lp.shareCode?.toUpperCase() === sp.shareCode?.toUpperCase()
+                        )
+                    )
+                    .map((sp) => {
+                      const spCover = resolvePlaylistCoverInfo(sp, playlistAppearances[sp.id]);
+                      return (
+                        <button
+                          key={`sb-collapsed-sp-${sp.id}`}
+                          type="button"
+                          data-testid={`sidebar-collapsed-shared-${sp.id}`}
+                          title={sp.name}
+                          aria-label={`Playlist compartida ${sp.name}`}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            openPlaylistContextMenu('shared', sp.id, e.clientX, e.clientY);
+                          }}
+                          onClick={() => openSharedPlaylistDetail(sp.id)}
+                          className="relative mx-auto flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-[10px] transition-all hover:scale-105"
+                        >
+                          <PlaylistCoverArt
+                            coverInfo={spCover}
+                            title={sp.name}
+                            artistName={sp.tracks[0]?.artists[0]?.name}
+                            variant="list"
+                            iconClassName="h-4 w-4"
+                          />
+                        </button>
+                      );
+                    })}
+
                   <button
                     type="button"
+                    data-testid="sidebar-collapsed-likes-btn"
                     title="Canciones que te gustan"
                     aria-label="Canciones que te gustan"
                     onDragOver={(e) => {
@@ -1977,7 +2084,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                       setActiveTab('Biblioteca');
                       setLibraryCategory('Me gusta');
                     }}
-                    className={`mx-auto flex h-10 w-10 items-center justify-center rounded-[11px] bg-rose-500/15 text-rose-500 transition-all hover:scale-105 ${
+                    className={`mx-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-rose-500/15 text-rose-500 transition-all hover:scale-105 ${
                       sidebarDropTargetId === 'liked' ? 'ring-2 ring-[var(--pm-accent-primary)]' : ''
                     }`}
                   >
@@ -1986,63 +2093,26 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
 
                   <button
                     type="button"
+                    data-testid="sidebar-collapsed-downloads-btn"
                     title="En este dispositivo"
                     aria-label="En este dispositivo"
                     onClick={() => {
                       setActiveTab('Biblioteca');
                       setLibraryCategory('Descargas');
                     }}
-                    className="mx-auto flex h-10 w-10 items-center justify-center rounded-[11px] bg-emerald-500/15 text-emerald-500 transition-all hover:scale-105"
+                    className="mx-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-emerald-500/15 text-emerald-500 transition-all hover:scale-105"
                   >
                     <Download className="h-4 w-4" />
                   </button>
-
-                  {playlists.slice(0, 5).map((pl) => {
-                    const coverInfo = resolvePlaylistCoverInfo(pl, playlistAppearances[pl.id]);
-                    const isDropActive = sidebarDropTargetId === pl.id;
-                    return (
-                      <button
-                        key={pl.id}
-                        type="button"
-                        title={pl.name}
-                        aria-label={`Playlist ${pl.name}`}
-                        onDragOver={(e) => {
-                          e.preventDefault();
-                          e.dataTransfer.dropEffect = 'copy';
-                          setSidebarDropTargetId(pl.id);
-                        }}
-                        onDragLeave={() => {
-                          if (sidebarDropTargetId === pl.id) setSidebarDropTargetId(null);
-                        }}
-                        onDrop={(e) => {
-                          e.preventDefault();
-                          setSidebarDropTargetId(null);
-                          const dropped = readTrackFromDropEvent(e);
-                          if (dropped) void addTrackToPlaylist(pl.id, dropped);
-                        }}
-                        onClick={() => openLocalPlaylistDetail(pl.id)}
-                        className={`relative mx-auto flex h-10 w-10 items-center justify-center overflow-hidden rounded-[11px] transition-all hover:scale-105 ${
-                          isDropActive ? 'ring-2 ring-[var(--pm-accent-primary)]' : ''
-                        }`}
-                      >
-                        <TrackArtwork
-                          trackId={coverInfo.fallbackTrackId}
-                          src={coverInfo.url}
-                          title={pl.name}
-                          artistName={pl.tracks[0]?.artists[0]?.name}
-                          alt={pl.name}
-                          variant="list"
-                          imgClassName="h-full w-full object-cover"
-                        />
-                      </button>
-                    );
-                  })}
                 </div>
               )}
 
-              {/* Solid Collection Shortcuts (Zero gradients, Drag & Drop Playlist Targets) */}
+              {/* Solid Collection Shortcuts (Playlists FIRST, then Likes & Downloads) */}
               {!sidebarCollapsed && (
-                <div className="space-y-1.5 border-t pm-border pt-3">
+                <div
+                  data-testid="sidebar-expanded-collection"
+                  className="space-y-1.5 border-t pm-border pt-3"
+                >
                   <div className="flex items-center justify-between px-2">
                     <span className="text-[11px] font-semibold tracking-wider pm-text-tertiary">
                       TU COLECCIÓN
@@ -2066,68 +2136,6 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                       </button>
                     </div>
                   </div>
-
-                  <button
-                    type="button"
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      e.dataTransfer.dropEffect = 'copy';
-                      setSidebarDropTargetId('liked');
-                    }}
-                    onDragLeave={() => {
-                      if (sidebarDropTargetId === 'liked') setSidebarDropTargetId(null);
-                    }}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      setSidebarDropTargetId(null);
-                      const dropped = readTrackFromDropEvent(e);
-                      if (dropped) void likeTrackIfNeeded(dropped);
-                    }}
-                    onClick={() => {
-                      setActiveTab('Biblioteca');
-                      setLibraryCategory('Me gusta');
-                    }}
-                    className={`flex w-full items-center gap-3 rounded-[10px] px-2 py-2 text-left transition-all ${
-                      sidebarDropTargetId === 'liked'
-                        ? 'pm-active-row ring-2 ring-[var(--pm-accent-primary)]'
-                        : 'pm-hover'
-                    }`}
-                  >
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-rose-500/15 text-rose-500">
-                      <Heart className="h-4 w-4 fill-current" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[13px] font-medium pm-text-primary">
-                        Canciones que te gustan
-                      </div>
-                      <div className="text-[11px] pm-text-tertiary">
-                        {sidebarDropTargetId === 'liked'
-                          ? 'Suelta para guardar'
-                          : `${likedTracks.length} pistas`}
-                      </div>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActiveTab('Biblioteca');
-                      setLibraryCategory('Descargas');
-                    }}
-                    className="pm-hover flex w-full items-center gap-3 rounded-[10px] px-2 py-2 text-left"
-                  >
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-emerald-500/15 text-emerald-500">
-                      <Download className="h-4 w-4" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[13px] font-medium pm-text-primary">
-                        En este dispositivo
-                      </div>
-                      <div className="text-[11px] pm-text-tertiary">
-                        {offlineEntries.length} descargadas
-                      </div>
-                    </div>
-                  </button>
 
                   {playlists.slice(0, 12).map((pl) => {
                     const coverInfo = resolvePlaylistCoverInfo(pl, playlistAppearances[pl.id]);
@@ -2214,14 +2222,12 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                         className="pm-hover flex w-full items-center gap-3 rounded-[10px] px-2 py-1.5 text-left transition-all"
                       >
                         <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-[7px]">
-                          <TrackArtwork
-                            trackId={spCover.fallbackTrackId}
-                            src={spCover.url}
+                          <PlaylistCoverArt
+                            coverInfo={spCover}
                             title={sp.name}
                             artistName={sp.tracks[0]?.artists[0]?.name}
-                            alt={sp.name}
                             variant="list"
-                            imgClassName="h-full w-full object-cover"
+                            iconClassName="h-3.5 w-3.5"
                           />
                         </div>
                         <div className="min-w-0 flex-1">
@@ -2236,13 +2242,77 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                       </button>
                       );
                     })}
+
+                  <button
+                    type="button"
+                    data-testid="sidebar-expanded-likes-btn"
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'copy';
+                      setSidebarDropTargetId('liked');
+                    }}
+                    onDragLeave={() => {
+                      if (sidebarDropTargetId === 'liked') setSidebarDropTargetId(null);
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setSidebarDropTargetId(null);
+                      const dropped = readTrackFromDropEvent(e);
+                      if (dropped) void likeTrackIfNeeded(dropped);
+                    }}
+                    onClick={() => {
+                      setActiveTab('Biblioteca');
+                      setLibraryCategory('Me gusta');
+                    }}
+                    className={`flex w-full items-center gap-3 rounded-[10px] px-2 py-2 text-left transition-all ${
+                      sidebarDropTargetId === 'liked'
+                        ? 'pm-active-row ring-2 ring-[var(--pm-accent-primary)]'
+                        : 'pm-hover'
+                    }`}
+                  >
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-rose-500/15 text-rose-500">
+                      <Heart className="h-4 w-4 fill-current" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[13px] font-medium pm-text-primary">
+                        Canciones que te gustan
+                      </div>
+                      <div className="text-[11px] pm-text-tertiary">
+                        {sidebarDropTargetId === 'liked'
+                          ? 'Suelta para guardar'
+                          : `${likedTracks.length} pistas`}
+                      </div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="sidebar-expanded-downloads-btn"
+                    onClick={() => {
+                      setActiveTab('Biblioteca');
+                      setLibraryCategory('Descargas');
+                    }}
+                    className="pm-hover flex w-full items-center gap-3 rounded-[10px] px-2 py-2 text-left"
+                  >
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-emerald-500/15 text-emerald-500">
+                      <Download className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[13px] font-medium pm-text-primary">
+                        En este dispositivo
+                      </div>
+                      <div className="text-[11px] pm-text-tertiary">
+                        {offlineEntries.length} descargadas
+                      </div>
+                    </div>
+                  </button>
                 </div>
               )}
             </div>
 
             {/* Bottom Sidebar Utilities */}
             <div
-              className={`flex w-full flex-col border-t pm-border pt-2.5 ${
+              className={`flex w-full shrink-0 flex-col border-t pm-border pt-2 ${
                 sidebarCollapsed ? 'items-center gap-1' : 'space-y-1'
               }`}
             >
@@ -2253,12 +2323,12 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                 onClick={() => setImportModalOpen(true)}
                 className={
                   sidebarCollapsed
-                    ? 'pm-hover mx-auto flex h-10 w-10 items-center justify-center rounded-[12px] pm-text-secondary hover:text-[var(--pm-text-primary)]'
+                    ? 'pm-hover mx-auto flex h-9 w-9 items-center justify-center rounded-[10px] pm-text-secondary hover:text-[var(--pm-text-primary)]'
                     : 'pm-hover flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-xs font-medium pm-text-secondary hover:text-[var(--pm-text-primary)]'
                 }
               >
                 <ListMusic className="h-4 w-4 shrink-0" />
-                {!sidebarCollapsed && <span>Importar playlist</span>}
+                {!sidebarCollapsed && <span className="truncate whitespace-nowrap">Importar playlist</span>}
               </button>
 
               <button
@@ -2269,12 +2339,12 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                 onClick={() => setDevicesSheetOpen(true)}
                 className={
                   sidebarCollapsed
-                    ? 'pm-hover mx-auto flex h-10 w-10 items-center justify-center rounded-[12px] text-emerald-500'
+                    ? 'pm-hover mx-auto flex h-9 w-9 items-center justify-center rounded-[10px] text-emerald-500'
                     : 'pm-hover flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-xs font-medium pm-text-secondary hover:text-[var(--pm-text-primary)]'
                 }
               >
                 <Wifi className="h-4 w-4 shrink-0 text-emerald-500" />
-                {!sidebarCollapsed && <span>Dispositivos</span>}
+                {!sidebarCollapsed && <span className="truncate whitespace-nowrap">Dispositivos</span>}
               </button>
 
               <button
@@ -2284,12 +2354,12 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                 onClick={() => setSettingsOpen(true)}
                 className={
                   sidebarCollapsed
-                    ? 'pm-hover mx-auto flex h-10 w-10 items-center justify-center rounded-[12px] pm-text-secondary hover:text-[var(--pm-text-primary)]'
+                    ? 'pm-hover mx-auto flex h-9 w-9 items-center justify-center rounded-[10px] pm-text-secondary hover:text-[var(--pm-text-primary)]'
                     : 'pm-hover flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-xs font-medium pm-text-secondary hover:text-[var(--pm-text-primary)]'
                 }
               >
                 <Settings className="h-4 w-4 shrink-0" />
-                {!sidebarCollapsed && <span>Ajustes</span>}
+                {!sidebarCollapsed && <span className="truncate whitespace-nowrap">Ajustes</span>}
               </button>
             </div>
           </aside>
@@ -2884,14 +2954,14 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
             scrubDraggingRef.current = false;
             setDockHoverPct(null);
           }}
-          className={`pm-glass-regular fixed z-40 grid select-none items-center gap-4 overflow-visible ${nowPlayingOpen ? 'pm-behind-nowplaying ' : ''}${
+          className={`pm-glass-regular fixed z-40 grid select-none items-center gap-2 lg:gap-4 overflow-visible ${nowPlayingOpen ? 'pm-behind-nowplaying ' : ''}${
             playerBarStyle === 'floating-island'
-              ? 'left-1/2 bottom-3.5 h-[72px] w-[min(880px,calc(100%-32px))] -translate-x-1/2 cursor-pointer grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] rounded-full px-5'
+              ? 'left-1/2 bottom-3.5 h-[72px] w-[min(880px,calc(100%-20px))] -translate-x-1/2 cursor-pointer grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] rounded-full px-3 sm:px-5'
               : playerBarStyle === 'minimal-wave'
-                ? 'inset-x-3 bottom-3 h-[76px] cursor-pointer grid-cols-[minmax(200px,1fr)_minmax(300px,520px)_minmax(200px,1fr)] rounded-[18px] px-5'
+                ? 'inset-x-2.5 lg:inset-x-3 bottom-2.5 lg:bottom-3 h-[76px] cursor-pointer grid-cols-[minmax(140px,1fr)_minmax(210px,360px)_minmax(140px,1fr)] lg:grid-cols-[minmax(190px,1fr)_minmax(290px,460px)_minmax(190px,1fr)] xl:grid-cols-[minmax(210px,1fr)_minmax(320px,540px)_minmax(210px,1fr)] rounded-[18px] px-3 lg:px-5'
                 : playerBarStyle === 'ambient-dock'
-                  ? 'inset-x-3 bottom-3 h-[80px] cursor-pointer grid-cols-[minmax(200px,1fr)_minmax(320px,540px)_minmax(200px,1fr)] rounded-[20px] px-5'
-                  : 'inset-x-3 bottom-3 h-[84px] grid-cols-[minmax(200px,1fr)_minmax(320px,540px)_minmax(200px,1fr)] rounded-[20px] px-5'
+                  ? 'inset-x-2.5 lg:inset-x-3 bottom-2.5 lg:bottom-3 h-[80px] cursor-pointer grid-cols-[minmax(140px,1fr)_minmax(210px,360px)_minmax(140px,1fr)] lg:grid-cols-[minmax(190px,1fr)_minmax(290px,460px)_minmax(190px,1fr)] xl:grid-cols-[minmax(210px,1fr)_minmax(320px,540px)_minmax(210px,1fr)] rounded-[20px] px-3 lg:px-5'
+                  : 'inset-x-2.5 lg:inset-x-3 bottom-2.5 lg:bottom-3 h-[84px] grid-cols-[minmax(140px,1fr)_minmax(210px,360px)_minmax(140px,1fr)] lg:grid-cols-[minmax(190px,1fr)_minmax(290px,460px)_minmax(190px,1fr)] xl:grid-cols-[minmax(210px,1fr)_minmax(320px,540px)_minmax(210px,1fr)] rounded-[20px] px-3 lg:px-5'
           }`}
         >
           <div
@@ -3293,7 +3363,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
 
           {/* Center: Symmetrical Clean Transport [Shuffle · Prev · Play · Next · Repeat] + Centered Timeline/Time */}
           <div className="pointer-events-none relative z-10 flex w-full flex-col items-center justify-center gap-1 justify-self-center">
-            <div className="pm-dock-interactive pointer-events-auto inline-flex items-center justify-center gap-2 sm:gap-3">
+            <div className="pm-dock-interactive pointer-events-auto inline-flex items-center justify-center gap-1 sm:gap-2 lg:gap-3">
               <button
                 type="button"
                 disabled={isGuestInJam}
@@ -3331,15 +3401,15 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
 
               <button
                 type="button"
-                disabled={isGuestInJam}
-                title={isGuestInJam ? 'Solo el jefe de la Jam controla la reproducción' : undefined}
+                disabled={lockGuestPlayback}
+                title={lockGuestPlayback ? 'Solo el jefe de la Jam controla la reproducción' : undefined}
                 aria-label="Anterior"
                 onClick={() => {
                   triggerDockTransportAnim('prev');
                   void prevTrack();
                 }}
                 className={`pm-pressable pm-hover relative inline-flex h-10 w-10 items-center justify-center overflow-visible rounded-full pm-text-primary ${
-                  isGuestInJam ? 'cursor-not-allowed opacity-40' : 'active:scale-90'
+                  lockGuestPlayback ? 'cursor-not-allowed opacity-40' : 'active:scale-90'
                 }`}
               >
                 <AnimatedSkipBackIcon
@@ -3350,8 +3420,8 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
 
               <button
                 type="button"
-                disabled={isGuestInJam}
-                title={isGuestInJam ? 'Solo el jefe de la Jam controla la reproducción' : undefined}
+                disabled={lockGuestPlayback}
+                title={lockGuestPlayback ? 'Solo el jefe de la Jam controla la reproducción' : undefined}
                 data-testid="dock-play-btn"
                 aria-label={showBuffering ? 'Cargando canción' : isPlaying ? 'Pausar' : 'Reproducir'}
                 onClick={() => {
@@ -3359,7 +3429,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                   void togglePlayPause();
                 }}
                 className={`pm-btn-primary pm-pressable relative flex h-[42px] w-[42px] items-center justify-center overflow-visible rounded-full shadow-lg transition-transform duration-200 ${
-                  isGuestInJam ? 'cursor-not-allowed opacity-45' : 'hover:scale-105 active:scale-90'
+                  lockGuestPlayback ? 'cursor-not-allowed opacity-45' : 'hover:scale-105 active:scale-90'
                 }`}
               >
                 {showBuffering ? (
@@ -3386,15 +3456,15 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
 
               <button
                 type="button"
-                disabled={isGuestInJam}
-                title={isGuestInJam ? 'Solo el jefe de la Jam controla la reproducción' : undefined}
+                disabled={lockGuestPlayback}
+                title={lockGuestPlayback ? 'Solo el jefe de la Jam controla la reproducción' : undefined}
                 aria-label="Siguiente"
                 onClick={() => {
                   triggerDockTransportAnim('next');
                   void nextTrack();
                 }}
                 className={`pm-pressable pm-hover relative inline-flex h-10 w-10 items-center justify-center overflow-visible rounded-full pm-text-primary ${
-                  isGuestInJam ? 'cursor-not-allowed opacity-40' : 'active:scale-90'
+                  lockGuestPlayback ? 'cursor-not-allowed opacity-40' : 'active:scale-90'
                 }`}
               >
                 <AnimatedSkipForwardIcon
@@ -3442,7 +3512,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                   />
                 )}
               </button>
-              {isGuestInJam && (
+              {lockGuestPlayback && (
                 <span
                   title="Solo el jefe de la Jam controla la reproducción"
                   className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/[0.06] px-2 py-0.5 text-[10px] font-semibold pm-text-secondary"
@@ -3490,7 +3560,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                     type="range"
                     role="slider"
                     aria-label="Posición de reproducción"
-                    disabled={isGuestInJam}
+                    disabled={lockGuestPlayback}
                     min={0}
                     max={Math.max(1, Math.round(activeDockDurSec))}
                     step={0.1}
@@ -3498,7 +3568,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                       Math.min(activeDockDurSec, Math.round(liveDockPosSec * 10) / 10).toFixed(1)
                     )}
                     onChange={(e) => {
-                      if (isGuestInJam) return;
+                      if (lockGuestPlayback) return;
                       const next = Number(e.target.value);
                       const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
                       manualSeekAtMsRef.current = now;
@@ -3545,31 +3615,13 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
             {playerBarStyle === 'floating-island' ? (
               <div
                 ref={islandMenuRef}
-                className="pm-dock-interactive pm-dock-cluster pointer-events-auto relative flex items-center gap-1 rounded-full px-2 py-1"
+                className="pm-dock-interactive pm-dock-cluster pointer-events-auto relative flex items-center gap-0.5 sm:gap-1 rounded-full px-1.5 sm:px-2 py-1"
               >
-                <button
-                  type="button"
-                  aria-label={volume === 0 ? 'Activar sonido' : 'Silenciar'}
-                  onClick={() => toggleMute()}
-                  className="pm-pressable inline-flex h-8 w-8 items-center justify-center rounded-full pm-text-secondary transition-colors hover:bg-white/[0.10] hover:text-[var(--pm-text-primary)]"
-                >
-                  {volume === 0 ? (
-                    <VolumeX className="h-3.5 w-3.5" />
-                  ) : (
-                    <Volume2 className="h-3.5 w-3.5" />
-                  )}
-                </button>
-
-                <input
-                  type="range"
-                  role="slider"
-                  aria-label="Volumen"
-                  min={0}
-                  max={100}
-                  value={volumePct}
-                  onChange={(e) => setVolume(Number(e.target.value) / 100)}
-                  style={{ '--pm-fill': `${volumePct}%` } as React.CSSProperties}
-                  className="pm-range-subtle mx-0.5 hidden w-14 sm:block"
+                <VolumeHoverPopover
+                  volume={volume}
+                  onChangeVolume={setVolume}
+                  onToggleMute={toggleMute}
+                  inlineBreakpoint="sm"
                 />
 
                 <button
@@ -3740,7 +3792,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                 )}
               </div>
             ) : (
-            <div className="pm-dock-interactive pm-dock-cluster pointer-events-auto flex items-center gap-1 rounded-full px-2 py-1">
+            <div className="pm-dock-interactive pm-dock-cluster pointer-events-auto flex items-center gap-0.5 lg:gap-1 rounded-full px-1.5 lg:px-2 py-1">
               <button
                 type="button"
                 data-testid="dock-eq-btn"
@@ -3763,7 +3815,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                 aria-label="Dispositivos conectados (pMusic Connect)"
                 aria-pressed={devicesSheetOpen || Boolean(remoteControlledDeviceId)}
                 onClick={() => setDevicesSheetOpen(!devicesSheetOpen)}
-                className={`pm-pressable inline-flex h-8 items-center justify-center gap-1.5 rounded-full px-2 text-[11px] font-bold transition-colors ${
+                className={`pm-pressable inline-flex h-8 w-8 items-center justify-center gap-1.5 rounded-full text-[11px] font-bold transition-colors xl:w-auto xl:px-2 ${
                   remoteControlledDeviceId
                     ? 'bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-400/40'
                     : onlineDevices.length > 1
@@ -3791,32 +3843,14 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
                 <Mic2 className="h-3.5 w-3.5" />
               </button>
 
-              <button
-                type="button"
-                aria-label={volume === 0 ? 'Activar sonido' : 'Silenciar'}
-                onClick={() => toggleMute()}
-                className="pm-pressable inline-flex h-8 w-8 items-center justify-center rounded-full pm-text-secondary transition-colors hover:bg-white/[0.10] hover:text-[var(--pm-text-primary)]"
-              >
-                {volume === 0 ? (
-                  <VolumeX className="h-3.5 w-3.5" />
-                ) : (
-                  <Volume2 className="h-3.5 w-3.5" />
-                )}
-              </button>
-
-              <input
-                type="range"
-                role="slider"
-                aria-label="Volumen"
-                min={0}
-                max={100}
-                value={volumePct}
-                onChange={(e) => setVolume(Number(e.target.value) / 100)}
-                style={{ '--pm-fill': `${volumePct}%` } as React.CSSProperties}
-                className="pm-range-subtle mx-1 hidden w-16 lg:block xl:w-20"
+              <VolumeHoverPopover
+                volume={volume}
+                onChangeVolume={setVolume}
+                onToggleMute={toggleMute}
+                inlineBreakpoint="lg"
               />
 
-              <span aria-hidden="true" className="mx-0.5 h-3.5 w-px bg-white/10" />
+              <span aria-hidden="true" className="mx-0.5 hidden h-3.5 w-px bg-white/10 lg:block" />
 
               <button
                 type="button"
@@ -4128,6 +4162,7 @@ const PMusicMainApp: React.FC<{ initialJamCode?: string | null }> = ({ initialJa
       <DjPopover />
       <DevicesConnectSheet />
       <JamInviteModal />
+      <JamJoinAudioModal />
       <ReleaseNotificationsModal />
       {carModeOpen && (
         <Suspense fallback={null}>

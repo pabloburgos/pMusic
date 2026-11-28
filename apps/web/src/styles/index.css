@@ -1128,14 +1128,14 @@ input[type="range"].pm-eq-vertical {
   color: #FFFFFF;
   opacity: 1;
   filter: none;
-  transform: scale(1.035) translateX(6px);
+  transform: translate3d(6px, 0, 0) scale(1.035);
   transform-origin: left center;
-  text-shadow: 0 6px 32px rgba(255, 255, 255, 0.26);
+  text-shadow: 0 6px 28px rgba(255, 255, 255, 0.24);
   transition:
-    transform 360ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 420ms cubic-bezier(0.22, 1, 0.36, 1),
     color 240ms ease,
-    opacity 260ms ease,
-    filter 280ms ease;
+    opacity 320ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform, opacity;
 }
 
 /* Apple Music Sing progressive word illumination — GPU-friendly 60fps sweep */
@@ -1181,38 +1181,44 @@ input[type="range"].pm-eq-vertical {
 
 .pm-lyric-line-inactive {
   color: #C2C2CC;
-  filter: blur(1.4px);
   opacity: 0.56;
-  transform: scale(0.99);
+  transform: translate3d(0, 0, 0) scale(0.985);
   transform-origin: left center;
   transition:
-    transform 300ms var(--ease-out),
+    transform 400ms cubic-bezier(0.22, 1, 0.36, 1),
     color 240ms ease,
-    opacity 260ms ease,
-    filter 280ms ease;
+    opacity 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.pm-lyric-line-past {
+  transform: translate3d(0, -2px, 0) scale(0.982);
+}
+
+.pm-lyric-line-upcoming {
+  transform: translate3d(0, 2px, 0) scale(0.99);
 }
 
 .pm-lyric-dist-1 {
   opacity: 0.66;
-  filter: blur(0.9px);
+  filter: blur(0.6px);
 }
 
 .pm-lyric-dist-2 {
   opacity: 0.42;
-  filter: blur(1.9px);
+  filter: blur(1.2px);
 }
 
 .pm-lyric-dist-far {
-  opacity: 0.25;
-  filter: blur(2.9px);
+  opacity: 0.26;
+  filter: none;
 }
 
 @media (hover: hover) and (pointer: fine) {
   .pm-lyric-line-inactive:hover {
     color: #F5F5F7;
     opacity: 0.96;
-    filter: blur(0px);
-    transform: scale(1) translateX(3px);
+    filter: none;
+    transform: translate3d(3px, 0, 0) scale(1);
   }
 }
 
@@ -3182,19 +3188,8 @@ html.pm-solid-modern .pm-mobile-glass-header {
   .pm-shuffle-stroke-b {
     animation: none !important;
   }
-  .pm-sing-word {
-    transform: none !important;
-    transition: none !important;
-  }
   .pm-lyric-line-inactive {
     filter: none !important;
-  }
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
   }
 }
 
@@ -3877,4 +3872,20 @@ html.pm-reduced-motion .pm-heart-liquid-pop {
 
 .pm-np-light-surface .text-\[\#4ADE80\] {
   color: #15803d !important;
+}
+
+@keyframes pmVolumePop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 6px) scale(0.94);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+.pm-volume-pop {
+  animation: pmVolumePop 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform-origin: bottom center;
 }
